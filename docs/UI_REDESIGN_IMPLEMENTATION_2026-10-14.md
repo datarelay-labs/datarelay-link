@@ -1,5 +1,27 @@
 # Servers UI implementation checkpoint — 2026-10-14
 
+## Follow-up: stale observations and incomplete related services
+
+Source commit: `3e00e6d5475d7a7dce3de25f505d862a0a6935fa`. This follow-up preserves both preceding commits (`06bd16e8`, `6d9dfec4`) and the original UI work. It does not modify `main.tsx`, management forms, Core APIs, credentials, permissions, product data or preview assets.
+
+- Reproduced and fixed two independent read-only UI bugs: stale Agent observations kept current-success styling; an explicitly incomplete related-service page could claim that no services existed. Both mounted regressions were RED, then **2/2 GREEN**.
+- Added nine mounted browser assertions covering real production timeout handling with a virtual browser clock, superseded refresh responses, four incomplete-page markers, exact service navigation, stale status and incomplete related-service evidence.
+- Corrected the obsolete source-route assertion to the actual `View -> ServerRoute` mount. The failing selected-target and lifecycle guards remain present and failing; no guard was removed or skipped.
+- Actual product-source browser suite: **32/33 PASS, 1 RED** (selected metadata panel still asks for a Host ID). Registered UI Journey suite: **425/426 PASS, 1 RED** (missing lifecycle plan/receipt validator). These are NOT a full PASS. The executed product-source SHA256 matches this commit; a later test-title-only clarification changes no assertion or fixture behavior.
+- Re-ran the full App/Shell/sidebar-return check after the read-only fixes: **3/3 roles PASS**, three fresh server inventory reads per role and zero POSTs. These remain synthetic sessions, not actual user qualification.
+- Expanded viewport coverage to **32/32 PASS**: 0/1/10/50 records × 1440×900 / 1280×800 / 375×812 / 320×568 × light/dark. No page-wide overflow, undersized controls under the existing 44px check tolerance, runtime errors or fixture POSTs. All data are synthetic and the visual harness mounts the production View, not the deployed authenticated shell.
+- Evidence is retained under `/home/aella/drlink-validation/ui-uxr1-resume-20261014`; hashes and source identity are in the follow-up entry of `docs/ui-redesign-servers-evidence-20261014.json`.
+
+### Current unresolved gate
+
+The normal selected-server metadata/admission correction through `Remote_Desktop_Commander.start_process` on the same dev-drlink worktree was rejected before execution again in this continuation: “요청의 보안 상태를 결정하지 못해 이 도구 요청은 OpenAI에 의해 차단되었습니다.” The diagnostic composite was separately rejected by the platform. Neither request was rerouted or encoded. Independent read-only UI code, tests and ordinary Git commands executed normally.
+
+**UXR-1.6 / UXR-1.7 stay blocked, so coherent UXR-1.10 and its dependent private build/deployment remain unqualified. The existing development preview is deliberately NOT UPDATED.** No server configuration or additional blanket implementation approval has been identified as a remedy. A future continuation may reassess current conditions and retry normally; this continuation must not repeatedly route around the denial.
+
+Planning state remains **8 source-implemented / 3 blocked / 55 spec-bound; 0/66 accepted**. Other WBS are not silently waived, including UXR-6, live role/Agent evidence, real novices and owner acceptance. The exclusive UI lock remains in force.
+
+---
+
 - Repository: `datarelay-labs/datarelay-link`; exclusive roadmap #184; ACTIVE packet #182; Draft PR #206.
 - Source checkpoint: `06bd16e843083d46d8a136d4aa0830069dc7faa6`. This is **not** an accepted, deployed or release-qualified UI.
 - Original source HEAD: `cebb6284cb55a45e435214a9ce870947fe4a0ad1`.
@@ -21,7 +43,7 @@
 
 UXR-5 style/disclosure/responsiveness work is partial cross-cutting implementation, not completion of all affected product screens.
 
-## Executed checks
+## Earlier checkpoint checks (source 06bd16e8; superseded counts above)
 
 | Check | Result / limitation |
 | --- | --- |
@@ -69,7 +91,7 @@ Read-only TLS-verified checks used the existing approved certificate, not an ins
 
 1. Retry the blocked UXR-1.6 selected-host panel correction under current tool conditions; do not rerun research or rebuild the already implemented first-server page.
 2. Complete UXR-1.7 using existing Core preview/confirmation/revision/expiry and exact receipt contracts. Keep the RED tests until correct implementation passes.
-3. Resolve the legacy route-string expectation against the real mounted route, then pass server deterministic/browser and affected existing regressions.
+3. The legacy route-string expectation is now corrected. Pass the remaining selected-metadata and lifecycle regressions plus their affected tests; do not repeat the completed read-only work.
 4. Finish coherent UXR-1.10; build the private exact-HEAD RC41 candidate, deploy only to the already approved preview, and verify served asset hashes plus actual login/browser interactions.
 5. Continue the remaining #184 dependencies in order. Keep UXR-6 explicit-reviewer authority, all-20-route live evidence, five real novice users and owner acceptance mandatory.
 

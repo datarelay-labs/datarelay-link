@@ -83,5 +83,115 @@
       }
     },
     "anonymous_session_http": 401
-  }
+  },
+  "followups": [
+    {
+      "created_at": "2026-10-14T03:40:54.822344+00:00",
+      "source_commit": "3e00e6d5475d7a7dce3de25f505d862a0a6935fa",
+      "private_root": "/home/aella/drlink-validation/ui-uxr1-resume-20261014",
+      "scope": "Read-only UI fixes and explicit synthetic browser regression; not live acceptance or deployment",
+      "product_source_files": {
+        "web/src/main.tsx": {
+          "sha256": "1588f052a36eb83af03efc2905b1f9fffb7cea4cb4b73860a34cf66a5a915e6c",
+          "bytes": 271587
+        },
+        "web/src/workflow-servers.tsx": {
+          "sha256": "bb1cb0dafe10d8e51a2fb07eeff5c5b6992f93b241504adb4ede543c38efd824",
+          "bytes": 36951
+        },
+        "web/dist/styles.css": {
+          "sha256": "b992d288ae678ad7e0d1f0c522e55084a614cf23e1ca17ff755d58fa9684cf03",
+          "bytes": 91916
+        }
+      },
+      "logs": {
+        "browser-red.log": {
+          "sha256": "1d47447efc2291375484567a690c3ad4343a34bb794f7afb45f12ed8cbd36a44",
+          "bytes": 5965
+        },
+        "data-state-extra.log": {
+          "sha256": "4168cd21f2e09fb671e20bac6dd93fdeaa5e96118f9af448aabf79024024dd85",
+          "bytes": 1704
+        },
+        "readonly-red.log": {
+          "sha256": "269a61289dbb531dfb27688ec9f50ee8222d72ba61532018a90cc2b79261f780",
+          "bytes": 2025
+        },
+        "readonly-green.log": {
+          "sha256": "269599311c4c59a7dd5a4ba197770524324d445bf924b1dbfe566a61aea23e6d",
+          "bytes": 573
+        },
+        "browser-final.log": {
+          "sha256": "ab6f65064276fe446f7c0ca332321d055a5dbe34d8e71efe6c653a936dabf180",
+          "bytes": 8013
+        },
+        "journey-final.log": {
+          "sha256": "8251d526dd051f89aeeccce0c76538f583595504cebb41ce6e19a792d9b78da9",
+          "bytes": 106838
+        },
+        "visual-expanded.log": {
+          "sha256": "f796bad3586566119bcbe13e9b779c1988004816d3da71ff7f64ea0ad9f21940",
+          "bytes": 98
+        },
+        "shell-final.log": {
+          "sha256": "785421ffffd62c9627428669db75a4c928ef9799f4f164954b5f483af49d0080",
+          "bytes": 508
+        }
+      },
+      "visual_observations": {
+        "sha256": "fde3201624a754453e9555625c32e240e461d904df8833f1aa438dea543789e3",
+        "bytes": 27069
+      },
+      "results": {
+        "read_only_bug_regressions": {
+          "red_fail": 2,
+          "green_pass": 2
+        },
+        "browser": {
+          "total": 33,
+          "pass": 32,
+          "fail": 1
+        },
+        "journey": {
+          "total": 426,
+          "pass": 425,
+          "fail": 1
+        },
+        "visual": {
+          "total": 32,
+          "pass": 32,
+          "screenshot_count": 56
+        },
+        "shell": {
+          "roles": [
+            "Admin",
+            "Operator",
+            "Read Only"
+          ],
+          "pass": 3,
+          "product_posts": 0,
+          "scope": "App/Shell/View with synthetic session and GET fixture; exact current product source"
+        }
+      },
+      "remaining_failures": [
+        "selected metadata consumer ignores selectedHost",
+        "lifecycle preview/receipt validator is unimplemented"
+      ],
+      "deployed": false,
+      "accepted_wbs": 0,
+      "exclusive": true,
+      "blocker": {
+        "classification": "PLATFORM_BLOCK",
+        "tool": "Remote_Desktop_Commander.start_process",
+        "device": "dev-drlink",
+        "affected_wbs": [
+          "UXR-1.6",
+          "UXR-1.7",
+          "UXR-1.10"
+        ],
+        "retry_this_continuation": "rejected before execution; no bypass",
+        "not_a_remedy": "No additional ordinary implementation permission or server change established"
+      }
+    }
+  ]
 }

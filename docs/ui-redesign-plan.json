@@ -174,7 +174,9 @@
         "source_commit": "06bd16e843083d46d8a136d4aa0830069dc7faa6",
         "implementation_report": "docs/UI_REDESIGN_IMPLEMENTATION_2026-10-14.md",
         "focused_tests": "docs/ui-redesign-servers-evidence-20261014.json",
-        "qualification": "Source only; not deployed, live-browser-verified or accepted."
+        "qualification": "Source only; not deployed, live-browser-verified or accepted.",
+        "followup_source_commit": "3e00e6d5475d7a7dce3de25f505d862a0a6935fa",
+        "followup_evidence": "docs/ui-redesign-servers-evidence-20261014.json#followups"
       }
     },
     {
@@ -271,7 +273,9 @@
         "source_commit": "06bd16e843083d46d8a136d4aa0830069dc7faa6",
         "implementation_report": "docs/UI_REDESIGN_IMPLEMENTATION_2026-10-14.md",
         "focused_tests": "docs/ui-redesign-servers-evidence-20261014.json",
-        "qualification": "Source only; not deployed, live-browser-verified or accepted."
+        "qualification": "Source only; not deployed, live-browser-verified or accepted.",
+        "followup_source_commit": "3e00e6d5475d7a7dce3de25f505d862a0a6935fa",
+        "followup_evidence": "docs/ui-redesign-servers-evidence-20261014.json#followups"
       }
     },
     {
@@ -365,7 +369,9 @@
         "source_commit": "06bd16e843083d46d8a136d4aa0830069dc7faa6",
         "implementation_report": "docs/UI_REDESIGN_IMPLEMENTATION_2026-10-14.md",
         "focused_tests": "docs/ui-redesign-servers-evidence-20261014.json",
-        "qualification": "Source only; not deployed, live-browser-verified or accepted."
+        "qualification": "Source only; not deployed, live-browser-verified or accepted.",
+        "followup_source_commit": "3e00e6d5475d7a7dce3de25f505d862a0a6935fa",
+        "followup_evidence": "docs/ui-redesign-servers-evidence-20261014.json#followups"
       }
     },
     {
@@ -1130,7 +1136,9 @@
       "approval_required": false,
       "evidence": {
         "partial_work_report": "docs/UI_REDESIGN_IMPLEMENTATION_2026-10-14.md",
-        "qualification": "Servers-only cross-cutting work; all affected product screens remain unqualified."
+        "qualification": "Servers-only cross-cutting work; all affected product screens remain unqualified.",
+        "followup_source_commit": "3e00e6d5475d7a7dce3de25f505d862a0a6935fa",
+        "followup_evidence": "docs/ui-redesign-servers-evidence-20261014.json#followups"
       }
     },
     {
@@ -2491,7 +2499,7 @@
   "uxe_to_wbs": [
     {
       "id": "LEGACY19-UXE-01",
-      "meaning": "New Admin logs in and locates “Add Agent” without instructions | Can discover action and distinguish on-prem install roles",
+      "meaning": "New Admin logs in and locates \u201cAdd Agent\u201d without instructions | Can discover action and distinguish on-prem install roles",
       "source_line": 229,
       "wbs": [
         "UXR-7.5"
@@ -2515,7 +2523,7 @@
     },
     {
       "id": "LEGACY19-UXE-04",
-      "meaning": "An intentionally denied source tries to connect | A single “Why denied?” workflow shows truthful reason, policy and next action; no false ALLOW",
+      "meaning": "An intentionally denied source tries to connect | A single \u201cWhy denied?\u201d workflow shows truthful reason, policy and next action; no false ALLOW",
       "source_line": 232,
       "wbs": [
         "UXR-7.5"
