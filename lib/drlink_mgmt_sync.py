@@ -1843,16 +1843,23 @@ def server_report_remote_service_status(plane, auth: MgmtAuthContext, body: dict
         finally:
             plane._batch_mode = nested_prev
 
+    # Runtime status, temporary reachability, and endpoint health are
+    # operational projections, not desired configuration. Do not advance
+    # sourceRevision, append configuration history, or recompile policy
+    # runtime merely because an Agent health report changed. Serialize the
+    # projection itself and commit only its operational rows.
+    plane.conn.execute("BEGIN IMMEDIATE")
     try:
-        plane._mutate(
-            "mgmt remote-service status [agent %s]" % machine_id,
-            "mgmt remote service status",
-            write,
-        )
-    except UnchangedStatusReport:
-        # _mutate rolled back the no-op transaction. All statuses were still
-        # validated, and no mutation/audit/revision took place.
-        pass
+        try:
+            write()
+        except UnchangedStatusReport:
+            # All statuses were validated but no row changed.
+            plane._rollback_open_transaction()
+        else:
+            plane._commit_open_transaction()
+    except Exception:
+        plane._rollback_open_transaction()
+        raise
     return {"updated": updated, "services": updated, "count": len(updated)}
 
 

@@ -1111,6 +1111,71 @@ class StatusParityTests(unittest.TestCase):
         ).fetchone()
         self.assertEqual((row["status"], row["runtime_verified"]), ("DEGRADED", 0))
 
+    def test_status_push_retries_ambiguous_projection_once(self):
+        # Remote Service status is an idempotent operational projection.
+        # If the first response is lost, retry the same signed projection once
+        # instead of leaving Agent HEALTHY while the Server remains DEGRADED
+        # until a later lifecycle heartbeat.
+        from unittest import mock
+
+        created = mgmt.upsert_remote_service_on_server(
+            root=self.agent_tmp,
+            name="status-retry",
+            destination="this-host",
+            service="ssh",
+            enabled=True,
+            pool_class="normal",
+            target_host="127.0.0.1",
+            target_port=22,
+            target_mode="self",
+            runtime_verified=True,
+        )
+        self.assertEqual(created["status"], "HEALTHY")
+        port = int(self._server_status("status-retry")["public_port"])
+        self.agent.conn.execute(
+            "INSERT INTO agent_remote_services"
+            "(name, destination, service_object, enabled, status, endpoint_host, "
+            "endpoint_port, pending_allocation, delete_pending, pool_class, reason, "
+            "updated_at, runtime_verified) "
+            "VALUES ('status-retry', 'this-host', 'ssh', 1, 'HEALTHY', 'example.test', "
+            "?, 0, 0, 'normal', '', '2026-10-14T00:00:00Z', 1)",
+            (port,),
+        )
+        self.agent.conn.commit()
+        self.server.conn.execute(
+            "UPDATE remote_service_meta SET status='DEGRADED', "
+            "reason='Runtime activation pending.', runtime_verified=0 "
+            "WHERE service_id=(SELECT id FROM published_services WHERE name='status-retry')"
+        )
+        self.server.conn.commit()
+
+        original = mgmt.report_remote_service_status_on_server
+        calls = {"count": 0}
+
+        def flaky(*, root, services):
+            calls["count"] += 1
+            if calls["count"] == 1:
+                raise mgmt.MgmtAmbiguousWriteError("simulated lost status response")
+            return original(root=root, services=services)
+
+        with mock.patch.object(
+            mgmt, "report_remote_service_status_on_server", side_effect=flaky
+        ) as report:
+            v24._push_agent_remote_service_status(self.agent, root=self.agent_tmp)
+
+        self.assertEqual(report.call_count, 2)
+        server = self.server.conn.execute(
+            "SELECT m.status, m.runtime_verified FROM remote_service_meta m "
+            "JOIN published_services s ON s.id=m.service_id "
+            "WHERE s.name='status-retry'"
+        ).fetchone()
+        self.assertEqual((server["status"], server["runtime_verified"]), ("HEALTHY", 1))
+        agent = self.agent.conn.execute(
+            "SELECT status, runtime_verified FROM agent_remote_services "
+            "WHERE name='status-retry'"
+        ).fetchone()
+        self.assertEqual((agent["status"], agent["runtime_verified"]), ("HEALTHY", 1))
+
     def _u005_online_synchronize_upsert_write_race(self, operator_online=True):
         from unittest import mock
         import drlink_v24_runtime as runtime

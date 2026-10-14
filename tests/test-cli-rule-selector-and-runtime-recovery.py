@@ -155,13 +155,16 @@ class RuleSelectorAndRuntimeRecovery(unittest.TestCase):
         row = self.plane.conn.execute('SELECT status,runtime_verified FROM remote_service_meta '
                                       'WHERE service_id=?',(service,)).fetchone()
         self.assertEqual((row['status'],row['runtime_verified']), ('DISABLED',0))
-        # A real mismatch must still repair the Server and create one revision.
+        # Runtime health repair is operational state, not desired configuration.
+        # It must repair the Server without invalidating reviewed sourceRevision.
         self.plane.conn.execute('UPDATE remote_service_meta SET status=?, reason=? '
                                 'WHERE service_id=?', ('DEGRADED','stale report',service))
         self.plane.conn.commit()
         before_repair = self.plane.current_revision()
-        repaired = mgmt.server_report_remote_service_status(self.plane, auth, payload)
-        self.assertGreater(self.plane.current_revision(), before_repair)
+        with mock.patch.object(self.plane, 'compile_runtime') as compile_runtime:
+            repaired = mgmt.server_report_remote_service_status(self.plane, auth, payload)
+        self.assertEqual(self.plane.current_revision(), before_repair)
+        compile_runtime.assert_not_called()
         self.assertEqual(repaired['services'][0]['status'], 'DISABLED')
         self.assertEqual(self.plane.conn.execute('SELECT status FROM remote_service_meta '
                         'WHERE service_id=?',(service,)).fetchone()['status'], 'DISABLED')

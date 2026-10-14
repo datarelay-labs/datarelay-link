@@ -5610,6 +5610,17 @@ def _push_agent_remote_service_status(plane_db, *, root: Optional[str] = None, n
         return 0
     try:
         result = mgmt.report_remote_service_status_on_server(root=target_root, services=items)
+    except mgmt.MgmtAmbiguousWriteError:
+        # Remote Service status is an idempotent operational projection. A
+        # response can be lost after the Server has committed, so replay the
+        # same signed projection once instead of waiting for a later lifecycle
+        # heartbeat and exposing Agent HEALTHY / Server DEGRADED in the interim.
+        try:
+            result = mgmt.report_remote_service_status_on_server(
+                root=target_root, services=items
+            )
+        except Exception:
+            return 0
     except Exception:
         return 0
     return _reconcile_agent_from_server_status(plane_db, result)
