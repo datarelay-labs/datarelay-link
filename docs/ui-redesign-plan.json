@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "revision": 4,
+  "revision": 5,
   "repository": "datarelay-labs/datarelay-link",
   "roadmap": 184,
   "packet": 182,
@@ -11,7 +11,7 @@
   "priority": "P0_EXCLUSIVE_UI_REDESIGN",
   "exclusive": true,
   "scope_complete": false,
-  "next_task": "UXR-5.1",
+  "next_task": "UXR-6.1",
   "owner_acceptance": null,
   "scope_change_approval": null,
   "milestones": [
@@ -1217,11 +1217,15 @@
         "UXR-1.3"
       ],
       "owner": "CHATGPT_CHAT",
-      "status": "SPEC_BOUND",
+      "status": "DEV_DEPLOYED",
       "approval_required": false,
       "evidence": {
-        "partial_work_report": "docs/UI_REDESIGN_IMPLEMENTATION_2026-10-14.md",
-        "qualification": "Servers-only cross-cutting work; all affected product screens remain unqualified."
+        "source_commit": "971f35e250a3a724803478ed68091cf61e6786fc",
+        "deployed_source_head": "971f35e250a3a724803478ed68091cf61e6786fc",
+        "preview": "https://221.139.249.111:19044",
+        "private_bundle_sha256": "53558225b27f7973544a81c7e48c17fff5876aea51e09027a7c08ac09dab2f08",
+        "verification": "Shared readable headings, 44px primary interaction baseline and common focus-trap contract. Responsive matrix passes after RED 35.5\u201340px controls were corrected.",
+        "qualification": "Exact-head private development deployment; no production/release or live-user acceptance inferred."
       }
     },
     {
@@ -1239,11 +1243,15 @@
         "UXR-1.9"
       ],
       "owner": "CHATGPT_CHAT",
-      "status": "SPEC_BOUND",
+      "status": "DEV_DEPLOYED",
       "approval_required": false,
       "evidence": {
-        "partial_work_report": "docs/UI_REDESIGN_IMPLEMENTATION_2026-10-14.md",
-        "qualification": "Servers-only cross-cutting work; all affected product screens remain unqualified."
+        "source_commit": "971f35e250a3a724803478ed68091cf61e6786fc",
+        "deployed_source_head": "971f35e250a3a724803478ed68091cf61e6786fc",
+        "preview": "https://221.139.249.111:19044",
+        "private_bundle_sha256": "53558225b27f7973544a81c7e48c17fff5876aea51e09027a7c08ac09dab2f08",
+        "verification": "Technical details disclosures normalized; critical warnings and required-test text remain outside disclosure. Focused 99/99 and Journey 439/439 PASS before exact-head build.",
+        "qualification": "Exact-head private development deployment; no production/release or live-user acceptance inferred."
       }
     },
     {
@@ -1261,11 +1269,15 @@
         "UXR-1.10"
       ],
       "owner": "CHATGPT_CHAT",
-      "status": "SPEC_BOUND",
+      "status": "DEV_DEPLOYED",
       "approval_required": false,
       "evidence": {
-        "partial_work_report": "docs/UI_REDESIGN_IMPLEMENTATION_2026-10-14.md",
-        "qualification": "Servers-only cross-cutting work; all affected product screens remain unqualified."
+        "source_commit": "971f35e250a3a724803478ed68091cf61e6786fc",
+        "deployed_source_head": "971f35e250a3a724803478ed68091cf61e6786fc",
+        "preview": "https://221.139.249.111:19044",
+        "private_bundle_sha256": "53558225b27f7973544a81c7e48c17fff5876aea51e09027a7c08ac09dab2f08",
+        "verification": "Local runtime asset gate 3/3 PASS; index/app/CSS/favicon/logo are same-origin with self-only CSP. Deployed six-asset HTTP 200 and byte-parity verified.",
+        "qualification": "Exact-head private development deployment; no production/release or live-user acceptance inferred."
       }
     },
     {
@@ -1283,11 +1295,15 @@
         "UXR-1.10"
       ],
       "owner": "CHATGPT_CHAT",
-      "status": "SPEC_BOUND",
+      "status": "DEV_DEPLOYED",
       "approval_required": false,
       "evidence": {
-        "partial_work_report": "docs/UI_REDESIGN_IMPLEMENTATION_2026-10-14.md",
-        "qualification": "Servers-only cross-cutting work; all affected product screens remain unqualified."
+        "source_commit": "971f35e250a3a724803478ed68091cf61e6786fc",
+        "deployed_source_head": "971f35e250a3a724803478ed68091cf61e6786fc",
+        "preview": "https://221.139.249.111:19044",
+        "private_bundle_sha256": "53558225b27f7973544a81c7e48c17fff5876aea51e09027a7c08ac09dab2f08",
+        "verification": "Production View responsive browser matrix PASS: 8 route/error modes \u00d7 4 viewports \u00d7 2 themes; no page-wide overflow, browser errors or fixture writes.",
+        "qualification": "Exact-head private development deployment; no production/release or live-user acceptance inferred."
       }
     },
     {
@@ -1305,11 +1321,15 @@
         "UXR-1.10"
       ],
       "owner": "CHATGPT_CHAT",
-      "status": "SPEC_BOUND",
+      "status": "DEV_DEPLOYED",
       "approval_required": false,
       "evidence": {
-        "partial_work_report": "docs/UI_REDESIGN_IMPLEMENTATION_2026-10-14.md",
-        "qualification": "Servers-only cross-cutting work; all affected product screens remain unqualified."
+        "source_commit": "971f35e250a3a724803478ed68091cf61e6786fc",
+        "deployed_source_head": "971f35e250a3a724803478ed68091cf61e6786fc",
+        "preview": "https://221.139.249.111:19044",
+        "private_bundle_sha256": "53558225b27f7973544a81c7e48c17fff5876aea51e09027a7c08ac09dab2f08",
+        "verification": "Responsive/accessibility browser 2/2 PASS; 11 unnamed visible Policy/Access inputs fixed, dialog focus contained/restored, shared light/dark text-token pairs >=4.5:1.",
+        "qualification": "Exact-head private development deployment; no production/release or live-user acceptance inferred."
       }
     },
     {
@@ -1327,11 +1347,15 @@
         "UXR-1.10"
       ],
       "owner": "CHATGPT_CHAT",
-      "status": "SPEC_BOUND",
+      "status": "DEV_DEPLOYED",
       "approval_required": false,
       "evidence": {
-        "partial_work_report": "docs/UI_REDESIGN_IMPLEMENTATION_2026-10-14.md",
-        "qualification": "Servers-only cross-cutting work; all affected product screens remain unqualified."
+        "source_commit": "971f35e250a3a724803478ed68091cf61e6786fc",
+        "deployed_source_head": "971f35e250a3a724803478ed68091cf61e6786fc",
+        "preview": "https://221.139.249.111:19044",
+        "private_bundle_sha256": "53558225b27f7973544a81c7e48c17fff5876aea51e09027a7c08ac09dab2f08",
+        "verification": "Core auth 12/12, MFA policy 5/5, Web session 5/5, three-role App/Shell 3/3 and direct guarded Web effects 6/6 PASS. Existing live preview credential was not reset; authenticated live-login acceptance remains open.",
+        "qualification": "Exact-head private development deployment; no production/release or live-user acceptance inferred."
       }
     },
     {
@@ -1349,13 +1373,15 @@
         "UXR-1.10"
       ],
       "owner": "CHATGPT_CHAT",
-      "status": "SPEC_BOUND",
+      "status": "DEV_DEPLOYED",
       "approval_required": false,
       "evidence": {
-        "partial_work_report": "docs/UI_REDESIGN_IMPLEMENTATION_2026-10-14.md",
-        "qualification": "Servers-only cross-cutting work; all affected product screens remain unqualified.",
-        "followup_source_commit": "3e00e6d5475d7a7dce3de25f505d862a0a6935fa",
-        "followup_evidence": "docs/ui-redesign-servers-evidence-20261014.json#followups"
+        "source_commit": "971f35e250a3a724803478ed68091cf61e6786fc",
+        "deployed_source_head": "971f35e250a3a724803478ed68091cf61e6786fc",
+        "preview": "https://221.139.249.111:19044",
+        "private_bundle_sha256": "53558225b27f7973544a81c7e48c17fff5876aea51e09027a7c08ac09dab2f08",
+        "verification": "Mounted Servers async 35/35 and additional async/paging unit 68/68 PASS, including 100/101 paging, actor/route invalidation, real timeout, superseded refresh and non-idempotent locks.",
+        "qualification": "Exact-head private development deployment; no production/release or live-user acceptance inferred."
       }
     },
     {
@@ -1467,12 +1493,12 @@
       "status": "IMPLEMENTED",
       "approval_required": false,
       "evidence": {
-        "source_commit": "1c90e9ef0029fe53340f5bf2793eac60cf8da011",
-        "bundle_sha256": "439ad4de4d7181f9aba4c41a0c8b193cad29bbc1b05b41c802788242f2f6fd4b",
+        "source_commit": "971f35e250a3a724803478ed68091cf61e6786fc",
+        "bundle_sha256": "53558225b27f7973544a81c7e48c17fff5876aea51e09027a7c08ac09dab2f08",
         "foundation_head": "46ddb60cad8eae7b1718588cd19421e61b5300e7",
         "foundation_package_count": 10,
-        "private_candidate": "dev-installed-1c90e9ef",
-        "qualification": "Exact-source deterministic private RC41 build and disposable install PASS; not release acceptance."
+        "private_candidate": "dev-installed-971f35e2",
+        "qualification": "Exact-head deterministic private RC41 build, Web suites and disposable install PASS; not release acceptance."
       }
     },
     {
@@ -1492,16 +1518,23 @@
       "status": "DEV_DEPLOYED",
       "approval_required": false,
       "evidence": {
-        "source_commit": "1c90e9ef0029fe53340f5bf2793eac60cf8da011",
-        "deployed_source_head": "1c90e9ef0029fe53340f5bf2793eac60cf8da011",
+        "source_commit": "971f35e250a3a724803478ed68091cf61e6786fc",
+        "deployed_source_head": "971f35e250a3a724803478ed68091cf61e6786fc",
         "preview": "https://221.139.249.111:19044",
-        "app_sha256": "def05ce30033073d4807fee067b276c6a6c2aee8826565323dde6e4c687bd642",
-        "styles_sha256": "0c31801485e67f1875af4417e454459b514bf30aaab3e7e45637e0ec4eeb071e",
+        "app_sha256": "6979cd33c876d4d973255056a347dc2161208d8491814e658bf45319dbc2bc70",
+        "styles_sha256": "3cd48eb87dae27792760425e1183fd9d25b542cfedd1b7c4c3902382cd9f3c7a",
         "foundation_css_sha256": "3049f76b67d9341920254bcbe1b26b48d52b05e9faa9bc992f0d51f6887928d7",
+        "favicon_sha256": "7ec193f6192213c31b63cc5cee2e8bb5439efaaa79b07534a1916c3f3b897462",
+        "logo_sha256": "5e90dfa40d1400eb24ec8e02adf9016d8b43b9995b8953cd59472789904657aa",
         "anonymous_session_http": 401,
-        "previous_candidate": "dev-installed-df12fde7",
-        "active_candidate": "dev-installed-1c90e9ef",
-        "qualification": "Approved dev pointer updated; explicit-cert served asset parity PASS. Authenticated live-browser acceptance remains open."
+        "previous_candidate": "dev-installed-1c90e9ef",
+        "active_candidate": "dev-installed-971f35e2",
+        "preview_state_preserved": {
+          "db_sha256": "e3ba06536f7dbba337dee3c1c5f01b43660ce276abb54c5cee2d5defc5b970aa",
+          "cert_sha256": "f990aa9f0b6dd8433dac5c9c072152088ff2ef5116dfaf49373f83c66b15dfbf",
+          "key_sha256": "5ebbabca902feb4709d8d98a9b5a4b4977877b6e1f888f5613f510d608bd1fb6"
+        },
+        "qualification": "Approved development preview pointer updated; assets byte-identical and existing DB/TLS unchanged. Authenticated live-browser acceptance remains open."
       }
     },
     {

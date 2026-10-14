@@ -1,3 +1,20 @@
+## 2026-10-14 continuation — cross-cutting UXR-5 development deployment
+
+Exact deployed Web source: `971f35e250a3a724803478ed68091cf61e6786fc`; private RC41 bundle SHA256 `53558225b27f7973544a81c7e48c17fff5876aea51e09027a7c08ac09dab2f08`; active development candidate `dev-installed-971f35e2`.
+
+- UXR-5.1 standardized readable heading/focus behavior and a 44px minimum for primary interaction controls. The responsive RED run found real 35.5–40px major actions; the product CSS was fixed rather than weakening the gate.
+- UXR-5.2 moved nonessential implementation evidence under one keyboard-readable **Technical details** disclosure while destructive/truncated/required-test warnings remain visible.
+- UXR-5.3 added a local-asset regression gate. The deployed preview serves index, app, both CSS files, favicon and local DataRelay logo with HTTP 200 and bytes identical to the active candidate; CSP remains same-origin.
+- UXR-5.4 production `View` browser coverage passed across Home, Servers, Setup, Services, Policies, Access, Activity and error state at 1440×900 / 1280×800 / 375×812 / 320×568 in light/dark.
+- UXR-5.5 fixed eleven unnamed visible Policy/Access controls. Full responsive/accessibility browser **2/2 PASS** verifies names, dialog focus containment/return and shared text contrast >= 4.5:1.
+- UXR-5.6: Core auth **12/12**, MFA policy **5/5**, Web session **5/5**, synthetic independent Admin/Operator/Read Only Shell **3/3**, selected directly guarded Web API effects **6/6**. The existing development account was not reset or replaced merely to obtain a live-login test.
+- UXR-5.7: mounted Servers async **35/35** and additional async/pagination **68/68** PASS, covering timeout/retry, actor and route change, superseded response, pending load-more and 100/101 boundaries.
+- The exact-head private builder passed its Web suites and disposable install. Development pointer changed atomically from `dev-installed-1c90e9ef` to `dev-installed-971f35e2`. The preview database, TLS certificate and TLS key hashes are unchanged before/after promotion. Anonymous session remains HTTP 401.
+
+UXR-5.1–5.7 are **DEV_DEPLOYED**, not ACCEPTED. Live authenticated browser acceptance remains intentionally open because no existing credential was exposed or reset. Production, merge, release and customer state are untouched. Next dependency: **UXR-6.1 UI06 contract/approval boundary**.
+
+---
+
 ## 2026-10-14 continuation — V3 Access, Home and Activity development deployment
 
 Exact deployed Link source: `1c90e9ef0029fe53340f5bf2793eac60cf8da011`. UXR-3.1–3.11 and UXR-4.1–4.10 are source-complete and deployed to the approved development preview, while live-user acceptance remains open.

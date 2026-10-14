@@ -207,6 +207,39 @@
         "journey": "437/437",
         "p0": "44/44"
       }
+    },
+    {
+      "acceptance_claimed": false,
+      "anonymous_session_http": 401,
+      "dev_candidate": "dev-installed-971f35e2",
+      "live_authenticated_browser_verified": false,
+      "preview": "https://221.139.249.111:19044",
+      "preview_state_preserved": true,
+      "previous_candidate": "dev-installed-1c90e9ef",
+      "private_bundle_sha256": "53558225b27f7973544a81c7e48c17fff5876aea51e09027a7c08ac09dab2f08",
+      "recorded_at": "2026-10-14T06:13:57.668474+00:00",
+      "scope": "UXR-5 cross-cutting development deployment; live authenticated user acceptance remains open",
+      "served": {
+        "app.js": "6979cd33c876d4d973255056a347dc2161208d8491814e658bf45319dbc2bc70",
+        "favicon.svg": "7ec193f6192213c31b63cc5cee2e8bb5439efaaa79b07534a1916c3f3b897462",
+        "foundation.css": "3049f76b67d9341920254bcbe1b26b48d52b05e9faa9bc992f0d51f6887928d7",
+        "index.html": "672e50ea3c12917b65b08f69c1d6aeaa8e8c946c7218ba25a75e1fc1bf9245f2",
+        "logo/datarelay-logo.svg": "5e90dfa40d1400eb24ec8e02adf9016d8b43b9995b8953cd59472789904657aa",
+        "styles.css": "3cd48eb87dae27792760425e1183fd9d25b542cfedd1b7c4c3902382cd9f3c7a"
+      },
+      "source_commit": "971f35e250a3a724803478ed68091cf61e6786fc",
+      "tests": {
+        "additional_async": "68/68",
+        "core_auth": "12/12",
+        "direct_guarded_api": "6/6",
+        "journey": "439/439",
+        "local_assets": "3/3",
+        "mfa_policy": "5/5",
+        "responsive_accessibility": "2/2",
+        "servers_async": "35/35",
+        "three_role_shell": "3/3",
+        "web_session": "5/5"
+      }
     }
   ],
   "logs": {
