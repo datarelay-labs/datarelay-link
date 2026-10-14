@@ -8,12 +8,12 @@ import {fileURLToPath,pathToFileURL} from "node:url";
 
 const root=dirname(dirname(fileURLToPath(import.meta.url)));
 const scratch=mkdtempSync(join(root,"node_modules",".pfci-service-detail-"));
-let serviceStateLabel,serviceDetailSections,serviceVisibleIdentity,sshConnectionTemplate;
+let serviceStateLabel,serviceDetailSections,serviceVisibleIdentity,sshConnectionTemplate,serviceUseAction;
 try{
  const output=join(scratch,"projection.mjs");
  await build({entryPoints:[join(root,"src","uxb-service-detail.ts")],outfile:output,
   bundle:true,platform:"node",format:"esm",logLevel:"silent"});
- ({serviceStateLabel,serviceDetailSections,serviceVisibleIdentity,sshConnectionTemplate}=await import(pathToFileURL(output).href));
+ ({serviceStateLabel,serviceDetailSections,serviceVisibleIdentity,sshConnectionTemplate,serviceUseAction}=await import(pathToFileURL(output).href));
 }finally{rmSync(scratch,{recursive:true,force:true})}
 const flatten=value=>serviceDetailSections(value).flatMap(s=>s.fields).map(f=>f.label+": "+f.value).join(" | ");
 
@@ -67,6 +67,20 @@ test("Missing/invalid Core service state stays UNKNOWN and does not fabricate de
  assert.match(flatten({target_port:-1,public_port:"443"}),/Public port: UNKNOWN/);
 });
 
+
+test("UXR-2.7 protocol use actions never invent a public host or execute a command",()=>{
+ const base={public_port:8443,enabled:true,released:false};
+ assert.deepEqual(serviceUseAction({...base,service_type:"https"}),{kind:"https",copyText:"https://PUBLIC_SERVER_HOST:8443/",openUrl:null,note:"Open is unavailable until a public service host is separately verified."});
+ assert.equal(serviceUseAction({...base,service_type:"https"},"relay.example.com")?.openUrl,"https://relay.example.com:8443/");
+ assert.equal(serviceUseAction({...base,service_type:"http",public_port:8080},"evil.example@attacker.test")?.openUrl,null);
+ assert.equal(serviceUseAction({...base,service_type:"tcp",public_port:6001})?.copyText,"PUBLIC_SERVER_HOST:6001");
+ assert.equal(serviceUseAction({...base,service_type:"ssh",public_port:6000})?.copyText,"ssh -p 6000 USERNAME@PUBLIC_SERVER_HOST");
+ for(const invalid of [{...base,service_type:"rdp"},{...base,service_type:"https",enabled:false},{...base,service_type:"https",public_port:"443"}])assert.equal(serviceUseAction(invalid),null);
+ const main=readFileSync(join(root,"src","main.tsx"),"utf8");
+ assert.match(main,/function ServiceUseActions/);assert.match(main,/Open verified URL/);assert.match(main,/disabled=\{!action\.openUrl\}/);
+ assert.doesNotMatch(main,/window\.open\(action\.copyText/);
+});
+
 test("Remote Service drawer never renders unapproved arbitrary/secret fields or control text",()=>{
  const obj={
   id:"service-id",name:"A\u202e\nB".repeat(100),target_host:"10.0.0.1",
@@ -86,12 +100,24 @@ test("Remote Service drawer never renders unapproved arbitrary/secret fields or 
 test("Actual Web inventory list and drawer use the same safe status and detail projection",()=>{
  const source=readFileSync(join(root,"src","main.tsx"),"utf8");
  const resource=source.split("function ResourceWorkspace(",2)[1]?.split("function UsersPanel(",1)[0]||"";
- assert.match(source,/import \{serviceStateLabel,serviceDetailSections,sshConnectionTemplate\} from "\.\/uxb-service-detail"/);
+ assert.match(source,/import \{serviceStateLabel,serviceDetailSections,serviceUseAction\} from "\.\/uxb-service-detail"/);
  assert.match(resource,/serviceStateLabel\(item\)/);
  assert.match(resource,/serviceStateLabel\(selected\)/);
  assert.match(resource,/serviceDetailSections\(selected\)\.map/);
  assert.doesNotMatch(resource,/Object\.entries\(selected\)/);
  assert.match(resource,/Why can \/ cannot connect\?/);
+});
+
+test("UXR-2.6 Service catalog shows type identity and separates config from policy and transport evidence",()=>{
+ const src=readFileSync(join(root,"src","main.tsx"),"utf8");
+ const resource=src.split("function ResourceWorkspace(",2)[1]?.split("function UsersPanel(",1)[0]||"";
+ assert.match(src,/function ServiceTypeGlyph/);
+ assert.match(resource,/ServiceTypeGlyph type=\{item\.service_type\}/);
+ assert.match(src,/function ServiceEvidenceStatus/);
+ assert.match(resource,/ServiceEvidenceStatus service=\{selected\}/);
+ assert.match(src,/Access policy<\/span><strong>Not checked/);
+ assert.match(src,/Transport<\/span><strong>Not tested/);
+ assert.match(resource,/Managed host/);assert.match(resource,/Public port/);
 });
 
 test("Remote Service list and drawer headings never display unbounded control text",()=>{
@@ -126,17 +152,18 @@ test("G-10 never invents commands for unknown type, invalid port or non-enabled 
   {...base,enabled:false},{...base,enabled:0},{...base,enabled:null},{...base,enabled:"true"}])
   assert.equal(sshConnectionTemplate(invalid),null,JSON.stringify(invalid));
 });
-test("G-10 read-only template and explicit clipboard result use native action without Core/credential mutation",()=>{
+test("G-10 protocol templates and explicit clipboard result use native actions without Core/credential mutation",()=>{
  const src=readFileSync(join(root,"src","main.tsx"),"utf8");
- const hint=src.split("function ServiceSshConnectHint(",2)[1]?.split("function ResourceWorkspace(",1)[0]||"";
+ const hint=src.split("function ServiceUseActions(",2)[1]?.split("function ResourceWorkspace(",1)[0]||"";
  const resource=src.split("function ResourceWorkspace(",2)[1]?.split("function UsersPanel(",1)[0]||"";
- assert.match(src,/import \{serviceStateLabel,serviceDetailSections,sshConnectionTemplate\} from "\.\/uxb-service-detail"/);
- assert.match(resource,/!isHost&&<ServiceSshConnectHint.*?service=\{selected\}/);
- assert.match(hint,/sshConnectionTemplate\(service\)/);
- assert.match(hint,/aria-label="SSH connection template"/);
- assert.match(hint,/USERNAME and PUBLIC_SERVER_HOST/);
- assert.match(hint,/navigator\.clipboard\.writeText\(template\)/);
+ assert.match(src,/import \{serviceStateLabel,serviceDetailSections,serviceUseAction\} from "\.\/uxb-service-detail"/);
+ assert.match(resource,/!isHost&&<ServiceUseActions.*?service=\{selected\}/);
+ assert.match(hint,/serviceUseAction\(service\)/);
+ assert.match(hint,/aria-label="Service use actions"/);
+ assert.match(hint,/navigator\.clipboard\.writeText\(action!\.copyText\)/);
  assert.match(hint,/Clipboard unavailable/);
+ assert.match(hint,/Open verified URL/);
+ assert.match(hint,/disabled=\{!action\.openUrl\}/);
  assert.match(hint,/type="button"/);
  assert.doesNotMatch(hint,/\b(?:api|fetch|load|apply|eval)\s*\(/);
  assert.match(hint,/overflowWrap:"anywhere"/);

@@ -206,6 +206,10 @@ export function RemoteServiceEditor({api,ownerHint="",onSelection,initialSelecti
     }catch(e:any){if(generation===requestGeneration.current){setPreview(null);setError(String(e?.message||e))}}
     finally{if(generation===requestGeneration.current)setBusy(false)}
   }
+  function cancelReview(){
+    requestGeneration.current+=1;
+    setPreview(null);setConfirmation("");setError("");
+  }
   async function doApply(){
     // The Core apply can enqueue a distinct Agent Job before React renders
     // the busy flag. Ref lock closes the duplicate non-idempotent POST gap.
@@ -262,21 +266,31 @@ export function RemoteServiceEditor({api,ownerHint="",onSelection,initialSelecti
       <p className="muted">Example: choose your existing TCP/22 Service Object. The Remote Service name is a separate label you choose below.</p>
     </div>}
     {error&&<p className="error" role="alert">{error}</p>}
+    {lockOwner?<div className="dr-uxb-selected-owner" role="status">
+      <strong>Selected Managed Host</strong><span>{actualOwner||"UNKNOWN"}</span>
+      <small>Bound to the observed Agent selected in setup. Change the owner from the previous step; do not retype a Host ID here.</small>
+    </div>:<label className="dr-field"><span>Owning Agent / Managed Host</span>
+      <input value={actualOwner} onChange={e=>edit(setOwner,e.target.value)} placeholder="Host name or ID"/>
+    </label>}
     <fieldset className="dr-uxb-form" disabled={busy}>
-      <label className="dr-field"><span>Owning Agent / Managed Host</span>
-        <input value={actualOwner} readOnly={lockOwner}
-          onChange={e=>{if(!lockOwner)edit(setOwner,e.target.value)}} placeholder="Host name or ID"/>
-        {lockOwner&&<small>Bound to the observed Agent selected above. To change the owner, choose another Agent in the setup guide.</small>}
-      </label>
       <label className="dr-field"><span>Remote Service name</span><input value={name} onChange={e=>edit(setName,e.target.value)} placeholder="e.g. ssh-admin"/></label>
-      <label className="dr-field"><span>Change</span><select value={operation} onChange={e=>edit(setOperation,e.target.value)}><option value="set">Create / edit</option><option value="delete">Delete</option></select></label>
       {operation==="set"&&<>
-        <label className="dr-field"><span>Destination</span><input value={destination} onChange={e=>edit(setDestination,e.target.value)} placeholder="this-host or approved destination"/></label>
         <label className="dr-field"><span>Service Object</span><input value={service} onChange={e=>edit(setService,e.target.value)} placeholder="e.g. ssh-tcp22"/><small>Protocol/port object; not the same as the Remote Service name.</small></label>
-        <label className="dr-uxb-check"><input type="checkbox" checked={enabled} onChange={e=>edit(setEnabled,e.target.checked)}/> Enable service</label>
+        <label className="dr-field"><span>Internal target</span><input value={destination} onChange={e=>edit(setDestination,e.target.value)} placeholder="this-host or approved destination"/><small>The public endpoint remains proposed until Core/Agent inventory confirms it.</small></label>
       </>}
     </fieldset>
-    <button className="primary" disabled={!ready||busy} onClick={doPreview}>{busy?"Checking…":"Preview service impact"}</button>
+    <details className="dr-wf-disclosure dr-uxb-service-advanced">
+      <summary>Advanced service options</summary>
+      <div className="dr-uxb-form">
+        <label className="dr-field"><span>Change</span><select value={operation} disabled={busy} onChange={e=>edit(setOperation,e.target.value)}><option value="set">Create / edit</option><option value="delete">Delete</option></select></label>
+        {operation==="set"&&<label className="dr-uxb-check"><input type="checkbox" checked={enabled} disabled={busy} onChange={e=>edit(setEnabled,e.target.checked)}/> Enable service after the Agent job succeeds</label>}
+      </div>
+      {operation==="delete"&&<p className="warning-box">Delete is destructive for this Remote Service. Core Preview remains mandatory; disabling a service is not the same as releasing its reservation.</p>}
+    </details>
+    <div className="dr-uxb-service-proposed" role="status"><strong>Proposed configuration</strong>
+      <span>{operation==="delete"?"Delete the selected Remote Service after Core impact review.":actualOwner&&name.trim()&&service.trim()?actualOwner+" → "+name.trim()+" → "+service.trim()+" @ "+destination.trim():"Choose the service name and protocol/port object. No public endpoint is confirmed yet."}</span>
+    </div>
+    <button className="primary" disabled={!ready||busy} onClick={doPreview}>{busy?"Checking…":"Review service change →"}</button>
     {preview&&<div className="dr-p0-review">
       <h4>Core change preview</h4>
       <p>Valid until: {preview.valid_until||"UNKNOWN"} · approval never means Agent job completed.</p>
@@ -284,11 +298,13 @@ export function RemoteServiceEditor({api,ownerHint="",onSelection,initialSelecti
         <pre className="plan">{JSON.stringify({owner:preview.owner,impact:preview.impact,preview:preview.preview},null,2)}</pre>
       </details>
       <label className="dr-field"><span>Type {required} to queue</span><input value={confirmation} onChange={e=>setConfirmation(e.target.value)} placeholder={required}/></label>
-      <button className="danger" disabled={busy||!preview.change_plan_id||confirmation!==required} onClick={doApply}>Queue authenticated Agent job</button>
+      <div className="dr-form-actions"><button className="secondary" type="button" disabled={busy} onClick={cancelReview}>Cancel review</button>
+        <button className="danger" disabled={busy||!preview.change_plan_id||confirmation!==required} onClick={doApply}>Queue authenticated Agent job</button></div>
+      <p className="muted">Cancel discards only this browser review. No Core or Agent mutation is sent until Apply.</p>
     </div>}
     {job&&<div className="notice" role="status">
       <strong>Agent job: {visibleJob.job_id}</strong>
-      <p>Status: {visibleJob.status}. Service publication and target reachability must be verified separately.</p>
+      <p>Status: {visibleJob.status}. The public endpoint is confirmed only by fresh Remote Service inventory after the job succeeds; target reachability remains separate.</p>
       <button className="secondary" disabled={busy||!job.job_id||visibleJob.job_id==="UNKNOWN"} onClick={refreshJob}>Refresh actual job status</button>
       <details><summary>Bounded Core job evidence</summary><pre className="plan">{JSON.stringify(visibleJob,null,2)}</pre>
         <p className="muted">Unrestricted Agent payloads, credentials and job results are not displayed in this workspace. Check authenticated Jobs for permitted diagnostic details.</p>

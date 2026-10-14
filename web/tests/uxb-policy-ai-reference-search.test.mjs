@@ -67,7 +67,7 @@ test("G-27 original 120-char typed input and G20 state/expiry failures still fai
 
 test("G-27 Web label advertises verified AI IDs, no Core query or security semantics changed",()=>{
  const main=readFileSync(join(root,"src","main.tsx"),"utf8");
- const policy=main.split("function PolicyWorkspace(",2)[1]?.split("function ServiceSshConnectHint(",1)[0]||"";
+ const policy=main.split("function PolicyWorkspace(",2)[1]?.split("function ServiceUseActions(",1)[0]||"";
  assert.match(policy,/aria-label="Search visible policy fields"/);
  assert.match(policy,/Filter policies \(name, ID, AI refs\)/);
  assert.match(policy,/maxLength=\{120\}/);

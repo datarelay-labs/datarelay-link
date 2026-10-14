@@ -33,6 +33,39 @@ export function sshConnectionTemplate(value:unknown):string|null{
  if(typeof port!=="number"||!Number.isSafeInteger(port)||port<1||port>65535)return null;
  return "ssh -p "+String(port)+" USERNAME@PUBLIC_SERVER_HOST";
 }
+
+export type ServiceUseAction={
+ kind:"ssh"|"http"|"https"|"tcp",copyText:string,openUrl:string|null,note:string
+};
+function verifiedPublicEndpointHost(value:unknown):string|null{
+ if(typeof value!=="string"||!value.trim()||value.length>253||FORBIDDEN_TEXT.test(value))return null;
+ const host=value.trim();
+ try{
+   const probe=new URL("https://"+host+":443/");
+   if(probe.username||probe.password||probe.pathname!=="/"||probe.search||probe.hash
+     ||probe.hostname.replace(/^\[|\]$/g,"")!==host.replace(/^\[|\]$/g,""))return null;
+   return host;
+ }catch{return null}
+}
+/** UXR-2.7: protocol-specific use guidance from explicit Core Service facts.
+ * PUBLIC_SERVER_HOST is intentionally a placeholder unless a separately verified
+ * public endpoint host is supplied. No command is executed by this helper. */
+export function serviceUseAction(value:unknown,publicHost?:unknown):ServiceUseAction|null{
+ const data=object(value);
+ if(serviceStateLabel(data)!=="Enabled")return null;
+ const port=data.public_port,type=data.service_type;
+ if(typeof port!=="number"||!Number.isSafeInteger(port)||port<1||port>65535
+   ||typeof type!=="string"||!["ssh","http","https","tcp"].includes(type))return null;
+ const verified=verifiedPublicEndpointHost(publicHost);
+ if(type==="ssh")return {kind:"ssh",copyText:"ssh -p "+port+" USERNAME@"+(verified||"PUBLIC_SERVER_HOST"),openUrl:null,
+   note:"Replace the account and any placeholder host with separately verified values."};
+ if(type==="tcp")return {kind:"tcp",copyText:(verified||"PUBLIC_SERVER_HOST")+":"+port,openUrl:null,
+   note:"Raw TCP endpoint template; application protocol and reachability are not inferred."};
+ const scheme=type as "http"|"https";
+ const copyText=scheme+"://"+(verified||"PUBLIC_SERVER_HOST")+":"+port+"/";
+ return {kind:scheme,copyText,openUrl:verified?copyText:null,
+   note:verified?"Public host was separately verified for this action.":"Open is unavailable until a public service host is separately verified."};
+}
 function safeValue(data:ServiceFields,key:string):string{
  const raw=data[key];
  if(key==="target_port"||key==="public_port"){

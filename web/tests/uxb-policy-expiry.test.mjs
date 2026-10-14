@@ -104,7 +104,7 @@ test("G-20 unsafe/unbounded typed Policy filter is explicit error, no broadening
 });
 test("G-20 Web policy UX preserves scope/plane/state, displays as-of and native expiry filters without Core modification",()=>{
  const src=readFileSync(join(root,"src","main.tsx"),"utf8");
- const policy=src.split("function PolicyWorkspace(",2)[1]?.split("function ServiceSshConnectHint(",1)[0]||"";
+ const policy=src.split("function PolicyWorkspace(",2)[1]?.split("function ServiceUseActions(",1)[0]||"";
  assert.match(src,/import \{observedPolicyExpiryState,filterObservedPoliciesByExpiry,observedPolicyExpiryCounts,filterObservedPolicySearch/);
  assert.match(policy,/const \[expiryFilter,setExpiryFilter\]=useState/);
  assert.match(policy,/const \[expiryObservedAt,setExpiryObservedAt\]=useState\(\(\)=>Date\.now\(\)\)/);
@@ -165,7 +165,7 @@ test("G-20 policy detail uses only explicit canonical Core selectors and never d
  assert.ok(ai.some(field=>field.label==="State"&&field.value==="UNKNOWN"));
  assert.ok(ai.some(field=>field.label==="Expires"&&field.value==="Never"));
  const src=readFileSync(join(root,"src","main.tsx"),"utf8");
- const policy=src.split("function PolicyWorkspace(",2)[1]?.split("function ServiceSshConnectHint(",1)[0]||"";
+ const policy=src.split("function PolicyWorkspace(",2)[1]?.split("function ServiceUseActions(",1)[0]||"";
  assert.match(policy,/observedPolicyDetailFields\(selected\)\.map/);
  assert.doesNotMatch(policy,/Object\.entries\(selected\)/);
 });

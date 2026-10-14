@@ -88,7 +88,7 @@ test("G-28 Saved Views UI supports explicit Policy target, plane and private reo
 
 test("G-28 PolicyWorkspace reopens verified private view, saves only local text/plane; Core untouched",()=>{
  const main=readFileSync(join(root,"src","main.tsx"),"utf8");
- const policy=main.split("function PolicyWorkspace(",2)[1]?.split("function ServiceSshConnectHint(",1)[0]||"";
+ const policy=main.split("function PolicyWorkspace(",2)[1]?.split("function ServiceUseActions(",1)[0]||"";
  assert.match(policy,/const savedPolicyDraft=saveDraftForResource\("policy",context\?\.savedFilter,context\?\.savedPolicyPlane\|\|"all"\)/);
  assert.match(policy,/focusPlane\|\|carriedPlane\|\|savedPolicyDraft\?\.plane\|\|"all"/);
  assert.match(policy,/focusName\|\|inspectPolicyId\|\|savedPolicyDraft\?\.filter\|\|""/);

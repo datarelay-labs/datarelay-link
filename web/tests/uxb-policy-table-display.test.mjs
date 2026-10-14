@@ -52,7 +52,7 @@ test("G-29 oversize, controls and bidi fields are UNKNOWN, not dropped Core rows
 
 test("G-29 default Table uses safe Core projection, retaining Card/Audit/filters/drawer as they were",()=>{
  const main=readFileSync(join(root,"src","main.tsx"),"utf8");
- const policy=main.split("function PolicyWorkspace(",2)[1]?.split("function ServiceSshConnectHint(",1)[0]||"";
+ const policy=main.split("function PolicyWorkspace(",2)[1]?.split("function ServiceUseActions(",1)[0]||"";
  assert.match(main,/import \{observedPolicyTableDisplayCells\} from "\.\/uxb-policy-table-display"/);
  assert.match(policy,/<strong>\{observedPolicyTableDisplayCells\(item\)\.name\}<\/strong>/);
  assert.match(policy,/<small>\{observedPolicyTableDisplayCells\(item\)\.id\}<\/small>/);

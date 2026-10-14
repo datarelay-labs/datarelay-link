@@ -51,7 +51,7 @@ test("G-22 missing, malformed, unsafe and conflicting Core policy fields do not 
 });
 test("G-22 Table/Card buttons navigate without opening policy detail; existing drawer remains safety-held",()=>{
  const src=readFileSync(join(root,"src","main.tsx"),"utf8");
- const page=src.split("function PolicyWorkspace(",2)[1]?.split("function ServiceSshConnectHint(",1)[0]||"";
+ const page=src.split("function PolicyWorkspace(",2)[1]?.split("function ServiceUseActions(",1)[0]||"";
  assert.match(src,/import \{policyAuditInvestigationTarget\} from "\.\/uxb-policy-audit-action"/);
  assert.match(page,/function reviewPolicyAudit\(row:unknown\)\{/);
  assert.match(page,/const target=policyAuditInvestigationTarget\(row\)/);

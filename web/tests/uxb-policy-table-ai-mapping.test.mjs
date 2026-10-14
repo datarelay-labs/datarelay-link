@@ -66,7 +66,7 @@ test("G-26 Remote and Internet never inherit AI mappings or imply no actual poli
 
 test("G-26 source wiring adds exactly one read-only Table column; Card, Audit, Core and drawer remain intact",()=>{
  const src=readFileSync(join(root,"src","main.tsx"),"utf8");
- const policy=src.split("function PolicyWorkspace(",2)[1]?.split("function ServiceSshConnectHint(",1)[0]||"";
+ const policy=src.split("function PolicyWorkspace(",2)[1]?.split("function ServiceUseActions(",1)[0]||"";
  assert.match(src,/import \{AiPolicyMappingCell\} from "\.\/uxb-policy-table-ai-mapping"/);
  assert.match(policy,/<th>AI mapping<\/th>/);
  assert.match(policy,/<AiPolicyMappingCell row=\{item\} asOf=\{expiryObservedAt\}\/>/);

@@ -56,7 +56,7 @@ test("G-23 rejects invalid sort selectors and non-array Core evidence without co
 
 test("G-23 native Policy Table/Cards control only sorts filtered, Core-loaded rows; no drawer rewrite",()=>{
  const src=readFileSync(join(root,"src","main.tsx"),"utf8");
- const policy=src.split("function PolicyWorkspace(",2)[1]?.split("function ServiceSshConnectHint(",1)[0]||"";
+ const policy=src.split("function PolicyWorkspace(",2)[1]?.split("function ServiceUseActions(",1)[0]||"";
  assert.match(src,/import \{sortLoadedPolicies,isPolicySortMode,type PolicySortMode\} from "\.\/uxb-policy-sort"/);
  assert.match(policy,/const \[policySort,setPolicySort\]=useState<PolicySortMode>\("core"\)/);
  assert.match(policy,/const rows=sortLoadedPolicies<any>\(filterObservedPoliciesByExpiry<any>\(policyStatusRows,expiryFilter,expiryObservedAt\),policySort\)/);

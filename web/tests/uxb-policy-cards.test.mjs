@@ -66,7 +66,7 @@ test("G-21 malformed/missing time/type/secret identity stays UNKNOWN or no card,
 });
 test("G-21 native Policy Table/Cards control preserves loaded-only Core rules and exact existing detail drawer",()=>{
  const src=readFileSync(join(root,"src","main.tsx"),"utf8");
- const block=src.split("function PolicyWorkspace(",2)[1]?.split("function ServiceSshConnectHint(",1)[0]||"";
+ const block=src.split("function PolicyWorkspace(",2)[1]?.split("function ServiceUseActions(",1)[0]||"";
  assert.match(src,/import \{observedPolicyCardSummary\} from "\.\/uxb-policy-cards"/);
  assert.match(block,/const \[policyView,setPolicyView\]=useState<"table"\|"cards">\("table"\)/);
  assert.match(block,/role="group" aria-label="Policy inventory view"/);

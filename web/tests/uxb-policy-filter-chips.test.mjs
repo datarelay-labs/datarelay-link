@@ -57,7 +57,7 @@ test("G-24 typed search and malformed/secret-bearing selector values are never s
 
 test("G-24 Policy filter chips wiring removes exactly one local selector per native action",()=>{
  const src=readFileSync(join(root,"src","main.tsx"),"utf8");
- const policy=src.split("function PolicyWorkspace(",2)[1]?.split("function ServiceSshConnectHint(",1)[0]||"";
+ const policy=src.split("function PolicyWorkspace(",2)[1]?.split("function ServiceUseActions(",1)[0]||"";
  assert.match(src,/import \{activePolicyFilterChips,type PolicyFilterChipId\} from "\.\/uxb-policy-filter-chips"/);
  assert.match(policy,/const policyFilterChips=activePolicyFilterChips\(plane,filter,statusFilter,expiryFilter,policySort\)/);
  const handler=policy.match(/function removePolicyFilterChip\(id:PolicyFilterChipId\)\{([\s\S]*?)\n  \}/)?.[1]||"";
@@ -80,7 +80,7 @@ test("G-24 Policy filter chips wiring removes exactly one local selector per nat
 
 test("G-24 one-click Clear affects exactly five local selectors, not view/selection/authority",()=>{
  const src=readFileSync(join(root,"src","main.tsx"),"utf8");
- const policy=src.split("function PolicyWorkspace(",2)[1]?.split("function ServiceSshConnectHint(",1)[0]||"";
+ const policy=src.split("function PolicyWorkspace(",2)[1]?.split("function ServiceUseActions(",1)[0]||"";
  const handler=policy.match(/function clearPolicyDisplayFilters\(\)\{([\s\S]*?)\n  \}/)?.[1]||"";
  assert.ok(handler);
  for(const state of ['setPlane("all")','setFilter("")','setStatusFilter("all")','setExpiryFilter("all")','setPolicySort("core")'])

@@ -19,7 +19,7 @@ import {CoreDoctorWorkspace} from "./uxb-doctor";
 import {SavedViewsWorkspace,saveDraftForResource,isSavedAdmission,type HostAdmission} from "./uxb-saved-views";
 import {hostDetailSections,hostConnectionState} from "./uxb-host-detail";
 import {hostInventoryFacts,hostVisibleIdentity} from "./uxb-host-detail";
-import {serviceStateLabel,serviceDetailSections,sshConnectionTemplate} from "./uxb-service-detail";
+import {serviceStateLabel,serviceDetailSections,serviceUseAction} from "./uxb-service-detail";
 import {serviceVisibleIdentity} from "./uxb-service-detail";
 import {resourceCardSummary} from "./uxb-resource-cards";
 import {filterObservedServices} from "./uxb-service-search";
@@ -2268,30 +2268,45 @@ function PolicyWorkspace({data,operator,onNavigate,api,context}:{data:any,operat
   </div>;
 }
 
-function ServiceSshConnectHint({service}:{service:unknown}){
-  const template=sshConnectionTemplate(service);
+function ServiceTypeGlyph({type}:{type:unknown}){
+  const kind=typeof type==="string"&&["ssh","http","https","tcp"].includes(type)?type:"unknown";
+  const common={viewBox:"0 0 24 24",fill:"none",stroke:"currentColor",strokeWidth:1.7,strokeLinecap:"round" as const,strokeLinejoin:"round" as const,"aria-hidden":true as const};
+  if(kind==="ssh")return <svg {...common}><rect x="3" y="4" width="18" height="16" rx="2"/><path d="m7 10 3 2-3 2m6 1h4"/></svg>;
+  if(kind==="http"||kind==="https")return <svg {...common}><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a15 15 0 0 1 0 18M12 3a15 15 0 0 0 0 18"/>{kind==="https"&&<path d="M16 16h4v4h-4z"/>}</svg>;
+  if(kind==="tcp")return <svg {...common}><path d="M4 7h6l2 3 2-3h6M4 17h6l2-3 2 3h6"/><circle cx="4" cy="7" r="1"/><circle cx="20" cy="17" r="1"/></svg>;
+  return <svg {...common}><circle cx="12" cy="12" r="9"/><path d="M9.5 9a2.7 2.7 0 0 1 5 1.4c0 2-2.5 2.3-2.5 4M12 18h.01"/></svg>;
+}
+
+function ServiceEvidenceStatus({service}:{service:any}){
+  return <section className="dr-service-evidence-status" aria-label="Service evidence status">
+    <div><span>Configuration</span><strong>{serviceStateLabel(service)}</strong></div>
+    <div><span>Access policy</span><strong>Not checked</strong></div>
+    <div><span>Transport</span><strong>Not tested</strong></div>
+  </section>;
+}
+
+function ServiceUseActions({service}:{service:unknown}){
+  const action=serviceUseAction(service);
   const [copyResult,setCopyResult]=useState("");
-  if(!template)return null;
+  if(!action)return <section className="dr-host-detail-section" role="region" aria-label="Service use actions">
+    <h3>Use this service</h3><p className="muted">No safe connection template is available from the observed Core fields. Verify the service type, enabled state and public endpoint.</p>
+  </section>;
   async function copyTemplate(){
     setCopyResult("");
     try{
-      if(typeof navigator==="undefined"||typeof navigator.clipboard?.writeText!=="function")
-        throw new Error("Clipboard unavailable");
-      await navigator.clipboard.writeText(template);
-      setCopyResult("Template copied. Replace USERNAME and PUBLIC_SERVER_HOST with verified values before use.");
-    }catch{
-      setCopyResult("Clipboard unavailable. Select the template text and copy it manually.");
-    }
+      if(typeof navigator==="undefined"||typeof navigator.clipboard?.writeText!=="function")throw new Error("Clipboard unavailable");
+      await navigator.clipboard.writeText(action!.copyText);
+      setCopyResult("Connection template copied. Verify placeholders and access before use.");
+    }catch{setCopyResult("Clipboard unavailable. Select the template text and copy it manually.")}
   }
-  return <section className="dr-host-detail-section" role="region" aria-label="SSH connection template">
-    <h3>SSH connection template · not verified</h3>
-    <p className="muted">Replace USERNAME and PUBLIC_SERVER_HOST with the actual SSH account
-      and separately verified Data Relay Link public server hostname or IP. This is a syntax
-      example using the Core-observed reserved public port, not proof of reachability,
-      enabled access policy, active Agent or successful SSH login.</p>
-    <pre className="plan" style={{overflowWrap:"anywhere",whiteSpace:"pre-wrap"}}>{template}</pre>
-    <div className="dr-form-actions"><button type="button" className="secondary"
-      onClick={()=>copyTemplate()}>Copy SSH template</button></div>
+  return <section className="dr-host-detail-section" role="region" aria-label="Service use actions">
+    <h3>{action.kind.toUpperCase()} connection · not verified</h3>
+    <p className="muted">{action.note} Configuration does not prove policy permission, Agent health, target reachability or a successful application connection.</p>
+    <pre className="plan" style={{overflowWrap:"anywhere",whiteSpace:"pre-wrap"}}>{action.copyText}</pre>
+    <div className="dr-form-actions"><button type="button" className="secondary" onClick={copyTemplate}>Copy {action.kind.toUpperCase()} {action.kind==="tcp"?"endpoint":"template"}</button>
+      {(action.kind==="http"||action.kind==="https")&&<button type="button" className="secondary" disabled={!action.openUrl}
+        onClick={()=>{if(action.openUrl)window.open(action.openUrl,"_blank","noopener,noreferrer")}}>Open verified URL</button>}
+    </div>
     {copyResult&&<p className="muted" role="status">{copyResult}</p>}
   </section>;
 }
@@ -2384,7 +2399,7 @@ function ResourceWorkspace({kind,data,operator,onNavigate,api,initialFilter="",i
     if(id==="sort"){setHostSort("review");return}
   }
   return <div className="dr-resource-workspace">
-    <section className="dr-page-intro"><div><p className="dr-eyebrow">Connections</p><h2>{heading}</h2><p className="muted">{description}</p></div><div className="dr-page-actions">{isHost&&operator.role==="Admin"&&<button className="primary" onClick={()=>onNavigate?.("enrollments","infrastructure")}>Connect Agent</button>}<button className="secondary" onClick={()=>onNavigate?.("access","access")}>Access workspace</button></div></section>
+    <section className="dr-page-intro"><div><p className="dr-eyebrow">Connections</p><h2>{heading}</h2><p className="muted">{description}</p></div><div className="dr-page-actions">{isHost&&operator.role==="Admin"&&<button className="primary" onClick={()=>onNavigate?.("enrollments","connections")}>Connect Agent</button>}{!isHost&&operator.role!=="Read Only"&&<button className="primary" onClick={()=>onNavigate?.("setup","connections",{plane:"remote"})}>Publish service</button>}<button className="secondary" onClick={()=>onNavigate?.("access","access")}>Access workspace</button></div></section>
     <section className="card dr-list-card">
       <div className="dr-list-toolbar"><div><strong>{rows.length}</strong><span>{heading.toLowerCase()}</span></div>
         {isHost&&<select aria-label="Filter Managed Host admission" value={admissionFilter} onChange={e=>setAdmissionFilter(isSavedAdmission(e.target.value)?e.target.value:"all")}>
@@ -2513,14 +2528,14 @@ function ResourceWorkspace({kind,data,operator,onNavigate,api,initialFilter="",i
       <div className="dr-table-scroll"><table className="dr-resource-table"><thead><tr>{isHost?<><th>Host</th><th>Admission</th><th>Connection</th><th>Trust</th><th>Platform</th><th>Version</th><th>Agent heartbeat</th><th>Last activity</th></>:<><th>Service</th><th>Managed host</th><th>Type</th><th>Public port</th><th>Target</th><th>State</th></>}</tr></thead><tbody>{rows.map((item:any)=><tr key={item.id} tabIndex={0} onClick={()=>setSelected(item)} onKeyDown={e=>{if(e.key==="Enter"||e.key===" "){e.preventDefault();setSelected(item)}}}>{isHost?<><td><strong>{hostVisibleIdentity(item).primary}</strong><small>{hostVisibleIdentity(item).secondary}</small>
   <button type="button" className="dr-text-action"
     aria-label={"Inspect Managed Host "+hostVisibleIdentity(item).primary}
-    onClick={event=>{event.stopPropagation();setSelected(item)}}>Inspect Managed Host →</button></td><td><span className={item.admission_state==="APPROVED"?"dr-state active":"dr-state"}><i/>{item.admission_state==="APPROVED"?"Approved":item.admission_state==="PENDING_APPROVAL"?"Pending approval":item.admission_state==="QUARANTINED"?"Quarantined":"Unknown"}</span></td><td><span className={hostConnectionState(item)==="Connected"?"dr-state active":"dr-state"}><i/>{hostConnectionState(item)}</span></td><td>{hostInventoryFacts(item).trust}</td><td>{hostInventoryFacts(item).platform}</td><td>{hostInventoryFacts(item).version}</td><td title="Core-observed Agent heartbeat; not proof of live access">{hostInventoryFacts(item).lastHeartbeat}</td><td title="Last Core activity; Agent heartbeat is separate">{hostInventoryFacts(item).lastActivity}</td></>:<><td><strong>{serviceVisibleIdentity(item).primary}</strong><small>{serviceVisibleIdentity(item).secondary}</small>
+    onClick={event=>{event.stopPropagation();setSelected(item)}}>Inspect Managed Host →</button></td><td><span className={item.admission_state==="APPROVED"?"dr-state active":"dr-state"}><i/>{item.admission_state==="APPROVED"?"Approved":item.admission_state==="PENDING_APPROVAL"?"Pending approval":item.admission_state==="QUARANTINED"?"Quarantined":"Unknown"}</span></td><td><span className={hostConnectionState(item)==="Connected"?"dr-state active":"dr-state"}><i/>{hostConnectionState(item)}</span></td><td>{hostInventoryFacts(item).trust}</td><td>{hostInventoryFacts(item).platform}</td><td>{hostInventoryFacts(item).version}</td><td title="Core-observed Agent heartbeat; not proof of live access">{hostInventoryFacts(item).lastHeartbeat}</td><td title="Last Core activity; Agent heartbeat is separate">{hostInventoryFacts(item).lastActivity}</td></>:<><td><span className="dr-service-name-line"><span className="dr-service-type-icon"><ServiceTypeGlyph type={item.service_type}/></span><span><strong>{serviceVisibleIdentity(item).primary}</strong><small>{serviceVisibleIdentity(item).secondary}</small></span></span>
   <button type="button" className="dr-text-action"
     aria-label={"Inspect Remote Service "+serviceVisibleIdentity(item).primary}
     onClick={event=>{event.stopPropagation();setSelected(item)}}>Inspect Remote Service →</button></td><td>{item.managed_host||item.managed_host_id||"—"}</td><td>{item.service_type||"—"}</td><td>{item.public_port??"—"}</td><td>{[item.target_host,item.target_port].filter(Boolean).join(":")||item.target_mode||"—"}</td><td><span className={serviceStateLabel(item)==="Enabled"?"dr-state active":"dr-state"}><i/>{serviceStateLabel(item)}</span></td></>}</tr>)}</tbody></table></div>}
     </section>
-    {selected&&<div className="dr-drawer-backdrop" onMouseDown={e=>{if(e.currentTarget===e.target)setSelected(null)}}><aside className="dr-detail-drawer" role="dialog" aria-modal="true" aria-label={heading+" detail"} tabIndex={-1} autoFocus><header><div><p className="dr-eyebrow">{isHost?"Managed Host":"Remote Service"}</p><h2>{isHost?hostVisibleIdentity(selected).primary:serviceVisibleIdentity(selected).primary}</h2><p>{isHost?hostVisibleIdentity(selected).secondary:serviceVisibleIdentity(selected).secondary}</p></div><button className="dr-icon-button" onClick={()=>setSelected(null)} aria-label="Close detail">×</button></header><div className="dr-drawer-status"><span className={(isHost?hostConnectionState(selected)==="Connected":serviceStateLabel(selected)==="Enabled")?"dr-state active":"dr-state"}><i/>{isHost?hostConnectionState(selected):serviceStateLabel(selected)}</span>{isHost&&<span className={selected.admission_state==="APPROVED"?"dr-state active":"dr-state"}>{selected.admission_state==="PENDING_APPROVAL"?"Pending approval":selected.admission_state==="QUARANTINED"?"Quarantined":selected.admission_state==="APPROVED"?"Approved":"Unknown admission"}</span>}</div><div className="dr-detail-fields">{isHost?hostDetailSections(selected).map(section=><section key={section.title} className="dr-host-detail-section"><h3>{section.title}</h3>{section.fields.map(field=><div key={field.label}><span>{field.label}</span><strong>{field.value}</strong></div>)}</section>):serviceDetailSections(selected).map(section=><section key={section.title} className="dr-host-detail-section">
+    {selected&&<div className="dr-drawer-backdrop" onMouseDown={e=>{if(e.currentTarget===e.target)setSelected(null)}}><aside className="dr-detail-drawer" role="dialog" aria-modal="true" aria-label={heading+" detail"} tabIndex={-1} autoFocus><header><div><p className="dr-eyebrow">{isHost?"Managed Host":"Remote Service"}</p><h2>{isHost?hostVisibleIdentity(selected).primary:serviceVisibleIdentity(selected).primary}</h2><p>{isHost?hostVisibleIdentity(selected).secondary:serviceVisibleIdentity(selected).secondary}</p></div><button className="dr-icon-button" onClick={()=>setSelected(null)} aria-label="Close detail">×</button></header><div className="dr-drawer-status"><span className={(isHost?hostConnectionState(selected)==="Connected":serviceStateLabel(selected)==="Enabled")?"dr-state active":"dr-state"}><i/>{isHost?hostConnectionState(selected):serviceStateLabel(selected)}</span>{isHost&&<span className={selected.admission_state==="APPROVED"?"dr-state active":"dr-state"}>{selected.admission_state==="PENDING_APPROVAL"?"Pending approval":selected.admission_state==="QUARANTINED"?"Quarantined":selected.admission_state==="APPROVED"?"Approved":"Unknown admission"}</span>}</div>{!isHost&&<ServiceEvidenceStatus service={selected}/>}<div className="dr-detail-fields">{isHost?hostDetailSections(selected).map(section=><section key={section.title} className="dr-host-detail-section"><h3>{section.title}</h3>{section.fields.map(field=><div key={field.label}><span>{field.label}</span><strong>{field.value}</strong></div>)}</section>):serviceDetailSections(selected).map(section=><section key={section.title} className="dr-host-detail-section">
   <h3>{section.title}</h3>{section.fields.map(field=><div key={field.label}>
-    <span>{field.label}</span><strong>{field.value}</strong></div>)}</section>)}</div>{!isHost&&<ServiceSshConnectHint key={String(selected.id||"")} service={selected}/>}<footer><button className="secondary" onClick={()=>{const target={originType:isHost?"managed-host":"remote-service",originId:String(selected.id||"")};setSelected(null);onNavigate?.("audit","activity",target)}}>Recent activity</button><button className="primary" onClick={()=>{const target={originType:isHost?"managed-host":"remote-service",originId:String(selected.id||""),plane:"remote"};setSelected(null);onNavigate?.("access","access",target)}}>Why can / cannot connect?</button></footer></aside></div>}
+    <span>{field.label}</span><strong>{field.value}</strong></div>)}</section>)}</div>{!isHost&&<ServiceUseActions key={String(selected.id||"")} service={selected}/>}<footer><button className="secondary" onClick={()=>{const target={originType:isHost?"managed-host":"remote-service",originId:String(selected.id||"")};setSelected(null);onNavigate?.("audit","activity",target)}}>Recent activity</button><button className="primary" onClick={()=>{const target={originType:isHost?"managed-host":"remote-service",originId:String(selected.id||""),plane:"remote"};setSelected(null);onNavigate?.("access","access",target)}}>Why can / cannot connect?</button></footer></aside></div>}
   </div>;
 }
 
@@ -2998,7 +3013,7 @@ function LegacyView({active,operator,onNavigate,context,setupDraft,onSetupDraftC
   if(active==="versions"&&data)return <AgentVersionDrift data={data} onNavigate={onNavigate}/>;
   if(active==="system"&&data)return <SystemAdministrationWorkspace data={data} operator={operator} onNavigate={onNavigate}/>;
   if(active==="objects"&&data)return <><ObjectsWorkspace data={data} onNavigate={onNavigate} context={context} api={api}/>{operator.role!=="Read Only"&&<GuidedObjectPanel/>}</>;
-  if(active==="services"&&data)return <><ResourceWorkspace kind="service" data={data} operator={operator} onNavigate={onNavigate} api={api} initialFilter={String(context?.savedFilter||"").slice(0,120)} initialInspectId={context?.inspectResourceId}/>{operator.role!=="Read Only"&&<RemoteServiceEditor api={api}/>}</>;
+  if(active==="services"&&data)return <ResourceWorkspace kind="service" data={data} operator={operator} onNavigate={onNavigate} api={api} initialFilter={String(context?.savedFilter||"").slice(0,120)} initialInspectId={context?.inspectResourceId}/>;
   if(active==="policies"&&data){
     const selectedPlane=["remote","internet","ai"].includes(String(context?.plane||context?.focusPolicy?.plane))
       ?String(context?.plane||context?.focusPolicy?.plane) as AccessPlane:"remote";

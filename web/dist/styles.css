@@ -512,3 +512,14 @@
 @media(max-width:560px){.dr-enrollment-platforms{grid-template-columns:1fr}.dr-enrollment-platform{min-height:64px}}
 .dr-enrollment-detection{display:grid;gap:3px;margin-top:10px;border-left:2px solid var(--dr-action-primary);padding:4px 0 4px 10px;color:var(--dr-text-secondary)}
 .dr-enrollment-detection strong{font-size:13px}.dr-enrollment-detection span{font-size:12px;line-height:1.45;color:var(--dr-text-muted)}
+
+/* UXR-2.8 selected-host service publication: core task first, advanced lifecycle disclosed. */
+.dr-uxb-service .dr-uxb-selected-owner{display:grid;gap:3px;margin:10px 0;border:1px solid var(--dr-border-default);border-radius:9px;background:var(--dr-surface-section);padding:10px 12px}
+.dr-uxb-service .dr-uxb-selected-owner span{font-size:13px;color:var(--dr-text-primary)}.dr-uxb-service .dr-uxb-selected-owner small{font-size:11px;color:var(--dr-text-muted)}
+.dr-uxb-service-advanced{margin:12px 0}.dr-uxb-service-advanced>.dr-uxb-form{margin-top:10px}
+.dr-uxb-service-proposed{display:grid;gap:4px;margin:12px 0;border-left:2px solid var(--dr-action-primary);padding:4px 0 4px 10px}.dr-uxb-service-proposed strong{font-size:13px}.dr-uxb-service-proposed span{font-size:12px;color:var(--dr-text-secondary);overflow-wrap:anywhere}
+/* UXR-2.6 actionable service catalog evidence: type is visible; config/policy/transport stay distinct. */
+.dr-service-name-line{display:flex;align-items:center;gap:9px}.dr-service-name-line>span:last-child{display:grid;min-width:0}
+.dr-service-type-icon{display:grid;width:32px;height:32px;flex:0 0 32px;place-items:center;border-radius:8px;background:var(--dr-surface-section);color:var(--dr-text-muted)}.dr-service-type-icon svg{width:17px;height:17px}
+.dr-service-evidence-status{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;padding:0 20px 12px}.dr-service-evidence-status>div{display:grid;gap:2px;border:1px solid var(--dr-border-default);border-radius:8px;background:var(--dr-surface-section);padding:8px 10px}.dr-service-evidence-status span{font-size:10px;color:var(--dr-text-muted)}.dr-service-evidence-status strong{font-size:12px;color:var(--dr-text-primary)}
+@media(max-width:560px){.dr-service-evidence-status{grid-template-columns:1fr;padding:0 16px 10px}}

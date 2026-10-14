@@ -70,7 +70,7 @@ test("G-25 card facts use only existing fixed Core whitelist without new API, pe
  assert.match(source,/label:"Permission reference"/);
  assert.doesNotMatch(source,/\b(?:fetch|api|localStorage|sessionStorage|eval)\s*\(/);
  const main=readFileSync(join(root,"src","main.tsx"),"utf8");
- const policy=main.split("function PolicyWorkspace(",2)[1]?.split("function ServiceSshConnectHint(",1)[0]||"";
+ const policy=main.split("function PolicyWorkspace(",2)[1]?.split("function ServiceUseActions(",1)[0]||"";
  assert.match(policy,/observedPolicyCardSummary\(item,expiryObservedAt\)/);
  assert.match(policy,/info\.facts\.map\(field=>/);
  assert.match(policy,/Core policy list may be incomplete/);

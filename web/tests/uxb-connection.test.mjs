@@ -277,25 +277,26 @@ test("Guided setup cannot publish to a Host other than the observed explicit sel
   ownerHint:"host-b",lockOwner:true,
   initialSelection:{owner:"host-a",name:"ssh-admin",service:"ssh-tcp22",destination:"this-host"}
  }));
- assert.match(guided,/Owning Agent \/ Managed Host/);
- assert.match(guided,/value="host-b"/);
- assert.match(guided,/readOnly=""/);
+ assert.match(guided,/Selected Managed Host/);
+ assert.match(guided,/>host-b</);
+ assert.doesNotMatch(guided,/placeholder="Host name or ID"/);
  assert.doesNotMatch(guided,/value="host-a"/);
  const unset=renderToStaticMarkup(React.createElement(service.RemoteServiceEditor,{
   api:async()=>{throw new Error("SSR must not call Core")},
   ownerHint:"",lockOwner:true,
   initialSelection:{owner:"host-a",name:"ssh-admin",service:"ssh-tcp22",destination:"this-host"}
  }));
- assert.match(unset,/readOnly=""/);
- assert.match(unset,/value=""/);
- assert.match(unset,/<button[^>]*disabled=""[^>]*>Preview service impact<\/button>/);
+ assert.match(unset,/Selected Managed Host/);
+ assert.match(unset,/UNKNOWN/);
+ assert.doesNotMatch(unset,/placeholder="Host name or ID"/);
+ assert.match(unset,/<button[^>]*disabled=""[^>]*>Review service change →<\/button>/);
  const raw=renderToStaticMarkup(React.createElement(service.RemoteServiceEditor,{
   api:async()=>{throw new Error("SSR must not call Core")},
   ownerHint:"host-b",
   initialSelection:{owner:"host-a",name:"ssh-admin",service:"ssh-tcp22",destination:"this-host"}
  }));
  assert.match(raw,/value="host-a"/);
- assert.doesNotMatch(raw,/readOnly=""/);
+ assert.match(raw,/placeholder="Host name or ID"/);
 });
 test("Setup does not mount a Host-bound editor until selected Host is observed",()=>{
  const html=renderToStaticMarkup(React.createElement(setup.FirstConnectionSetup,{
@@ -315,8 +316,8 @@ test("service publication is preview/typed/queued and cannot imply deployed",()=
  }));
  assert.match(html,/data-testid="uxb-remote-service"/);
  assert.match(html,/Host name or ID|Owning Agent/);
- assert.match(html,/Preview service impact/);
- assert.match(html,/<button[^>]*disabled=""[^>]*>Preview service impact<\/button>/);
+ assert.match(html,/Review service change/);
+ assert.match(html,/<button[^>]*disabled=""[^>]*>Review service change →<\/button>/);
  assert.doesNotMatch(html,/Queue authenticated Agent job/);
  const source=readFileSync(join(root,"src","uxb-remote-service.tsx"),"utf8");
  for(const endpoint of ["/api/v1/remote-services/preview","/api/v1/remote-services/apply","/api/v1/jobs/"]){
@@ -812,6 +813,16 @@ test("M2/R6 Remote Service non-idempotent Apply uses ref lock, strict Core recei
  assert.doesNotMatch(apply,/setJob\(result\)/);
 });
 
+test("UXR-2.9 service review cancel is local-only and preserves one-shot Apply safety",()=>{
+ const src=readFileSync(join(root,"src","uxb-remote-service.tsx"),"utf8");
+ const cancel=src.split("  function cancelReview(){",2)[1]?.split("  async function doApply(){",1)[0]||"";
+ assert.match(cancel,/requestGeneration\.current\+=1/);
+ assert.match(cancel,/setPreview\(null\);setConfirmation\(""\)/);
+ assert.doesNotMatch(cancel,/\b(?:api|fetch|apply|enqueue)\s*\(/);
+ assert.match(src,/Cancel review/);
+ assert.match(src,/No Core or Agent mutation is sent until Apply/);
+});
+
 test("M2/R6 Agent Job identity and error display must never echo arbitrary Core/Agent secrets",()=>{
  const id="mjob_"+"c".repeat(24);
  const safe=service.remoteServiceJobEvidence({
@@ -837,4 +848,21 @@ test("M2/R6 Agent Job identity and error display must never echo arbitrary Core/
  const unexpected=service.remoteServiceJobEvidence({job_id:id,
    status:"SUCCEEDED",target_count:0});
  assert.equal(unexpected.status,"UNKNOWN");
+});
+
+test("UXR-2.8/2.9 selected-host service form is focused while lifecycle safety remains in disclosed review",()=>{
+ const html=renderToStaticMarkup(React.createElement(service.RemoteServiceEditor,{
+  api:async()=>{throw new Error("SSR must not call Core")},ownerHint:"host-a",lockOwner:true,
+  initialSelection:{owner:"host-a",name:"ssh-admin",service:"ssh-tcp22",destination:"this-host"}
+ }));
+ assert.match(html,/Selected Managed Host/);assert.match(html,/>host-a</);
+ assert.doesNotMatch(html,/placeholder="Host name or ID"/);
+ assert.match(html,/Remote Service name/);assert.match(html,/Service Object/);assert.match(html,/Internal target/);
+ assert.match(html,/<details class="dr-wf-disclosure dr-uxb-service-advanced">/);assert.doesNotMatch(html,/<details[^>]*open/);
+ assert.match(html,/Advanced service options/);assert.match(html,/Review service change →/);
+ assert.match(html,/No public endpoint is confirmed yet|public endpoint remains proposed/i);
+ const source=readFileSync(join(root,"src","uxb-remote-service.tsx"),"utf8");
+ assert.match(source,/Delete is destructive/);assert.match(source,/disabling a service is not the same as releasing its reservation/);
+ assert.match(source,/observedRemoteServicePreview\(result,body\)/);assert.match(source,/observedRemoteServiceApplyReceipt\(result,reviewed\)/);
+ assert.match(source,/UNKNOWN.*Agent Job may already be queued/);
 });
