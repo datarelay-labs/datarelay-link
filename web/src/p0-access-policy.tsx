@@ -1,23 +1,105 @@
 import React, {useEffect, useRef, useState} from "react";
 import {CoreChoiceField,useCoreCatalog,type CoreCatalog} from "./uxb-core-choices";
+import {isObservedAbsoluteTime} from "./uxb-integrations-state";
 
 export type LinkApi = (path:string, init?:RequestInit)=>Promise<Record<string,any>>;
-type Navigate = (id:string,groupId?:string)=>void;
+type Navigate = (id:string,groupId?:string,context?:any)=>void;
 export type AccessPlane = "remote"|"internet"|"ai";
+
+export type AccessPlanePurpose={label:string,summary:string,source:string,destination:string,selector:string,agentRequired:boolean};
+export function accessPlanePurpose(plane:AccessPlane):AccessPlanePurpose{
+  if(plane==="internet")return {label:"Internet Access",summary:"Allow a restricted source network to reach only approved Internet destinations.",source:"Source network / CIDR object",destination:"Internet destination object",selector:"Service / port object",agentRequired:false};
+  if(plane==="ai")return {label:"AI Access",summary:"Authorize a named AI identity to use an approved permission against an AI destination.",source:"AI identity",destination:"AI provider / destination object",selector:"Permission object",agentRequired:false};
+  return {label:"Remote Access",summary:"Allow an outside source to reach an explicitly published internal service through a managed Host.",source:"Source object / group",destination:"Internal server / service object",selector:"Service object",agentRequired:true};
+}
 type SelectedFlow = {source:string,destination:string,selector:string,path?:string};
 
-export function reliableDecision(value:unknown):"ALLOW"|"DENY"|"UNKNOWN" {
-  const text=String(value??"").toUpperCase();
-  return text==="ALLOW"||text==="DENY"?text:"UNKNOWN";
+const UNSAFE_CORE_TRACE=/[\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/;
+function trustedCoreTraceText(value:unknown,max=160):value is string{
+  return typeof value==="string"&&!!value.trim()&&value.length<=max
+    &&!UNSAFE_CORE_TRACE.test(value);
 }
 
-/** The browser must never authorize based on policy simulation or stale views. */
-export function explainTrace(trace:any):{decision:"ALLOW"|"DENY"|"UNKNOWN",reason:string,rules:string[]} {
+export function reliableDecision(value:unknown):"ALLOW"|"DENY"|"UNKNOWN" {
+  // Array or nested JSON coercion (e.g. ["ALLOW"]) is not a Core verdict.
+  if(typeof value!=="string"||!trustedCoreTraceText(value,16))return "UNKNOWN";
+  const decision=value.toUpperCase();
+  return decision==="ALLOW"||decision==="DENY"?decision:"UNKNOWN";
+}
+
+/** Only a scalar, bounded Core route label may be presented as a decision
+ * endpoint. A missing optional value may fall back to the explicit user input;
+ * malformed Core evidence must instead remain UNKNOWN.
+ */
+export function observedTraceRouteValue(value:unknown,fallback:unknown):string{
+  if(value===undefined)return trustedCoreTraceText(fallback)?fallback.trim():"UNKNOWN";
+  return trustedCoreTraceText(value)?value.trim():"UNKNOWN";
+}
+
+/** A Core policy trace must confirm the exact submitted selector and plane.
+ * This is a bounded read-only projection: never display arbitrary nested Core
+ * data (audit, group members, secrets) as a governing access explanation.
+ */
+export function observedCoreTraceForFlow(
+ payload:unknown,plane:AccessPlane,source:unknown,destination:unknown,
+ selector:unknown,path:unknown
+):{
+ plane:AccessPlane,normalized_input:Record<string,string>,
+ policy:{mode:string,enforcement:string,matched_rules:string[]},
+ final:{result:"ALLOW"|"DENY"|"UNKNOWN",reason:string},mixed:boolean
+}|null{
+ const record=(v:unknown):v is Record<string,unknown>=>
+   !!v&&typeof v==="object"&&!Array.isArray(v);
+ if(!record(payload)||!record(payload.normalized_input)
+   ||!record(payload.policy)||!record(payload.final)
+   ||!["remote","internet","ai"].includes(plane)
+   ||![source,destination,selector].every(x=>trustedCoreTraceText(x))
+   ||typeof path!=="string"||path.length>512||UNSAFE_CORE_TRACE.test(path))return null;
+ const current=payload.normalized_input,policy=payload.policy,final=payload.final;
+ if(payload.plane!==plane||current.plane!==plane
+   ||current.source!==source||current.destination!==destination
+   ||(plane==="ai"?current.permission:current.service)!==selector
+   ||(plane==="ai"?String(current.path??"")!==path:current.path!==undefined)
+   ||!["ALLOW","DENY","UNKNOWN"].includes(String(final.result))
+   ||typeof final.result!=="string"
+   ||!trustedCoreTraceText(final.reason,240)
+   ||(policy.mode!==undefined&&policy.mode!==null&&!trustedCoreTraceText(policy.mode,80))
+   ||(policy.enforcement!==undefined&&policy.enforcement!==null
+      &&!trustedCoreTraceText(policy.enforcement,80))
+   ||!Array.isArray(policy.matched_rules)||policy.matched_rules.length>20
+   ||policy.matched_rules.some(rule=>!trustedCoreTraceText(rule))
+   ||typeof payload.mixed!=="boolean")return null;
+ const input:Record<string,string>={plane,source,destination};
+ if(plane==="ai"){
+   input.permission=selector as string;
+   if(path)input.path=path;
+ }else input.service=selector as string;
+ return {plane,normalized_input:input,
+   policy:{mode:typeof policy.mode==="string"?policy.mode:"UNKNOWN",
+     enforcement:typeof policy.enforcement==="string"?policy.enforcement:"UNKNOWN",
+     matched_rules:[...new Set(policy.matched_rules as string[])]},
+   final:{result:final.result as "ALLOW"|"DENY"|"UNKNOWN",
+     reason:(final.reason as string).trim()},
+   mixed:payload.mixed};
+}
+
+/** The browser must never authorize based on policy simulation or stale views.
+ * Incomplete/tainted matched-rule evidence cannot become "none reported".
+ */
+export function explainTrace(trace:any):{
+ decision:"ALLOW"|"DENY"|"UNKNOWN",reason:string,rules:string[],rulesQualified:boolean
+}{
   const decision=reliableDecision(trace?.final?.result);
-  const reason=String(trace?.final?.reason||"Core did not provide a decision reason.");
-  const rules=Array.isArray(trace?.policy?.matched_rules)
-    ?trace.policy.matched_rules.map((item:any)=>String(item)).filter(Boolean).slice(0,20):[];
-  return {decision,reason,rules};
+  const reason=trustedCoreTraceText(trace?.final?.reason,240)
+    ?trace.final.reason.trim():"Core did not provide a decision reason.";
+  const raw=trace?.policy?.matched_rules;
+  const rows=Array.isArray(raw)&&raw.length<=128?raw:[];
+  const valid=rows.filter((item:unknown):item is string=>trustedCoreTraceText(item));
+  const distinct=[...new Set(valid.map(x=>x.trim()))];
+  const rules=distinct.slice(0,20);
+  const rulesQualified=Array.isArray(raw)&&raw.length<=20&&valid.length===raw.length
+    &&distinct.length<=20;
+  return {decision,reason,rules,rulesQualified};
 }
 
 /** Label displayed evidence by the exact user-supplied flow, not the currently
@@ -36,36 +118,290 @@ export function coreCutoffKey(plane:string,scopeKind:string,scopeRef:string,oper
   return JSON.stringify([plane,scopeKind,scopeRef.trim(),operation,reason.trim()]);
 }
 
-export function canApplyGuidedRule(preview:any,tests:any,acknowledgedUnknowns:boolean):boolean {
-  if(!preview?.change_plan_id||preview.no_change||tests?.ok!==true||Number(tests.required_failed??1)!==0)return false;
-  if(preview.policy_regression && (preview.policy_regression.ok!==true || Number(preview.policy_regression.required_failed??1)!==0))return false;
-  if(preview.blast_radius?.limits?.truncated)return false;
-  if((preview.blast_radius?.unknowns||[]).length && !acknowledgedUnknowns)return false;
-  return true;
+export function canApplyGuidedRule(
+ preview:any,tests:any,acknowledgedUnknowns:boolean,now:number=Date.now()
+):boolean{
+ const object=(value:unknown):value is Record<string,any>=>
+   !!value&&typeof value==="object"&&!Array.isArray(value);
+ if(!object(preview)||!object(tests)||!Number.isFinite(now)
+   ||typeof preview.change_plan_id!=="string"
+   ||!/^cp_[A-Za-z0-9_-]{16,128}$/.test(preview.change_plan_id)
+   ||preview.operation_class!=="CHANGE"
+   ||!["remote-access-rule","internet-access-rule","ai-access-rule"].includes(preview.change_type)
+   ||preview.resource_type!==preview.change_type
+   ||!["set","delete"].some(op=>preview.operation==="guided."+preview.change_type+"."+op)
+   ||!trustedCoreTraceText(preview.resource_ref)
+   ||preview.confirmation_class!=="APPLY"||preview.no_change!==false
+   ||!Number.isSafeInteger(preview.expected_revision)||preview.expected_revision<0
+   ||!isObservedAbsoluteTime(preview.valid_until)
+   ||Date.parse(preview.valid_until)<=now
+   ||tests.ok!==true||tests.required_failed!==0)return false;
+ const regression=preview.policy_regression,blast=preview.blast_radius;
+ if(!object(regression)||regression.ok!==true||regression.required_failed!==0
+   ||!object(blast)||!object(blast.limits)||blast.limits.truncated!==false
+   ||!Array.isArray(blast.unknowns)||blast.unknowns.length>128
+   ||blast.unknowns.some((item:unknown)=>!trustedCoreTraceText(item,512)))return false;
+ if(blast.unknowns.length>0&&acknowledgedUnknowns!==true)return false;
+ return true;
 }
 
-export function AccessEvidenceExplorer({api,plane,source,destination,selector,onSelect,onNavigate}:{
+/** Preview belongs only to the exact requested rule and Core policy plane.
+ * Matching the preview itself during Apply cannot compensate for a Preview
+ * response that selected the wrong rule before the operator approved it.
+ */
+export function observedGuidedPreviewMatchesIntent(
+ input:unknown,plane:AccessPlane,operation:unknown,ruleName:unknown,now:number=Date.now()
+):boolean{
+ if(!input||typeof input!=="object"||Array.isArray(input)
+   ||!["remote","internet","ai"].includes(plane)
+   ||!["set","delete"].includes(String(operation))
+   ||!trustedCoreTraceText(ruleName,128)||!Number.isFinite(now))return false;
+ const plan=input as Record<string,unknown>,kind=plane+"-access-rule";
+ return typeof plan.change_plan_id==="string"
+   &&/^cp_[A-Za-z0-9_-]{16,128}$/.test(plan.change_plan_id)
+   &&plan.operation_class==="CHANGE"
+   &&plan.change_type===kind&&plan.resource_type===kind
+   &&plan.operation==="guided."+kind+"."+operation
+   &&plan.resource_ref===ruleName.trim()
+   &&plan.confirmation_class==="APPLY"
+   &&Number.isSafeInteger(plan.expected_revision)&&Number(plan.expected_revision)>=0
+   &&isObservedAbsoluteTime(plan.valid_until)
+   &&Date.parse(plan.valid_until)>now;
+}
+
+/** Guided policy HTTP success is not an Apply acknowledgement. Match the
+ * one-shot Core Change Plan's exact access plane/rule/type and require an
+ * observed strictly advanced numeric revision before displaying success.
+ */
+export function observedGuidedPolicyApplyReceipt(result:unknown,plan:unknown,plane:AccessPlane):{revision:number}|null{
+ if(!result||typeof result!=="object"||Array.isArray(result)
+   ||!plan||typeof plan!=="object"||Array.isArray(plan)
+   ||!["remote","internet","ai"].includes(plane))return null;
+ const proof=result as Record<string,unknown>,review=plan as Record<string,unknown>;
+ const kind=plane+"-access-rule";
+ if(typeof review.change_plan_id!=="string"
+   ||!/^cp_[A-Za-z0-9_-]{16,128}$/.test(review.change_plan_id)
+   ||review.change_type!==kind||review.resource_type!==kind
+   ||!trustedCoreTraceText(review.resource_ref)
+   ||review.confirmation_class!=="APPLY"||review.no_change!==false
+   ||!Number.isSafeInteger(review.expected_revision)||Number(review.expected_revision)<0
+   ||proof.status!=="APPLIED"||proof.change_type!==kind||proof.resource_type!==kind
+   ||proof.resource_ref!==review.resource_ref
+   ||!Number.isSafeInteger(proof.revision)
+   ||Number(proof.revision)<=Number(review.expected_revision))return null;
+ return {revision:proof.revision as number};
+}
+
+/** A modeled Core graph path is evidence, not live connectivity or the final
+ * governing rule. Reject incomplete/cross-plane rows rather than guessing.
+ */
+export function modeledPathEvidence(row:unknown,plane:AccessPlane){
+  if(!row||typeof row!=="object"||Array.isArray(row))return null;
+  const value=row as Record<string,any>,input=value.input;
+  if(!input||typeof input!=="object"||Array.isArray(input))return null;
+  if((value.plane!=null&&value.plane!==plane)||(input.plane!=null&&input.plane!==plane))return null;
+  const source=input.source,destination=input.destination,selector=plane==="ai"?input.permission:input.service;
+  if([source,destination,selector].some(x=>!trustedCoreTraceText(x)))return null;
+  const path=plane==="ai"?(typeof input.path==="string"?input.path:""):"";
+  if(path.length>512||UNSAFE_CORE_TRACE.test(path))return null;
+  const rawRules=Array.isArray(value.rules)?value.rules:[];
+  const boundedRules=rawRules.slice(0,128);
+  const validRules=boundedRules.filter(
+    (x:unknown):x is string=>trustedCoreTraceText(x)
+  );
+  const distinctRules=[...new Set(validRules)];
+  const ruleReferences=distinctRules.slice(0,8);
+  return {
+    key:coreFlowKey(plane,source,destination,selector,path),
+    flow:{source:source.trim(),destination:destination.trim(),selector:selector.trim(),path:path.trim()},
+    decision:reliableDecision(value.decision),
+    ruleReferences,
+    ruleReferencesLimited:distinctRules.length>8||boundedRules.length!==rawRules.length||validRules.length!==boundedRules.length,
+  };
+}
+
+/** CUI-001 — Original DRLink focus semantics inspired by published
+ * NetBird/Twingate screen behavior (see competitor evidence ledger).
+ * Search only the already loaded Core-modeled policy paths; no new network
+ * request, authorization or implied live reachability.
+ */
+export function focusCoreModeledPaths(
+ input:unknown,plane:AccessPlane,filter:unknown
+):{
+ rows:{index:number,evidence:NonNullable<ReturnType<typeof modeledPathEvidence>>}[],
+ matching:number,loaded:number,unverifiable:number,limited:boolean,filtering:boolean
+}|null{
+ if(!Array.isArray(input)||input.length>400
+   ||!["remote","internet","ai"].includes(plane)
+   ||typeof filter!=="string"||filter.length>128
+   ||UNSAFE_CORE_TRACE.test(filter))return null;
+ const query=filter.trim().toLowerCase();
+ const found:{index:number,evidence:NonNullable<ReturnType<typeof modeledPathEvidence>>}[]=[];
+ let unverifiable=0;
+ input.forEach((raw,index)=>{
+   const evidence=modeledPathEvidence(raw,plane);
+   if(!evidence){unverifiable+=1;return;}
+   const terms=[evidence.flow.source,evidence.flow.destination,
+     evidence.flow.selector,...evidence.ruleReferences];
+   if(!query||terms.some(term=>term.toLowerCase().includes(query))){
+     found.push({index,evidence});
+   }
+ });
+ return {rows:found.slice(0,16),matching:found.length,
+   loaded:input.length,unverifiable,limited:found.length>16,filtering:query.length>0};
+}
+
+/** A successful HTTP response is not proof of the requested policy graph.
+ * Only the canonical read-only Core graph scope, plane, revision and exact
+ * bounded path totals can become a UI snapshot. Never expose nested nodes.
+ */
+export function observedCoreGraphSnapshot(input:unknown,plane:AccessPlane):{
+ revision:number,paths:unknown[],limits:{path_count:number,truncated:boolean},network_topology:false
+}|null{
+ if(!input||typeof input!=="object"||Array.isArray(input)
+   ||!["remote","internet","ai"].includes(plane))return null;
+ const row=input as Record<string,unknown>,limits=row.limits;
+ if(row.scope!=="policy-and-inventory"
+   ||!Array.isArray(row.planes)||row.planes.length!==1||row.planes[0]!==plane
+   ||row.network_topology!==false
+   ||!Number.isSafeInteger(row.revision)||Number(row.revision)<0
+   ||!Array.isArray(row.paths)||row.paths.length>400
+   ||!limits||typeof limits!=="object"||Array.isArray(limits))return null;
+ const bounds=limits as Record<string,unknown>;
+ if(!Number.isSafeInteger(bounds.max_paths)||Number(bounds.max_paths)<1
+   ||Number(bounds.max_paths)>400||row.paths.length>Number(bounds.max_paths)
+   ||!Number.isSafeInteger(bounds.path_count)||Number(bounds.path_count)!==row.paths.length
+   ||typeof bounds.truncated!=="boolean"
+   ||row.paths.some(path=>modeledPathEvidence(path,plane)===null))return null;
+ return {revision:row.revision as number,paths:row.paths,
+   limits:{path_count:bounds.path_count as number,truncated:bounds.truncated as boolean},
+   network_topology:false};
+}
+
+/** Rule names in a Core trace are not IDs. Resolve only against a complete,
+ * same-plane Core policy inventory, with exactly one exact-name match.
+ */
+export function resolveCompletePolicyMatch(items:unknown,plane:AccessPlane,name:unknown,complete:boolean){
+  if(!complete||typeof name!=="string"||!name.trim()||name.length>160||!Array.isArray(items))return null;
+  const matches=items.filter((item:any)=>item&&typeof item==="object"&&!Array.isArray(item)
+    &&item.plane===plane&&item.name===name&&typeof item.id==="string"&&!!item.id.trim());
+  return matches.length===1?matches[0]:null;
+}
+
+
+/** UI-02 is a read-only publication relationship, distinct from policy
+ * source/destination modeled paths or a live network topology. Project only
+ * exact service.client_id -> managed-host.id Core inventory references.
+ */
+export type ObservedPublicationEdge={serviceId:string,serviceName:string,hostId:string,hostName:string};
+export function observedPublicationOwnership(services:unknown,hosts:unknown):{
+ edges:ObservedPublicationEdge[],unresolved:number,partial:boolean,limited:boolean
+}|null{
+ const isRecord=(x:unknown):x is Record<string,unknown>=>!!x&&typeof x==="object"&&!Array.isArray(x);
+ const cleanId=(x:unknown):x is string=>typeof x==="string"&&/^[A-Za-z0-9][A-Za-z0-9_.:@-]{0,159}$/.test(x);
+ const cleanLabel=(x:unknown,fallback:string):string=>typeof x==="string"
+   &&!!x.trim()&&x.length<=160&&!/[\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/.test(x)?x.trim():fallback;
+ function typedPage(value:unknown,type:string):{items:Record<string,unknown>[],partial:boolean}|null{
+   if(!isRecord(value)||value.resource_type!==type||!Array.isArray(value.items)
+     ||!Number.isSafeInteger(value.limit)||Number(value.limit)<1||Number(value.limit)>100
+     ||value.items.length>Number(value.limit)
+     ||value.next_cursor!==null&&!(typeof value.next_cursor==="string"
+       &&!!value.next_cursor&&value.next_cursor.length<=1024
+       &&!/[\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/.test(value.next_cursor)))
+       return null;
+   if(value.items.some(x=>!isRecord(x)||!cleanId(x.id)))return null;
+   const items=value.items as Record<string,unknown>[];
+   if(new Set(items.map(x=>x.id)).size!==items.length)return null;
+   return {items,partial:value.next_cursor!==null};
+ }
+ const svc=typedPage(services,"remote-service"),h=typedPage(hosts,"managed-host");
+ if(!svc||!h)return null;
+ const hostMap=new Map(h.items.map(x=>[x.id as string,x]));
+ const edges:ObservedPublicationEdge[]=[];
+ let unresolved=0;
+ for(const item of svc.items){
+   const hostId=item.managed_host_id;
+   const host=cleanId(hostId)?hostMap.get(hostId):undefined;
+   if(!host){unresolved++;continue;}
+   edges.push({serviceId:item.id as string,
+     serviceName:cleanLabel(item.name,item.id as string),
+     hostId:host.id as string,
+     hostName:cleanLabel(host.name,host.id as string)});
+ }
+ return {edges:edges.slice(0,16),unresolved,
+   partial:svc.partial||h.partial,limited:edges.length>16};
+}
+
+/** UI-02: preserve the exact observed Host ID when routing to the existing
+ * loaded-only Host detail. A colon in a Core ID must not be read as a search
+ * facet, and IDs longer than the UI's 120-char search input are not truncated.
+ */
+export function observedHostInspectContext(hostId:unknown):{
+ inspectResourceId:string,savedFilter:string
+}|null{
+ if(typeof hostId!=="string"||
+    !/^[A-Za-z0-9][A-Za-z0-9_.:@-]{0,159}$/.test(hostId))return null;
+ return {inspectResourceId:hostId,savedFilter:hostId.length<=117?"id:"+hostId:""};
+}
+
+export function AccessEvidenceExplorer({api,plane,source,destination,selector,onSelect,onNavigate,onInspectHost,actor}:{
   api:LinkApi,plane:AccessPlane,source:string,destination:string,selector:string,
-  onSelect:(flow:SelectedFlow)=>void,onNavigate?:Navigate
+  onSelect:(flow:SelectedFlow)=>void,onNavigate?:Navigate,
+  onInspectHost?:(hostId:string)=>void,actor?:{id?:unknown,role?:unknown}
 }){
   const [graphEvidence,setGraphEvidence]=useState<{key:string,value:any}|null>(null);
+  const [graphFocus,setGraphFocus]=useState("");
   const [traceEvidence,setTraceEvidence]=useState<{key:string,value:any}|null>(null);
   const [graphBusy,setGraphBusy]=useState(false),[traceBusy,setTraceBusy]=useState(false);
   const [error,setError]=useState(""),[path,setPath]=useState("");
+  const [selectedPath,setSelectedPath]=useState<ReturnType<typeof modeledPathEvidence>>(null);
   const graphRequest=useRef(0),traceRequest=useRef(0);
+  const publicationRequest=useRef(0);
+  const [publication,setPublication]=useState<{scope:string,value:NonNullable<ReturnType<typeof observedPublicationOwnership>>}|null>(null);
+  const [publicationBusy,setPublicationBusy]=useState(false),[publicationError,setPublicationError]=useState("");
+  const actorScope=JSON.stringify([actor?.id,actor?.role]);
+  const currentActorScope=useRef(actorScope);
+  currentActorScope.current=actorScope;
+  const visiblePublication=plane==="remote"&&publication?.scope===actorScope?publication.value:null;
   const currentTraceKey=coreFlowKey(plane,source,destination,selector,path);
   const visibleTrace=visibleCoreEvidence(traceEvidence,currentTraceKey);
   const visibleGraph=visibleCoreEvidence(graphEvidence,plane);
-  useEffect(()=>{graphRequest.current+=1;setGraphEvidence(null);setError("");setGraphBusy(false)},[plane]);
+  useEffect(()=>{graphRequest.current+=1;setGraphEvidence(null);setSelectedPath(null);setGraphFocus("");setError("");setGraphBusy(false)},[plane]);
   useEffect(()=>{traceRequest.current+=1;setTraceEvidence(null);setTraceBusy(false);setError("")},[plane,source,destination,selector,path]);
-  useEffect(()=>()=>{graphRequest.current+=1;traceRequest.current+=1},[]);
+  useEffect(()=>()=>{graphRequest.current+=1;traceRequest.current+=1;publicationRequest.current+=1},[]);
+  useEffect(()=>{
+    publicationRequest.current+=1;
+    setPublication(null);setPublicationError("");setPublicationBusy(false);
+  },[plane,actorScope]);
   const ready=!!(source.trim()&&destination.trim()&&selector.trim());
+  async function loadOwnership(){
+    if(plane!=="remote"||publicationBusy
+      ||typeof actor?.id!=="string"||!actor.id.trim()
+      ||!["Admin","Operator","Read Only"].includes(String(actor?.role)))return;
+    const generation=++publicationRequest.current,requestScope=actorScope;
+    setPublication(null);setPublicationBusy(true);setPublicationError("");
+    try{
+      const [services,hosts]=await Promise.all([
+        api("/api/v1/inventory?resource_type=remote-service&limit=100"),
+        api("/api/v1/inventory?resource_type=managed-host&limit=100")
+      ]);
+      if(generation!==publicationRequest.current||requestScope!==currentActorScope.current)return;
+      const proof=observedPublicationOwnership(services,hosts);
+      if(!proof)throw new Error("Core publication inventory response is unverified");
+      setPublication({scope:requestScope,value:proof});
+    }catch(e:any){
+      if(generation===publicationRequest.current&&requestScope===currentActorScope.current)
+        setPublicationError("Core ownership evidence unavailable: "+String(e?.message||e));
+    }finally{if(generation===publicationRequest.current)setPublicationBusy(false)}
+  }
   async function loadGraph(){
     const token=++graphRequest.current;
-    setGraphEvidence(null);setGraphBusy(true);setError("");
+    setGraphEvidence(null);setSelectedPath(null);setGraphBusy(true);setError("");
     try{
       const next=await api("/api/v1/policy/graph?plane="+encodeURIComponent(plane));
-      if(graphRequest.current===token)setGraphEvidence({key:plane,value:next});
+      const validated=observedCoreGraphSnapshot(next,plane);
+      if(!validated)throw new Error("Core graph plane, scope or bounded totals are unverified.");
+      if(graphRequest.current===token)setGraphEvidence({key:plane,value:validated});
     }catch(e:any){if(graphRequest.current===token)setError("Core graph unavailable: "+String(e.message||e))}
     finally{if(graphRequest.current===token)setGraphBusy(false)}
   }
@@ -79,11 +415,17 @@ export function AccessEvidenceExplorer({api,plane,source,destination,selector,on
     else body.service=selector.trim();
     try{
       const next=await api("/api/v1/policy/trace",{method:"POST",body:JSON.stringify(body)});
-      if(traceRequest.current===token)setTraceEvidence({key:requestKey,value:next});
+      const qualified=observedCoreTraceForFlow(next,plane,source.trim(),destination.trim(),selector.trim(),path.trim());
+      if(!qualified)throw new Error("Core policy trace is missing exact requested flow evidence.");
+      if(traceRequest.current===token)setTraceEvidence({key:requestKey,value:qualified});
     }catch(e:any){if(traceRequest.current===token)setError("Core decision unavailable: "+String(e.message||e))}
     finally{if(traceRequest.current===token)setTraceBusy(false)}
   }
-  const observed=explainTrace(visibleTrace),paths=Array.isArray(visibleGraph?.paths)?visibleGraph.paths.slice(0,16):[];
+  const observed=explainTrace(visibleTrace);
+  const allPaths=Array.isArray(visibleGraph?.paths)?visibleGraph.paths:[];
+  const scopedPaths=focusCoreModeledPaths(allPaths,plane,graphFocus);
+  const paths=scopedPaths?.rows||[];
+  const focus=selectedPath?.key===currentTraceKey&&visibleGraph?selectedPath:null;
   const limits=visibleGraph?.limits||{};
   return <section className="card dr-p0-section" aria-label="Effective access explanation" data-testid="p0-access-explain">
     <div className="dr-section-head"><div><p className="dr-eyebrow">Effective Access · Core evidence</p>
@@ -92,24 +434,89 @@ export function AccessEvidenceExplorer({api,plane,source,destination,selector,on
     </div><button className="secondary" onClick={loadGraph} disabled={graphBusy}>{graphBusy?"Loading…":"Load modeled paths"}</button></div>
     {error&&<div className="error" role="alert">{error}</div>}
     {visibleGraph&&<>
-      <div className="dr-p0-facts"><span>Modeled flows: {limits.path_count??visibleGraph.paths?.length??"UNKNOWN"}</span>
-        <span>Core graph: {limits.truncated?"TRUNCATED":"bounded snapshot"}</span>
+      <div className="dr-p0-facts"><span>Modeled flows: {limits.path_count}</span>
+        <span>Core revision: {visibleGraph.revision}</span>
+        <span>Core graph: {limits.truncated===true?"TRUNCATED":limits.truncated===false?"bounded snapshot":"UNKNOWN scope"}</span>
         <span>Topology discovery: {visibleGraph.network_topology?"present":"not performed"}</span></div>
-      {limits.truncated&&<p className="warning-box">Only bounded graph paths are shown. Absent paths are not proof of DENY.</p>}
-      {paths.length? <div className="dr-p0-paths" aria-label="Core modeled paths">
-        {paths.map((row:any,i:number)=>{
-          const input=row.input||{},select=plane==="ai"?input.permission:input.service;
-          const decision=reliableDecision(row.decision);
-          return <button type="button" className="dr-p0-path" key={i} onClick={()=>{
-            onSelect({source:String(input.source||""),destination:String(input.destination||""),selector:String(select||""),path:String(input.path||"")});
-            setPath(String(input.path||""));
-          }}>
-            <strong>{input.source||"Unknown source"} <span aria-hidden="true">→</span> {input.destination||"Unknown destination"}</strong>
-            <small>{select||"unspecified selector"} · {(row.rules||[]).length?row.rules.join(", "):"no matched rule listed"}</small>
-            <span className={"dr-p0-result "+decision.toLowerCase()}>{decision}</span>
-          </button>;
-        })}</div>:<p className="muted">No modeled paths returned. This does not prove an access decision.</p>}
+      <label className="dr-field dr-p0-focus">
+        <span>Focus modeled paths · source, destination, service or policy reference</span>
+        <input type="search" aria-label="Focus modeled paths" maxLength={128}
+          value={graphFocus} onChange={e=>{setGraphFocus(e.target.value);setSelectedPath(null)}}
+          placeholder="Find a source, destination, service or policy within loaded Core paths"/>
+        <small>Search only the {allPaths.length} loaded Core-modeled paths. This is policy evidence, not a network connectivity probe.</small>
+      </label>
+      {scopedPaths?<p className="muted" role="status">
+        Matching loaded paths: {scopedPaths.matching} / {scopedPaths.loaded}
+        {scopedPaths.filtering?" · filtered by current focus":" · no focus filter"}
+        · showing {scopedPaths.rows.length}
+      </p>:<p className="warning-box" role="alert">Core modeled path focus input is invalid · UNKNOWN.</p>}
+      {(limits.truncated!==false||scopedPaths?.limited||!!scopedPaths?.unverifiable)&&<p className="warning-box" role="status">
+        {scopedPaths?.limited?"Only the first 16 matching loaded paths are displayed. ":""}
+        {limits.truncated===true?"Core graph is truncated; filtering excludes unreturned paths. ":limits.truncated!==false?"Core graph completeness is UNKNOWN. ":""}
+        {!!scopedPaths?.unverifiable?scopedPaths.unverifiable+" loaded paths are unverified. ":""}
+        Absent paths are not proof of DENY.
+      </p>}
+      {paths.length?<div className="dr-p0-paths" aria-label="Core modeled paths">
+        {paths.map(({index,evidence:row})=>
+          <button type="button" className="dr-p0-path" key={index}
+            aria-pressed={focus?.key===row.key}
+            onClick={()=>{
+              setSelectedPath(row);
+              onSelect(row.flow);
+              setPath(row.flow.path);
+            }}>
+            <strong>{row.flow.source} <span aria-hidden="true">→</span> {row.flow.destination}</strong>
+            <small>{row.flow.selector} · {row.ruleReferences.length?row.ruleReferences.join(", "):"policy references UNKNOWN"}</small>
+            <span className={"dr-p0-result "+row.decision.toLowerCase()}>{row.decision}</span>
+          </button>
+        )}</div>:<p className="muted" role="status">
+          {scopedPaths?.filtering?"No matching paths in the loaded Core snapshot. ":"No modeled paths returned. "}
+          This does not prove DENY or imply reachability outside the current Core snapshot.
+        </p>}
     </>}
+    {plane==="remote"&&<section className="dr-p0-evidence" role="region" aria-label="Observed Service to owning Host">
+      <h4>Observed Service → owning Host</h4>
+      <p className="muted">Read-only Core publication identity; this is separate from modeled policy flow, live connectivity and network topology.</p>
+      <button className="secondary" type="button" onClick={loadOwnership}
+        disabled={publicationBusy||!actor?.id||!["Admin","Operator","Read Only"].includes(String(actor?.role))}>
+        {publicationBusy?"Reading Core ownership…":"Load published ownership"}</button>
+      {publicationError&&<p className="warning-box" role="alert">{publicationError}</p>}
+      {visiblePublication&&<>
+        <p role="status">Observed publication relationship: {visiblePublication.edges.length} verified links in the loaded pages.</p>
+        {(visiblePublication.partial||visiblePublication.limited||visiblePublication.unresolved>0)&&
+          <p className="warning-box" role="status">Partial / UNKNOWN ownership scope. {visiblePublication.unresolved} loaded services have no verified owner in the observed Host page.
+            {visiblePublication.partial?" Additional Core pages exist.":""}
+            {visiblePublication.limited?" Only the first 16 links are displayed.":""}
+            A missing link never proves that a Service has no owning Host.</p>}
+        {visiblePublication.edges.length?<div className="dr-p0-paths" aria-label="Verified Core publication edges">
+          {visiblePublication.edges.map(edge=><div className="dr-p0-path" key={edge.serviceId}>
+            <strong>{edge.serviceName} <span aria-hidden="true">→</span> {edge.hostName}</strong>
+            <small>Exact Core Service {edge.serviceId} → Host {edge.hostId}</small>
+            <button type="button" className="secondary" disabled={!onInspectHost}
+              onClick={()=>onInspectHost?.(edge.hostId)}>Inspect owning Host →</button>
+          </div>)}
+        </div>:<p className="muted">No exact publication links confirmed in this bounded Core page; ownership outside the observed rows remains UNKNOWN.</p>}
+      </>}
+    </section>}
+    {focus&&<section className="dr-p0-evidence dr-p0-focused" aria-label="Focused Core-modeled access path" role="region">
+      <h4>Focused access path · Core model</h4>
+      <div className="dr-p0-route" aria-label="Source, policy references and destination">
+        <div><small>Source object / group</small><strong>{focus.flow.source}</strong></div>
+        <span aria-hidden="true">→</span>
+        <div><small>Policy references · not governing proof</small>
+          <strong>{focus.ruleReferences.length?focus.ruleReferences.join(", "):"UNKNOWN"}</strong></div>
+        <span aria-hidden="true">→</span>
+        <div><small>Destination object / group</small><strong>{focus.flow.destination}</strong></div>
+      </div>
+      <div className="dr-p0-facts"><span>Selector: {focus.flow.selector}</span>
+        <span>Modeled decision: {focus.decision}</span>
+        <span>Live reachability: NOT VERIFIED</span></div>
+      {focus.ruleReferencesLimited&&<p className="warning-box">Policy references were bounded. This list may be incomplete.</p>}
+      <p className="muted">These are modeled policy references, not confirmed governing rules. Run the fresh Core trace below before interpreting why access is allowed or denied.</p>
+      <button type="button" className="secondary" disabled={!ready||traceBusy} onClick={explain}>
+        {traceBusy?"Checking Core…":"Explain focused path with Core →"}
+      </button>
+    </section>}
     {plane==="ai"&&<label className="dr-field"><span>Optional AI request path</span><input value={path} onChange={e=>setPath(e.target.value)} placeholder="/resource/path"/></label>}
     <div className="dr-p0-actions"><button className="primary" onClick={explain} disabled={!ready||traceBusy}>{traceBusy?"Checking…":"Explain selected access"}</button>
       <button className="secondary" onClick={()=>onNavigate?.("policies","access")}>View policies</button>
@@ -117,19 +524,69 @@ export function AccessEvidenceExplorer({api,plane,source,destination,selector,on
     {visibleTrace&&<div className="dr-p0-evidence">
       <div className="dr-p0-decision"><span>Effective policy decision</span><strong className={"dr-p0-result "+observed.decision.toLowerCase()}>{observed.decision}</strong></div>
       <div className="dr-p0-route" aria-label="Core decision route">
-        <div><small>Source</small><strong>{visibleTrace.normalized_input?.source||source}</strong></div>
+        <div><small>Source</small><strong>{observedTraceRouteValue(visibleTrace.normalized_input?.source,source)}</strong></div>
         <span aria-hidden="true">→</span>
         <div><small>Policy decision</small><strong>{observed.decision}</strong></div>
         <span aria-hidden="true">→</span>
-        <div><small>Destination</small><strong>{visibleTrace.normalized_input?.destination||destination}</strong></div>
+        <div><small>Destination</small><strong>{observedTraceRouteValue(visibleTrace.normalized_input?.destination,destination)}</strong></div>
       </div>
       <p>{observed.reason}</p>
-      <p className="muted">Matched rules: {observed.rules.length?observed.rules.join(", "):"none reported"} · Mode: {visibleTrace.policy?.mode||"UNKNOWN"} · Enforcement: {visibleTrace.policy?.enforcement||"UNKNOWN"}</p>
-      {visibleTrace.mixed&&<p className="warning-box">Mixed group membership outcomes; inspect individual member results before acting.</p>}
-      <details><summary>Advanced · exact Core trace</summary><pre className="plan">{JSON.stringify(visibleTrace,null,2)}</pre></details>
+      <p className="muted">Matched rules: {observed.rules.length?observed.rules.join(", "):observed.rulesQualified?"none reported":"UNKNOWN"} · Mode: {observedTraceRouteValue(visibleTrace.policy?.mode,undefined)} · Enforcement: {observedTraceRouteValue(visibleTrace.policy?.enforcement,undefined)}</p>
+      {!observed.rulesQualified&&<p className="warning-box" role="status">Core matched-rule references were missing, invalid or truncated. This does not prove no rule matched.</p>}
+      {observed.rules.length>0&&<div className="dr-p0-actions" aria-label="Find Core-traced policy rule">
+        {observed.rules.filter(rule=>rule.length<=160).map(rule=><button key={rule} type="button" className="secondary"
+          onClick={()=>onNavigate?.("policies","access",{focusPolicy:{plane,name:rule},
+            source:source.trim(),destination:destination.trim(),selector:selector.trim()})}>
+          Find traced rule · {rule} →
+        </button>)}
+        <p className="muted">The policy list verifies an exact single rule identity before opening details. A trace name alone is not a policy ID.</p>
+      </div>}
+      {visibleTrace.mixed===true&&<p className="warning-box">Mixed group membership outcomes; inspect individual member results before acting.</p>}
+      <details className="dr-technical-details"><summary>Technical details · exact Core trace</summary><pre className="plan">{JSON.stringify(visibleTrace,null,2)}</pre></details>
     </div>}
     {!visibleTrace&&!traceBusy&&<p className="muted">Decision: UNKNOWN until a fresh Core decision trace succeeds.</p>}
   </section>;
+}
+
+/** CUI-002 — original, display-only prepared rule-change summary.
+ * The Tailscale editor's public screenshots show complete rule intent before
+ * save. Link always delegates preview/tests/apply to its own Core authority.
+ * No copied vendor syntax, assets or frontend mutation behavior.
+ */
+export function preparedGuidedPolicyChange(input:unknown):{
+ action:"SET"|"DELETE",plane:AccessPlane,rule:string,effect:string,
+ source:string,destination:string,selector:string,expiry:string,enabled:string,
+ aiPaths:string[],pathsLimited:boolean
+}|null{
+ if(!input||typeof input!=="object"||Array.isArray(input))return null;
+ const v=input as Record<string,unknown>;
+ if(!["remote","internet","ai"].includes(String(v.plane))
+   ||!["set","delete"].includes(String(v.operation)))return null;
+ const action=v.operation==="set"?"SET":"DELETE";
+ const label=(raw:unknown,max=160):string=>{
+   if(raw===undefined||raw===null||raw==="")return "NOT SPECIFIED";
+   return trustedCoreTraceText(raw,max)?raw.trim():"INVALID / NOT VERIFIED";
+ };
+ const plane=v.plane as AccessPlane,rule=label(v.name,128);
+ if(action==="DELETE"){
+   return {action,plane,rule,effect:"Remove existing rule · Core Preview and explicit Apply required",
+     source:"NOT APPLICABLE",destination:"NOT APPLICABLE",selector:"NOT APPLICABLE",
+     expiry:"NOT APPLICABLE",enabled:"NOT APPLICABLE",aiPaths:[],pathsLimited:false};
+ }
+ const expiry=v.expiresAt===undefined||v.expiresAt===null||v.expiresAt===""
+   ?"No expiry specified":isObservedAbsoluteTime(v.expiresAt)
+   ?v.expiresAt:"INVALID / NOT VERIFIED";
+ const rawPaths=plane==="ai"&&typeof v.paths==="string"
+   ?v.paths.split(",").map(x=>x.trim()).filter(Boolean):[];
+ const bounded=rawPaths.filter(x=>trustedCoreTraceText(x,512));
+ return {action,plane,rule,
+   effect:v.mode==="whitelist"?"Allow matching access":
+     v.mode==="blacklist"?"Deny matching access":"UNKNOWN / NOT VERIFIED",
+   source:label(v.source),destination:label(v.destination),selector:label(v.selector,128),
+   expiry:expiry as string,
+   enabled:v.enabled===true?"Enabled":v.enabled===false?"Disabled":"UNKNOWN",
+   aiPaths:bounded.slice(0,8),
+   pathsLimited:rawPaths.length>8||bounded.length!==rawPaths.length};
 }
 
 export function GuidedPolicyJourney({api,onNavigate,initialPlane="remote",lockedPlane=false,initialFlow,onFlowChange,resourceCatalog,onBusyChange}: {
@@ -148,9 +605,27 @@ export function GuidedPolicyJourney({api,onNavigate,initialPlane="remote",locked
   const [confirmation,setConfirmation]=useState(""),[acknowledge,setAcknowledge]=useState(false);
   const [busy,setBusy]=useState(false),[error,setError]=useState(""),[message,setMessage]=useState("");
   const seq=useRef(0);
+  // Core Preview creates a persisted Change Plan; Apply can commit a policy
+  // revision before the browser receives its reply. Busy state alone cannot
+  // prevent a second click before React rerenders.
+  const previewInFlight=useRef(false);
+  const applyInFlight=useRef(false);
   const catalog=useCoreCatalog(api,resourceCatalog);
   useEffect(()=>{onBusyChange?.(busy)},[busy]);
   useEffect(()=>()=>{onBusyChange?.(false)},[]);
+  useEffect(()=>{
+    if(!preview||busy)return;
+    const expires=Date.parse(preview.valid_until);
+    const delay=expires-Date.now();
+    if(!Number.isFinite(delay)||delay>2147483647)return;
+    const timer=setTimeout(()=>{
+      if(Date.now()>=expires){
+        setPreview(null);setTests(null);setConfirmation("");setAcknowledge(false);
+        setPhase(1);setError("Core Change Plan expired. Request a fresh Preview and policy tests.");
+      }
+    },Math.max(0,delay));
+    return()=>clearTimeout(timer);
+  },[preview?.change_plan_id,preview?.valid_until,busy]);
   function invalidate(){
     seq.current+=1;setPreview(null);setTests(null);setConfirmation("");setAcknowledge(false);
     setPhase(1);setMessage("");setError("");
@@ -164,8 +639,10 @@ export function GuidedPolicyJourney({api,onNavigate,initialPlane="remote",locked
     invalidate();
   }
   const ready=!!name.trim()&&(operation==="delete"||!!(source.trim()&&destination.trim()&&selector.trim()));
+  const prepared=preparedGuidedPolicyChange({plane,operation,name,mode,source,destination,selector,enabled,expiresAt,paths});
   async function review(){
-    if(!ready||busy)return;
+    if(!ready||busy||previewInFlight.current)return;
+    previewInFlight.current=true;
     const token=++seq.current;
     setBusy(true);setError("");setMessage("");setPreview(null);setTests(null);setConfirmation("");setAcknowledge(false);
     const payload:any={operation,name:name.trim()};
@@ -181,9 +658,11 @@ export function GuidedPolicyJourney({api,onNavigate,initialPlane="remote",locked
       const result=await api("/api/v1/guided/preview",{method:"POST",
         body:JSON.stringify({change_type:plane+"-access-rule",payload})});
       if(seq.current!==token)return;
+      if(!observedGuidedPreviewMatchesIntent(result,plane,operation,payload.name))
+        throw new Error("Core Preview does not confirm the exact requested rule, policy action and current plan expiry.");
       setPreview(result);setPhase(2);
     }catch(e:any){if(seq.current===token)setError("Preview failed: "+String(e.message||e))}
-    finally{if(seq.current===token)setBusy(false)}
+    finally{previewInFlight.current=false;if(seq.current===token)setBusy(false)}
   }
   async function verifyRequired(){
     if(!preview?.change_plan_id||busy)return;
@@ -197,10 +676,25 @@ export function GuidedPolicyJourney({api,onNavigate,initialPlane="remote",locked
     finally{if(seq.current===token)setBusy(false)}
   }
   const unknowns=Array.isArray(preview?.blast_radius?.unknowns)?preview.blast_radius.unknowns:[];
-  const safe=canApplyGuidedRule(preview,tests,acknowledge);
-  const requiredWord=String(preview?.confirmation_class||"APPLY");
+  const safe=canApplyGuidedRule(preview,tests,acknowledge)
+    &&preview?.change_type===plane+"-access-rule"
+    &&preview?.operation==="guided."+plane+"-access-rule."+operation
+    &&preview?.resource_ref===name.trim();
+  const requiredWord=preview?.confirmation_class==="APPLY"?"APPLY":"UNVERIFIED";
   async function apply(){
-    if(!safe||confirmation!==requiredWord||busy)return;
+    if(applyInFlight.current)return;
+    if(busy||confirmation!==requiredWord
+      ||preview?.change_type!==plane+"-access-rule"
+      ||preview?.operation!=="guided."+plane+"-access-rule."+operation
+      ||preview?.resource_ref!==name.trim())return;
+    // Re-evaluate expiry and Core proof at click time; stale render state is
+    // never sufficient to send a side-effecting Apply request.
+    if(!canApplyGuidedRule(preview,tests,acknowledge)){
+      setPreview(null);setTests(null);setConfirmation("");setAcknowledge(false);setPhase(1);
+      setError("Core Change Plan is expired or incomplete. Request a fresh Preview and policy tests.");
+      return;
+    }
+    applyInFlight.current=true;
     const token=seq.current;
     setBusy(true);setError("");
     try{
@@ -208,10 +702,17 @@ export function GuidedPolicyJourney({api,onNavigate,initialPlane="remote",locked
         change_plan_id:preview.change_plan_id,confirmation,
       })});
       if(seq.current!==token)return;
-      setMessage("Core applied rule change at revision "+String(result.revision??"UNKNOWN"));
+      const confirmed=observedGuidedPolicyApplyReceipt(result,preview,plane);
+      if(!confirmed)throw new Error("Core did not confirm the reviewed Change Plan, rule or advanced revision.");
+      setMessage("Core applied rule change at revision "+confirmed.revision);
       setPreview(null);setTests(null);setConfirmation("");setAcknowledge(false);setPhase(1);
-    }catch(e:any){if(seq.current===token)setError("Apply was not confirmed: "+String(e.message||e))}
-    finally{if(seq.current===token)setBusy(false)}
+    }catch(e:any){if(seq.current===token){
+      // A transport error or unverified receipt may follow a committed Core
+      // change; never invite a blind second Apply with the old one-shot plan.
+      setPreview(null);setTests(null);setConfirmation("");setAcknowledge(false);setPhase(1);
+      setError("Apply outcome UNKNOWN. Inspect Core Change History before retrying. "+String(e.message||e));
+    }}
+    finally{applyInFlight.current=false;if(seq.current===token)setBusy(false)}
   }
   return <section className="card dr-p0-section" data-testid="p0-guided-policy">
     <div className="dr-section-head"><div><p className="dr-eyebrow">P0 · Guided policy workflow</p>
@@ -243,11 +744,6 @@ export function GuidedPolicyJourney({api,onNavigate,initialPlane="remote",locked
       {operation==="set"&&<>
         <label className="dr-field"><span>Policy mode</span><select value={mode} onChange={e=>change(setMode,e.target.value)}>
           <option value="whitelist">Whitelist · grant matching access</option><option value="blacklist">Blacklist · deny matching access</option></select></label>
-        <div className="dr-uxb-rule-summary" role="status">
-          <strong>Rule you are preparing · {mode==="whitelist"?"Allow matching access":"Deny matching access"}</strong>
-          <p>{source||"Choose a source"} <span aria-hidden="true">→</span> {destination||"Choose a destination"} · {selector||("Choose a "+(plane==="ai"?"permission":"service"))}</p>
-          <small>This is an unverified draft. No access is granted or denied until Core preview, tests and confirmed Apply.</small>
-        </div>
         <details className="dr-uxb-manual-fields">
           <summary>Advanced · review or enter exact Core names manually</summary>
           <div className="dr-uxb-form">
@@ -262,6 +758,26 @@ export function GuidedPolicyJourney({api,onNavigate,initialPlane="remote",locked
       </>}
       <label className="dr-field dr-p0-purpose"><span>Review purpose (screen only)</span><input value={purpose} onChange={e=>change(setPurpose,e.target.value)} placeholder="Optional rationale for this review"/><small>Not submitted to Core or stored as a policy audit reason.</small></label>
     </fieldset>
+    {prepared&&<section className="dr-uxb-rule-summary" role="status" aria-label="Prepared rule change · not applied">
+      <strong>Prepared {prepared.action} · {prepared.rule}</strong>
+      <p>{prepared.effect} · {prepared.plane} policy plane</p>
+      {prepared.action==="SET"?<>
+        <p>{prepared.source} <span aria-hidden="true">→</span> {prepared.destination} · {prepared.selector}</p>
+        <p>Status: {prepared.enabled} · Expiry: {prepared.expiry}</p>
+        {prepared.plane==="ai"&&<p>
+          AI path limits: {prepared.aiPaths.length?prepared.aiPaths.join(", "):"NOT SPECIFIED"}
+          {prepared.pathsLimited?" · additional or invalid path values require Core review":""}
+        </p>}
+        {prepared.expiry==="INVALID / NOT VERIFIED"&&<p className="warning-box">
+          Expiry is not a trustworthy ISO 8601 timestamp. Core may reject this draft.
+        </p>}
+      </>:<p className="warning-box">
+        Deletion is proposed for this exact rule name only. No access change has happened.
+        Core must calculate impact and require explicit confirmation.
+      </p>}
+      <small>Not submitted to Core until a fresh Preview, required tests and explicit Apply;
+        this is an editable screen-only summary, not a governing or live-access decision.</small>
+    </section>}
     <div className="dr-p0-actions"><button className="primary" disabled={!ready||busy} onClick={review}>{busy&&phase<3?"Preparing…":"1. Preview Core impact"}</button>
       {preview&&<button className="secondary" disabled={busy} onClick={()=>{setPhase(2);setConfirmation("")}}>Review current plan</button>}</div>
     {preview&&<div className="dr-p0-review">
@@ -278,7 +794,7 @@ export function GuidedPolicyJourney({api,onNavigate,initialPlane="remote",locked
       {preview.blast_radius?.limits?.truncated&&<p className="warning-box">Core impact model is truncated. Apply is blocked until an untruncated preview is available.</p>}
       {unknowns.length>0&&<div className="warning-box">Unknown impact evidence: {unknowns.slice(0,8).join(" · ")}</div>}
       {preview.policy_regression&&<p className={preview.policy_regression.ok?"notice":"warning-box"}>Core preview required tests: {preview.policy_regression.passed??"?"}/{preview.policy_regression.count??"?"}; failures {preview.policy_regression.required_failed??"UNKNOWN"}</p>}
-      <details><summary>Advanced · Core preview and graph overlay</summary><pre className="plan">{JSON.stringify({preview:preview.preview,impact:preview.impact,blast_radius:preview.blast_radius,graph_overlay:preview.graph_overlay},null,2)}</pre></details>
+      <details className="dr-technical-details"><summary>Technical details · Core preview and graph overlay</summary><pre className="plan">{JSON.stringify({preview:preview.preview,impact:preview.impact,blast_radius:preview.blast_radius,graph_overlay:preview.graph_overlay},null,2)}</pre></details>
       <h4>3. Independently verify saved required tests</h4>
       <p className="muted">Read-only Core test run is a second check. Failing or unavailable results block Apply.</p>
       <button className="secondary" disabled={!preview.change_plan_id||busy} onClick={verifyRequired}>{busy?"Checking…":"Run required policy regression tests"}</button>

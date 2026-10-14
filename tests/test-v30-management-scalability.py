@@ -168,6 +168,57 @@ class V30ManagementScalabilityTests(unittest.TestCase):
         self.assertEqual(versions[("linux", "3.0.0")], 1)
         self.assertEqual(versions[("win32", "unknown")], 1)
 
+    def test_overview_heartbeat_offsets_future_and_corrupt_fail_conservatively(self):
+        # Read-only operational health must agree with Core's actual UTC
+        # heartbeat freshness predicate, never lexical ordering of raw text.
+        samples = (
+            ("fresh-utc", "2026-10-04T01:59:30Z"),
+            ("fresh-plus-two", "2026-10-04T03:59:30+02:00"),
+            ("fresh-minus-five", "2026-10-03T20:59:30-05:00"),
+            ("future", "2026-10-04T02:00:01Z"),
+            ("invalid", "not-a-timestamp"),
+            ("invalid-offset", "2026-10-04T01:59:30+99:00"),
+            ("stale", "2026-10-04T01:50:00Z"),
+        )
+        for name, stamp in samples:
+            self._insert_client(name, heartbeat=stamp)
+        self.conn.commit()
+
+        before = self.conn.total_changes
+        summary = overview_summary(self.conn, now=self.now)["managed_hosts"]
+        self.assertEqual(summary["total"], 7)
+        self.assertEqual(summary["connected"], 3)
+        self.assertEqual(summary["stale"], 4)
+        self.assertEqual(summary["disconnected"], 0)
+        self.assertEqual(self.conn.total_changes, before)
+
+    def test_overview_admission_and_legacy_connectivity_match_core(self):
+        # A revoked, retired or offline Legacy Host cannot be healthy merely
+        # because its lifecycle or an old heartbeat says it was connected.
+        cases = (
+            ("healthy", "trusted", "active", "connected", 1, "2026-10-04T01:59:30Z"),
+            ("revoked", "revoked", "active", "connected", 1, "2026-10-04T01:59:30Z"),
+            ("retired", "trusted", "retired", "connected", 1, "2026-10-04T01:59:30Z"),
+            ("legacy-up", "trusted", "active", "legacy", 1, None),
+            ("legacy-down", "trusted", "active", "legacy", 0, None),
+            ("legacy-retired", "trusted", "retired", "legacy", 1, None),
+            ("stale", "trusted", "active", "connected", 1, None),
+        )
+        for ident, trust, status, lifecycle, connected, heartbeat in cases:
+            self._insert_client(ident, lifecycle=lifecycle, connected=connected,
+                                heartbeat=heartbeat)
+            self.conn.execute("UPDATE clients SET trust_status=?,status=? WHERE id=?",
+                              (trust, status, ident))
+        self.conn.commit()
+        before = self.conn.total_changes
+        counts = overview_summary(self.conn, now=self.now)["managed_hosts"]
+        self.assertEqual(counts["total"], 7)
+        self.assertEqual(counts["connected"], 2)
+        self.assertEqual(counts["stale"], 1)
+        self.assertEqual(counts["disconnected"], 4)
+        self.assertEqual(counts["legacy"], 3)
+        self.assertEqual(self.conn.total_changes, before)
+
     def test_query_service_read_models_do_not_need_writer_slot(self):
         self._insert_client("host-a")
         self.conn.commit()

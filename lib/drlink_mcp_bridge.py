@@ -1334,22 +1334,37 @@ def make_handler(bridge: MCPBridge):
                 except Exception:
                     self._send(400, {"error": "parse error"})
                     return
+                # This optional bearer-Agent transport must not bypass
+                # the Core's typed, lease-changing claim/complete boundary.
+                if not isinstance(body, dict):
+                    self._send(400, {"error": "invalid_agent_request"})
+                    return
                 try:
                     if parsed.path.endswith("/claim"):
+                        raw_limit = body.get("limit", 4)
+                        if type(raw_limit) is not int or raw_limit < 1:
+                            self._send(400, {"error": "invalid_claim_limit"})
+                            return
                         with bridge._lock:
-                            jobs = bridge.plane.claim_ai_jobs(client_id, int(body.get("limit") or 4))
+                            jobs = bridge.plane.claim_ai_jobs(client_id, raw_limit)
                         self._send(200, {"jobs": jobs})
                         return
-                    full = body.get("result") or {}
+                    full = body.get("result", {})
+                    if not isinstance(full, dict):
+                        self._send(400, {"error": "invalid_agent_result"})
+                        return
+                    job_id = str(body.get("id") or "")
                     with bridge._lock:
-                        bridge._job_results[str(body.get("id") or "")] = full
                         bridge.plane.complete_ai_job(
-                            str(body.get("id") or ""),
+                            job_id,
                             client_id,
                             full,
                             claim_token=body.get("claim_token"),
                             attempt_id=body.get("attempt_id"),
                         )
+                        # Never expose a response as complete before Core
+                        # has accepted the authenticated target/claim.
+                        bridge._job_results[job_id] = full
                     self._send(200, {"ok": True})
                     return
                 except ControlPlaneError as exc:

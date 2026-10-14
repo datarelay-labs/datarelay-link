@@ -36,6 +36,11 @@ from drlink_management_host_lifecycle import (
 from drlink_policy_safety import PolicySafetyService
 import drlink_policy_safety as policy_safety
 from drlink_management_system import ManagementSystemService
+from drlink_management_temporary_access_requests import (
+    REVIEW_PERMISSION,
+    REQUEST_PERMISSION,
+    TemporaryAccessRequestService,
+)
 from drlink_management_drafts import (
     DRAFT_ADMIN,
     DRAFT_OBSERVE,
@@ -454,6 +459,74 @@ class ManagementCoreService:
                 "This Web management operation requires role: %s." % ", ".join(sorted(roles))
             )
         return role
+
+    def temporary_access_request_create(
+        self, *, actor: ManagementActor, plane: str, rule: str,
+        purpose: str, duration_seconds: int,
+    ) -> dict[str, Any]:
+        self._require_web_role(actor, "Admin", "Operator")
+        if REQUEST_PERMISSION not in actor.permissions:
+            raise ManagementAuthorizationError("management-temporary-access is required.")
+        with TemporaryAccessRequestService(self.root) as service:
+            return service.create(
+                actor_id=actor.actor_id, role=actor.role, permissions=actor.permissions,
+                plane=plane, rule=rule, purpose=purpose,
+                duration_seconds=duration_seconds,
+            )
+
+    def temporary_access_request_list(
+        self, *, actor: ManagementActor, status: str = "", limit: int = 50,
+        cursor: str = "",
+    ) -> dict[str, Any]:
+        self._require_web_role(actor, "Admin", "Operator")
+        if REQUEST_PERMISSION not in actor.permissions:
+            raise ManagementAuthorizationError("management-temporary-access is required.")
+        with TemporaryAccessRequestService(self.root) as service:
+            return service.list(
+                actor_id=actor.actor_id, role=actor.role, permissions=actor.permissions,
+                status=status, limit=limit, cursor=cursor,
+            )
+
+    def temporary_access_request_get(
+        self, request_id: str, *, actor: ManagementActor,
+    ) -> dict[str, Any]:
+        self._require_web_role(actor, "Admin", "Operator")
+        if REQUEST_PERMISSION not in actor.permissions:
+            raise ManagementAuthorizationError("management-temporary-access is required.")
+        with TemporaryAccessRequestService(self.root) as service:
+            return service.get(
+                request_id, actor_id=actor.actor_id, role=actor.role,
+                permissions=actor.permissions,
+            )
+
+    def temporary_access_request_review(
+        self, request_id: str, *, actor: ManagementActor, decision: str,
+        approved_duration_seconds: Optional[int], reason: str, row_version: int,
+    ) -> dict[str, Any]:
+        self._require_web_role(actor, "Admin")
+        if REVIEW_PERMISSION not in actor.permissions:
+            raise ManagementAuthorizationError(
+                "management-access-request-review is required."
+            )
+        with TemporaryAccessRequestService(self.root) as service:
+            return service.review(
+                request_id, actor_id=actor.actor_id, role=actor.role,
+                permissions=actor.permissions, decision=decision,
+                approved_duration_seconds=approved_duration_seconds,
+                reason=reason, row_version=row_version,
+            )
+
+    def temporary_access_request_revoke(
+        self, request_id: str, *, actor: ManagementActor, row_version: int,
+    ) -> dict[str, Any]:
+        self._require_web_role(actor, "Admin", "Operator")
+        if REQUEST_PERMISSION not in actor.permissions:
+            raise ManagementAuthorizationError("management-temporary-access is required.")
+        with TemporaryAccessRequestService(self.root) as service:
+            return service.revoke(
+                request_id, actor_id=actor.actor_id, role=actor.role,
+                permissions=actor.permissions, row_version=row_version,
+            )
 
     def policy_decision_trace(
         self,

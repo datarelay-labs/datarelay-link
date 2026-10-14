@@ -11,6 +11,7 @@ ADMIN_SOURCE = (ROOT / "web/src/foundation-administration.ts").read_text(encodin
 P0_ACCESS_SOURCE = (ROOT / "web/src/p0-access-policy.tsx").read_text(encoding="utf-8")
 P0_ENROLL_SOURCE = (ROOT / "web/src/p0-enrollment.tsx").read_text(encoding="utf-8")
 NAV_SOURCE = (ROOT / "web/src/uxb-navigation.ts").read_text(encoding="utf-8")
+SERVER_WORKFLOW_SOURCE = (ROOT / "web/src/workflow-servers.tsx").read_text(encoding="utf-8")
 HOME_SOURCE = (ROOT / "web/src/uxb-home.tsx").read_text(encoding="utf-8")
 SETUP_SOURCE = (ROOT / "web/src/uxb-setup.tsx").read_text(encoding="utf-8")
 CSS = (ROOT / "web/dist/styles.css").read_text(encoding="utf-8")
@@ -114,7 +115,13 @@ class V30WebSaasUxContractTests(unittest.TestCase):
         # An HttpOnly session cookie survives a tab refresh, but JS state
         # does not. A GET session bootstrap must restore CSRF in memory.
         self.assertIn('api("/api/v1/session").then(d=>{', SOURCE)
-        self.assertIn('csrf=d.csrf_token;', SOURCE)
+        self.assertIn('const observed=observedAuthenticatedWebSession(d);', SOURCE)
+        self.assertIn('csrf=observed.csrf_token;', SOURCE)
+        self.assertIn('setOperator(observed.operator);', SOURCE)
+        self.assertIn('onLogin(observed.operator);', SOURCE)
+        self.assertIn('function observedAuthenticatedWebSession(',
+                      (ROOT / "web/src/uxb-web-session.ts").read_text(encoding="utf-8"))
+        self.assertNotIn('csrf=d.csrf_token;', SOURCE)
         self.assertIn('if(csrf)headers["X-CSRF-Token"]=csrf;', SOURCE)
         self.assertNotIn('localStorage.setItem("csrf', SOURCE)
         self.assertNotIn('sessionStorage', SOURCE)
@@ -140,15 +147,24 @@ class V30WebSaasUxContractTests(unittest.TestCase):
         # UXE-11: a previously reviewed change plan must not remain
         # actionable after editing its host/object/policy input fields.
         for form in (
-            'key={JSON.stringify([host,label,description,tags])}',
+            'key={JSON.stringify([host,label,description,descriptionTouched,tags])}',
             'key={JSON.stringify([kind,operation,name,value,subtype,port,items])}',
             'key={JSON.stringify([plane,operation,enabled])}',
         ):
             self.assertIn(form, SOURCE)
-        lifecycle = SOURCE.split('function ManagedHostLifecyclePanel(){', 1)[1].split(
-            'function GuidedObjectPanel(){', 1
-        )[0]
-        self.assertIn('onChange={e=>{setHost(e.target.value);setPreview(null);setConfirmation("")}}', lifecycle)
+        lifecycle = SOURCE.split(
+            'function ManagedHostLifecyclePanel({selectedHost}:{selectedHost:any}){', 1
+        )[1].split('function GuidedObjectPanel(){', 1)[0]
+        self.assertIn('const host=String(selectedHost?.id||"");', lifecycle)
+        self.assertIn(
+            'function resetLifecycle(){generation.current+=1;setPreview(null);setConfirmation("");setMessage("")}',
+            lifecycle,
+        )
+        self.assertIn(
+            'onChange={e=>{resetLifecycle();setOperation(e.target.value)}}',
+            lifecycle,
+        )
+        self.assertNotIn('setHost(', lifecycle)
 
     def test_remaining_security_workflows_retire_stale_previews(self):
         # UXE-11 supplementary checks for rarely used Core-backed changes.
@@ -173,14 +189,19 @@ class V30WebSaasUxContractTests(unittest.TestCase):
         self.assertIn('function changeDiagnosisFlow(', operations)
 
     def test_uxb_home_and_health_do_not_misreport_missing_evidence_as_empty(self):
-        self.assertIn('setActivity(observedRecentFeed(auditResult))', SOURCE)
-        self.assertIn('setChanges(observedRecentFeed(revisionResult))', SOURCE)
+        self.assertIn('setActivity(observedCoreRecentFeed(auditResult,"audit-event"))', SOURCE)
+        self.assertIn('setChanges(observedCoreRecentFeed(revisionResult,"revision"))', SOURCE)
         self.assertIn('activity.status!=="ready"', SOURCE)
         self.assertIn('changes.status!=="ready"', SOURCE)
         self.assertIn('UNKNOWN · Recent Activity unavailable', SOURCE)
         self.assertIn('UNKNOWN · Change History unavailable', SOURCE)
         self.assertIn('const coreStatus=coreHealthState(data)', SOURCE)
-        self.assertIn('const configuredPlanes=accessPlaneCount(data)', SOURCE)
+        self.assertIn('const configuredPlanes=observedHealthPlaneCount(data)', SOURCE)
+        health=(ROOT / 'web/src/uxb-health-state.ts').read_text(encoding='utf-8')
+        self.assertIn('function observedCoreHealthSnapshot(', health)
+        self.assertIn('function observedHealthPlaneCount(', health)
+        self.assertIn('const observed=observedCoreHealthSnapshot(raw);', SOURCE)
+        self.assertNotIn('JSON.stringify(raw,null,2)', SOURCE)
         self.assertIn('configuredPlanes===null?"UNKNOWN"', SOURCE)
         self.assertIn('observedNumber(jobs.active_jobs)', SOURCE)
         self.assertNotIn('Remote, Internet and AI configured', SOURCE)
@@ -196,7 +217,10 @@ class V30WebSaasUxContractTests(unittest.TestCase):
         self.assertIn('onChange={e=>changeQuery(e.target.value)}', search)
         self.assertIn("const generation=++requestGeneration.current;", search)
         self.assertIn("if(requestGeneration.current!==generation)return;", search)
-        self.assertIn('if(!Array.isArray(data?.items))throw new Error(', search)
+        self.assertIn('const projection=observedBoundedCoreSearchResponse(data,q);', search)
+        self.assertIn('if(!projection)throw new Error("Core Search query, first-20 limit', search)
+        self.assertIn('function observedBoundedCoreSearchResponse(',
+                      (ROOT / 'web/src/uxb-global-search-target.ts').read_text(encoding='utf-8'))
 
     def test_core_access_evidence_matches_current_flow_and_blocks_stale_response(self):
         access=P0_ACCESS_SOURCE
@@ -205,21 +229,29 @@ class V30WebSaasUxContractTests(unittest.TestCase):
         self.assertIn("export function visibleCoreEvidence(", access)
         self.assertIn("const currentTraceKey=coreFlowKey(", access)
         self.assertIn("const visibleTrace=visibleCoreEvidence(", access)
-        self.assertIn("setTraceEvidence({key:requestKey,value:next})", access)
+        self.assertIn("const qualified=observedCoreTraceForFlow(next,plane,source.trim(),destination.trim(),selector.trim(),path.trim());", access)
+        self.assertIn("if(!qualified)throw new Error(", access)
+        self.assertIn("setTraceEvidence({key:requestKey,value:qualified})", access)
         self.assertIn("const visibleGraph=visibleCoreEvidence(", access)
         self.assertIn("const diagnosisGeneration=useRef(0),liveGeneration=useRef(0);", operations)
         self.assertIn("const matchingDiagnosis=visibleCoreEvidence(", operations)
         self.assertIn("const matchingLive=visibleCoreEvidence(", operations)
         self.assertIn("if(diagnosisGeneration.current!==token)return;", operations)
         self.assertIn("diagnosisGeneration.current+=1;", operations)
-        self.assertIn('setDiagnosisEvidence({key:requestKey,value:result})', operations)
+        self.assertIn('const valid=requireObservedDiagnosisView(result,plane,source.trim(),destination.trim(),selector.trim());', operations)
+        self.assertIn('setDiagnosisEvidence({key:requestKey,value:valid})', operations)
+        self.assertIn('export function requireObservedDiagnosisView(',
+                      (ROOT / 'web/src/uxb-menu-evidence.ts').read_text(encoding='utf-8'))
         self.assertIn("if(liveGeneration.current!==token)return;", operations)
         self.assertIn("Live access: UNKNOWN", operations)
         self.assertIn("const cutoffGeneration=useRef(0);", operations)
         self.assertIn("const activeCutoffs=visibleCoreEvidence(", operations)
         self.assertIn("const token=++cutoffGeneration.current;", operations)
         self.assertIn("if(cutoffGeneration.current!==token)return;", operations)
-        self.assertIn("setCutoffEvidence({key:plane,value:result})", operations)
+        self.assertIn("const verified=requireObservedCutoffInventory(result,plane);", operations)
+        self.assertIn("setCutoffEvidence({key:plane,value:verified})", operations)
+        self.assertIn("export function requireObservedCutoffInventory(",
+                      (ROOT / "web/src/uxb-menu-evidence.ts").read_text(encoding="utf-8"))
         self.assertIn("Cutoff evidence: UNKNOWN", operations)
         self.assertIn("export function coreCutoffKey(", access)
         self.assertIn("const cutoffPlanGeneration=useRef(0);", operations)
@@ -227,7 +259,11 @@ class V30WebSaasUxContractTests(unittest.TestCase):
         self.assertIn("cutoffPlanGeneration.current+=1;", operations)
         self.assertIn("const token=++cutoffPlanGeneration.current;", operations)
         self.assertIn("if(cutoffPlanGeneration.current!==token)return;", operations)
-        self.assertIn("setCutoffPreview({key:requestKey,value:result})", operations)
+        self.assertIn("const verified=observedEmergencyCutoffPreviewForIntent(result,plane,scopeKind,scopeRef,cutoffOperation);", operations)
+        self.assertIn("if(!verified)throw new Error(", operations)
+        self.assertIn("setCutoffPreview({key:requestKey,value:verified})", operations)
+        self.assertIn("const currentCutoffActionable=observedEmergencyCutoffPreviewForIntent(", operations)
+        self.assertIn("const latest=observedEmergencyCutoffPreviewForIntent(", operations)
         self.assertIn("change_plan_id:currentCutoffPreview.change_plan_id", operations)
         self.assertIn("disabled={cutoffBusy} onClick={()=>changePlane(value)}", operations)
         self.assertIn("disabled={cutoffBusy||cutoffConfirm!==", operations)
@@ -303,7 +339,10 @@ class V30WebSaasUxContractTests(unittest.TestCase):
         self.assertIn('if(planeRef.current==="remote")chooseRemoteHost("");', SETUP_SOURCE)
         self.assertIn("selectedHostRef.current=\"\";", SETUP_SOURCE)
         self.assertIn("planeRef.current=value;", SETUP_SOURCE)
-        self.assertIn("const restoredDraft=reconcileHostBoundDraft(initialDraft);", SETUP_SOURCE)
+        self.assertIn("const restoredDraft=safeResumedSetupDraft(initialDraft);", SETUP_SOURCE)
+        self.assertIn("return reconcileHostBoundDraft(draft);", SETUP_SOURCE)
+        self.assertIn("Number.isSafeInteger(original.step)", SETUP_SOURCE)
+        self.assertIn("!SETUP_UNSAFE_TEXT.test(v)", SETUP_SOURCE)
         self.assertIn("const [serviceDraft,setServiceDraft]=useState(restoredDraft.service||", SETUP_SOURCE)
         self.assertIn("const [selectedHost,setSelectedHost]=useState(restoredDraft.selectedHost||", SETUP_SOURCE)
 
@@ -368,7 +407,9 @@ class V30WebSaasUxContractTests(unittest.TestCase):
         self.assertIn('A selection is not approval; Core validates the change.', policy)
         self.assertIn('className="dr-uxb-rule-summary"', policy)
         self.assertIn('className="dr-uxb-manual-fields"', policy)
-        self.assertIn('This is an unverified draft.', policy)
+        self.assertIn('Not submitted to Core until a fresh Preview, required tests and explicit Apply', policy)
+        self.assertIn('aria-label="Prepared rule change · not applied"', policy)
+        self.assertIn('preparedGuidedPolicyChange({plane,operation,name,mode,source,destination,selector,enabled,expiresAt,paths})', policy)
         self.assertIn('.dr-uxb-rule-summary', CSS)
         self.assertIn('resourceCatalog={catalog}', SETUP_SOURCE)
         self.assertIn('export async function searchCoreSelectorCatalog(', chooser)
@@ -413,7 +454,10 @@ class V30WebSaasUxContractTests(unittest.TestCase):
             'originType:isHost?"managed-host":"remote-service"',
             'Why can / cannot connect?', 'Why allowed / denied?',
             'initialPlane=["remote","internet","ai"]',
-            'setResource]=useState(String(context?.originId||""))',
+            'setResource]=useState(investigation.resource)',
+            'const investigation=auditInvestigation(context);',
+            'onNavigate?.(investigation.returnTarget.id,investigation.returnTarget.group,investigation.returnTarget.context)',
+            'matchObservedAuditReturn(loaded,initialInspectId)',
         ):
             self.assertIn(marker, SOURCE)
         # UXB-05 keeps Foundation administration visible but hides privileged
@@ -444,7 +488,12 @@ class V30WebSaasUxContractTests(unittest.TestCase):
         https = ADMIN_SOURCE.split('"core.https":{', 1)[1].split('    },', 1)[0]
         users = ADMIN_SOURCE.split('"core.users":{', 1)[1].split('    },', 1)[0]
         self.assertIn('availability:"read_only"', https)
-        self.assertIn('access:"view"', https)
+        # Recognized Web roles may view the read-only status. Unknown roles
+        # must receive no actionable targets, even when capability exists.
+        self.assertIn('const authenticated=admin||role==="Operator"||role==="Read Only"', ADMIN_SOURCE)
+        self.assertIn('const readAccess=authenticated?"view":"none"', ADMIN_SOURCE)
+        self.assertIn('access:readAccess', https)
+        self.assertIn('...(authenticated?{target:', https)
         self.assertIn('MCP TLS certificate status only', https)
         self.assertIn('Shared Web HTTPS listener and redirect configuration', https)
         self.assertIn('actionId:"link.certificate"', https)
@@ -454,13 +503,26 @@ class V30WebSaasUxContractTests(unittest.TestCase):
         self.assertIn('actionId:"link.users"', users)
         self.assertIn('if(admin)onNavigate?.("users","administration")', component)
         self.assertIn('showUnavailable onOpen={openTask}', component)
-        for name in (
-            "core.password", "core.timezone", "core.network",
-            "core.retention", "core.backup-import"
-        ):
+        for name in ("core.password", "core.timezone", "core.network"):
             self.assertIn(f'"{name}":unavailable', ADMIN_SOURCE)
-        for name in ("core.audit", "core.health"):
+        for name, action in (("core.retention", "link.retention"),
+                             ("core.backup-import", "link.backup")):
             self.assertIn(f'"{name}":{{', ADMIN_SOURCE)
+            task = ADMIN_SOURCE.split(f'"{name}":{{', 1)[1].split('    },', 1)[0]
+            self.assertIn('availability:"read_only"', task)
+            self.assertIn('access:readAccess', task)
+            self.assertIn(f'actionId:"{action}"', task)
+            self.assertIn('...(authenticated?{target:', task)
+        for name in ("core.audit", "core.health"):
+            task = ADMIN_SOURCE.split(f'"{name}":{{', 1)[1].split('    }', 1)[0]
+            self.assertIn('access:readAccess', task)
+            self.assertIn('...(authenticated?{target:', task)
+        self.assertIn('case "link.retention":onNavigate?.("audit","activity");break;', component)
+        self.assertIn('case "link.backup":', component)
+        self.assertIn('getElementById("drlink-backup-status")', component)
+        self.assertIn('id="drlink-backup-status"', SOURCE)
+        self.assertIn('api("/api/v1/audit/retention")', SOURCE)
+        self.assertIn('api("/api/v1/system/backup/validate"', SOURCE)
 
     def test_managed_host_admission_is_visible_separately_from_connection(self):
         # An admission filter alone is not enough; the selected state must be
@@ -476,18 +538,28 @@ class V30WebSaasUxContractTests(unittest.TestCase):
         self.assertIn('value="QUARANTINED"', SOURCE)
 
     def test_admission_changes_are_admin_only_and_confirmation_bound(self):
-        self.assertIn("function ManagedHostAdmissionPanel()", SOURCE)
+        self.assertIn(
+            "function ManagedHostAdmissionPanel({selectedHost}:{selectedHost:any})",
+            SOURCE,
+        )
         self.assertIn("/api/v1/managed-hosts/admission/preview", SOURCE)
         self.assertIn("/api/v1/managed-hosts/admission/apply", SOURCE)
-        self.assertIn('operator.role==="Admin"&&<ManagedHostAdmissionPanel/>', SOURCE)
+        self.assertIn(
+            "const canAdmin=canManage&&knownActor(operator)&&operator?.role==='Admin';",
+            SERVER_WORKFLOW_SOURCE,
+        )
+        self.assertIn(
+            "action&&canEdit&&(action==='metadata'||canAdmin)",
+            SERVER_WORKFLOW_SOURCE,
+        )
         self.assertIn('confirmation!==required', SOURCE)
-        self.assertIn("active connections are not terminated", SOURCE)
+        self.assertIn("it does not terminate active connections", SOURCE)
 
     def test_zero_touch_preapproval_is_explicit_admin_only_and_defaults_off(self):
         self.assertIn('const [preApproved,setPreApproved]=useState(false)', P0_ENROLL_SOURCE)
         self.assertIn('mode==="zero-touch"?{pre_approved:preApproved}:{}', P0_ENROLL_SOURCE)
         self.assertIn('admin&&mode==="zero-touch"', P0_ENROLL_SOURCE)
-        self.assertIn('setPreApproved(false);setIssued(null)', P0_ENROLL_SOURCE)
+        self.assertIn('setIssued(null);setCopyStatus("");setMode(e.target.value);setPreApproved(false)', P0_ENROLL_SOURCE)
         self.assertIn('Pre-approve first Host from this ticket', P0_ENROLL_SOURCE)
         self.assertIn('data={data} operator={operator} onNavigate={onNavigate} refresh=', SOURCE)
 
@@ -604,7 +676,7 @@ class V30WebSaasUxContractTests(unittest.TestCase):
             "dr-audit-filter-grid",
             "Audit Retention",
             "HealthWorkspace",
-            "Advanced · raw health payload",
+            "Technical details · bounded Core health facts",
             "temporary setup key is not active until you verify",
             "QRCodeSVG",
             "1. Scan the QR code",
@@ -635,8 +707,9 @@ class V30WebSaasUxContractTests(unittest.TestCase):
         ):
             self.assertIn(marker, CSS)
         self.assertIn('(e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==="k"', SOURCE)
-        self.assertIn('if(e.key==="Escape")onClose()', SOURCE)
-        self.assertIn('tabIndex={-1} autoFocus', SOURCE)
+        self.assertIn('if(e.key==="Escape"){e.preventDefault();onClose();return}', SOURCE)
+        self.assertIn('ref={dialogRef} tabIndex={-1}', SOURCE)
+        self.assertIn('<input autoFocus', SOURCE)
 
     def test_uxb_global_search_keeps_keyboard_focus_inside_modal(self):
         # Static integration guard only; the real 320/375px browser keyboard
@@ -692,7 +765,7 @@ class V30WebSaasUxContractTests(unittest.TestCase):
         )
         self.assertLess(
             dialog.index('navigatingRef.current=true;'),
-            dialog.index('onNavigate(id,group);'),
+            dialog.index('onNavigate(id,group,context);'),
         )
         self.assertIn('id="drlink-main-content"', SOURCE)
         self.assertIn('tabIndex={-1}', SOURCE)
@@ -711,23 +784,39 @@ class V30WebSaasUxContractTests(unittest.TestCase):
         self.assertIn('function isPartialCorePage(', helper)
         self.assertIn('from "./uxb-menu-evidence"', SOURCE)
         self.assertIn('requireObservedInventoryContinuation(route,await api(path),requestedCursor,100)', SOURCE)
-        self.assertIn('<ResourceWorkspace kind="host" data={data}', SOURCE)
+        self.assertIn('if(active==="hosts")return <ServerRoute', SOURCE)
         self.assertIn('<ResourceWorkspace kind="service" data={data}', SOURCE)
-        self.assertIn('Load more Managed Hosts →', SOURCE)
+        self.assertIn(
+            'current.cursor&&<button type="button" className="secondary" disabled={busy} onClick={loadMore}',
+            SERVER_WORKFLOW_SOURCE,
+        )
+        self.assertIn("busy?'Loading…':'Load more'", SERVER_WORKFLOW_SOURCE)
         self.assertIn('Load more Remote Services →', SOURCE)
         self.assertIn('Next Core inventory page unavailable', SOURCE)
         self.assertIn('setCursor(isPartialCorePage(page)?page.next_cursor:null)', SOURCE)
         self.assertIn('if(epoch!==loadEpoch.current)return;', SOURCE)
         self.assertIn('Core policy list may be incomplete', SOURCE)
         self.assertIn('Partial Core inventory', SOURCE)
+        self.assertIn(
+            'Filters and counts cover the pages loaded above',
+            SERVER_WORKFLOW_SOURCE,
+        )
         self.assertIn('No match in loaded policy rules', SOURCE)
         self.assertIn('No match in loaded resources', SOURCE)
-        self.assertIn('setData(active==="hygiene"?requireObservedAccessHygiene(payload):requireObservedMenuPayload(active,payload))', SOURCE)
+        self.assertIn('active==="hosts"||active==="services"?requireObservedBoundedCorePage(active,payload,"",100)', SOURCE)
+        self.assertIn('requireObservedMenuPayload(active,payload)', SOURCE)
+        # Both initial pages and existing continuation must use the same
+        # stricter Core resource/limit/cursor validator, not raw HTTP 200.
+        self.assertIn('function requireObservedBoundedCorePage(', helper)
+        self.assertIn('return requireObservedBoundedCorePage(route,payload,requestedCursor,limit)', helper)
         self.assertIn('if(!current)return;', SOURCE)
         self.assertIn('return()=>{current=false}', SOURCE)
         self.assertIn('Core data unavailable · UNKNOWN', SOURCE)
         self.assertIn('Retry Core read →', SOURCE)
-        self.assertIn('requireObservedMenuPayload("jobs",await api("/api/v1/jobs?limit=50"+', SOURCE)
+        self.assertIn('requireObservedJobsPage(await api("/api/v1/jobs?limit=50"+', SOURCE)
+        self.assertIn(')),jobsCursor,50)', SOURCE)
+        self.assertIn('function requireObservedJobsPage(',
+                      (ROOT / "web/src/uxb-menu-evidence.ts").read_text(encoding="utf-8"))
         self.assertIn('if(epoch!==jobsReadEpoch.current)return;', SOURCE)
         self.assertIn('useEffect(()=>{refresh();return()=>{jobsReadEpoch.current+=1}},[jobsCursor]);', SOURCE)
         self.assertIn('setJobsHistory([...jobsHistory,jobsCursor])', SOURCE)
@@ -749,7 +838,10 @@ class V30WebSaasUxContractTests(unittest.TestCase):
         integrations = SOURCE.split("function IntegrationsPanel(", 1)[1].split("function CommandCenter(", 1)[0]
         for expected in (
             'const [data,setData]=useState<any>(null)',
-            'setData(requireObservedMenuPayload("users",await api("/api/v1/operators")))',
+            'const page=requireObservedMenuPayload("users",await api("/api/v1/operators"));',
+            'const observed=observedOperatorInventory(page.items);',
+            'if(!observed)throw new Error("Core operator list returned unverified identities.',
+            'setData({items:observed});',
             'catch(e:any){setData(null);setError(e.message||String(e))}',
             'if(!data)return <section className="card"',
             'Users inventory unavailable. No empty result was confirmed.',
@@ -776,11 +868,13 @@ class V30WebSaasUxContractTests(unittest.TestCase):
             'const auditReadEpoch=useRef(0);',
             'const epoch=++auditReadEpoch.current;',
             'setData(null);setAuditState("loading");',
-            'requireObservedMenuPayload("audit",await api("/api/v1/audit?"+q.toString()))',
+            'requireObservedBoundedCorePage("audit",await api("/api/v1/audit?"+q.toString()),position.cursor,50)',
             'if(epoch!==auditReadEpoch.current)return;',
             'setData(page);setAuditPage(position);setAuditFilterKey(filterKey);setAuditState("ready");',
             'setData(null);setAuditState("unknown");',
-            'auditState==="ready"?<Table items={rows}/>',
+            'auditState==="ready"?<AuditEventList items={rows}',
+            'observedAuditEventDetails(data?.items?.[index])',
+            'observedAuditAppliedFilters(auditFilterKey)',
             'UNKNOWN · Core Audit inventory unavailable.',
             'const [auditPage,setAuditPage]=useState<MenuPagePosition>',
             'const [auditFilterKey,setAuditFilterKey]=useState<string|null>(null);',
@@ -790,7 +884,7 @@ class V30WebSaasUxContractTests(unittest.TestCase):
             'selectMenuPage(auditPage,data?.next_cursor,"newer")',
             'selectMenuPage(auditPage,data.next_cursor,"older")',
             'Filters changed since the loaded Audit page.',
-            'auditReadEpoch.current+=1;setData(null);setAuditState("idle");setAuditPage({cursor:"",history:[]});setAuditFilterKey(null);setError("");',
+            'auditReadEpoch.current+=1;setData(null);setAuditState("idle");setAuditPage({cursor:"",history:[]});setAuditFilterKey(null);setError("");setStart("");setEnd("");setCategory("");setEventType("");setActor("");setResource("");setResult("");setCorrelation("")',
             'Filters cleared. Select Search audit to load current Core records.',
         ):
             self.assertIn(expected, audit, expected)
@@ -907,6 +1001,12 @@ class V30WebSaasUxContractTests(unittest.TestCase):
         ):
             self.assertIn(marker,jobs,marker)
         self.assertIn('const result=requireObservedJobDetail(await api(',jobs)
+        self.assertIn('observedJobCancelAvailable(safeDetail,operator.role)',jobs)
+        self.assertIn('!observedJobCancelAvailable(observedCoreJobDisplay(detail),operator.role)',jobs)
+        self.assertIn('const safeDetail=detail?observedCoreJobDisplay(detail):null;',jobs)
+        self.assertIn('{safeDetail&&<div className="card">',jobs)
+        self.assertIn('JSON.stringify(safeDetail,null,2)',jobs)
+        self.assertNotIn('result:x.result',jobs)
         self.assertIn('if(epoch!==detailReadEpoch.current)return;',jobs)
         self.assertNotIn('setMessage("Cancellation requested. Queued targets are cancelled;',jobs)
 
@@ -961,6 +1061,7 @@ class V30WebSaasUxContractTests(unittest.TestCase):
         jobs=SOURCE.split("function JobOperations(",1)[1].split("function ObjectsWorkspace(",1)[0]
         for marker in (
             "export function requireObservedJobStart(",
+            "export function requireObservedJobStartForRequest(",
             "export function requireObservedFleetApply(",
             'job.status!=="QUEUED"',
             'value.status!=="APPLIED"',
@@ -968,7 +1069,7 @@ class V30WebSaasUxContractTests(unittest.TestCase):
         ):
             self.assertIn(marker,evidence,marker)
         for marker in (
-            "requireObservedJobStart(await api(",
+            "requireObservedJobStartForRequest(await api(",
             "requireObservedFleetApplyForPreview(await api(",
             "Core job request accepted",
             "UNKNOWN · Core Job start response",
@@ -1083,8 +1184,15 @@ class V30WebSaasUxContractTests(unittest.TestCase):
             'function validatedDoctorEvidence(payload:unknown)',
             'report.read_only!==true||report.side_effect_free!==true',
             '||!Array.isArray(report.checks)',
-            'row.status==="PASS"?"PASS":',
-            'row.status==="ATTENTION"?"ATTENTION":"UNKNOWN"',
+            'const message=doctorText(row.message,"UNKNOWN · Core reason unavailable")',
+            'const runtime=/^Runtime generation status: ([a-z][a-z0-9_]*)$/.exec(message);',
+            'const expected=runtime?["active","not_configured"].includes(runtime[1])?"PASS":"ATTENTION":null;',
+            'const canonicalPlane=typeof row.plane==="string"',
+            '&&["remote","internet","ai"].includes(row.plane)',
+            '&&row.id==="runtime."+row.plane;',
+            'const observedState=canonicalPlane&&expected!==null&&row.status===expected',
+            'new Set((report.checks as any[]).map(row=>row.id)).size!==report.checks.length',
+
             'No runtime generation checks were observed',
             'not proof of healthy access or policy deployment',
             'UNKNOWN · Some Core check states could not be classified',
@@ -1097,7 +1205,7 @@ class V30WebSaasUxContractTests(unittest.TestCase):
 
     def test_saved_views_can_open_explicit_non_security_resource_filters(self):
         saved=(ROOT / "web/src/uxb-saved-views.tsx").read_text(encoding="utf-8")
-        self.assertIn('import {SavedViewsWorkspace,saveDraftForResource} from "./uxb-saved-views"', SOURCE)
+        self.assertIn('import {SavedViewsWorkspace,saveDraftForResource,isSavedAdmission,type HostAdmission} from "./uxb-saved-views"', SOURCE)
         self.assertIn('if(active==="views"&&data)return <SavedViewsWorkspace data={data} api={api} onNavigate={onNavigate}', SOURCE)
         self.assertIn('initialFilter={String(context?.savedFilter||"").slice(0,120)}', SOURCE)
         self.assertIn('useEffect(()=>{setFilter(initialFilter)},[kind,initialFilter]);', SOURCE)
@@ -1105,8 +1213,8 @@ class V30WebSaasUxContractTests(unittest.TestCase):
             'export function readSavedView(value:unknown)',
             'payload.resource_type==="managed-host"',
             'payload.resource_type==="remote-service"',
-            'onNavigate?.(parsed.route,"connections",{savedFilter:parsed.filter})',
-            'payload:{resource_type:target,filter:filter.trim()}',
+            'onNavigate?.(parsed.route,"connections",{savedFilter:parsed.filter,savedAdmission:parsed.admission||"all"})',
+            'payload:currentDraft',
             'Legacy/unsupported view; save a new named target',
             'private display preferences, never access policies',
             'does not fetch missing inventory pages',
@@ -1121,9 +1229,54 @@ class V30WebSaasUxContractTests(unittest.TestCase):
         self.assertIn('const prepared=readSavedView({payload:initialDraft});', saved)
         self.assertIn('onNavigate?.("views","activity",{savedViewDraft:savedDraft})', SOURCE)
         self.assertIn('initialDraft={context?.savedViewDraft}', SOURCE)
-        self.assertIn('Save this filter →', SOURCE)
+        self.assertIn('Save this view →', SOURCE)
         self.assertIn('maxLength={120}', SOURCE)
         self.assertIn('Pre-filled from', saved)
+
+    def test_saved_view_optional_host_admission_without_security_policy_mutation(self):
+        saved=(ROOT / "web/src/uxb-saved-views.tsx").read_text(encoding="utf-8")
+        self.assertIn('export type HostAdmission="all"|"PENDING_APPROVAL"|"APPROVED"|"QUARANTINED"', saved)
+        self.assertIn('export function isSavedAdmission(value:unknown)', saved)
+        self.assertIn('const currentDraft=saveDraftForResource(', saved)
+        self.assertIn('payload:currentDraft', saved)
+        self.assertIn('Filter Managed Host admission', saved)
+        self.assertIn('setAdmission("all")', saved)
+        self.assertIn('savedAdmission:parsed.admission||"all"', saved)
+        self.assertIn(
+            "initialAdmission={restored?.admission??context?.savedAdmission}",
+            SERVER_WORKFLOW_SOURCE,
+        )
+        self.assertIn('isSavedAdmission(initialAdmission)', SERVER_WORKFLOW_SOURCE)
+        self.assertIn(
+            "filterObservedHosts(current.rows,filter,admission)",
+            SERVER_WORKFLOW_SOURCE,
+        )
+        self.assertIn(
+            "navigate('views','activity',{savedViewDraft:draft})",
+            SERVER_WORKFLOW_SOURCE,
+        )
+        self.assertNotIn('Host admission selection is not included.', SOURCE)
+        self.assertNotIn('method:"PUT"', saved)
+
+    def test_managed_host_detail_allowlist_and_operator_groups(self):
+        helper=(ROOT / "web/src/uxb-host-detail.ts").read_text(encoding="utf-8")
+        stylesheet=(ROOT / "web/dist/styles.css").read_text(encoding="utf-8")
+        self.assertIn('hostDetailSections(selected).map(', SOURCE)
+        self.assertIn('className="dr-host-detail-section"', SOURCE)
+        self.assertIn('import {hostDetailSections,hostConnectionState} from "./uxb-host-detail"', SOURCE)
+        self.assertIn('hostConnectionState(item)==="Connected"', SOURCE)
+        self.assertIn('hostConnectionState(selected)==="Connected"', SOURCE)
+        self.assertIn('isHost?hostConnectionState(selected)', SOURCE)
+        self.assertNotIn('item.connected?"Connected":item.agent_lifecycle_state', SOURCE)
+        self.assertIn(".dr-host-detail-section", stylesheet)
+        self.assertIn("Trust & Admission", helper)
+        self.assertIn("Connectivity & Version", helper)
+        self.assertIn("admission_state", helper)
+        self.assertIn("connected===false||data.connected===0", helper)
+        self.assertNotIn("Object.entries", helper)
+        self.assertIn("tests/uxb-host-detail.test.mjs", PACKAGE)
+        self.assertIn("Recent activity", SOURCE)
+        self.assertIn("Why can / cannot connect?", SOURCE)
 
     def test_saved_view_name_replacement_requires_explicit_review(self):
         saved=(ROOT / "web/src/uxb-saved-views.tsx").read_text(encoding="utf-8")
@@ -1135,7 +1288,7 @@ class V30WebSaasUxContractTests(unittest.TestCase):
             'setConfirmReplace(false);',
             "Replace existing saved filter",
             "checked={confirmReplace}",
-            "disabled={busy||!name.trim()||!filter.trim()||!!(duplicate&&!confirmReplace)||incompleteNames&&!confirmReplace}",
+            "disabled={busy||!validSavedViewName(name)||!currentDraft||!!(duplicate&&!confirmReplace)||incompleteNames&&!confirmReplace}",
             "if(incompleteNames&&!confirmReplace)return;",
             'setName(e.target.value);setConfirmReplace(false);',
             'setFilter(e.target.value);setConfirmReplace(false)',
@@ -1143,6 +1296,40 @@ class V30WebSaasUxContractTests(unittest.TestCase):
         ):
             self.assertIn(marker,saved,marker)
         self.assertNotIn('method:"PUT"',saved)
+
+    def test_typed_host_search_uses_only_observed_core_fields_and_pages(self):
+        typed = (ROOT / "web/src/uxb-host-search.ts").read_text(encoding="utf-8")
+        core = (ROOT / "lib/drlink_management_service.py").read_text(encoding="utf-8")
+        # Product-owned Core query is display-name-only; the new helper must
+        # never imply tag/group/ip or privilege-expanding global search.
+        self.assertIn('"managed-host": {', core)
+        self.assertIn('"c.agent_platform AS agent_platform', core)
+        self.assertIn('where_parts.append("LOWER(%s) LIKE ?" % name_expr)', core)
+        for marker in (
+            'export function filterObservedHosts(',
+            '"name","hostname"',  # Only allowlisted, not arbitrary metadata.
+            'tag","group","ip',
+            'scope:"loaded-only"',
+            'UNKNOWN requested field values',
+            'return errorResult(items,',
+        ):
+            self.assertIn(marker, typed, marker)
+        # The picker and typed text must share one evidence-aware Core
+        # projection, never a later blind admission comparison that can
+        # falsely report "no matching resources" for UNKNOWN Core states.
+        self.assertIn('filterObservedHosts(loaded,filter,admissionFilter)', SOURCE)
+        self.assertNotIn('.filter((item:any)=>!isHost||admissionFilter==="all"', SOURCE)
+        self.assertIn('Typed Host search not applied:', SOURCE)
+        self.assertIn('hostSearch?.warning', SOURCE)
+        self.assertIn('!hostSearch?.error', SOURCE)
+        self.assertIn('Partial Core inventory', SOURCE)
+        self.assertIn(
+            'Filters and counts cover the pages loaded above',
+            SERVER_WORKFLOW_SOURCE,
+        )
+        self.assertIn('requireObservedInventoryContinuation', SOURCE)
+        self.assertIn('tests/uxb-host-search.test.mjs', PACKAGE)
+        self.assertNotIn('MISSING_CORE_TAG_QUERY_ENGINE', typed)
 
     def test_normative_ux_doc_binds_control_reference_and_competitive_sources(self):
         for required in (

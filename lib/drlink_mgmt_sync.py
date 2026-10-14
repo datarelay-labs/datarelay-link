@@ -1546,8 +1546,14 @@ def server_claim_ai_jobs(plane, auth: MgmtAuthContext, body: dict) -> dict:
     """Claim queued AI jobs for the authenticated Managed Host identity only."""
     machine_id = auth.machine_id
     _require_managed_host(plane, machine_id)
-    limit = int((body or {}).get("limit") or 4)
-    jobs = plane.claim_ai_jobs(machine_id, limit)
+    # Claiming AI Jobs consumes one-shot leases. Reject coerced or ambiguous
+    # signed limits before delegating to the Core state-changing claim.
+    if not isinstance(body, dict):
+        raise MgmtSyncError("AI Job claim request must be an object")
+    raw_limit = body.get("limit", 4)
+    if type(raw_limit) is not int or raw_limit <= 0:
+        raise MgmtSyncError("AI Job claim limit must be a positive integer")
+    jobs = plane.claim_ai_jobs(machine_id, min(raw_limit, 16))
     return {"jobs": jobs}
 
 
@@ -1558,7 +1564,10 @@ def server_complete_ai_job(plane, auth: MgmtAuthContext, body: dict) -> dict:
     job_id = str((body or {}).get("id") or "").strip()
     if not job_id:
         raise MgmtSyncError("AI job id is required")
-    result = (body or {}).get("result") or {}
+    # Missing result retains the legacy empty-object default, but an
+    # explicitly supplied null/array/primitive must not be coerced into a
+    # successful signed AI Job completion.
+    result = (body or {}).get("result", {})
     if not isinstance(result, dict):
         raise MgmtSyncError("AI job result must be an object")
     claim_token = (body or {}).get("claim_token")
@@ -1579,10 +1588,15 @@ def server_claim_management_jobs(plane, auth: MgmtAuthContext, body: dict) -> di
 
     machine_id = auth.machine_id
     _require_managed_host(plane, machine_id)
-    try:
-        limit = max(1, min(int((body or {}).get("limit") or 4), 16))
-    except (TypeError, ValueError) as exc:
-        raise MgmtSyncError("Management Job claim limit must be an integer") from exc
+    # Signed requests must not coerce false/zero, fractional or string
+    # limits into a live claim; claiming mutates a Core Job lease. Preserve
+    # the omitted-field default and the existing upper safety cap.
+    if not isinstance(body, dict):
+        raise MgmtSyncError("Management Job claim request must be an object")
+    raw_limit = body.get("limit", 4)
+    if type(raw_limit) is not int or raw_limit <= 0:
+        raise MgmtSyncError("Management Job claim limit must be a positive integer")
+    limit = min(raw_limit, 16)
     engine = ManagementJobEngine(getattr(plane, "root", None))
     try:
         jobs = engine.claim_targets_for_target(
@@ -1595,6 +1609,195 @@ def server_claim_management_jobs(plane, auth: MgmtAuthContext, body: dict) -> di
     return {"jobs": jobs}
 
 
+def _require_safe_signed_job_diagnostics(kind: str, result: dict) -> None:
+    """Reject unreviewed Agent-local diagnostic text before Core persistence.
+
+    A host signature proves identity, not that nested Doctor/Refresh messages
+    are safe to expose through the wider Management Job query/Web audience.
+    The native Agent emits only one fixed public placeholder or no message.
+    """
+    placeholder = "Check Agent-local diagnostics for details."
+    invalid = "Core Management Job diagnostic receipt is unsafe or malformed."
+
+    def safe_message(value: object) -> bool:
+        return type(value) is str and value in ("", placeholder)
+
+    if kind == "doctor":
+        # Native Doctor always returns explicit evidence. A bare signed name
+        # cannot be recorded as a successful examination of Agent health.
+        if (
+            result.get("overall") not in ("PASS", "PASS_WITH_WARNINGS", "FAIL", "ERROR")
+            or type(result.get("exit_code")) is not int
+            or not 0 <= result["exit_code"] <= 255
+            or type(result.get("check_count")) is not int
+            or not 0 <= result["check_count"] <= 10000
+            or not isinstance(result.get("counts"), dict)
+            or len(result["counts"]) > 16
+            or not isinstance(result.get("findings"), list)
+            or len(result["findings"]) > 20
+            or result.get("network_probe_performed") is not False
+        ):
+            raise MgmtSyncError(invalid)
+        if (
+            any(type(value) is not int or not 0 <= value <= 100000
+                for value in result["counts"].values())
+            or sum(result["counts"].values()) != result["check_count"]
+        ):
+            raise MgmtSyncError(invalid)
+        if "findings" in result:
+            findings = result["findings"]
+            if not isinstance(findings, list) or len(findings) > 20:
+                raise MgmtSyncError(invalid)
+            for finding in findings:
+                if (
+                    not isinstance(finding, dict)
+                    or set(finding) - {"id", "status", "message"}
+                    or type(finding.get("id")) is not str
+                    or len(finding["id"]) > 128
+                    or finding.get("status") not in ("FAIL", "WARN", "ERROR")
+                    or not safe_message(finding.get("message", ""))
+                ):
+                    raise MgmtSyncError(invalid)
+        if "counts" in result:
+            counts = result["counts"]
+            if (
+                not isinstance(counts, dict)
+                or len(counts) > 16
+                or any(
+                    type(status) is not str
+                    or len(status) > 24
+                    or not status.isupper()
+                    or type(count) is not int
+                    or not 0 <= count <= 100000
+                    for status, count in counts.items()
+                )
+            ):
+                raise MgmtSyncError(invalid)
+        # Match frp_doctor.Report.overall() and run_doctor()'s exit mapping.
+        # In particular, a signed "PASS" with failing checks is not health.
+        counts = result["counts"]
+        overall = result["overall"]
+        derived = (
+            "FAIL" if counts.get("FAIL", 0) else
+            "PASS_WITH_WARNINGS" if counts.get("WARN", 0) else "PASS"
+        )
+        expected_exit = 2 if overall == "ERROR" else 1 if overall == "FAIL" else 0
+        if (
+            (overall != "ERROR" and overall != derived)
+            or result["exit_code"] != expected_exit
+        ):
+            raise MgmtSyncError(invalid)
+
+    if kind == "refresh":
+        # A signed ACK without the native synchronized-state counters is
+        # not evidence of a successful Agent refresh.
+        if (
+            result.get("status") not in (
+                "SYNCHRONIZED", "DEGRADED", "OFFLINE", "UNKNOWN"
+            )
+            or type(result.get("updated")) is not int
+            or not 0 <= result["updated"] <= 1000000
+            or type(result.get("projected")) is not int
+            or not 0 <= result["projected"] <= 1000000
+            or not isinstance(result.get("affected"), list)
+            or len(result["affected"]) > 20
+            or not safe_message(result.get("runtime_error"))
+        ):
+            raise MgmtSyncError(invalid)
+        if "runtime_error" in result and not safe_message(result["runtime_error"]):
+            raise MgmtSyncError(invalid)
+        if "affected" in result:
+            affected = result["affected"]
+            if not isinstance(affected, list) or len(affected) > 20:
+                raise MgmtSyncError(invalid)
+            for item in affected:
+                if (
+                    not isinstance(item, dict)
+                    or set(item) - {"name", "reason"}
+                    or type(item.get("name")) is not str
+                    or len(item["name"]) > 128
+                    or not safe_message(item.get("reason", ""))
+                ):
+                    raise MgmtSyncError(invalid)
+
+    if kind == "version-check":
+        # The native Agent always returns a complete bounded comparison.
+        # A signed bare operation or contradictory update flags are UNKNOWN.
+        limits = {
+            "project_version": 64,
+            "relay_engine_version": 64,
+            "release_channel": 40,
+            "source_ref": 256,
+            "source_head": 64,
+            "target_project_version": 64,
+            "target_relay_engine_version": 64,
+            "target_release_channel": 40,
+        }
+        if any(
+            type(result.get(key)) is not str
+            or not 1 <= len(result[key]) <= limit
+            or any(not 33 <= ord(char) <= 126 for char in result[key])
+            for key, limit in limits.items()
+        ):
+            raise MgmtSyncError(invalid)
+        for current, target, flag in (
+            ("project_version", "target_project_version", "product_update_available"),
+            ("relay_engine_version", "target_relay_engine_version",
+             "relay_engine_update_available"),
+        ):
+            reported = result.get(flag)
+            if reported is not None and type(reported) is not bool:
+                raise MgmtSyncError(invalid)
+            expected = (
+                None if "unknown" in (result[current], result[target])
+                else result[current] != result[target]
+            )
+            if reported is not expected:
+                raise MgmtSyncError(invalid)
+
+    if kind == "support-bundle":
+        # The Agent signs a receipt, not the archive itself. Persist SUCCESS
+        # only with the complete, bounded native metadata, not a bare name.
+        path = result.get("artifact_path")
+        digest = result.get("sha256")
+        role = result.get("role")
+        size = result.get("size")
+        sections = result.get("section_count")
+        skipped = result.get("skipped_count")
+        if (
+            not isinstance(path, str)
+            or not 1 <= len(path) <= 2048
+            or not path.startswith("/var/lib/drlink/")
+            or not path.endswith(".tar.gz")
+            or any(ord(char) < 33 or ord(char) > 126 or char == "\\" for char in path)
+            or any(part in ("", ".", "..") for part in path.split("/")[1:])
+            or type(size) is not int or not 1 <= size <= (1 << 40)
+            or not isinstance(digest, str) or len(digest) != 64
+            or any(char not in "0123456789abcdef" for char in digest)
+            or result.get("sanitized") is not True
+            or type(sections) is not int or not 0 <= sections <= 2048
+            or type(skipped) is not int or not 0 <= skipped <= 2048
+            or not isinstance(role, str) or not 1 <= len(role) <= 40
+            or any(char not in "abcdefghijklmnopqrstuvwxyz0123456789_-" for char in role)
+        ):
+            raise MgmtSyncError(invalid)
+
+    if kind == "remote-service-set":
+        if "reason" in result and not safe_message(result["reason"]):
+            raise MgmtSyncError(invalid)
+        # This display-only Agent endpoint is untrusted receipt metadata,
+        # never Core evidence of a reachable remote socket. Do not persist
+        # nested/private data or multiline control characters in Job history.
+        if "endpoint" in result:
+            endpoint = result["endpoint"]
+            if endpoint is not None and (
+                type(endpoint) is not str
+                or not 1 <= len(endpoint) <= 512
+                or any(not 32 <= ord(char) <= 126 for char in endpoint)
+            ):
+                raise MgmtSyncError(invalid)
+
+
 def server_complete_management_job(plane, auth: MgmtAuthContext, body: dict) -> dict:
     """Complete only the authenticated Managed Host's currently claimed target."""
     from drlink_v30_jobs import ManagementJobEngine, FAILED, SUCCEEDED
@@ -1604,14 +1807,23 @@ def server_complete_management_job(plane, auth: MgmtAuthContext, body: dict) -> 
     job_id = str((body or {}).get("id") or "").strip()
     claim_token = str((body or {}).get("claim_token") or "").strip()
     status = str((body or {}).get("status") or "").strip().upper()
-    result = (body or {}).get("result") or {}
-    error = str((body or {}).get("error") or "")[:1024]
+    # Missing result is a legacy empty object; an explicitly supplied
+    # non-object must not be coerced into a successful Core Job receipt.
+    result = (body or {}).get("result", {})
     if not job_id or not claim_token:
         raise MgmtSyncError("Management Job id and claim token are required")
     if status not in (SUCCEEDED, FAILED):
         raise MgmtSyncError("Management Job completion status must be SUCCEEDED or FAILED")
     if not isinstance(result, dict):
         raise MgmtSyncError("Management Job result must be an object")
+    # Signed Agent requests authenticate the Host, not the safety of any
+    # free-form handler error text. Core owns the persisted diagnostic code.
+    # Ignore the incoming error field on both SUCCESS and FAILED completions.
+    error = "AGENT_JOB_EXECUTION_FAILED" if status == FAILED else ""
+    if status == FAILED:
+        # An unsuccessful signed Agent job has no verified result payload.
+        # Do not retain untrusted diagnostic, credential or partial data.
+        result = {}
     engine = ManagementJobEngine(getattr(plane, "root", None))
     try:
         if status == SUCCEEDED:
@@ -1622,16 +1834,106 @@ def server_complete_management_job(plane, auth: MgmtAuthContext, body: dict) -> 
             from drlink_v30_jobs import ROLLOUT_JOB_TYPE
 
             claimed = engine.conn.execute(
-                "SELECT j.job_type FROM management_jobs j "
+                "SELECT j.job_type,j.payload_json FROM management_jobs j "
                 "JOIN management_job_targets t ON t.job_id=j.id "
                 "WHERE j.id=? AND t.target_id=? AND t.claim_token=? "
                 "AND t.status='RUNNING'",
                 (job_id, machine_id, claim_token),
             ).fetchone()
+            if claimed:
+                # Host request signatures authenticate an enrolled Agent,
+                # not arbitrary result fields it may inject into Core's
+                # queryable Job history. Accept only documented native
+                # top-level receipt keys for the claimed operation.
+                receipt_fields = {
+                    "doctor": frozenset((
+                        "operation", "overall", "exit_code", "check_count",
+                        "counts", "findings", "network_probe_performed",
+                    )),
+                    "refresh": frozenset((
+                        "operation", "status", "updated", "projected",
+                        "affected", "runtime_error",
+                    )),
+                    "version-check": frozenset((
+                        "operation", "project_version",
+                        "relay_engine_version", "release_channel",
+                        "source_ref", "source_head",
+                        "target_project_version", "target_relay_engine_version",
+                        "target_release_channel", "product_update_available",
+                        "relay_engine_update_available",
+                    )),
+                    "support-bundle": frozenset((
+                        "operation", "artifact_path", "size", "sha256",
+                        "sanitized", "section_count", "skipped_count", "role",
+                    )),
+                    "remote-service-set": frozenset((
+                        "operation", "name", "runtime_status", "reason",
+                        "endpoint",
+                    )),
+                    "remote-service-delete": frozenset((
+                        "operation", "name", "status", "runtime_verified",
+                    )),
+                }
+                allowed = receipt_fields.get(str(claimed["job_type"]))
+                if allowed is not None and any(field not in allowed for field in result):
+                    raise MgmtSyncError(
+                        "Core Management Job completion contains unexpected result fields."
+                    )
+                _require_safe_signed_job_diagnostics(
+                    str(claimed["job_type"]), result
+                )
             if claimed and str(claimed["job_type"]) == ROLLOUT_JOB_TYPE:
                 raise MgmtSyncError(
                     "AGENT_UPDATER_NOT_QUALIFIED: signed Agent update completion is unavailable"
                 )
+            if claimed and str(claimed["job_type"]) in (
+                "doctor", "refresh", "version-check", "support-bundle"
+            ) and result.get("operation") != str(claimed["job_type"]):
+                # A signed response alone does not prove which diagnostic
+                # operation produced it. Preserve Core's queued Job identity.
+                raise MgmtSyncError(
+                    "Core Management Job completion receipt does not match requested Job type."
+                )
+            if claimed and str(claimed["job_type"]) in (
+                "remote-service-set", "remote-service-delete"
+            ):
+                # The signed caller is the enrolled Host, but its completion
+                # still must identify the exact Core-requested operation and
+                # immutable Remote Service name. An unrelated Job receipt is
+                # never evidence that the requested mutation was performed.
+                kind = str(claimed["job_type"])
+                try:
+                    requested = json.loads(str(claimed["payload_json"] or "{}"))
+                except (TypeError, ValueError):
+                    requested = None
+                name = requested.get("name") if isinstance(requested, dict) else None
+                if (
+                    not isinstance(name, str) or not name
+                    or result.get("operation") != kind
+                    or result.get("name") != name
+                    # Only the native Agent local Remote Service view's
+                    # recognized states are usable as a set receipt. A signed
+                    # identity alone cannot turn UNKNOWN/missing evidence into
+                    # an asserted successful local configuration mutation.
+                    or (kind == "remote-service-set"
+                        and (not isinstance(result.get("runtime_status"), str)
+                             or result["runtime_status"] not in (
+                                 "HEALTHY", "DEGRADED", "DISABLED")
+                             # Native Agent always reports DISABLED for
+                             # Core-requested disabled services. A signed
+                             # HEALTHY receipt must not override that intent.
+                             or type(requested.get("enabled")) is not bool
+                             or (requested["enabled"] is False
+                                 and result["runtime_status"] != "DISABLED")))
+                    # Deleting local configuration explicitly does not prove
+                    # a running transport endpoint has been torn down.
+                    or (kind == "remote-service-delete"
+                        and (result.get("status") != "DELETED"
+                             or result.get("runtime_verified") is not False))
+                ):
+                    raise MgmtSyncError(
+                        "Core Management Job completion receipt does not match requested Remote Service."
+                    )
         job = engine.complete_target(
             job_id=job_id,
             target_id=machine_id,

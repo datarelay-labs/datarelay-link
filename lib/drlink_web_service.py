@@ -16,7 +16,7 @@ from typing import Any, Optional
 from urllib.parse import parse_qs, unquote, urlparse
 
 from drlink_control_db import ControlPlaneError
-from drlink_management_core import ManagementActor
+from drlink_management_core import ManagementActor, ManagementAuthorizationError
 from drlink_management_service import ManagementQueryService
 from drlink_management_web_adapter import ManagementWebApiAdapter
 from drlink_web_auth import ROLE_ADMIN, WebAuthService, WebMfaEnrollmentChallenge, WebPrincipal
@@ -398,6 +398,18 @@ class WebApplication:
             if len(parts) == 2 and parts[1] == "export":
                 return self.adapter.draft_export(draft_id, actor=actor)
             raise ControlPlaneError("Web API route was not found.")
+        if path == "/api/v1/temporary-access-requests":
+            return self.adapter.temporary_access_request_list(
+                actor=actor,
+                status=_first(query, "status"),
+                limit=_int_arg(_first(query, "limit"), 50, high=100),
+                cursor=_first(query, "cursor"),
+            )
+        if path.startswith("/api/v1/temporary-access-requests/"):
+            request_id = path[len("/api/v1/temporary-access-requests/") :].strip()
+            if not request_id or "/" in request_id:
+                raise ControlPlaneError("Temporary Access request was not found.")
+            return self.adapter.temporary_access_request_get(request_id, actor=actor)
         if path == "/api/v1/jobs":
             payload: dict[str, Any] = {
                 "limit": _int_arg(_first(query, "limit"), 50)
@@ -670,6 +682,45 @@ class WebApplication:
                 },
                 actor=self._actor(principal),
             )
+        if path == "/api/v1/temporary-access-requests":
+            duration = body.get("duration_seconds")
+            if isinstance(duration, bool) or not isinstance(duration, int):
+                raise ControlPlaneError("duration_seconds must be an integer.")
+            return self.adapter.temporary_access_request_create(
+                actor=self._actor(principal),
+                plane=str(body.get("plane") or ""),
+                rule=str(body.get("rule") or ""),
+                purpose=str(body.get("purpose") or ""),
+                duration_seconds=duration,
+            )
+        if path.startswith("/api/v1/temporary-access-requests/"):
+            suffix = path[len("/api/v1/temporary-access-requests/") :]
+            parts = [item for item in suffix.split("/") if item]
+            if len(parts) != 2:
+                raise ControlPlaneError("Temporary Access request operation was not found.")
+            request_id, action = parts
+            row_version = body.get("row_version")
+            if isinstance(row_version, bool) or not isinstance(row_version, int):
+                raise ControlPlaneError("row_version must be an integer.")
+            if action == "review":
+                approved = body.get("approved_duration_seconds")
+                if approved is not None and (isinstance(approved, bool) or not isinstance(approved, int)):
+                    raise ControlPlaneError("approved_duration_seconds must be an integer.")
+                return self.adapter.temporary_access_request_review(
+                    request_id,
+                    actor=self._actor(principal),
+                    decision=str(body.get("decision") or ""),
+                    approved_duration_seconds=approved,
+                    reason=str(body.get("reason") or ""),
+                    row_version=row_version,
+                )
+            if action == "revoke":
+                return self.adapter.temporary_access_request_revoke(
+                    request_id,
+                    actor=self._actor(principal),
+                    row_version=row_version,
+                )
+            raise ControlPlaneError("Temporary Access request operation was not found.")
         if path == "/api/v1/temporary-access/preview":
             payload = {
                 "plane": str(body.get("plane") or ""),
@@ -1051,6 +1102,8 @@ class DrlinkWebHandler(BaseHTTPRequestHandler):
                     parsed.path, parse_qs(parsed.query, keep_blank_values=True), principal
                 )
                 self._json(200, payload)
+            except ManagementAuthorizationError as exc:
+                self._error(403, str(exc))
             except ControlPlaneError as exc:
                 self._error(400, str(exc))
             except Exception:
@@ -1159,6 +1212,8 @@ class DrlinkWebHandler(BaseHTTPRequestHandler):
                 if clear
                 else None,
             )
+        except ManagementAuthorizationError as exc:
+            self._error(403, str(exc))
         except ControlPlaneError as exc:
             self._error(400, str(exc))
         except Exception:

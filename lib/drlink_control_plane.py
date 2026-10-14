@@ -4960,21 +4960,44 @@ class ControlPlane:
         patterns: list[str],
         timeout: Optional[int],
     ) -> str:
+        # Fail before queue mutation: a malformed source request must not
+        # create a Job that the Agent/strict Core Claim can never execute.
+        if not isinstance(arguments, dict):
+            raise ControlPlaneError("AI Job arguments must be an object")
+        if patterns is not None and not isinstance(patterns, (list, tuple)):
+            raise ControlPlaneError("AI Job patterns must be an array")
+        selected_patterns = list(patterns) if patterns is not None else []
+        if len(selected_patterns) > 128 or any(
+            not isinstance(item, str) or not item
+            or len(item) > 4096 or "\x00" in item
+            for item in selected_patterns
+        ):
+            raise ControlPlaneError("AI Job patterns are invalid or unbounded")
+        if timeout is not None and (
+            type(timeout) is not int or not 1 <= timeout <= 3600
+        ):
+            raise ControlPlaneError("AI Job timeout must be an integer in 1..3600")
+        timeout_seconds = 30 if timeout is None else timeout
         ensure_ai_jobs_safety_schema(self.conn)
         self.assert_ai_job_claimant(client_id)
         job_id = _new_id("job")
         now = utc_now_iso()
-        timeout_seconds = int(timeout or 30)
         deadline_at = _ai_job_deadline_iso(
             now, timeout_seconds + AI_JOB_DISPATCH_GRACE_SECONDS
         )
         payload = {
             "client_id": client_id,
             "arguments": arguments,
-            "patterns": list(patterns or []),
+            "patterns": selected_patterns,
             "timeout": timeout_seconds,
             "deadline_at": deadline_at,
         }
+        try:
+            payload_json = json.dumps(payload, sort_keys=True, allow_nan=False)
+        except (TypeError, ValueError, RecursionError):
+            raise ControlPlaneError(
+                "AI Job payload is not valid finite JSON"
+            ) from None
         self.conn.execute(
             "INSERT INTO ai_jobs(id, principal_id, endpoint_object_id, capability, payload_json, "
             "status, result_json, created_at, updated_at, timeout_seconds, client_id, deadline_at, "
@@ -4985,7 +5008,7 @@ class ControlPlane:
                 principal_id,
                 endpoint_object_id,
                 capability,
-                json.dumps(payload, sort_keys=True),
+                payload_json,
                 now,
                 now,
                 timeout_seconds,
@@ -5194,27 +5217,74 @@ class ControlPlane:
         return True
 
     def claim_ai_jobs(self, client_id: str, limit: int = 4) -> list[dict]:
+        # Direct Core users (including the internal Bridge) must not coerce
+        # invalid limits into a lease-changing operation. Keep the existing
+        # Bridge batch of 64 supported while bounding larger callers.
+        if type(limit) is not int or limit < 1:
+            raise ControlPlaneError("AI job claim limit must be a positive integer")
+        take = min(limit, 64)
         ensure_ai_jobs_safety_schema(self.conn)
         self.assert_ai_job_claimant(client_id)
         self.refresh_managed_host_liveness(client_id)
         now = utc_now_iso()
         self._terminalize_expired_queued_ai_jobs(client_id=client_id, now=now)
         self._fail_closed_stale_running_ai_jobs(client_id=client_id, now=now)
-        # Filter by target host before LIMIT so one busy host cannot starve another.
-        take = max(1, int(limit))
+        # Filter by target host, then scan a bounded window so a damaged
+        # earlier job cannot starve a healthy queued job on the same Host.
+        scan_limit = min(256, max(take, take * 4))
         rows = list(
             self.conn.execute(
                 "SELECT * FROM ai_jobs WHERE status = 'queued' AND client_id = ? "
                 "AND (deadline_at IS NULL OR deadline_at > ?) "
                 "ORDER BY created_at LIMIT ?",
-                (client_id, now, take),
+                (client_id, now, scan_limit),
             )
         )
+
+        def unique_pairs(pairs):
+            obj = {}
+            for key, value in pairs:
+                if key in obj:
+                    raise ValueError("duplicate AI Job payload field")
+                obj[key] = value
+            return obj
+
+        def deny_constant(_value):
+            raise ValueError("invalid AI Job payload number")
+
         claimed = []
         for row in rows:
             if len(claimed) >= take:
                 break
-            payload = json.loads(row["payload_json"] or "{}")
+            # Corrupt queue content must not create a one-shot Agent claim.
+            # Missing/ambiguous intent is never a valid empty operation.
+            raw_payload = row["payload_json"]
+            if not isinstance(raw_payload, str) or not raw_payload:
+                continue
+            try:
+                payload = json.loads(
+                    raw_payload, object_pairs_hook=unique_pairs,
+                    parse_constant=deny_constant,
+                )
+            except (TypeError, ValueError, RecursionError):
+                continue
+            args = payload.get("arguments") if isinstance(payload, dict) else None
+            patterns = payload.get("patterns") if isinstance(payload, dict) else None
+            duration = payload.get("timeout") if isinstance(payload, dict) else None
+            if (
+                not isinstance(payload, dict)
+                or payload.get("client_id") != client_id
+                or payload.get("deadline_at") != row["deadline_at"]
+                or not isinstance(args, dict)
+                or not isinstance(patterns, list) or len(patterns) > 128
+                or any(
+                    not isinstance(item, str) or not item
+                    or len(item) > 4096 or "\x00" in item
+                    for item in patterns
+                )
+                or type(duration) is not int or not 1 <= duration <= 3600
+            ):
+                continue
             claim_token = "atk_" + secrets.token_urlsafe(24)
             attempt_id = _new_id("att")
             self.conn.execute(
@@ -5321,6 +5391,22 @@ class ControlPlane:
             provided_attempt = str(attempt_id or "")
             if expected_attempt and provided_attempt != expected_attempt:
                 raise ControlPlaneError("AI job attempt mismatch")
+        # A long-running Agent may finish after Core's deadline without any
+        # intervening claim or sweeper. A matching signed claim is not renewed
+        # execution authority: do not persist its late result as DONE.
+        if _ai_job_deadline_passed(row["deadline_at"]):
+            terminal = (
+                "recovery_required"
+                if str(row["capability"] or "") in AI_MUTATING_CAPABILITIES
+                else "expired"
+            )
+            self.conn.execute(
+                "UPDATE ai_jobs SET status=?, updated_at=? "
+                "WHERE id=? AND status='running' AND claim_token=?",
+                (terminal, utc_now_iso(), job_id, expected_token),
+            )
+            self.commit_if_autonomous()
+            raise ControlPlaneError("AI job deadline expired before completion")
         full = dict(result or {})
         self._store_ai_job_result_blob(job_id, full)
         safe = dict(full)

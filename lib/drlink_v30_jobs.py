@@ -12,6 +12,7 @@ transactions.
 from __future__ import annotations
 
 import json
+import math
 import secrets
 import threading
 from concurrent.futures import Future, ThreadPoolExecutor
@@ -65,14 +66,67 @@ def _parse_utc(value: str) -> datetime:
     return parsed.astimezone(timezone.utc)
 
 
+def _unexpired_claim_clock(value: Any, now: datetime) -> bool:
+    """Accept only Core's canonical unexpired UTC-second claim timestamps."""
+    if not isinstance(value, str) or len(value) != 20 or not value.endswith("Z"):
+        return False
+    try:
+        instant = _parse_utc(value)
+        return _utc_text(instant) == value and instant > now
+    except (TypeError, ValueError, OverflowError):
+        return False
+
+
 def _json(value: Any, *, max_bytes: int = 16384, field: str = "Management Job JSON") -> str:
     try:
-        raw = json.dumps(value, sort_keys=True, separators=(",", ":"))
+        raw = json.dumps(
+            value, sort_keys=True, separators=(",", ":"), allow_nan=False,
+        )
     except (TypeError, ValueError) as exc:
         raise ControlPlaneError("%s is not JSON serializable." % field) from exc
     if len(raw.encode("utf-8")) > max_bytes:
         raise ControlPlaneError("%s exceeds the %d-byte bound." % (field, max_bytes))
     return raw
+
+
+def _strict_queued_job_payload(raw: Any) -> Optional[dict[str, Any]]:
+    """Return only an unambiguous bounded Core-owned queued Job payload.
+
+    Storage corruption is never authority to claim work with an invented
+    empty payload. This parser is deliberately read-only and fail-closed.
+    """
+    if not isinstance(raw, str) or not raw:
+        return None
+
+    def unique_pairs(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+        value: dict[str, Any] = {}
+        for key, item in pairs:
+            if key in value:
+                raise ValueError("duplicate Job payload field")
+            value[key] = item
+        return value
+
+    def reject_constant(_value: str) -> None:
+        raise ValueError("non-finite Job payload number")
+
+    def reject_nonfinite_float(text: str) -> float:
+        # JSON permits exponent notation, but Python can decode an extreme
+        # finite decimal as infinity; neither may become Core job authority.
+        parsed = float(text)
+        if not math.isfinite(parsed):
+            raise ValueError("non-finite Job payload number")
+        return parsed
+
+    try:
+        if len(raw.encode("utf-8")) > 16384:
+            return None
+        value = json.loads(
+            raw, object_pairs_hook=unique_pairs, parse_constant=reject_constant,
+            parse_float=reject_nonfinite_float,
+        )
+    except (TypeError, ValueError, UnicodeError, RecursionError):
+        return None
+    return value if isinstance(value, dict) else None
 
 
 def _bounded_text(value: Any, *, field: str, max_len: int = 256) -> str:
@@ -85,9 +139,21 @@ def _bounded_text(value: Any, *, field: str, max_len: int = 256) -> str:
 
 
 def _normalize_targets(targets: Iterable[str], *, max_targets: int) -> tuple[str, ...]:
+    # Strings iterate individual characters and mappings iterate keys; neither
+    # represents an explicit collection of immutable Managed Host targets.
+    if targets is None or isinstance(targets, (str, bytes, bytearray, Mapping)):
+        raise ControlPlaneError("Management Job targets must be an iterable of text IDs.")
+    try:
+        iterator = iter(targets)
+    except TypeError as exc:
+        raise ControlPlaneError(
+            "Management Job targets must be an iterable of text IDs."
+        ) from exc
     seen: set[str] = set()
     ordered: list[str] = []
-    for raw in targets:
+    for raw in iterator:
+        if not isinstance(raw, str):
+            raise ControlPlaneError("Management Job target must be text.")
         target = _bounded_text(raw, field="Management Job target")
         if target in seen:
             continue
@@ -234,10 +300,15 @@ class ManagementJobEngine:
             )
         actor = _bounded_text(requested_by, field="Management Job actor")
         target_ids = _normalize_targets(targets, max_targets=self.max_targets)
-        try:
-            timeout = int(timeout_seconds)
-        except (TypeError, ValueError) as exc:
-            raise ControlPlaneError("Management Job timeout must be an integer.") from exc
+        # The authoritative Core queue must not silently turn a malformed
+        # caller payload into an empty object or persist an executable array.
+        if payload is not None and not isinstance(payload, dict):
+            raise ControlPlaneError("Management Job payload must be an object.")
+        # Do not coerce boolean, fractional or string deadlines into a real
+        # Job: a changed timeout can expire a queued operation unexpectedly.
+        if type(timeout_seconds) is not int:
+            raise ControlPlaneError("Management Job timeout must be an integer.")
+        timeout = timeout_seconds
         if timeout < 1 or timeout > MAX_JOB_TIMEOUT_SECONDS:
             raise ControlPlaneError(
                 "Management Job timeout must be between 1 and %d seconds."
@@ -305,14 +376,21 @@ class ManagementJobEngine:
             (str(job_id), self.max_targets),
         ).fetchall()
         out = {key: job[key] for key in job.keys() if key != "payload_json"}
-        out["payload"] = json.loads(str(job["payload_json"] or "{}"))
+        payload = _strict_queued_job_payload(job["payload_json"])
+        if payload is None:
+            # A read-only Job detail must not present a corrupt queued
+            # payload as a legitimate empty object or leak raw stored text.
+            raise ControlPlaneError("Management Job stored payload is malformed.")
+        out["payload"] = payload
         out["targets"] = []
         for row in targets:
             item = {key: row[key] for key in row.keys() if key != "result_json"}
-            try:
-                item["result"] = json.loads(str(row["result_json"] or "{}"))
-            except ValueError:
-                item["result"] = {}
+            result = _strict_queued_job_payload(row["result_json"])
+            if result is None:
+                # A corrupt result must not appear as successful empty
+                # evidence in Core/Web Job history.
+                raise ControlPlaneError("Management Job stored result is malformed.")
+            item["result"] = result
             out["targets"].append(item)
         return out
 
@@ -360,17 +438,45 @@ class ManagementJobEngine:
         job_id = str(row["job_id"])
         target = str(row["target_id"])
         try:
-            payload = json.loads(str(row["payload_json"] or "{}"))
-            if not isinstance(payload, dict):
+            payload = _strict_queued_job_payload(row["payload_json"])
+            if payload is None:
                 return False
-            canary_list = payload.get("canary_targets") or []
-            if not isinstance(canary_list, list) or any(
-                not isinstance(host, str) or not host for host in canary_list
+            # This scheduler is independently reachable from the Core claim
+            # path: reject corrupted artifact identity or a coerced operator
+            # pause flag before issuing even an offline rollout lease.
+            artifact = payload.get("artifact")
+            if not isinstance(artifact, dict):
+                return False
+            version = artifact.get("version")
+            source_ref = artifact.get("source_ref")
+            sha256 = artifact.get("sha256")
+            hexchars = frozenset("0123456789abcdefABCDEF")
+            if (not isinstance(version, str) or not version.strip()
+                or not isinstance(source_ref, str) or len(source_ref) != 40
+                or not all(char in hexchars for char in source_ref)
+                or not isinstance(sha256, str) or len(sha256) != 64
+                or not all(char in hexchars for char in sha256)
+                or type(payload.get("operator_paused", False)) is not bool):
+                return False
+            # Only the exact validated Core rollout shape can authorize a
+            # staged Agent claim. Never silently upgrade corrupt/missing
+            # canaries to an unrestricted wave or coerce bool/float/string
+            # bounds from persisted state.
+            canary_list = payload.get("canary_targets")
+            if not isinstance(canary_list, list) or not canary_list or any(
+                not isinstance(host, str) or not host or host != host.strip()
+                for host in canary_list
+            ) or len(set(canary_list)) != len(canary_list):
+                return False
+            if payload.get("rollout_state") not in (
+                "CANARY", "WAVE", "PAUSED", "HALTED"
             ):
                 return False
+            wave_size = payload.get("wave_size")
+            threshold = payload.get("failure_threshold_percent")
+            if type(wave_size) is not int or type(threshold) is not int:
+                return False
             canaries = set(canary_list)
-            wave_size = int(payload["wave_size"])
-            threshold = int(payload["failure_threshold_percent"])
             if wave_size < 1 or wave_size > MAX_ROLLOUT_WAVE_SIZE or not 0 <= threshold <= 100:
                 raise ValueError("invalid scheduling bounds")
         except (TypeError, KeyError, ValueError, json.JSONDecodeError):
@@ -434,7 +540,13 @@ class ManagementJobEngine:
         now: Optional[datetime] = None,
     ) -> list[dict[str, Any]]:
         worker = _bounded_text(worker_id, field="Management Job worker")
-        count = max(1, min(int(limit), MAX_CLAIM_BATCH))
+        # Claiming reserves Core leases. Reject invalid or coerced counts
+        # before any deadline recovery, transaction or target state mutation.
+        if type(limit) is not int or limit < 1:
+            raise ControlPlaneError(
+                "Management Job claim limit must be a positive integer."
+            )
+        count = min(limit, MAX_CLAIM_BATCH)
         # A small requested claim batch must not hide eligible canaries behind
         # alphabetically earlier non-canary targets or other paused jobs.
         scan_limit = min(
@@ -478,7 +590,23 @@ class ManagementJobEngine:
             for row in rows:
                 if len(claimed) >= count:
                     break
+                # SQL TEXT ordering is not proof of an unexpired UTC deadline.
+                # Refuse malformed or noncanonical persisted timestamps before
+                # issuing a one-shot Agent lease.
+                if not _unexpired_claim_clock(row["deadline_at"], current_dt):
+                    continue
+                # Never lease a Job whose persisted intent is malformed,
+                # ambiguous, non-object, non-finite or outside the source
+                # storage bound. A corrupted record remains QUEUED and
+                # eventually expires rather than executing as empty intent.
+                payload = _strict_queued_job_payload(row["payload_json"])
+                if payload is None:
+                    continue
                 kind = str(row["job_type"])
+                # A corrupted persisted Job family is not permission to
+                # dispatch arbitrary Agent RPCs or synthetic success claims.
+                if kind not in ADMITTED_JOB_TYPES:
+                    continue
                 if kind in MUTATING_AGENT_JOB_TYPES:
                     host = self.conn.execute(
                         "SELECT trust_status,admission_state,status FROM clients WHERE id=?",
@@ -516,10 +644,6 @@ class ManagementJobEngine:
                     "started_at=COALESCE(started_at,?),updated_at=? WHERE id=?",
                     (current, current, row["job_id"]),
                 )
-                try:
-                    payload = json.loads(str(row["payload_json"] or "{}"))
-                except ValueError:
-                    payload = {}
                 claimed.append(
                     {
                         "job_id": str(row["job_id"]),
@@ -571,18 +695,32 @@ class ManagementJobEngine:
                 )
             late_reason = ""
             try:
-                if current_dt >= _parse_utc(str(claim["deadline_at"])):
-                    late_reason = "DEADLINE_EXCEEDED"
-                elif claim["lease_expires_at"] and current_dt >= _parse_utc(
-                    str(claim["lease_expires_at"])
-                ):
-                    late_reason = "WORKER_LEASE_EXPIRED"
-            except ValueError:
+                # Completion, like claim dispatch, requires canonical, live
+                # Core clocks. An absent or noncanonical RUNNING lease must
+                # never validate an unverified Agent success acknowledgement.
+                if not _unexpired_claim_clock(claim["deadline_at"], current_dt):
+                    late_reason = (
+                        "DEADLINE_EXCEEDED"
+                        if current_dt >= _parse_utc(str(claim["deadline_at"]))
+                        else "INVALID_EXECUTION_DEADLINE"
+                    )
+                elif not _unexpired_claim_clock(claim["lease_expires_at"], current_dt):
+                    late_reason = (
+                        "WORKER_LEASE_EXPIRED"
+                        if current_dt >= _parse_utc(str(claim["lease_expires_at"]))
+                        else "INVALID_EXECUTION_DEADLINE"
+                    )
+            except (TypeError, ValueError, OverflowError):
                 late_reason = "INVALID_EXECUTION_DEADLINE"
             if late_reason:
                 terminal = FAILED
                 result = {}
                 error = late_reason
+            if terminal != SUCCEEDED:
+                # Failed/cancelled work has no verified result payload. Keep
+                # untrusted partial diagnostics or credentials out of the
+                # authoritative Core Job history on every completion path.
+                result = {}
             updated = self.conn.execute(
                 "UPDATE management_job_targets SET status=?,finished_at=?,lease_expires_at=NULL,"
                 "updated_at=?,result_json=?,error=? "
@@ -726,6 +864,11 @@ class ManagementJobEngine:
     ) -> tuple[tuple[str, ...], dict[str, Any]]:
         """Validate one immutable request shape for both preview and apply."""
         target_ids = _normalize_targets(targets, max_targets=self.max_targets)
+        # Do not reinterpret string characters or mapping keys as canaries.
+        if canary_targets is None or isinstance(
+            canary_targets, (str, bytes, bytearray, Mapping)
+        ):
+            raise ControlPlaneError("Rollout canary targets must be a collection of IDs.")
         requested_canaries = tuple(canary_targets)
         canaries = (
             _normalize_targets(requested_canaries, max_targets=self.max_targets)
@@ -733,11 +876,11 @@ class ManagementJobEngine:
         )
         if set(canaries) - set(target_ids):
             raise ControlPlaneError("Rollout canary target is outside the explicit target set.")
-        try:
-            size = int(wave_size)
-            threshold = int(failure_threshold_percent)
-        except (TypeError, ValueError) as exc:
-            raise ControlPlaneError("Rollout wave size and failure threshold must be integers.") from exc
+        # A coerced bool, string or fraction must never alter a canary wave.
+        if type(wave_size) is not int or type(failure_threshold_percent) is not int:
+            raise ControlPlaneError("Rollout wave size and failure threshold must be integers.")
+        size = wave_size
+        threshold = failure_threshold_percent
         if size < 1 or size > min(MAX_ROLLOUT_WAVE_SIZE, self.max_targets):
             raise ControlPlaneError("Rollout wave size is outside the bounded 3.0 range.")
         if not canaries:
@@ -852,8 +995,12 @@ class ManagementJobEngine:
         Agent-owned and no SQLite transaction is held while an Agent updates.
         """
         target_ids = _normalize_targets(targets, max_targets=self.max_targets)
-        # Materialize a caller-provided iterator once; consuming it to check
-        # emptiness must not silently discard the actual canary selection.
+        # Preserve iterator-backed canaries while rejecting a mapping or
+        # scalar masquerading as an explicit list of Host identities.
+        if canary_targets is None or isinstance(
+            canary_targets, (str, bytes, bytearray, Mapping)
+        ):
+            raise ControlPlaneError("Rollout canary targets must be a collection of IDs.")
         requested_canaries = tuple(canary_targets)
         canaries = (
             _normalize_targets(requested_canaries, max_targets=self.max_targets)
@@ -862,11 +1009,10 @@ class ManagementJobEngine:
         unknown = sorted(set(canaries) - set(target_ids))
         if unknown:
             raise ControlPlaneError("Rollout canary target is outside the explicit target set.")
-        try:
-            size = int(wave_size)
-            threshold = int(failure_threshold_percent)
-        except (TypeError, ValueError) as exc:
-            raise ControlPlaneError("Rollout wave size and failure threshold must be integers.") from exc
+        if type(wave_size) is not int or type(failure_threshold_percent) is not int:
+            raise ControlPlaneError("Rollout wave size and failure threshold must be integers.")
+        size = wave_size
+        threshold = failure_threshold_percent
         if size < 1 or size > min(MAX_ROLLOUT_WAVE_SIZE, self.max_targets):
             raise ControlPlaneError("Rollout wave size is outside the bounded 3.0 range.")
         # When no explicit canary is provided, treat the first bounded wave
@@ -934,7 +1080,46 @@ class ManagementJobEngine:
                     raise ControlPlaneError("Managed Update rollout was not found.")
                 if str(row["status"]) in TERMINAL_STATUSES:
                     raise ControlPlaneError("Completed rollout cannot be paused or resumed.")
-                payload = json.loads(str(row["payload_json"] or "{}"))
+                # Pause/resume is not permission to repair or reinterpret a
+                # corrupted Core rollout plan. Preserve the original bytes
+                # and target state until the persisted intent is investigated.
+                payload = _strict_queued_job_payload(row["payload_json"])
+                artifact = payload.get("artifact") if payload is not None else None
+                canaries = payload.get("canary_targets") if payload is not None else None
+                wave_size = payload.get("wave_size") if payload is not None else None
+                threshold = payload.get("failure_threshold_percent") if payload is not None else None
+                state = payload.get("rollout_state") if payload is not None else None
+                hexchars = frozenset("0123456789abcdefABCDEF")
+                source_ref = artifact.get("source_ref") if isinstance(artifact, dict) else None
+                sha256 = artifact.get("sha256") if isinstance(artifact, dict) else None
+                version = artifact.get("version") if isinstance(artifact, dict) else None
+                target_ids = {
+                    str(target["target_id"]) for target in self.conn.execute(
+                        "SELECT target_id FROM management_job_targets WHERE job_id=?",
+                        (str(job_id),),
+                    )
+                }
+                if (
+                    not isinstance(payload, dict)
+                    or not isinstance(version, str) or not version.strip()
+                    or not isinstance(source_ref, str) or len(source_ref) != 40
+                    or not all(ch in hexchars for ch in source_ref)
+                    or not isinstance(sha256, str) or len(sha256) != 64
+                    or not all(ch in hexchars for ch in sha256)
+                    or not isinstance(canaries, list) or not canaries
+                    or len(canaries) > self.max_targets
+                    or any(not isinstance(host, str) or not host
+                           or host != host.strip() for host in canaries)
+                    or len(set(canaries)) != len(canaries)
+                    or not set(canaries).issubset(target_ids)
+                    or type(wave_size) is not int
+                    or not 1 <= wave_size <= min(MAX_ROLLOUT_WAVE_SIZE, self.max_targets)
+                    or type(threshold) is not int
+                    or not 0 <= threshold <= MAX_ROLLOUT_FAILURE_THRESHOLD
+                    or state not in ("CANARY", "WAVE", "PAUSED", "HALTED")
+                    or type(payload.get("operator_paused", False)) is not bool
+                ):
+                    raise ControlPlaneError("Management Job stored rollout payload is malformed.")
                 payload["operator_paused"] = verb == "pause"
                 if verb == "pause":
                     payload["rollout_state"] = "PAUSED"
@@ -1050,8 +1235,20 @@ class BoundedAgentRpcWorkerPool:
         claim: dict[str, Any],
         handler: Callable[[dict[str, Any]], Optional[dict[str, Any]]],
     ) -> dict[str, Any]:
-        try:
-            if engine.is_cancel_requested(claim["job_id"]):
+        # A claimed Job may sit in an executor queue until Core's lease or
+        # deadline has expired. Check again at the worker execution boundary:
+        # executing it then sending a downgraded completion is not safe.
+        now = _utc_now()
+        if (
+            not _unexpired_claim_clock(claim.get("lease_expires_at"), now)
+            or not _unexpired_claim_clock(claim.get("deadline_at"), now)
+        ):
+            raise ControlPlaneError(
+                "Management Job claim UNKNOWN; inspect Core lease and deadline before retrying."
+            )
+        if engine.is_cancel_requested(claim["job_id"]):
+            # An ambiguous CANCELLED receipt must not be re-reported FAILED.
+            try:
                 return engine.complete_target(
                     job_id=claim["job_id"],
                     target_id=claim["target_id"],
@@ -1059,6 +1256,13 @@ class BoundedAgentRpcWorkerPool:
                     status=CANCELLED,
                     error="CANCELLED_BEFORE_RPC",
                 )
+            except Exception:
+                # Do not expose Core persistence/transport errors that may
+                # include private fields, or invent a terminal Job result.
+                raise ControlPlaneError(
+                    "Management Job completion receipt UNKNOWN; inspect Core before retrying."
+                ) from None
+        try:
             if claim.get("job_type") == ROLLOUT_JOB_TYPE:
                 # A generic callable does not prove signed artifact identity,
                 # post-update health or rollback. Never report rollout success
@@ -1066,25 +1270,45 @@ class BoundedAgentRpcWorkerPool:
                 raise ControlPlaneError(
                     "AGENT_UPDATER_NOT_QUALIFIED: signed Agent updater and rollback are required."
                 )
-            result = handler(dict(claim))
-            return engine.complete_target(
-                job_id=claim["job_id"],
-                target_id=claim["target_id"],
-                claim_token=claim["claim_token"],
-                status=SUCCEEDED,
-                result=dict(result or {}),
-            )
-        except Exception as exc:
+            result = dict(handler(dict(claim)) or {})
+        except Exception:
             try:
                 return engine.complete_target(
                     job_id=claim["job_id"],
                     target_id=claim["target_id"],
                     claim_token=claim["claim_token"],
                     status=FAILED,
-                    error=str(exc)[:1024],
+                    # Handler exception text can include secrets or payloads;
+                    # persist only fixed codes in Core's queryable Job history.
+                    # Preserve the explicit unqualified-rollout safety reason.
+                    error=(
+                        "AGENT_UPDATER_NOT_QUALIFIED"
+                        if claim.get("job_type") == ROLLOUT_JOB_TYPE
+                        else "AGENT_JOB_EXECUTION_FAILED"
+                    ),
                 )
             except Exception:
-                raise exc
+                # An unconfirmed Core failure receipt must never expose the
+                # handler's raw exception (possibly credentials) to a worker log.
+                # Core remains authoritative: do not guess at terminal status.
+                raise ControlPlaneError(
+                    "Management Job completion receipt UNKNOWN; inspect Core before retrying."
+                ) from None
+        # Completion acknowledgement can fail AFTER Core committed SUCCEEDED.
+        # Never send a contradictory FAILED completion for an executed handler
+        # or expose raw completion errors that may contain sensitive payloads.
+        try:
+            return engine.complete_target(
+                job_id=claim["job_id"],
+                target_id=claim["target_id"],
+                claim_token=claim["claim_token"],
+                status=SUCCEEDED,
+                result=result,
+            )
+        except Exception:
+            raise ControlPlaneError(
+                "Management Job completion receipt UNKNOWN; inspect Core before retrying."
+            ) from None
 
     def dispatch_once(
         self,
@@ -1096,10 +1320,11 @@ class BoundedAgentRpcWorkerPool:
     ) -> list[Future]:
         if self._closed:
             raise ControlPlaneError("Agent RPC worker pool is closed.")
-        wanted = min(
-            self.capacity,
-            max(1, int(limit if limit is not None else self.max_workers)),
-        )
+        # Reserving work changes Core leases. Reject invalid caller bounds
+        # before acquiring any worker slot or requesting a mutable claim.
+        if limit is not None and (type(limit) is not int or limit < 1):
+            raise ControlPlaneError("Agent RPC worker dispatch limit must be a positive integer.")
+        wanted = min(self.capacity, limit if limit is not None else self.max_workers)
         reserved = 0
         for _ in range(wanted):
             if not self._slots.acquire(blocking=False):
@@ -1116,8 +1341,17 @@ class BoundedAgentRpcWorkerPool:
         for _ in range(reserved - len(claims)):
             self._slots.release()
         futures: list[Future] = []
-        for claim in claims:
-            future = self._executor.submit(self._run_claim, engine, claim, handler)
+        for index, claim in enumerate(claims):
+            try:
+                future = self._executor.submit(self._run_claim, engine, claim, handler)
+            except Exception:
+                # A concurrent shutdown/rejected submission must not leak
+                # reservations for work never accepted by the executor.
+                # Core retains the claimed targets for lease recovery; do not
+                # fabricate a completed Agent execution or release its claim.
+                for _ in range(len(claims) - index):
+                    self._slots.release()
+                raise
             future.add_done_callback(lambda _f: self._slots.release())
             futures.append(future)
         return futures

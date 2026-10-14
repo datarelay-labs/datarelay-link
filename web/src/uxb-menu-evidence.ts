@@ -1,3 +1,5 @@
+import {isObservedAbsoluteTime} from "./uxb-integrations-state";
+
 /** UXB-06F: a successful HTTP response is not automatically a valid, empty Core page.
  * Each listed menu must receive its canonical collection before showing "No results".
  * This changes Web presentation only; the Server/Core remains the authority. */
@@ -20,6 +22,528 @@ const collectionPages:Record<string,string>={
  * check loaded rows and may not find the rest. */
 export function isPartialCorePage(payload:any):boolean{
   return typeof payload?.next_cursor==="string"&&payload.next_cursor.length>0;
+}
+
+/** SQLite policy rows carry enabled=0/1, but a missing or malformed field
+ * is not evidence of Disabled. This is presentation only; Core is authority.
+ */
+export function policyStateLabel(value:unknown):"Enabled"|"Disabled"|"UNKNOWN"{
+  if(value===true||value===1)return "Enabled";
+  if(value===false||value===0)return "Disabled";
+  return "UNKNOWN";
+}
+/** An explicit Core NULL expiry means no expiry; an absent/invalid field
+ * means the Web has no reliable expiry evidence.
+ */
+export function policyExpiryLabel(item:unknown):string{
+  if(!item||typeof item!=="object"||Array.isArray(item))return "UNKNOWN";
+  const row=item as Record<string,unknown>;
+  if(!Object.prototype.hasOwnProperty.call(row,"expires_at"))return "UNKNOWN";
+  if(row.expires_at===null)return "Never";
+  if(!isObservedAbsoluteTime(row.expires_at))return "UNKNOWN";
+  return row.expires_at;
+}
+
+/** Legacy guided Object, Host and Policy panels must not interpret an
+ * HTTP 200 as permission to apply an arbitrary or expired Core Change Plan.
+ * Core still performs the actual actor-bound authorization and mutation.
+ */
+export function guidedChangePreviewMatchesIntent(
+ input:unknown,request:unknown,now:number=Date.now()
+):boolean{
+ const obj=(v:unknown):v is Record<string,any>=>!!v&&typeof v==="object"&&!Array.isArray(v);
+ const safe=(v:unknown,max=160):v is string=>typeof v==="string"
+   &&v.length<=max&&!/[\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/.test(v);
+ if(!obj(input)||!obj(request)||!obj(request.payload)||!Number.isFinite(now))return false;
+ const reviewed=input,kind=request.change_type,payload=request.payload;
+ const supported=new Set(["managed-host-metadata","network-object","network-group",
+   "service-object","service-group","permission-object","permission-group",
+   "remote-access-rule","internet-access-rule","ai-access-rule",
+   "remote-access-policy","internet-access-policy","ai-access-policy"]);
+ const operation=payload.operation??"set";
+ if(typeof kind!=="string"||!supported.has(kind)
+   ||!["set","delete","set-enforcement","reset"].includes(operation)
+   ||typeof reviewed.change_plan_id!=="string"
+   ||!/^cp_[A-Za-z0-9_-]{16,128}$/.test(reviewed.change_plan_id)
+   ||reviewed.operation_class!=="CHANGE"
+   ||reviewed.operation!=="guided."+kind+"."+operation
+   ||reviewed.resource_type!==kind||reviewed.change_type!==kind
+   ||!safe(reviewed.resource_ref)
+   ||reviewed.confirmation_class!=="APPLY"
+   ||reviewed.no_change!==false
+   ||!Number.isSafeInteger(reviewed.expected_revision)||reviewed.expected_revision<0
+   ||!isObservedAbsoluteTime(reviewed.valid_until)
+   ||Date.parse(reviewed.valid_until)<=now)return false;
+ const intended=payload.name??payload.host;
+ if(intended!==undefined){
+   if(typeof intended!=="string"||!intended.trim()
+     ||!safe(intended)||reviewed.resource_ref!==intended.trim())return false;
+ }else if(kind.endsWith("-access-policy")){
+   if(!["",kind.split("-")[0]].includes(reviewed.resource_ref))return false;
+ }else return false;
+ const regression=reviewed.policy_regression;
+ if(regression!==undefined&&regression!==null
+   &&(!obj(regression)||regression.ok!==true||regression.required_failed!==0))return false;
+ const blast=reviewed.blast_radius;
+ if(blast!==undefined&&blast!==null
+   &&(!obj(blast)||!obj(blast.limits)||blast.limits.truncated!==false
+     ||!Array.isArray(blast.unknowns)||blast.unknowns.length!==0))return false;
+ return true;
+}
+
+/** An Apply acknowledgement must prove the exact Core-reviewed target,
+ * type and advanced revision; an ambiguous outcome requires fresh inventory.
+ */
+export function requireObservedGuidedChangeApplyReceipt(
+ input:unknown,preview:unknown,request:unknown
+):{revision:number}{
+ const fail=():never=>{throw new Error("UNKNOWN · Core guided Apply receipt is unverified; inspect Change History before retrying.");};
+ if(!input||typeof input!=="object"||Array.isArray(input)
+   ||!preview||typeof preview!=="object"||Array.isArray(preview)
+   ||!request||typeof request!=="object"||Array.isArray(request))return fail();
+ const receipt=input as Record<string,unknown>,plan=preview as Record<string,any>,
+   req=request as Record<string,any>;
+ if(!guidedChangePreviewMatchesIntent(plan,req,Date.parse(plan.valid_until)-1)
+   ||receipt.status!=="APPLIED"
+   ||receipt.change_type!==req.change_type
+   ||receipt.resource_type!==plan.resource_type
+   ||receipt.resource_ref!==plan.resource_ref
+   ||!Number.isSafeInteger(receipt.revision)
+   ||Number(receipt.revision)<=Number(plan.expected_revision))return fail();
+ return {revision:receipt.revision as number};
+}
+
+/** Legacy Host approval/quarantine UI must verify a specific, immutable
+ * Core Host ID, reviewed admission transition, and non-destructive impact.
+ * This does not grant Web permission; the Core Admin/ACL gate remains sole
+ * authority and the new enrollment journey is unchanged.
+ */
+export function observedHostAdmissionPlanForAction(
+ input:unknown,hostId:unknown,action:unknown,now:number=Date.now()
+):any|null{
+ const obj=(v:unknown):v is Record<string,any>=>!!v&&typeof v==="object"&&!Array.isArray(v);
+ const safe=(v:unknown,max=160):v is string=>typeof v==="string"&&!!v.trim()
+   &&v.length<=max&&!/[\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/.test(v);
+ if(!obj(input)||typeof hostId!=="string"
+   ||!/^[A-Za-z0-9][A-Za-z0-9_.:@-]{0,159}$/.test(hostId)
+   ||!["approve","quarantine"].includes(String(action))||!Number.isFinite(now))return null;
+ const plan=input,summary=plan.preview,impact=plan.impact,
+   target=action==="approve"?"APPROVED":"QUARANTINED";
+ const from=action==="approve"?["PENDING_APPROVAL","QUARANTINED"]:
+   ["PENDING_APPROVAL","APPROVED"];
+ if(!obj(summary)||!obj(impact)||typeof plan.change_plan_id!=="string"
+   ||!/^cp_[A-Za-z0-9_-]{16,128}$/.test(plan.change_plan_id)
+   ||plan.operation_class!=="CHANGE"
+   ||plan.operation!=="managed-host-admission."+action
+   ||plan.admission_operation!==action
+   ||plan.resource_type!=="managed-host"||plan.resource_ref!==hostId
+   ||!Number.isSafeInteger(plan.expected_revision)||plan.expected_revision<0
+   ||plan.confirmation_class!==String(action).toUpperCase()
+   ||plan.no_change!==false||!isObservedAbsoluteTime(plan.valid_until)
+   ||Date.parse(plan.valid_until)<=now
+   ||summary.id!==hostId||summary.after!==target||!from.includes(summary.before)
+   ||impact.kind!=="managed-host-admission"
+   ||impact.before!==summary.before||impact.after!==target
+   ||impact.requires_confirmation!==true||impact.destructive!==false
+   ||impact.access_broadened!==(action==="approve")
+   ||impact.access_narrowed!==(action==="quarantine")
+   ||!safe(impact.warning)
+   ||!Array.isArray(impact.kept)||impact.kept.length>10
+   ||impact.kept.some((item:unknown)=>!safe(item,80)))return null;
+ return {change_plan_id:plan.change_plan_id,operation_class:"CHANGE",
+   operation:plan.operation,admission_operation:action,
+   resource_type:"managed-host",resource_ref:hostId,
+   expected_revision:plan.expected_revision,
+   confirmation_class:plan.confirmation_class,
+   no_change:false,valid_until:plan.valid_until,
+   preview:{id:hostId,before:summary.before,after:target},
+   impact:{kind:"managed-host-admission",before:summary.before,after:target,
+     requires_confirmation:true,destructive:false,
+     access_broadened:action==="approve",access_narrowed:action==="quarantine",
+     warning:impact.warning,kept:impact.kept.slice()}};
+}
+
+/** The Core Admission Apply receipt must advance the exact reviewed plan.
+ * A malformed or ambiguous HTTP 200 is not evidence of a state transition.
+ */
+export function requireObservedHostAdmissionReceipt(
+ input:unknown,plan:unknown,action:unknown
+):{revision:number}{
+ const fail=():never=>{throw new Error(
+   "UNKNOWN · Core Host admission Apply receipt is unverified. Inspect Host inventory and Change History before retrying."
+ )};
+ if(!input||typeof input!=="object"||Array.isArray(input)
+   ||!plan||typeof plan!=="object"||Array.isArray(plan)
+   ||typeof action!=="string")return fail();
+ const proof=input as Record<string,unknown>,preview=plan as Record<string,any>;
+ if(!observedHostAdmissionPlanForAction(preview,preview.resource_ref,action,
+     Date.parse(preview.valid_until)-1)
+   ||proof.status!=="APPLIED"||proof.admission_operation!==action
+   ||!Number.isSafeInteger(proof.revision)
+   ||Number(proof.revision)<=Number(preview.expected_revision))return fail();
+ return {revision:proof.revision as number};
+}
+
+/** Same-actor Temporary Access is NOT a reviewer workflow. Its preview
+ * must match the operator's exact Core rule, action and canonical expiry.
+ * Read-only Web preflight does not grant access or override Core safety.
+ */
+export function temporaryAccessPreviewMatchesIntent(
+ input:unknown,request:unknown,at:number=Date.now()
+):boolean{
+ const obj=(v:unknown):v is Record<string,any>=>!!v&&typeof v==="object"&&!Array.isArray(v);
+ const safe=(v:unknown,max=160):v is string=>typeof v==="string"&&!!v.trim()
+   &&v.length<=max&&!/[\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/.test(v);
+ if(!obj(input)||!obj(request)||!Number.isFinite(at))return false;
+ const preview=input,req=request,plane=req.plane,action=req.operation;
+ if(!["remote","internet","ai"].includes(plane)
+   ||!["set","clear"].includes(action)
+   ||!safe(req.rule)||typeof req.expires_at!=="string"
+   ||typeof preview.change_plan_id!=="string"
+   ||!/^cp_[A-Za-z0-9_-]{16,128}$/.test(preview.change_plan_id)
+   ||preview.operation_class!=="CHANGE"
+   ||preview.operation!=="temporary-access."+action
+   ||preview.resource_type!==plane+"-access-rule"
+   ||preview.resource_ref!==req.rule.trim()
+   ||!Number.isSafeInteger(preview.expected_revision)||preview.expected_revision<0
+   ||preview.confirmation_class!=="APPLY"||preview.no_change!==false
+   ||!isObservedAbsoluteTime(preview.valid_until)
+   ||Date.parse(preview.valid_until)<=at
+   ||(preview.current_expires_at!==null
+     &&!isObservedAbsoluteTime(preview.current_expires_at)))return false;
+ if(action==="clear"){
+   if(preview.desired_expires_at!==null||req.expires_at.trim()!=="")return false;
+ }else{
+   if(!isObservedAbsoluteTime(req.expires_at)
+     ||!isObservedAbsoluteTime(preview.desired_expires_at)
+     ||Date.parse(preview.desired_expires_at)<=at
+     ||Math.floor(Date.parse(preview.desired_expires_at)/1000)
+       !==Math.floor(Date.parse(req.expires_at)/1000))return false;
+ }
+ const regression=preview.policy_regression;
+ if(regression!=null&&(!obj(regression)||regression.ok!==true
+   ||regression.required_failed!==0))return false;
+ const blast=preview.blast_radius;
+ if(blast!=null&&(!obj(blast)||!obj(blast.limits)
+   ||blast.limits.truncated!==false
+   ||!Array.isArray(blast.unknowns)||blast.unknowns.length!==0))return false;
+ return true;
+}
+
+/** UI-06 distinction: existing Temporary Access is a *same-actor* Core
+ * policy-expiry Change Plan, NOT a requester/reviewer access request.
+ * Return only a revision proven against that exact approved plan.
+ */
+export function requireObservedTemporaryAccessApplyForPlan(
+ input:unknown,plan:unknown
+):{revision:number}{
+ const error=()=>{throw new Error("UNKNOWN · Core Temporary Access Apply receipt is unverified. Inspect the policy and Change History before any retry.");};
+ const record=(x:unknown):x is Record<string,unknown>=>
+   !!x&&typeof x==="object"&&!Array.isArray(x);
+ if(!record(input)||!record(plan))return error();
+ const row=input,preview=plan;
+ const operation=preview.operation,resourceType=preview.resource_type;
+ if(typeof preview.change_plan_id!=="string"||!/^cp_[A-Za-z0-9_-]{16,128}$/.test(preview.change_plan_id)
+   ||!["temporary-access.set","temporary-access.clear"].includes(String(operation))
+   ||!["remote-access-rule","internet-access-rule","ai-access-rule"].includes(String(resourceType))
+   ||typeof preview.resource_ref!=="string"||!preview.resource_ref.trim()
+   ||preview.resource_ref.length>160
+   ||!Number.isSafeInteger(preview.expected_revision)||Number(preview.expected_revision)<0
+   ||preview.no_change!==false||preview.confirmation_class!=="APPLY"
+   ||!isObservedAbsoluteTime(preview.valid_until)
+   ||Date.parse(preview.valid_until)<=Date.now()
+   ||operation==="temporary-access.set"&&
+      !isObservedAbsoluteTime(preview.desired_expires_at)
+   ||operation==="temporary-access.clear"&&preview.desired_expires_at!==null)return error();
+ if(row.status!=="APPLIED"||row.operation!==operation||row.resource_type!==resourceType
+   ||row.resource_ref!==preview.resource_ref
+   ||row.expires_at!==preview.desired_expires_at
+   ||!Number.isSafeInteger(row.revision)
+   ||Number(row.revision)<=Number(preview.expected_revision))return error();
+ return {revision:row.revision as number};
+}
+
+/** Cutoff inventory is an authoritative bounded Core read, not an
+ * arbitrary list or an empty-success HTTP response. Reject cross-plane
+ * snapshots and inconsistent totals before rendering active overrides.
+ */
+export function requireObservedCutoffInventory(input:unknown,plane:unknown):{
+ items:{id:string,plane:string,scope_kind:string,scope_ref:string,
+   reason:string,row_version:number,updated_at:string}[],
+ count:number,returned:number,plane:string,active:boolean,limit:200,truncated:boolean
+}{
+ const fail=():never=>{throw new Error(
+   "UNKNOWN · Core Emergency Cutoff inventory is incomplete, inconsistent or from another plane."
+ )};
+ const record=(v:unknown):v is Record<string,unknown>=>
+   !!v&&typeof v==="object"&&!Array.isArray(v);
+ const invalid=/[\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/;
+ const text=(v:unknown,max:number,allowEmpty=false):v is string=>
+   typeof v==="string"&&v.length<=max&&!invalid.test(v)
+   &&(allowEmpty||!!v.trim());
+ if(!record(input)||typeof plane!=="string"
+   ||!["remote","internet","ai"].includes(plane)
+   ||input.plane!==plane||!Array.isArray(input.items)
+   ||input.limit!==200||input.items.length>200
+   ||!Number.isSafeInteger(input.count)||Number(input.count)<0
+   ||input.returned!==input.items.length
+   ||Number(input.count)<input.items.length
+   ||input.active!==(Number(input.count)>0)
+   ||input.truncated!==(Number(input.count)>input.items.length))return fail();
+ const kinds=plane==="remote"?["plane","remote-service"]:
+   plane==="internet"?["plane","managed-host"]:["plane","ai-identity"];
+ const items:{id:string,plane:string,scope_kind:string,scope_ref:string,
+   reason:string,row_version:number,updated_at:string}[]=[];
+ const ids=new Set<string>(),refs=new Set<string>();
+ for(const value of input.items){
+   if(!record(value)||!text(value.id,160)
+     ||value.plane!==plane||typeof value.scope_kind!=="string"
+     ||!kinds.includes(value.scope_kind)
+     ||!text(value.scope_ref,160,true)
+     ||(value.scope_kind==="plane"?value.scope_ref!=="":!value.scope_ref)
+     ||!text(value.reason,500,true)
+     ||!Number.isSafeInteger(value.row_version)||Number(value.row_version)<1
+     ||!isObservedAbsoluteTime(value.updated_at))return fail();
+   const key=value.scope_kind+":"+value.scope_ref;
+   if(ids.has(value.id)||refs.has(key))return fail();
+   ids.add(value.id);refs.add(key);
+   items.push({
+     id:value.id,plane,scope_kind:value.scope_kind,scope_ref:value.scope_ref,
+     reason:value.reason,row_version:value.row_version as number,
+     updated_at:value.updated_at as string
+   });
+ }
+ return {items,count:input.count as number,returned:items.length,plane,
+   active:input.active as boolean,limit:200,truncated:input.truncated as boolean};
+}
+
+/** Read-only, bounded projection of the exact Core incident preview.
+ * Core may resolve a typed Service/Host alias to its canonical ID; require
+ * either that immutable ID or the canonical display name to match the
+ * request, never an arbitrary unrelated resource.
+ */
+export type ObservedEmergencyCutoffPreview={
+ change_plan_id:string,valid_until:string,operation_class:"INCIDENT_CHANGE",
+ resource_type:"emergency-cutoff",resource_ref:string,
+ operation:"emergency-cutoff.apply"|"emergency-cutoff.clear",
+ confirmation_class:"CONFIRM CUTOFF",expected_revision:number,
+ scope_kind:string,scope_ref:string,scope_display:string,
+ currently_active:boolean,desired_active:boolean,
+ active_sessions_terminated:false,no_change:false,
+ impact:{requires_confirmation:true,access_broadened:boolean,
+   access_narrowed:boolean,warning:string}
+};
+export function observedEmergencyCutoffPreviewForIntent(
+ input:unknown,plane:unknown,kind:unknown,selector:unknown,action:unknown,
+ now:number=Date.now()
+):ObservedEmergencyCutoffPreview|null{
+ const record=(v:unknown):v is Record<string,unknown>=>
+   !!v&&typeof v==="object"&&!Array.isArray(v);
+ const safe=(v:unknown,max=160):v is string=>
+   typeof v==="string"&&!!v.trim()&&v.length<=max
+     &&!/[\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/.test(v);
+ if(!record(input)||typeof plane!=="string"
+   ||!["remote","internet","ai"].includes(plane)
+   ||typeof kind!=="string"||typeof selector!=="string"
+   ||!["apply","clear"].includes(String(action))||!Number.isFinite(now))return null;
+ const allowed=plane==="remote"?["plane","remote-service"]:
+   plane==="internet"?["plane","managed-host"]:["plane","ai-identity"];
+ if(!allowed.includes(kind))return null;
+ const data=input,ref=data.scope_ref,display=data.scope_display,
+   impact=data.impact,operation="emergency-cutoff."+action;
+ if(typeof data.change_plan_id!=="string"
+   ||!/^cp_[A-Za-z0-9_-]{16,128}$/.test(data.change_plan_id)
+   ||data.operation_class!=="INCIDENT_CHANGE"
+   ||data.resource_type!=="emergency-cutoff"
+   ||data.operation!==operation||data.scope_kind!==kind
+   ||typeof ref!=="string"||ref.length>160
+   ||/[\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/.test(ref)
+   ||(kind==="plane"?ref!==""||selector.trim()!=="":!safe(ref))
+   ||!safe(display)
+   ||(kind!=="plane"&&![ref.toLowerCase(),display.toLowerCase()]
+     .includes(selector.trim().toLowerCase()))
+   ||data.resource_ref!==(kind==="plane"?plane:kind+":"+ref)
+   ||data.desired_active!==(action==="apply")
+   ||typeof data.currently_active!=="boolean"
+   ||data.active_sessions_terminated!==false||data.no_change!==false
+   ||data.confirmation_class!=="CONFIRM CUTOFF"
+   ||!Number.isSafeInteger(data.expected_revision)||Number(data.expected_revision)<0
+   ||!isObservedAbsoluteTime(data.valid_until)
+   ||Date.parse(data.valid_until)<=now
+   ||!record(impact)||impact.requires_confirmation!==true
+   ||impact.access_broadened!==(action==="clear")
+   ||impact.access_narrowed!==(action==="apply")
+   ||!safe(impact.warning,512))return null;
+ return {
+   change_plan_id:data.change_plan_id,valid_until:data.valid_until as string,
+   operation_class:"INCIDENT_CHANGE",resource_type:"emergency-cutoff",
+   resource_ref:data.resource_ref as string,operation:operation as ObservedEmergencyCutoffPreview["operation"],
+   confirmation_class:"CONFIRM CUTOFF",expected_revision:data.expected_revision as number,
+   scope_kind:kind,scope_ref:ref,scope_display:display,
+   currently_active:data.currently_active as boolean,
+   desired_active:data.desired_active as boolean,
+   active_sessions_terminated:false,no_change:false,
+   impact:{requires_confirmation:true,
+     access_broadened:impact.access_broadened as boolean,
+     access_narrowed:impact.access_narrowed as boolean,
+     warning:(impact.warning as string).trim()}
+ };
+}
+
+/** Emergency cutoff is a Core-only, one-shot incident Change Plan. A
+ * syntactically successful HTTP response cannot confirm the desired access
+ * state unless the exact plan, scope, operation and revision are acknowledged.
+ */
+export function requireObservedEmergencyCutoffApplyForPlan(
+ input:unknown,plan:unknown,plane:unknown,action:unknown
+):{revision:number,active_sessions_terminated:false}{
+ const unknown=():never=>{throw new Error(
+   "UNKNOWN · Core Emergency Cutoff Apply receipt is unverified. Inspect Core cutoff inventory and Change History before any retry."
+ )};
+ const obj=(v:unknown):v is Record<string,unknown>=>
+   !!v&&typeof v==="object"&&!Array.isArray(v);
+ if(!obj(input)||!obj(plan)||!["remote","internet","ai"].includes(String(plane))
+   ||!["apply","clear"].includes(String(action)))return unknown();
+ const receipt=input,review=plan,operation="emergency-cutoff."+action;
+ const validScope=plane==="remote"?["plane","remote-service"]
+   :plane==="internet"?["plane","managed-host"]:["plane","ai-identity"];
+ const ident=review.scope_ref;
+ if(typeof review.change_plan_id!=="string"
+   ||!/^cp_[A-Za-z0-9_-]{16,128}$/.test(review.change_plan_id)
+   ||review.operation_class!=="INCIDENT_CHANGE"
+   ||review.resource_type!=="emergency-cutoff"||review.operation!==operation
+   ||typeof review.scope_kind!=="string"||!validScope.includes(review.scope_kind)
+   ||typeof ident!=="string"||ident.length>160
+   ||/[\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/.test(ident)
+   ||(review.scope_kind==="plane"?ident!=="":!ident)
+   ||review.resource_ref!==(review.scope_kind==="plane"?plane:review.scope_kind+":"+ident)
+   ||review.desired_active!==(action==="apply")
+   ||review.no_change!==false
+   ||review.confirmation_class!=="CONFIRM CUTOFF"
+   ||!Number.isSafeInteger(review.expected_revision)||Number(review.expected_revision)<0
+   ||!isObservedAbsoluteTime(review.valid_until)
+   ||Date.parse(review.valid_until)<=Date.now())return unknown();
+ if(receipt.status!=="APPLIED"||receipt.operation!==operation
+   ||receipt.plane!==plane||receipt.scope_kind!==review.scope_kind
+   ||receipt.scope_ref!==ident||receipt.active!==(action==="apply")
+   ||receipt.active_sessions_terminated!==false
+   ||!Number.isSafeInteger(receipt.revision)
+   ||Number(receipt.revision)<=Number(review.expected_revision))return unknown();
+ return {revision:receipt.revision as number,active_sessions_terminated:false};
+}
+
+/** Project the official Core live-access read model only from same-plane,
+ * bounded observation pages. Never use arbitrary producer metadata as a Web
+ * table column; unknown fidelity never becomes a confirmed zero count.
+ */
+export function requireObservedLiveAccessView(
+ payload:unknown,plane:unknown,requestedResource:unknown
+):{
+ plane:string,fidelity:"UNKNOWN"|"EXACT_PER_CONNECTION",
+ active_count:number|null,observations:Record<string,string>[],reason:string,partial:boolean
+}{
+ const fail=():never=>{throw new Error(
+   "UNKNOWN · Core Live Access evidence is incomplete or does not match the requested plane. Refresh Core observations before interpreting connectivity."
+ )};
+ const record=(v:unknown):v is Record<string,unknown>=>
+   !!v&&typeof v==="object"&&!Array.isArray(v);
+ const safe=(v:unknown,max=160):v is string=>
+   typeof v==="string"&&v.length<=max
+   &&!/[\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/.test(v);
+ if(!record(payload)||!["remote","internet","ai"].includes(String(plane))
+   ||!safe(requestedResource,160))return fail();
+ const row=payload,fidelity=row.fidelity;
+ const actualResource=row.resource;
+ if(row.plane!==plane
+   ||!(actualResource===requestedResource||
+     requestedResource===""&&(actualResource===null||actualResource===""))
+   ||row.resource_type!==null
+   ||!Number.isSafeInteger(row.limit)||row.limit!==50
+   ||!Array.isArray(row.observations)||row.observations.length>50
+   ||!(row.next_cursor===null||(safe(row.next_cursor,1024)&&!!row.next_cursor))
+   ||!safe(row.reason,512)
+   ||!["UNKNOWN","EXACT_PER_CONNECTION"].includes(String(fidelity)))return fail();
+ if(fidelity==="UNKNOWN"){
+   if(row.active_count!==null||row.observations.length!==0||!!row.next_cursor
+     ||!row.reason)return fail();
+   return {plane:plane as string,fidelity:"UNKNOWN",active_count:null,
+     observations:[],reason:row.reason as string,partial:false};
+ }
+ if(plane==="remote"
+   ||!Number.isSafeInteger(row.active_count)
+   ||Number(row.active_count)<row.observations.length
+   ||Number(row.active_count)<0)return fail();
+ const allowed=plane==="ai"
+   ?["observation_kind","observation_id","job_id","status","capability",
+       "ai_identity","managed_host_id","endpoint","started_at","updated_at"]
+   :["observation_kind","observation_id","session_id","connection_id",
+       "hostname","relay_name","profile_id","source_ip","started_at"];
+ const kind=plane==="ai"?"AI_JOB":"NETWORK_SESSION";
+ const observations:Record<string,string>[]=[];
+ for(const raw of row.observations){
+   if(!record(raw)||raw.observation_kind!==kind
+     ||!safe(raw.observation_id)||!raw.observation_id)return fail();
+   const item:Record<string,string>={};
+   for(const field of allowed){
+     const value=raw[field];
+     if(value===undefined||value===null)continue;
+     if(!safe(value,160))return fail();
+     item[field]=value;
+   }
+   observations.push(item);
+ }
+ return {plane:plane as string,fidelity:"EXACT_PER_CONNECTION",
+   active_count:row.active_count as number,observations,
+   reason:row.reason as string,partial:row.next_cursor!==null};
+}
+
+/** A Core diagnosis response is descriptive evidence, never a probe or
+ * authorization decision. Strip nested policy traces and enforce the actual
+ * requested selectors and coherent layer severity before rendering.
+ */
+export function requireObservedDiagnosisView(
+ payload:unknown,plane:unknown,source:unknown,destination:unknown,selector:unknown
+):{
+ overall:"HEALTHY"|"FAILED"|"UNKNOWN",network_probe_performed:false,
+ next_action:string,layers:{layer:string,status:string,summary:string}[]
+}{
+ const fail=():never=>{throw new Error(
+   "UNKNOWN · Core Connection Diagnosis response has unverified fields, mismatched flow or inconsistent health evidence."
+ )};
+ const obj=(v:unknown):v is Record<string,unknown>=>
+   !!v&&typeof v==="object"&&!Array.isArray(v);
+ const safe=(v:unknown,max=240):v is string=>
+   typeof v==="string"&&!!v.trim()&&v.length<=max
+     &&!/[\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/.test(v);
+ if(!obj(payload)||!obj(payload.input)||!Array.isArray(payload.layers)
+   ||!["remote","internet","ai"].includes(String(plane))
+   ||![source,destination,selector].every(v=>safe(v,160)))return fail();
+ const input=payload.input;
+ if(payload.plane!==plane||payload.side_effect_free!==true
+   ||payload.network_probe_performed!==false
+   ||input.source!==source||input.destination!==destination
+   ||(plane==="ai"?input.permission:input.service)!==selector
+   ||!["HEALTHY","FAILED","UNKNOWN"].includes(String(payload.overall))
+   ||!safe(payload.next_action,240)
+   ||payload.layers.length===0||payload.layers.length>16)return fail();
+ const known=new Set(["input","policy","managed_host","remote_service","runtime",
+   "dns","target_reachability","emergency_cutoff","recent_activity"]);
+ const statuses=new Set(["HEALTHY","FAILED","UNKNOWN","N_A"]);
+ const layers:{layer:string,status:string,summary:string}[]=[];
+ const observed=new Set<string>();
+ for(const raw of payload.layers){
+   if(!obj(raw)||!safe(raw.layer,64)||!known.has(raw.layer)
+     ||observed.has(raw.layer)||!statuses.has(String(raw.status))
+     ||!safe(raw.summary,512))return fail();
+   observed.add(raw.layer as string);
+   layers.push({layer:raw.layer as string,status:raw.status as string,
+     summary:(raw.summary as string).trim()});
+ }
+ const derived=layers.some(x=>x.status==="FAILED")?"FAILED":
+   layers.some(x=>x.status==="UNKNOWN")?"UNKNOWN":"HEALTHY";
+ if(derived!==payload.overall)return fail();
+ return {overall:derived,network_probe_performed:false,
+   next_action:(payload.next_action as string).trim(),layers};
 }
 
 /** Keyset page navigation only uses observed opaque Core cursors. The UI may
@@ -66,20 +590,52 @@ export function combineObservedPolicyPlanes(
   return {items,possibly_truncated_planes,next_cursor_by_plane};
 }
 
+/** R2.2/M2: the FIRST Core Host/Service/Audit page and each keyset page
+ * require the same authoritative family, bounded limit, terminal/opaque cursor,
+ * and unique Core identity evidence. A malformed HTTP 200 is UNKNOWN, never an
+ * empty inventory or trustworthy cursor. No new Core authority is granted. */
+export function requireObservedBoundedCorePage(
+  route:"hosts"|"services"|"audit",payload:unknown,requestedCursor:string,limit:number
+):any{
+  const fail=():never=>{throw new Error("Core "+route+" page identity, bounds or cursor are inconsistent. State is UNKNOWN.");};
+  const expected=route==="hosts"?"managed-host":route==="services"?"remote-service":"audit-event";
+  const expectedLimit=route==="audit"?50:100;
+  const validCursor=(cursor:unknown):cursor is string=>
+    typeof cursor==="string"&&/^[A-Za-z0-9_-]{1,2048}$/.test(cursor);
+  const validId=(id:unknown):id is string=>
+    typeof id==="string"&&/^[A-Za-z0-9][A-Za-z0-9_.:@-]{0,159}$/.test(id);
+  const page=requireObservedMenuPayload(route,payload);
+  if(!Number.isSafeInteger(limit)||limit!==expectedLimit||page.resource_type!==expected
+    ||page.limit!==limit||!Array.isArray(page.items)||page.items.length>limit
+    ||typeof requestedCursor!=="string"
+    ||(requestedCursor!==""&&!validCursor(requestedCursor))
+    ||!Object.prototype.hasOwnProperty.call(page,"next_cursor")
+    ||(page.next_cursor!==null&&!validCursor(page.next_cursor))
+    ||(page.next_cursor!==null&&(page.next_cursor===requestedCursor||page.items.length===0)))
+    return fail();
+  const ids=new Set<string|number>();
+  for(const item of page.items){
+    let key:string|number;
+    if(route==="audit"){
+      if(!Number.isSafeInteger(item.row_id)||item.row_id<=0
+        ||(item.event_id!==null&&!validId(item.event_id)))return fail();
+      key=item.row_id;
+    }else{
+      if(!validId(item.id))return fail();
+      key=item.id;
+    }
+    if(ids.has(key))return fail();
+    ids.add(key);
+  }
+  return page;
+}
+
 /** Only observed Core pages of the requested resource family may extend a
  * loaded inventory. Never guess a next cursor or silently swap Host/Service. */
 export function requireObservedInventoryContinuation(
   route:"hosts"|"services",payload:unknown,requestedCursor:string,limit:number
 ):any{
-  const page=requireObservedMenuPayload(route,payload);
-  const expected=route==="hosts"?"managed-host":"remote-service";
-  if(page.resource_type!==expected||page.limit!==limit
-    ||!Number.isSafeInteger(limit)||limit<1
-    ||page.items.length>limit||page.next_cursor===requestedCursor
-    ||page.items.some((item:any)=>typeof item.id!=="string"||!item.id))
-    throw new Error("Core inventory page does not match the requested "+expected+
-      " resource type, size or cursor. State is UNKNOWN.");
-  return page;
+  return requireObservedBoundedCorePage(route,payload,requestedCursor,limit);
 }
 
 /** Objects & Groups uses the same Core inventory keyset API for seven public
@@ -118,6 +674,7 @@ export function requireObservedAccessHygiene(payload:unknown):any{
 /** Only true, role-appropriate workspaces offer an Inspect action.
  * Unrecognized resource kinds must not show a clickable no-op. */
 export function hygieneInspectTarget(type:unknown,role:unknown):{route:string,group:string}|null{
+  if(!["Admin","Operator","Read Only"].includes(String(role)))return null;
   if(type==="service-account"&&role!=="Admin")return null;
   const destinations:Record<string,{route:string,group:string}>={
     "managed-host":{route:"hosts",group:"connections"},
@@ -293,6 +850,60 @@ export function requireObservedInventoryExport(payload:unknown):any{
 
 /** A Job detail belongs to one explicitly requested ID. Incomplete or
  * superseded reads must not imply a matching current Job or cancellable state. */
+/** M2/R6: Core Management Jobs has a distinct bounded keyset page.
+ * An arbitrary HTTP 200 with items[] cannot establish an empty job queue,
+ * job status, resource family or continuation. Project public fixed fields
+ * before rendering; never display requested_by, private payloads, errors,
+ * target claim material, tokens or any unknown nested Core fields. */
+export function requireObservedJobsPage(
+  payload:unknown,requestedCursor:string,limit:number
+):{resource_type:"management-job",limit:number,next_cursor:string|null,items:any[]}{
+  const fail=():never=>{throw new Error(
+    "UNKNOWN · Core Management Jobs page family, limit, identity or cursor was not verified. Reload Jobs before interpreting status."
+  );};
+  const page=requireObservedMenuPayload("jobs",payload);
+  const cursorSafe=(value:unknown):value is string=>
+    typeof value==="string"&&/^[A-Za-z0-9_-]{1,2048}$/.test(value);
+  if(!Number.isSafeInteger(limit)||limit!==50
+    ||typeof requestedCursor!=="string"
+    ||(requestedCursor!==""&&!cursorSafe(requestedCursor))
+    ||page.resource_type!=="management-job"||page.limit!==50
+    ||!Array.isArray(page.items)||page.items.length>50
+    ||!Object.prototype.hasOwnProperty.call(page,"next_cursor")
+    ||(page.next_cursor!==null&&!cursorSafe(page.next_cursor))
+    ||(page.next_cursor!==null&&(page.next_cursor===requestedCursor||page.items.length===0)))
+    return fail();
+  const JOB_TYPES=new Set(["doctor","refresh","version-check","support-bundle",
+    "remote-service-set","remote-service-delete","agent-update-rollout"]);
+  const JOB_STATUSES=new Set(["QUEUED","RUNNING","SUCCEEDED","FAILED","CANCELLED"]);
+  const seen=new Set<string>(),items:any[]=[];
+  for(const entry of page.items){
+    const id=entry.id;
+    if(typeof id!=="string"||!/^mjob_[0-9a-f]{24}$/.test(id)
+      ||seen.has(id)||!JOB_TYPES.has(entry.job_type)
+      ||!JOB_STATUSES.has(entry.status)
+      ||!Number.isSafeInteger(entry.target_count)
+      ||entry.target_count<1||entry.target_count>100
+      ||!isObservedAbsoluteTime(entry.created_at))return fail();
+    seen.add(id);
+    const resourceType=typeof entry.resource_type==="string"
+      &&/^[a-z][a-z0-9-]{0,63}$/.test(entry.resource_type)
+      ?entry.resource_type:"UNKNOWN";
+    // The operational selector is a Core ID, not a URL or bearer token.
+    // Suppress arbitrary raw selector text instead of reflecting credentials.
+    const resourceRef=typeof entry.resource_ref==="string"
+      &&/^[A-Za-z0-9][A-Za-z0-9_.:@-]{0,159}$/.test(entry.resource_ref)
+      ?entry.resource_ref:"UNKNOWN";
+    const finished=entry.finished_at===null?null:
+      isObservedAbsoluteTime(entry.finished_at)?entry.finished_at:"UNKNOWN";
+    items.push({id,job_type:entry.job_type,status:entry.status,
+      resource_type:resourceType,resource_ref:resourceRef,
+      target_count:entry.target_count,created_at:entry.created_at,finished_at:finished});
+  }
+  return {resource_type:"management-job",limit:50,
+    next_cursor:page.next_cursor,items};
+}
+
 export function requireObservedJobDetail(payload:unknown,requestedId:unknown):any{
   const fail=()=>{throw new Error("UNKNOWN · Core Job Detail is missing, mismatched or incomplete. Retry the exact Job ID.");};
   if(!payload||typeof payload!=="object"||Array.isArray(payload)
@@ -352,6 +963,55 @@ export function requireObservedJobStart(payload:unknown,expectedJobType:string):
 
 /** A Fleet Preview is only meaningful when the Core plan belongs to this
  * form's resource family and the exact intended normalized metadata change. */
+/** M2/R6: an HTTP 200 for a diagnostic Job is not evidence that the
+ * requested target scope was enqueued. Core resolves labels to immutable IDs:
+ * therefore bind the requested FAMILY to both Core selection and Job, verify
+ * the exact Core-generated target list/ref/count, but never infer that a
+ * typed Host name itself is an immutable ID. Caller must inspect Jobs on
+ * ambiguous network/malformed replies; never auto-retry a POST. */
+export function requireObservedJobStartForRequest(payload:unknown,request:unknown):any{
+  const fail=():never=>{throw new Error(
+    "UNKNOWN · Core diagnostic Job receipt does not confirm the submitted family or immutable selection. Inspect Jobs before retrying."
+  );};
+  if(!request||typeof request!=="object"||Array.isArray(request))return fail();
+  const intent=request as Record<string,unknown>;
+  const supported=new Set(["doctor","refresh","version-check","support-bundle"]);
+  if(typeof intent.job_type!=="string"||!supported.has(intent.job_type)
+    ||!["managed-host","managed-host-group"].includes(String(intent.resource_type))
+    ||(intent.resource!==undefined&&typeof intent.resource!=="string")
+    ||typeof intent.resource==="string"&&intent.resource.length>256)return fail();
+  const selector=typeof intent.resource==="string"?intent.resource.trim():"";
+  if(intent.resource_type==="managed-host-group"&&!selector)return fail();
+  const receipt=requireObservedJobStart(payload,intent.job_type);
+  const job=receipt.job,selection=receipt.selection;
+  const id=/^mjob_[0-9a-f]{24}$/,
+    resourceId=/^[A-Za-z0-9][A-Za-z0-9_.:@-]{0,159}$/;
+  if(!id.test(String(job.id))
+    ||selection.resource_type!==intent.resource_type
+    ||job.resource_type!==selection.resource_type
+    ||typeof selection.resource_ref!=="string"
+    ||!resourceId.test(selection.resource_ref)
+    ||job.resource_ref!==selection.resource_ref
+    ||!isObservedAbsoluteTime(job.created_at)
+    ||![0,false].includes(job.cancel_requested)
+    ||!Array.isArray(job.targets)||job.targets.length!==job.target_count)
+    return fail();
+  const targets=new Set<string>();
+  for(const target of job.targets){
+    if(!target||typeof target!=="object"||Array.isArray(target)
+      ||typeof target.target_id!=="string"||!resourceId.test(target.target_id)
+      ||targets.has(target.target_id)||target.status!=="QUEUED")return fail();
+    targets.add(target.target_id);
+  }
+  if(intent.resource_type==="managed-host"){
+    if(selector===""){
+      if(selection.resource_ref!=="all")return fail();
+    }else if(job.target_count!==1
+      ||!targets.has(selection.resource_ref))return fail();
+  }
+  return receipt;
+}
+
 export function requireObservedFleetPreview(payload:unknown,request:unknown):any{
   const fail=()=>{throw new Error("UNKNOWN · Core Fleet Preview has mismatched targets, changes, or impact. Recheck the selection before creating a fresh Change Plan.");};
   const object=(v:unknown):v is Record<string,any>=>!!v&&typeof v==="object"&&!Array.isArray(v);

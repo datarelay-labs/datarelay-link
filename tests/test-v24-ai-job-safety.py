@@ -270,6 +270,36 @@ class AiJobSafetyTests(unittest.TestCase):
         self.assertEqual([j["id"] for j in claimed], [newer])
         self.assertEqual(self.plane.get_ai_job(old)["status"], "expired")
 
+    def test_core_rejects_late_completion_without_prior_sweeper(self):
+        # A running Job can expire while no claim/sweeper polls this Host.
+        # Late Agent success must not become DONE or persist result bytes.
+        for capability, expected_terminal in (
+            ("read_file", "expired"),
+            ("write_file", "recovery_required"),
+        ):
+            with self.subTest(capability=capability):
+                job_id = self._enqueue_with_timeout(MACHINE_A, capability, 60)
+                claims = self.plane.claim_ai_jobs(MACHINE_A, limit=1)
+                self.assertEqual([claim["id"] for claim in claims], [job_id])
+                claim = claims[0]
+                past = _ai_job_deadline_iso(utc_now_iso(), -5)
+                self.plane.conn.execute(
+                    "UPDATE ai_jobs SET deadline_at=? WHERE id=?",
+                    (past, job_id),
+                )
+                self.plane.commit_if_autonomous()
+                with self.assertRaises(ControlPlaneError):
+                    self.plane.complete_ai_job(
+                        job_id, MACHINE_A,
+                        {"result": "ALLOW", "secret_payload": "never-persist"},
+                        claim_token=claim["claim_token"],
+                        attempt_id=claim["attempt_id"],
+                    )
+                job = self.plane.get_ai_job(job_id)
+                self.assertEqual(job["status"], expected_terminal)
+                self.assertFalse(self.plane._ai_job_spool_path(job_id).exists())
+                self.assertFalse(job.get("result_json"))
+
     def test_late_completion_rejected_after_timeout(self):
         job_id = self._enqueue_with_timeout(MACHINE_A, "write_file", 60, path=str(self.agent_a_root / "x.txt"), content="a")
         claimed = self.plane.claim_ai_jobs(MACHINE_A, limit=1)
@@ -286,6 +316,292 @@ class AiJobSafetyTests(unittest.TestCase):
                 attempt_id=attempt,
             )
         self.assertEqual(self.plane.get_ai_job(job_id)["status"], "timeout")
+
+    def test_legacy_agent_http_never_accepts_ambiguous_claim_or_result(self):
+        # The optional bearer-Agent fallback is distinct from signed
+        # management auth, but cannot bypass the same Core state boundary.
+        from urllib.error import HTTPError
+        from urllib.request import Request, urlopen
+        from drlink_mcp_bridge import ThreadingHTTPServer, make_handler
+
+        token = self.plane.issue_agent_credential(MACHINE_A, rotate=True)
+        self.assertTrue(token)
+        server = ThreadingHTTPServer(("127.0.0.1", 0), make_handler(self.bridge))
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        endpoint = "http://127.0.0.1:%d/agent/v1/" % server.server_address[1]
+
+        def send(name, body):
+            request = Request(
+                endpoint + name,
+                data=json.dumps(body).encode("utf-8"),
+                headers={"Authorization": "Bearer " + token,
+                         "Content-Type": "application/json"},
+                method="POST",
+            )
+            try:
+                with urlopen(request, timeout=5) as response:
+                    return response.status, json.load(response)
+            except HTTPError as response:
+                return response.code, json.load(response)
+
+        try:
+            job_id = self._enqueue_with_timeout(MACHINE_A, "read_file", 60)
+            for invalid in (0, -1, True, False, 1.5, "2", None, []):
+                with self.subTest(claim_limit=invalid):
+                    status, _ = send("claim", {"limit": invalid})
+                    self.assertEqual(status, 400)
+                    self.assertEqual(
+                        self.plane.get_ai_job(job_id)["status"], "queued"
+                    )
+            status, response = send("claim", {"limit": 1})
+            self.assertEqual(status, 200)
+            self.assertEqual([j["id"] for j in response["jobs"]], [job_id])
+            claimed = response["jobs"][0]
+            for invalid in (None, [], "", 0, False):
+                with self.subTest(completion_result=invalid):
+                    status, _ = send(
+                        "complete", {"id": job_id,
+                                     "claim_token": claimed["claim_token"],
+                                     "attempt_id": claimed["attempt_id"],
+                                     "result": invalid},
+                    )
+                    self.assertEqual(status, 400)
+                    self.assertEqual(
+                        self.plane.get_ai_job(job_id)["status"], "running"
+                    )
+                    self.assertNotIn(job_id, self.bridge._job_results)
+            status, response = send(
+                "complete", {"id": job_id,
+                             "claim_token": claimed["claim_token"],
+                             "attempt_id": claimed["attempt_id"],
+                             "result": {"ok": True}},
+            )
+            self.assertEqual(status, 200)
+            self.assertTrue(response["ok"])
+            self.assertEqual(self.plane.get_ai_job(job_id)["status"], "done")
+            self.assertEqual(self.bridge._job_results[job_id], {"ok": True})
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=5)
+
+    def test_agent_loop_rejects_replayed_claim_batch_before_any_local_work(self):
+        # Both signed management identity and the optional local bearer
+        # adapter must validate the complete claimed batch before execution.
+        from datetime import datetime, timedelta, timezone
+        future = (datetime.now(timezone.utc) + timedelta(minutes=2)).isoformat()
+        legitimate = {
+            "id": "ai-job-one", "claim_token": "atk_test_one",
+            "attempt_id": "att_test_one", "capability": "write_file",
+            "arguments": {"path": str(self.agent_a_root / "not-written.txt"),
+                          "content": "not-written"},
+            "patterns": [str(self.agent_a_root / "**")],
+            "timeout": 5, "deadline_at": future,
+        }
+        peer = {
+            **legitimate, "id": "ai-job-two",
+            "claim_token": "atk_test_two", "attempt_id": "att_test_two",
+        }
+        invalid_batches = (
+            {"jobs": [legitimate, dict(legitimate)]},
+            {"jobs": [legitimate, {**peer, "capability": "unknown-privileged"}]},
+            {"jobs": [legitimate, {**peer, "patterns": [{"secret": "path"}]}]},
+            {"jobs": [legitimate, {**peer, "timeout": True}]},
+            {"jobs": [legitimate, {**peer, "timeout": "5"}]},
+            {"jobs": [legitimate, {**peer, "timeout": 0}]},
+            {"jobs": [legitimate, {**peer, "timeout": 1.5}]},
+            {"jobs": [legitimate, {**peer, "timeout": 3601}]},
+            {"jobs": [legitimate, {**peer, "attempt_id": legitimate["attempt_id"]}]},
+            {"jobs": [legitimate, {**peer, "claim_token": "bad\\nline"}]},
+            {"jobs": [legitimate, {"id": "malformed"}]},
+            {"jobs": [legitimate] * 5},
+            {"jobs": "not-a-list"},
+            {"jobs": None},
+            {},
+            # Unknown or timezone-naive deadlines previously looked
+            # "not expired" and could authorize local mutating operations.
+            {"jobs": [{**legitimate, "deadline_at": None}]},
+            {"jobs": [{**legitimate, "deadline_at": "invalid"}]},
+            {"jobs": [{**legitimate, "deadline_at": "2099-01-01T00:00:00"}]},
+            {"jobs": [{**legitimate, "deadline_at": []}]},
+        )
+        modes = (
+            (AgentLoop(agent_root=self.agent_a_tmp),
+             "drlink_mgmt_sync.claim_ai_jobs_on_server"),
+            (AgentLoop("http://127.0.0.1:1", "disposable-test-token"),
+             "drlink_ai_agent._agent_post"),
+        )
+        for loop, target in modes:
+            for reply in invalid_batches:
+                with self.subTest(target=target, reply=reply):
+                    with mock.patch(target, return_value=reply), mock.patch(
+                        "drlink_ai_agent.execute_local",
+                        return_value={"result": "ALLOW"},
+                    ) as executed, mock.patch.object(loop, "_complete") as completed:
+                        with self.assertRaisesRegex(
+                            ValueError, "AI job claim response UNKNOWN"
+                        ):
+                            loop.run_once()
+                        executed.assert_not_called()
+                        completed.assert_not_called()
+            with self.subTest(valid_target=target):
+                with mock.patch(
+                    target, return_value={"jobs": [legitimate]},
+                ), mock.patch(
+                    "drlink_ai_agent.execute_local",
+                    return_value={"result": "ALLOW"},
+                ) as executed, mock.patch.object(loop, "_complete") as completed:
+                    self.assertEqual(loop.run_once(), 1)
+                    executed.assert_called_once()
+                    completed.assert_called_once()
+
+    def test_agent_requires_explicit_core_completion_ack_in_both_transports(self):
+        # A returned HTTP/transport body alone is not proof that Core
+        # accepted an executed Agent action or its matching one-shot claim.
+        modes = (
+            (AgentLoop(agent_root=self.agent_a_tmp),
+             "drlink_mgmt_sync.complete_ai_job_on_server"),
+            (AgentLoop("http://127.0.0.1:1", "disposable-test-token"),
+             "drlink_ai_agent._agent_post"),
+        )
+        invalid = (
+            None, {}, {"ok": None}, {"ok": False},
+            {"ok": "true"}, {"error": "claim no longer current"},
+        )
+        for loop, target in modes:
+            for response in invalid:
+                with self.subTest(target=target, response=response):
+                    with mock.patch(target, return_value=response) as complete:
+                        with self.assertRaisesRegex(
+                            ValueError, "AI job completion receipt UNKNOWN"
+                        ):
+                            loop._complete(
+                                "ai-test-job", {"result": "ALLOW"},
+                                claim_token="atk_test",
+                                attempt_id="att_test",
+                            )
+                        complete.assert_called_once()
+            with self.subTest(target=target, success=True):
+                with mock.patch(target, return_value={"ok": True}) as complete:
+                    self.assertIsNone(loop._complete(
+                        "ai-test-job", {"result": "ALLOW"},
+                        claim_token="atk_test", attempt_id="att_test",
+                    ))
+                    complete.assert_called_once()
+
+    def test_agent_exec_timeout_never_outlives_core_deadline(self):
+        # A verified signed claim may be queued for several seconds before
+        # local execution. Its original timeout cannot extend Core authority.
+        from datetime import datetime, timedelta, timezone
+        job = {
+            "id": "ai-exec-time-budget", "claim_token": "atk_budget",
+            "attempt_id": "att_budget", "capability": "exec",
+            "arguments": {"command": "echo test"}, "patterns": [],
+            "timeout": 60,
+            "deadline_at": (
+                datetime.now(timezone.utc) + timedelta(seconds=4)
+            ).isoformat(),
+        }
+        loop = AgentLoop(agent_root=self.agent_a_tmp)
+        with mock.patch.object(loop, "_claim", return_value=[job]), mock.patch(
+            "drlink_ai_agent.execute_local", return_value={"result": "ALLOW"},
+        ) as executed, mock.patch.object(loop, "_complete") as completed:
+            self.assertEqual(loop.run_once(), 1)
+        executed.assert_called_once()
+        budget = executed.call_args.kwargs["timeout"]
+        self.assertGreaterEqual(budget, 1)
+        self.assertLessEqual(budget, 3)
+        completed.assert_called_once()
+
+    def test_agent_refuses_new_execution_with_subsecond_core_deadline(self):
+        from datetime import datetime, timedelta, timezone
+        job = {
+            "id": "ai-exec-too-late", "claim_token": "atk_late",
+            "attempt_id": "att_late", "capability": "exec",
+            "arguments": {"command": "echo must-not-run"}, "patterns": [],
+            "timeout": 60,
+            "deadline_at": (
+                datetime.now(timezone.utc) + timedelta(milliseconds=350)
+            ).isoformat(),
+        }
+        loop = AgentLoop(agent_root=self.agent_a_tmp)
+        with mock.patch.object(loop, "_claim", return_value=[job]), mock.patch(
+            "drlink_ai_agent.execute_local",
+        ) as executed, mock.patch.object(loop, "_complete") as completed:
+            self.assertEqual(loop.run_once(), 1)
+        executed.assert_not_called()
+        completed.assert_called_once()
+        self.assertEqual(completed.call_args.args[1]["result"], "DENY")
+
+    def test_ai_agent_exception_text_never_leaves_local_host(self):
+        # Local executor exceptions may contain paths, credentials or raw
+        # payloads. The Core completion must receive only fixed safe codes.
+        from datetime import datetime, timedelta, timezone
+        secret = "Bearer PRIVATE_AI_AGENT_TOKEN_DO_NOT_EXPORT"
+        future = (datetime.now(timezone.utc) + timedelta(minutes=2)).isoformat()
+        job = {
+            "id": "ai-exception-fixture", "claim_token": "atk_fixture",
+            "attempt_id": "att_fixture", "capability": "read_file",
+            "arguments": {}, "patterns": [],
+            "timeout": 5, "deadline_at": future,
+        }
+        loop = AgentLoop(agent_root=self.agent_a_tmp)
+        cases = (
+            (ControlPlaneError(secret), "DENY"),
+            (RuntimeError(secret), "ERROR"),
+        )
+        for thrown, status in cases:
+            with self.subTest(exception=type(thrown).__name__):
+                with mock.patch.object(loop, "_claim", return_value=[job]), mock.patch(
+                    "drlink_ai_agent.execute_local", side_effect=thrown
+                ), mock.patch.object(loop, "_complete") as completion:
+                    self.assertEqual(loop.run_once(), 1)
+                completion.assert_called_once()
+                args, kwargs = completion.call_args
+                self.assertEqual(args[0], job["id"])
+                self.assertEqual(args[1]["result"], status)
+                self.assertEqual(kwargs["claim_token"], job["claim_token"])
+                self.assertEqual(kwargs["attempt_id"], job["attempt_id"])
+                self.assertNotIn(secret, json.dumps(args[1]))
+                self.assertTrue(args[1].get("error"))
+
+    def test_core_ai_claim_rejects_coerced_limits_without_leasing(self):
+        job_id = self._enqueue_with_timeout(MACHINE_A, "read_file", 60)
+        for invalid in (0, -1, True, False, 1.5, "2", None):
+            with self.subTest(limit=invalid):
+                with self.assertRaisesRegex(
+                    ControlPlaneError, "AI job claim limit must be a positive integer"
+                ):
+                    self.plane.claim_ai_jobs(MACHINE_A, limit=invalid)
+                self.assertEqual(self.plane.get_ai_job(job_id)["status"], "queued")
+        # Existing bridge backends legitimately request 64 at a time.
+        claims = self.plane.claim_ai_jobs(MACHINE_A, limit=64)
+        self.assertEqual([job["id"] for job in claims], [job_id])
+
+    def test_signed_ai_completion_rejects_explicit_nonobject_results(self):
+        job_id = self._enqueue_with_timeout(MACHINE_A, "read_file", 60)
+        claims = mgmt.claim_ai_jobs_on_server(root=self.agent_a_tmp, limit=1)["jobs"]
+        self.assertEqual([claim["id"] for claim in claims], [job_id])
+        claim = claims[0]
+        endpoint = self.mgmt_url + "/v1/ai-jobs/complete"
+        for invalid in (None, [], "", 0, False):
+            with self.subTest(result=invalid):
+                with self.assertRaises(mgmt.MgmtSyncError):
+                    mgmt._request_json(
+                        "POST", endpoint,
+                        {"id": job_id, "claim_token": claim["claim_token"],
+                         "attempt_id": claim["attempt_id"], "result": invalid},
+                        root=self.agent_a_tmp,
+                    )
+                self.assertEqual(self.plane.get_ai_job(job_id)["status"], "running")
+        accepted = mgmt.complete_ai_job_on_server(
+            root=self.agent_a_tmp, job_id=job_id,
+            claim_token=claim["claim_token"], attempt_id=claim["attempt_id"],
+            result={"ok": True},
+        )
+        self.assertTrue(accepted["ok"])
+        self.assertEqual(self.plane.get_ai_job(job_id)["status"], "done")
 
     def test_stale_attempt_rejection(self):
         job_id = self._enqueue_with_timeout(MACHINE_A, "read_file", 60)

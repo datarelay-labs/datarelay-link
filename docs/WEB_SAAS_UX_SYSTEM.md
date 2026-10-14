@@ -2,7 +2,7 @@
 
 > **Status:** normative 3.0 Web UX contract
 > **Roadmap:** DRL3-7A (visual shell) + DRL3-7B (workflow-first usability)
-> **Usability roadmap:** `docs/WEB_USER_JOURNEY_UX_ROADMAP.md` (19-product vendor evidence; UXB-01..05 code implemented, UXB-06 actual-user E2E pending)
+> **ONE active roadmap:** [Issue #184 unified R1–R7](https://github.com/datarelay-labs/datarelay-link/issues/184), with `docs/WEB_USER_JOURNEY_UX_ROADMAP.md` as a repo-local index. R2 owns shared Web/Core/Administration source integration; R7 owns genuine Admin/Operator/Read Only Browser and same-HEAD two-user E2E. Historical UXB/19-product research remains in Git history; real user/browser acceptance is NOT VERIFIED.
 > **Visual reference authority:** Data Relay Control `main-v2` semantic foundation and App Shell
 > **Product authority:** `PRODUCT_MASTER.md`, `WEB_MANAGEMENT.md`, `MANAGEMENT_SURFACE_CONTRACT.md`
 
@@ -427,4 +427,4 @@ The originally implemented five-sidebar-group SaaS shell remains the stable cont
 
 Within Setup, users choose a purpose (internal server/Remote, outbound Internet, or AI permission) and see plain-language examples, a four-stage checklist, short definitions, and read-only selectors backed by actual bounded Core inventory. The same named selector assistance is available from the existing guided policy editor and Remote Service editor. Selecting a name never creates an object, grants access, approves an Agent or proves a connection. Existing explicit Core Preview → Regression/Test → Typed Apply, Agent admission/security boundaries and advanced exact-name forms are retained.
 
-This is the practical implementation of the existing 19-vendor research summary in `docs/WEB_USER_JOURNEY_UX_ROADMAP.md` §§14–15. No new Foundation package, independent visual system, cloud integration, or CLI grammar change is introduced. Source/SSR/offline tests **do not qualify** real browser persona usability at 320/375px, novice observation, live Agent reachability or release acceptance.
+This is the earlier implementation of the 19-vendor research baseline recorded in Git history and `WEB_UX_COMPETITIVE_AUDIT_2026-10.md`; current scheduling is the B1–B5 replacement in `docs/WEB_USER_JOURNEY_UX_ROADMAP.md`. No new Foundation package, independent visual system, cloud integration, or CLI grammar change is introduced. Source/SSR/offline tests **do not qualify** real browser persona usability at 320/375px, novice observation, live Agent reachability or release acceptance.

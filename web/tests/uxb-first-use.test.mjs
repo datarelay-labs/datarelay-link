@@ -1,7 +1,7 @@
 // DRL3-7B UXB-01/02 offline deterministic contract, not browser/user E2E.
 import assert from "node:assert/strict";
 import {before,after,test} from "node:test";
-import {mkdtempSync,rmSync} from "node:fs";
+import {mkdtempSync,rmSync,readFileSync} from "node:fs";
 import {dirname,join} from "node:path";
 import {fileURLToPath,pathToFileURL} from "node:url";
 import {build} from "esbuild";
@@ -105,13 +105,64 @@ test("Home welcome requires confirmed empty Core across Hosts, Services and ever
   policies:{ai:{total:0},remote:{enabled:0}}}},"ready"),false);
  assert.equal(home.showFreshHomeWelcome(null,"ready"),false);
 });
+test("Pending Host attention links to the existing admission-filtered Host inventory without approval",()=>{
+ const data={overview:{managed_hosts:{total:10,pending_approval:3},
+    remote_services:{total:0,enabled:0},policies:{ai:{total:0,enabled:0}}}};
+ for(const role of ["Admin","Operator","Read Only"]){
+   const html=renderToStaticMarkup(React.createElement(home.FirstUseHome,{
+     data,operator:{role},api:async()=>{throw new Error("SSR must not call Core")}}));
+   assert.match(html,/3 Host\(s\) await Admin approval/);
+   assert.match(html,/Review pending Hosts/);
+   assert.match(html,/more pages may be needed/);
+   assert.doesNotMatch(html,/Click here to approve|Approvals completed/);
+ }
+ const source=readFileSync(join(root,"src","uxb-home.tsx"),"utf8");
+ assert.match(source,/onNavigate\?\.\("hosts","connections",\{savedAdmission:"PENDING_APPROVAL"\}\)/);
+});
+test("Home next action never skips UNKNOWN or unapproved Agent prerequisites",()=>{
+ const ready="Configured · verify",unknown="Unknown",todo="Not started",verify="Needs verification";
+ assert.equal(home.nextFirstConnectionAction([ready,unknown,todo,todo,verify],"Admin").route,"hosts");
+ assert.equal(home.nextFirstConnectionAction([ready,unknown,todo,todo,verify],"Read Only").route,"hosts");
+ assert.equal(home.nextFirstConnectionAction([ready,"Needs approval",todo,todo,verify],"Admin").route,"hosts");
+ assert.equal(home.nextFirstConnectionAction([ready,todo,todo,todo,verify],"Admin").route,"enrollments");
+ assert.equal(home.nextFirstConnectionAction([ready,todo,todo,todo,verify],"Operator").route,"hosts");
+ assert.equal(home.nextFirstConnectionAction([ready,verify,todo,todo,verify],"Admin").route,"hosts");
+ assert.equal(home.nextFirstConnectionAction([ready,ready,todo,todo,verify],"Admin").route,"services");
+ const readOnlySvc=home.nextFirstConnectionAction([ready,ready,todo,todo,verify],"Read Only");
+ assert.equal(readOnlySvc.route,"services");
+ assert.match(readOnlySvc.action,/Review|Inspect/);
+ assert.equal(home.nextFirstConnectionAction([ready,ready,ready,todo,verify],"Read Only").route,"policies");
+ assert.equal(home.nextFirstConnectionAction([ready,ready,ready,ready,verify],"Admin").route,"access");
+});
+test("Approval queue prioritizes the complete Core overview over an incomplete 100-Host page",()=>{
+ const data={overview:{managed_hosts:{total:130,pending_approval:7,approved:120},
+   remote_services:{total:2,enabled:1},policies:{ai:{total:0,enabled:0}}}};
+ const loaded=Array.from({length:100},(_,i)=>({id:"host-"+i,
+   admission_state:"APPROVED",trust_status:"untrusted",connected:false}));
+ assert.equal(home.observedApprovalQueueCount(data,loaded,false),7);
+ assert.equal(home.firstConnectionStates(data,loaded,false)[1],"Needs approval");
+ assert.equal(home.observedApprovalQueueCount({overview:{managed_hosts:{pending_approval:0}}},loaded,false),0);
+ assert.equal(home.observedApprovalQueueCount(null,loaded,false),"UNKNOWN");
+ assert.equal(home.observedApprovalQueueCount(null,loaded,true),0);
+ assert.equal(home.observedApprovalQueueCount({overview:{managed_hosts:{total:130}}},loaded,true),"UNKNOWN");
+ assert.equal(home.observedApprovalQueueCount({overview:{managed_hosts:{total:100}}},loaded,true),0);
+ assert.equal(home.observedApprovalQueueCount({overview:{managed_hosts:{pending_approval:-1}}},loaded,false),"UNKNOWN");
+ assert.equal(home.observedApprovalQueueCount({overview:{managed_hosts:{pending_approval:"7"}}},loaded,false),"UNKNOWN");
+ assert.equal(home.firstConnectionStates({overview:{managed_hosts:{total:130},
+   remote_services:{total:0,enabled:0},policies:{ai:{total:0,enabled:0}}}},loaded,false)[1],"Unknown");
+ assert.equal(home.observedApprovalQueueCount(null,null,true),"UNKNOWN");
+ assert.equal(home.hostInventoryPageComplete({items:[],next_cursor:null}),true);
+ assert.equal(home.hostInventoryPageComplete({items:loaded,next_cursor:"cursor-101"}),false);
+ assert.equal(home.hostInventoryPageComplete({items:loaded}),null);
+ assert.equal(home.hostInventoryPageComplete({items:null,next_cursor:null}),null);
+});
 test("first-use states are fail-closed without trustworthy evidence",()=>{
  assert.deepEqual(home.firstConnectionStates(null,null),[
   "Unknown","Unknown","Unknown","Unknown","Needs verification"]);
  const blank={overview:{managed_hosts:{total:0},remote_services:{total:0,enabled:0},policies:{remote:{total:0,enabled:0}}}};
  assert.deepEqual(home.firstConnectionStates(blank,[]),[
   "Configured · verify","Not started","Not started","Not started","Needs verification"]);
- const partial={overview:{managed_hosts:{total:1},remote_services:{total:1,enabled:1},policies:{remote:{enabled:2}}}};
+ const partial={overview:{managed_hosts:{total:1},remote_services:{total:1,enabled:1},policies:{remote:{total:2,enabled:2}}}};
  const waiting=home.firstConnectionStates(partial,[{admission_state:"PENDING_APPROVAL",connected:true,trust_status:"trusted"}]);
  assert.equal(waiting[1],"Needs approval");
  assert.equal(waiting[2],"Configured · verify");
@@ -184,4 +235,305 @@ test("Home SSR has useful actions, no fake connection claims or credential URLs"
   assert.match(html,/>Open guided setup →<\/button>/);
   assert.doesNotMatch(html,/<button[^>]*disabled=""[^>]*>Open guided setup →<\/button>/);
  }
+});
+
+test("M1 Home rejects impossible Core counts and inconsistent step completion",()=>{
+ for(const bad of [-1,1.5,NaN,Infinity,Number.MAX_SAFE_INTEGER+1,"0",null]){
+  assert.equal(home.observedNumber(bad),"UNKNOWN",String(bad));
+ }
+ const good={overview:{managed_hosts:{total:2},remote_services:{total:1,enabled:1},
+  policies:{ai:{total:0,enabled:0},remote:{total:1,enabled:1}}}};
+ assert.equal(home.hasObservedCoreOverview(good),true);
+ for(const invalid of [
+  {...good,overview:{...good.overview,managed_hosts:{total:-1}}},
+  {...good,overview:{...good.overview,managed_hosts:{total:2,pending_approval:-1}}},
+  {...good,overview:{...good.overview,managed_hosts:{total:2,pending_approval:3}}},
+  {...good,overview:{...good.overview,remote_services:{total:1,enabled:2}}},
+  {...good,overview:{...good.overview,policies:{ai:{total:0,enabled:-1}}}},
+  {...good,overview:{...good.overview,policies:{remote:{total:0,enabled:5}}}},
+ ]){
+  assert.equal(home.hasObservedCoreOverview(invalid),false);
+  assert.equal(home.firstConnectionStates(invalid,[])[0],"Unknown");
+ }
+ const partial={overview:{...good.overview,policies:{remote:{enabled:1},ai:{total:0,enabled:0}}}};
+ assert.equal(home.firstConnectionStates(partial,[])[3],"Unknown");
+});
+test("Home Host page cannot claim complete approval queue from invalid/unknown admission",()=>{
+ for(const bad of [
+  {items:[null],next_cursor:null},
+  {items:[{id:"host-1"}],next_cursor:null},
+  {items:[{admission_state:"INVALID"}],next_cursor:null},
+  {items:Array.from({length:101},(_,i)=>({id:"h"+i,admission_state:"APPROVED"})),next_cursor:null},
+  {items:[],next_cursor:""}
+ ]){
+  assert.equal(home.hostInventoryPageComplete(bad),null);
+ }
+ assert.equal(home.observedApprovalQueueCount(null,[{admission_state:"UNKNOWN"}],true),"UNKNOWN");
+ assert.equal(home.observedApprovalQueueCount(null,[{admission_state:"APPROVED"}],true),0);
+});
+test("Recent Core Home feed cannot present malformed events as empty or render nested secrets",()=>{
+ for(const rows of [[null],[{}],[{event_id:"evt\u202e"}],Array.from({length:7},(_,i)=>({event_id:"evt-"+i}))]){
+  assert.deepEqual(home.observedRecentFeed({status:"fulfilled",value:{items:rows}}),
+   {status:"unknown",items:[]});
+ }
+ const result=home.observedRecentFeed({status:"fulfilled",value:{items:[
+  {event_id:"evt-1",event_type:"read",result:"allow",
+   actor_id:{secret:"PRIVATE_ACTOR"},category:"ACCESS",
+   unused:{key:"PRIVATE_KEY"}}
+ ]}});
+ assert.equal(result.status,"ready");
+ assert.equal(result.items[0].event_id,"evt-1");
+ assert.equal(result.items[0].actor_id,"UNKNOWN");
+ assert.doesNotMatch(JSON.stringify(result),/PRIVATE_/);
+ const revision=home.observedRecentFeed({status:"fulfilled",value:{items:[
+  {revision:12,actor:"operator-a",summary:"Narrow SSH access",
+   created_at:"2026-10-11T00:11:00Z"}
+ ]}});
+ assert.equal(revision.status,"ready");
+ assert.equal(revision.items[0].revision,12);
+});
+
+test("FirstUseHome must fail closed before accepting malformed role-scoped Host inventory",()=>{
+ const valid={items:[{id:"host-a",admission_state:"APPROVED",trust_status:"trusted",connected:true}],next_cursor:null};
+ assert.deepEqual(home.observedHomeHostPage(valid),{items:valid.items,complete:true});
+ assert.deepEqual(home.observedHomeHostPage({...valid,next_cursor:"opaque"}),{items:valid.items,complete:false});
+ for(const invalid of [
+  null,{items:null},{items:[null],next_cursor:null},
+  {items:[{id:"host-a"}],next_cursor:null},
+  {items:[{id:"host-a",admission_state:"INVALID"}],next_cursor:null},
+  {items:[{id:{secret:"private"},admission_state:"APPROVED"}],next_cursor:null},
+  {items:Array.from({length:101},(_,i)=>({id:"host-"+i,admission_state:"APPROVED"})),next_cursor:null}
+ ]){
+  assert.equal(home.observedHomeHostPage(invalid),null);
+ }
+ const source=readFileSync(join(root,"src","uxb-home.tsx"),"utf8");
+ assert.match(source,/const observed=observedHomeHostPage\(payload\)/);
+ assert.match(source,/if\(!observed\)throw new Error\("Core inventory response missing or malformed items"\)/);
+ assert.match(source,/\},\[api,operator\?\.id,operator\?\.role\]\)/);
+ assert.match(source,/setInventory\(null\);setInventoryComplete\(null\);setLoadState\("loading"\)/);
+});
+
+test("Host inventory evidence must remain private to its exact current Web operator and role",()=>{
+ const actor={id:"web-operator-a",role:"Admin"};
+ const scope={id:"web-operator-a",role:"Admin"};
+ assert.equal(home.homeInventoryMatchesActor(scope,actor),true);
+ for(const other of [
+  {id:"web-operator-b",role:"Admin"},
+  {id:"web-operator-a",role:"Operator"},
+  {id:"web-operator-a",role:"Read Only"},
+  {id:"",role:"Admin"},
+  {id:"web-operator-a",role:"Unknown"}
+ ])assert.equal(home.homeInventoryMatchesActor(scope,other),false,JSON.stringify(other));
+ assert.equal(home.homeInventoryMatchesActor(null,actor),false);
+ assert.equal(home.homeInventoryMatchesActor({id:"web-operator-a",role:"Admin"},null),false);
+ const src=readFileSync(join(root,"src","uxb-home.tsx"),"utf8");
+ assert.match(src,/const matchingActor=homeInventoryMatchesActor\(loadedFor,operator\)/);
+ assert.match(src,/const scopedInventory=matchingActor\?inventory:null/);
+ assert.match(src,/\},\[api,operator\?\.id,operator\?\.role\]\)/);
+});
+
+test("Competitor UX-4 Home evidence shows Core derived scope and observed time, not invented freshness",()=>{
+ const overview={schema_version:1,state_class:"DERIVED",authoritative:false,rebuildable:true,
+  generated_at:"2026-10-11T03:10:11Z",
+  managed_hosts:{total:3,pending_approval:1},remote_services:{total:1,enabled:1},
+  policies:{ai:{total:0,enabled:0},remote:{total:1,enabled:1}}};
+ assert.deepEqual(home.observedCoreOverviewEvidence({overview}),{
+  status:"observed",scope:"Fleet-wide derived Core counts",
+  observedAt:"2026-10-11T03:10:11Z"});
+ const html=renderToStaticMarkup(React.createElement(home.FirstUseHome,{
+  data:{overview},operator:{id:"reader-a",role:"Read Only"},
+  api:async()=>{throw new Error("SSR must not call Core")}}));
+ assert.match(html,/Core overview evidence/);
+ assert.match(html,/Fleet-wide derived Core counts/);
+ assert.match(html,/2026-10-11T03:10:11Z/);
+ assert.match(html,/Not proof of live connectivity/);
+ assert.match(html,/Inspect System Health/);
+ assert.doesNotMatch(html,/All systems healthy|Live access verified/);
+});
+test("UX-4 invalid or missing Core provenance/timestamps are UNKNOWN, never a healthy-looking timestamp",()=>{
+ const base={schema_version:1,state_class:"DERIVED",authoritative:false,rebuildable:true,
+  generated_at:"2026-10-11T03:10:11Z",
+  managed_hosts:{total:0},remote_services:{total:0,enabled:0},
+  policies:{ai:{total:0,enabled:0}}};
+ for(const partial of [
+  null,{overview:{}},
+  {overview:{...base,state_class:"AUTHORITATIVE"}},
+  {overview:{...base,authoritative:true}},
+  {overview:{...base,rebuildable:false}},
+  {overview:{...base,managed_hosts:{total:-1}}},
+ ]){
+  assert.deepEqual(home.observedCoreOverviewEvidence(partial),{
+   status:"UNKNOWN",scope:"UNKNOWN",observedAt:"UNKNOWN"});
+ }
+ for(const bad of [null,{}, "yesterday","2026-02-30T00:00:00Z","2026-10-11\nspoof",
+   "2026-10-11T03:10:11Z\u202e",42]){
+  const evidence=home.observedCoreOverviewEvidence({overview:{...base,generated_at:bad}});
+  assert.equal(evidence.scope,"Fleet-wide derived Core counts");
+  assert.equal(evidence.observedAt,"UNKNOWN");
+  assert.equal(evidence.status,"UNKNOWN");
+  const html=renderToStaticMarkup(React.createElement(home.FirstUseHome,{
+   data:{overview:{...base,generated_at:bad}},
+   operator:{id:"admin-a",role:"Admin"},api:async()=>Promise.resolve({items:[]})}));
+  assert.match(html,/Core overview UNKNOWN/);
+  assert.match(html,/Observation timestamp unavailable/);
+  assert.doesNotMatch(html,/spoof|\[object Object\]/);
+ }
+});
+
+test("UX-4 Core attention items provide bounded task-specific read-only inspection routes",()=>{
+ const page={attention:{authoritative:false,count:4,generated_at:"2026-10-11T03:19:00Z",items:[
+  {kind:"pending-host-approval",label:"Managed Hosts Pending Approval",count:2,severity:"warning"},
+  {kind:"degraded-remote-services",label:"DEGRADED Remote Services",count:1,severity:"warning"},
+  {kind:"failed-jobs",label:"Failed Management Jobs",count:4,severity:"warning"},
+  {kind:"webhook-delivery",label:"Signed Webhook Delivery Degraded",count:1,severity:"warning"}
+ ]}};
+ const admin=home.observedHomeAttention(page,"Admin");
+ assert.equal(admin?.items.length,4);
+ assert.deepEqual(admin?.items.map(item=>[item.route,item.group]),[
+  ["hosts","connections"],["services","connections"],["jobs","activity"],["integrations","administration"]]);
+ assert.equal(admin?.observedAt,"2026-10-11T03:19:00Z");
+ const readonly=home.observedHomeAttention(page,"Read Only");
+ assert.equal(readonly.items[3].route,"health");
+ assert.equal(readonly.items[3].group,"activity");
+ const html=renderToStaticMarkup(React.createElement(home.FirstUseHome,{
+  data:{...page,overview:{managed_hosts:{total:2},remote_services:{total:1,enabled:1},policies:{ai:{total:0,enabled:0}}}},
+  operator:{id:"reader-a",role:"Read Only"},api:async()=>{throw Error("SSR may not read Core")}}));
+ assert.match(html,/Investigate Core attention/);
+ assert.match(html,/DEGRADED Remote Services/);
+ assert.match(html,/Failed Management Jobs/);
+ assert.match(html,/Inspect Services/);
+ assert.match(html,/Inspect Jobs/);
+ assert.match(html,/Core attention observed at/);
+ assert.doesNotMatch(html,/Inspect integrations|No current attention items/);
+});
+test("UX-4 malformed or stale-looking attention cannot claim zero problems or expose nested Core payloads",()=>{
+ const valid={attention:{authoritative:false,count:1,generated_at:"2026-10-11T00:00:00Z",
+  items:[{kind:"version-drift",label:"Agent Version Drift",count:1,severity:"warning"}]}};
+ for(const bad of [
+  null,{}, {attention:{items:[]}}, {attention:{...valid.attention,count:0}},
+  {attention:{...valid.attention,authoritative:true}},
+  {attention:{...valid.attention,generated_at:"yesterday"}},
+  {attention:{...valid.attention,items:[null]}},
+  {attention:{...valid.attention,items:[{kind:"version-drift",label:{secret:"PRIVATE"},count:1,severity:"warning"}]}},
+  {attention:{...valid.attention,items:[{kind:"version-drift",label:"Agent\u202e Drift",count:1,severity:"warning"}]}},
+  {attention:{...valid.attention,items:[{kind:"version-drift",label:"Agent Version Drift",count:-1,severity:"warning"}]}},
+  {attention:{...valid.attention,items:[{kind:"version-drift",label:"Agent Version Drift",count:1,severity:"unsafe"}]}}
+ ])assert.equal(home.observedHomeAttention(bad,"Read Only"),null);
+ const unexpected=home.observedHomeAttention({attention:{...valid.attention,
+  items:[{kind:"constructor",label:"New Core signal",count:1,severity:"info"}]}},"Read Only");
+ assert.equal(unexpected?.items[0].route,"doctor");
+ assert.equal(unexpected?.items[0].action,"Troubleshoot");
+ assert.equal(home.observedHomeAttention({attention:{authoritative:false,count:0,
+  generated_at:"2026-10-11T00:00:00Z",items:[]}},"Read Only")?.items.length,0);
+ const none=renderToStaticMarkup(React.createElement(home.FirstUseHome,{
+  data:null,operator:{id:"reader-a",role:"Read Only"},
+  api:async()=>{throw Error("SSR may not read Core")}}));
+ assert.match(none,/Core attention UNKNOWN/);
+ assert.doesNotMatch(none,/No current attention items|PRIVATE/);
+});
+
+test("UX-4 Command Center uses the same validated Core attention snapshot as Home",()=>{
+ const src=readFileSync(join(root,"src","main.tsx"),"utf8");
+ const command=src.split("function CommandCenter(",2)[1]?.split("function AccessHygienePanel(",1)[0]||"";
+ assert.match(src,/import \{FirstUseHome,.*observedHomeAttention/);
+ assert.match(command,/const attentionState=observedHomeAttention\(data,operator.role\)/);
+ assert.match(command,/const attention=attentionState\?\.items\?\?null/);
+ assert.doesNotMatch(command,/Array\.isArray\(data\.attention\?\.items\)\?data\.attention\.items:null/);
+ assert.match(command,/Core observed no Attention items at \{attentionState\?\.observedAt\|\|"UNKNOWN"\}/);
+ assert.match(command,/UNKNOWN · Core attention evidence unavailable/);
+ assert.match(command,/No current attention items/);
+});
+test("UX-8 recent Audit and revision time labels reject impossible dates or fabricated relative times",()=>{
+ const audit={status:"fulfilled",value:{items:[{
+  event_id:"audit-a",occurred_at:"2026-02-31T11:22:33Z",
+  timestamp:"yesterday",actor_id:"operator-1",category:"CONTROL"
+ }]}};
+ const a=home.observedRecentFeed(audit);
+ assert.equal(a.status,"ready");
+ assert.equal(a.items[0].occurred_at,"UNKNOWN");
+ assert.equal(a.items[0].timestamp,"UNKNOWN");
+ const revision={status:"fulfilled",value:{items:[{
+  revision:7,actor:"operator-1",created_at:"2026-10-11T13:22:33+09:00",
+  summary:"Policy updated"
+ }]}};
+ assert.equal(home.observedRecentFeed(revision).items[0].created_at,
+  "2026-10-11T13:22:33+09:00");
+ for(const input of ["2026-10-11\nspoof","2026-10-11T13:22:33Z\u202e",42,{secret:"NO_SHOW"}]){
+  const safe=home.observedRecentFeed({status:"fulfilled",value:{items:[
+   {revision:7,actor:"operator-1",created_at:input}
+  ]}});
+  assert.equal(safe.items[0].created_at,"UNKNOWN");
+  assert.doesNotMatch(JSON.stringify(safe),/NO_SHOW|spoof/);
+ }
+});
+
+test("UX-4 Core coverage counters reject enabled/connected totals that cannot coexist",()=>{
+ for(const [value,key,want] of [
+  [{total:4,connected:3},"connected",{total:4,subset:3}],
+  [{total:0,connected:0},"connected",{total:0,subset:0}],
+  [{total:2,enabled:1},"enabled",{total:2,subset:1}],
+  [{total:2,enabled:4},"enabled",{total:2,subset:"UNKNOWN"}],
+  [{total:2,connected:-1},"connected",{total:2,subset:"UNKNOWN"}],
+  [{total:2,connected:"2"},"connected",{total:2,subset:"UNKNOWN"}],
+  [{total:4},"connected",{total:4,subset:"UNKNOWN"}],
+  [{total:0,enabled:1},"enabled",{total:0,subset:"UNKNOWN"}],
+  [{total:-1,enabled:0},"enabled",{total:"UNKNOWN",subset:"UNKNOWN"}],
+  [{total:"1",enabled:1},"enabled",{total:"UNKNOWN",subset:"UNKNOWN"}],
+  [null,"connected",{total:"UNKNOWN",subset:"UNKNOWN"}],
+  [[], "enabled",{total:"UNKNOWN",subset:"UNKNOWN"}]
+ ])assert.deepEqual(home.observedBoundedCountPair(value,key),want,JSON.stringify(value));
+});
+test("UX-4 Home Command Center renders fleet and policy counts only from validated Core coverage",()=>{
+ const src=readFileSync(join(root,"src","main.tsx"),"utf8");
+ const command=src.split("function CommandCenter(",2)[1]?.split("function AccessHygienePanel(",1)[0]||"";
+ assert.match(src,/import \{FirstUseHome,.*observedBoundedCountPair/);
+ assert.match(command,/const hostCounts=observedBoundedCountPair\(h,"connected"\)/);
+ assert.match(command,/const serviceCounts=observedBoundedCountPair\(svc,"enabled"\)/);
+ assert.match(command,/value:observedBoundedCountPair\(pol.remote,"enabled"\)/);
+ assert.match(command,/\{hostCounts\.subset\} connected/);
+ assert.match(command,/\{serviceCounts\.subset\} enabled/);
+ assert.match(command,/\{row\.value\.subset\} enabled of \{row\.value\.total\}/);
+ assert.doesNotMatch(command,/\{observed\(h\.connected\)\} connected/);
+ assert.doesNotMatch(command,/\{observed\(row\.value\.enabled\)\} enabled/);
+});
+
+test("UX-5 Recent Activity sanitized projection retains Core IDs only as read-only navigation evidence",()=>{
+ const item={event_id:"evt-1",resource_type:"remote-service",resource_id:"svc-a",
+  actor_id:"operator-a",occurred_at:"2026-10-11T11:21:37Z",result:"deny"};
+ const result=home.observedRecentFeed({status:"fulfilled",value:{items:[item]}});
+ assert.equal(result.status,"ready");
+ assert.equal(result.items[0].resource_type,"remote-service");
+ assert.equal(result.items[0].resource_id,"svc-a");
+ assert.equal(result.items[0].occurred_at,"2026-10-11T11:21:37Z");
+ for(const bad of ["svc\u202e-a",{secret:"PRIVATE"},null]){
+  const res=home.observedRecentFeed({status:"fulfilled",value:{
+   items:[{...item,resource_id:bad}]}});
+  assert.ok(["UNKNOWN",undefined].includes(res.items[0].resource_id));
+  assert.doesNotMatch(JSON.stringify(res),/PRIVATE/);
+ }
+});
+
+test("R2.2 M2 Home Recent Activity and Revisions do not fabricate empty history from a mismatched Core family",()=>{
+ const fulfilled=value=>({status:"fulfilled",value});
+ const audit={resource_type:"audit-event",limit:6,items:[{event_id:"evt-1"}],next_cursor:null};
+ const revisions={resource_type:"revision",limit:6,items:[{revision:7}],next_cursor:null};
+ assert.equal(home.observedCoreRecentFeed(fulfilled(audit),"audit-event").status,"ready");
+ assert.equal(home.observedCoreRecentFeed(fulfilled(revisions),"revision").status,"ready");
+ assert.deepEqual(home.observedCoreRecentFeed(fulfilled({...audit,items:[]}),"audit-event"),
+   {status:"ready",items:[]});
+ for(const bad of [
+   {items:[]},{...audit,resource_type:"revision"},
+   {...audit,limit:50},{...audit,limit:"6"},
+   {...audit,items:[],next_cursor:"phantom"},
+   {...audit,next_cursor:undefined},
+   {...audit,items:Array.from({length:7},(_,i)=>({event_id:"evt-"+i}))},
+ ]){
+   assert.deepEqual(home.observedCoreRecentFeed(fulfilled(bad),"audit-event"),
+     {status:"unknown",items:[]},JSON.stringify(bad));
+ }
+ assert.deepEqual(home.observedCoreRecentFeed(fulfilled(audit),"revision"),
+   {status:"unknown",items:[]});
+ const source=readFileSync(join(root,"src","main.tsx"),"utf8");
+ assert.match(source,/setActivity\(observedCoreRecentFeed\(auditResult,"audit-event"\)\)/);
+ assert.match(source,/setChanges\(observedCoreRecentFeed\(revisionResult,"revision"\)\)/);
 });

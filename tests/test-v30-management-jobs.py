@@ -51,6 +51,360 @@ class V30ManagementJobTests(unittest.TestCase):
             **kwargs,
         )
 
+    def test_agent_invalid_claim_limit_never_contacts_core(self):
+        # A local caller cannot claim work from Core before its own bounded
+        # request has been validated. Even a signed Core claim changes leases.
+        from unittest.mock import patch
+        import drlink_agent_lifecycle as agent
+
+        for invalid in (0, -1, True, False, 1.5, "1", None):
+            with self.subTest(limit=invalid):
+                with patch(
+                    "drlink_mgmt_sync.claim_management_jobs_on_server",
+                    side_effect=AssertionError("Core must not receive an invalid claim"),
+                ) as claim:
+                    with self.assertRaisesRegex(
+                        ValueError, "Core Management Job claim response UNKNOWN"
+                    ):
+                        agent.process_management_jobs_once(root=self.tmp, limit=invalid)
+                    claim.assert_not_called()
+
+    def test_agent_invalid_identity_never_leases_core_work(self):
+        # A valid signed session cannot compensate for absent or malformed
+        # local Host identity; do not reserve Core work before this check.
+        from unittest.mock import patch
+        import drlink_agent_lifecycle as agent
+
+        bad_identities = (
+            {}, {"machine_id": None}, {"machine_id": "  "},
+            {"machine_id": True}, {"machine_id": "host\nspoof"},
+        )
+        for identity in bad_identities:
+            with self.subTest(identity=identity):
+                with patch(
+                    "drlink_mgmt_sync._agent_identity", return_value=identity,
+                ), patch(
+                    "drlink_mgmt_sync.claim_management_jobs_on_server",
+                    side_effect=AssertionError("No Core claim with invalid Host identity"),
+                ) as claim:
+                    with self.assertRaisesRegex(
+                        ValueError, "Core Management Job claim response UNKNOWN"
+                    ):
+                        agent.process_management_jobs_once(root=self.tmp, limit=1)
+                    claim.assert_not_called()
+
+    def test_enqueue_rejects_coerced_timeout_before_queue_mutation(self):
+        before = self.engine.conn.execute(
+            "SELECT COUNT(*) FROM management_jobs"
+        ).fetchone()[0]
+        for invalid in (True, False, 1.5, "2", None):
+            with self.subTest(timeout=invalid):
+                with self.assertRaisesRegex(
+                    ControlPlaneError, "Management Job timeout must be an integer"
+                ):
+                    self._enqueue(timeout_seconds=invalid)
+                self.assertEqual(
+                    self.engine.conn.execute(
+                        "SELECT COUNT(*) FROM management_jobs"
+                    ).fetchone()[0],
+                    before,
+                )
+
+    def test_core_claim_rejects_coerced_limit_before_leasing_target(self):
+        job = self._enqueue(targets=("host-a",))
+        for invalid in (0, -1, True, False, 1.5, "1", None):
+            with self.subTest(limit=invalid):
+                with self.assertRaisesRegex(
+                    ControlPlaneError, "Management Job claim limit must be a positive integer"
+                ):
+                    self.engine.claim_targets(worker_id="worker-a", limit=invalid)
+                self.assertEqual(
+                    self.engine.get(job["id"])["targets"][0]["status"], QUEUED
+                )
+        self.assertEqual(
+            len(self.engine.claim_targets(worker_id="worker-a", limit=1)), 1
+        )
+
+    def test_enqueue_rejects_nonobject_payload_before_queue_mutation(self):
+        before = self.engine.conn.execute(
+            "SELECT COUNT(*) FROM management_jobs"
+        ).fetchone()[0]
+        for invalid in ([], ["not-an-object"], "invalid", False, 1.5):
+            with self.subTest(payload=invalid):
+                with self.assertRaisesRegex(
+                    ControlPlaneError, "Management Job payload must be an object"
+                ):
+                    self._enqueue(payload=invalid)
+                self.assertEqual(
+                    self.engine.conn.execute(
+                        "SELECT COUNT(*) FROM management_jobs"
+                    ).fetchone()[0],
+                    before,
+                )
+        self.assertEqual(self._enqueue(payload={})["status"], QUEUED)
+        self.assertEqual(self._enqueue(payload=None)["status"], QUEUED)
+
+    def test_job_targets_reject_scalar_mapping_and_nontext_before_enqueue(self):
+        # A scalar hostname must not become one target per character, and a
+        # mapping must not silently turn keys into executable Host targets.
+        before = self.engine.conn.execute(
+            "SELECT COUNT(*) FROM management_jobs"
+        ).fetchone()[0]
+        malformed = (
+            "host-a", b"host-a", {"host-a": True}, None,
+            ["host-a", 12], ["host-a", True], ["host-a", {"id": "host-b"}],
+        )
+        for targets in malformed:
+            with self.subTest(targets=targets):
+                with self.assertRaisesRegex(
+                    ControlPlaneError, "Management Job target"
+                ):
+                    self._enqueue(targets=targets)
+                self.assertEqual(
+                    self.engine.conn.execute(
+                        "SELECT COUNT(*) FROM management_jobs"
+                    ).fetchone()[0],
+                    before,
+                )
+        job = self._enqueue(targets=("host-a", "host-b"))
+        self.assertEqual(job["target_count"], 2)
+
+    def test_agent_remote_service_receipt_rejects_unverified_set_state(self):
+        # A local mutation acknowledgement cannot be promoted to an Agent
+        # success receipt with an invented status. Core accepts only these
+        # concrete native states; unknown evidence stays UNKNOWN.
+        from drlink_agent_lifecycle import _require_agent_remote_service_receipt
+        entity = {
+            "type": "remote-service", "id": "ssh-access", "name": "ssh-access",
+        }
+        base = {
+            "operation": "set", "entity": entity,
+            "view": {
+                "name": "ssh-access", "service": "ssh",
+                "enabled": True, "status": "HEALTHY",
+            },
+        }
+        for bad in ("UNKNOWN", "ACTIVE", "", None, True, [], 0):
+            with self.subTest(runtime_status=bad):
+                receipt = {**base, "view": {**base["view"], "status": bad}}
+                with self.assertRaisesRegex(ValueError, "receipt UNKNOWN"):
+                    _require_agent_remote_service_receipt(
+                        receipt, operation="set", name="ssh-access",
+                    )
+        for state in ("HEALTHY", "DEGRADED", "DISABLED"):
+            with self.subTest(good_runtime_status=state):
+                receipt = {**base, "view": {**base["view"], "status": state}}
+                self.assertIs(
+                    _require_agent_remote_service_receipt(
+                        receipt, operation="set", name="ssh-access",
+                    ), receipt,
+                )
+        deletion = {"operation": "delete", "entity": entity}
+        self.assertIs(
+            _require_agent_remote_service_receipt(
+                deletion, operation="delete", name="ssh-access",
+            ), deletion,
+        )
+
+    def test_nonfinite_job_payload_rejected_before_enqueue(self):
+        # The source writer must not persist a Job that the strict lease-time
+        # reader will refuse; fail before creating an executable queue row.
+        before = self.engine.conn.execute(
+            "SELECT COUNT(*) FROM management_jobs"
+        ).fetchone()[0]
+        for value in (float("nan"), float("inf"), float("-inf")):
+            with self.subTest(nonfinite=str(value)):
+                with self.assertRaisesRegex(
+                    ControlPlaneError, "not JSON serializable"
+                ):
+                    self._enqueue(payload={"score": value})
+                after = self.engine.conn.execute(
+                    "SELECT COUNT(*) FROM management_jobs"
+                ).fetchone()[0]
+                self.assertEqual(after, before)
+
+    def test_persisted_job_details_fail_closed_on_corrupt_json(self):
+        # Neither a valid Core job ID nor a previous SUCCEEDED status makes
+        # corrupted persisted JSON safe to present as a healthy Job detail.
+        job = self._enqueue(
+            targets=("host-a",), payload={"operation": "doctor"}
+        )
+        malformed = (
+            "", "{", "[]", "null", '"text"', "true",
+            '{"field":NaN}', '{"field":Infinity}',
+            '{"field":1e309}', '{"field":-1e309}', '{"field":[1e309]}',
+            '{"id":"first","id":"second"}',
+            '{"large":"' + "x" * 16385 + '"}',
+        )
+        for column, table, key in (
+            ("payload_json", "management_jobs", "id"),
+            ("result_json", "management_job_targets", "job_id"),
+        ):
+            if column == "result_json":
+                # A completed Job with corrupted evidence is still UNKNOWN
+                # to the reader, regardless of its persisted SUCCESS flags.
+                self.engine.conn.execute(
+                    "UPDATE management_jobs SET status='SUCCEEDED' WHERE id=?",
+                    (job["id"],),
+                )
+                self.engine.conn.execute(
+                    "UPDATE management_job_targets SET status='SUCCEEDED' "
+                    "WHERE job_id=?", (job["id"],),
+                )
+                self.engine.conn.commit()
+            for raw in malformed:
+                with self.subTest(column=column, value=raw[:60]):
+                    self.engine.conn.execute(
+                        f"UPDATE {table} SET {column}=? WHERE {key}=?",
+                        (raw, job["id"]),
+                    )
+                    self.engine.conn.commit()
+                    with self.assertRaisesRegex(
+                        ControlPlaneError, "Management Job stored .* malformed"
+                    ):
+                        self.engine.get(job["id"])
+                    # Source corruption must not be silently repaired or
+                    # promoted to a succeeded target during a read.
+                    actual = self.engine.conn.execute(
+                        f"SELECT {column} FROM {table} WHERE {key}=?",
+                        (job["id"],),
+                    ).fetchone()[0]
+                    self.assertEqual(actual, raw)
+            self.engine.conn.execute(
+                f"UPDATE {table} SET {column}='{{}}' WHERE {key}=?",
+                (job["id"],),
+            )
+            self.engine.conn.commit()
+        healthy = self.engine.get(job["id"])
+        self.assertEqual(healthy["payload"], {})
+        self.assertEqual(healthy["targets"][0]["result"], {})
+
+    def test_corrupt_persisted_payload_never_leases_core_job(self):
+        # A corrupted queued Job must never be leased to an Agent as an
+        # invented empty payload. Leave its target queued for investigation.
+        job = self._enqueue(targets=("host-a",), payload={"operation": "doctor"})
+        malformed = (
+            "", "{", "[]", "null", '"text"', "true",
+            '{"value":NaN}', '{"value":Infinity}',
+            '{"value":1e309}', '{"value":-1e309}', '{"value":[1e309]}',
+            '{"operation":"doctor","operation":"refresh"}',
+            '{"large":"' + "x" * 16385 + '"}',
+        )
+        for raw in malformed:
+            with self.subTest(raw=raw[:70]):
+                self.engine.conn.execute(
+                    "UPDATE management_jobs SET payload_json=? WHERE id=?",
+                    (raw, job["id"]),
+                )
+                self.engine.conn.commit()
+                claims = self.engine.claim_targets_for_target(
+                    target_id="host-a", worker_id="agent:host-a", limit=1,
+                    now=self.now + timedelta(seconds=1),
+                )
+                self.assertEqual(claims, [])
+                target = self.engine.conn.execute(
+                    "SELECT status,attempt,claim_token,lease_expires_at "
+                    "FROM management_job_targets WHERE job_id=? AND target_id=?",
+                    (job["id"], "host-a"),
+                ).fetchone()
+                self.assertEqual(target["status"], QUEUED)
+                self.assertEqual(target["attempt"], 0)
+                self.assertFalse(target["claim_token"])
+                self.assertIsNone(target["lease_expires_at"])
+        self.engine.conn.execute(
+            "UPDATE management_jobs SET payload_json=? WHERE id=?",
+            ('{"operation":"doctor"}', job["id"]),
+        )
+        self.engine.conn.commit()
+        claims = self.engine.claim_targets_for_target(
+            target_id="host-a", worker_id="agent:host-a", limit=1,
+            now=self.now + timedelta(seconds=2),
+        )
+        self.assertEqual([c["job_id"] for c in claims], [job["id"]])
+        self.assertEqual(claims[0]["payload"], {"operation": "doctor"})
+
+    def test_corrupted_job_type_never_leases_unknown_operation(self):
+        # A stored type that bypasses normal enqueue validation cannot
+        # become an executable Agent job just because its payload is valid.
+        job = self._enqueue(
+            targets=("host-a",), job_type="doctor", payload={"operation": "doctor"}
+        )
+        for invalid_type in ("unregistered-rpc", "remote-service-set ", ""):
+            with self.subTest(kind=invalid_type):
+                self.engine.conn.execute(
+                    "UPDATE management_jobs SET job_type=? WHERE id=?",
+                    (invalid_type, job["id"]),
+                )
+                self.engine.conn.commit()
+                claims = self.engine.claim_targets_for_target(
+                    target_id="host-a", worker_id="agent:host-a", limit=1,
+                    now=self.now + timedelta(seconds=1),
+                )
+                self.assertEqual(claims, [])
+                target = self.engine.conn.execute(
+                    "SELECT status,attempt,claim_token FROM management_job_targets "
+                    "WHERE job_id=? AND target_id=?",
+                    (job["id"], "host-a"),
+                ).fetchone()
+                self.assertEqual(target["status"], QUEUED)
+                self.assertEqual(target["attempt"], 0)
+                self.assertFalse(target["claim_token"])
+        self.engine.conn.execute(
+            "UPDATE management_jobs SET job_type='doctor' WHERE id=?",
+            (job["id"],),
+        )
+        self.engine.conn.commit()
+        claims = self.engine.claim_targets_for_target(
+            target_id="host-a", worker_id="agent:host-a", limit=1,
+            now=self.now + timedelta(seconds=2),
+        )
+        self.assertEqual([c["job_type"] for c in claims], ["doctor"])
+
+    def test_corrupt_persisted_deadline_never_leases_core_target(self):
+        # A future-sorting SQLite TEXT deadline is not proof of a valid
+        # authoritative UTC deadline. Reject before allocating a claim token.
+        job = self._enqueue(targets=("host-a",), payload={"operation": "doctor"})
+        valid_deadline = job["deadline_at"]
+        suspicious_deadlines = (
+            "9999-99-99T99:99:99Z",
+            "zzzz",
+            "2100-01-01T00:00:00+00:00",
+            "2100-01-01T00:00:00.000Z",
+            "2100-01-01T00:00:00z",
+        )
+        for deadline in suspicious_deadlines:
+            with self.subTest(deadline=deadline):
+                self.engine.conn.execute(
+                    "UPDATE management_jobs SET deadline_at=? WHERE id=?",
+                    (deadline, job["id"]),
+                )
+                self.engine.conn.commit()
+                claims = self.engine.claim_targets_for_target(
+                    target_id="host-a", worker_id="agent:host-a", limit=1,
+                    now=self.now + timedelta(seconds=1),
+                )
+                self.assertEqual(claims, [])
+                row = self.engine.conn.execute(
+                    "SELECT status,attempt,claim_token,lease_expires_at "
+                    "FROM management_job_targets WHERE job_id=? AND target_id=?",
+                    (job["id"], "host-a"),
+                ).fetchone()
+                self.assertEqual(row["status"], QUEUED)
+                self.assertEqual(row["attempt"], 0)
+                self.assertFalse(row["claim_token"])
+                self.assertIsNone(row["lease_expires_at"])
+
+        self.engine.conn.execute(
+            "UPDATE management_jobs SET deadline_at=? WHERE id=?",
+            (valid_deadline, job["id"]),
+        )
+        self.engine.conn.commit()
+        claim = self.engine.claim_targets_for_target(
+            target_id="host-a", worker_id="agent:host-a", limit=1,
+            now=self.now + timedelta(seconds=2),
+        )
+        self.assertEqual([item["job_id"] for item in claim], [job["id"]])
+
     def test_schema_is_separate_from_ai_jobs(self):
         tables = {
             row[0]
@@ -131,6 +485,124 @@ class V30ManagementJobTests(unittest.TestCase):
         self.assertEqual(paused["payload"]["rollout_state"], "PAUSED")
         resumed = self.engine.rollout_control(job["id"], action="resume")
         self.assertFalse(resumed["payload"]["operator_paused"])
+
+    def test_rollout_control_rejects_corrupt_stored_intent_without_mutation(self):
+        import json
+        from drlink_control_plane import ControlPlane
+
+        plane = ControlPlane(self.tmp)
+        try:
+            plane.upsert_client("host-a", hostname="host-a")
+            plane.upsert_client("host-b", hostname="host-b")
+        finally:
+            plane.close()
+        job = self.engine.enqueue_rollout(
+            targets=("host-a", "host-b"), canary_targets=("host-a",),
+            requested_by="admin-a",
+            artifact={"version": "3.0.0-rc.1", "source_ref": "a" * 40, "sha256": "b" * 64},
+            wave_size=2, now=self.now,
+        )
+        original = job["payload"]
+        malformed = (
+            "{", "[]", "{}", '{"one":1,"one":2}', '{"one":NaN}',
+            json.dumps({**original, "canary_targets": []}),
+            json.dumps({**original, "wave_size": "2"}),
+            json.dumps({**original, "operator_paused": "false"}),
+            json.dumps({**original, "artifact": {}}),
+        )
+        for raw in malformed:
+            with self.subTest(raw=raw[:72]):
+                self.engine.conn.execute(
+                    "UPDATE management_jobs SET payload_json=? WHERE id=?",
+                    (raw, job["id"]),
+                )
+                self.engine.conn.commit()
+                before = tuple(self.engine.conn.execute(
+                    "SELECT payload_json,status,updated_at FROM management_jobs WHERE id=?",
+                    (job["id"],),
+                ).fetchone())
+                with self.assertRaisesRegex(ControlPlaneError, "stored rollout payload"):
+                    self.engine.rollout_control(job["id"], action="resume")
+                after = tuple(self.engine.conn.execute(
+                    "SELECT payload_json,status,updated_at FROM management_jobs WHERE id=?",
+                    (job["id"],),
+                ).fetchone())
+                self.assertEqual(after, before)
+        self.engine.conn.execute(
+            "UPDATE management_jobs SET payload_json=? WHERE id=?",
+            (json.dumps(original), job["id"]),
+        )
+        self.engine.conn.commit()
+        self.assertFalse(self.engine.rollout_control(job["id"], action="resume")["payload"]["operator_paused"])
+
+    def test_rollout_claim_rejects_corrupt_persisted_authority_without_leases(self):
+        # A previously valid queued rollout can lose its immutable artifact or
+        # have operator pause state corrupted on disk. Neither is an authority
+        # to lease a staged update; malformed data stays unchanged for audit.
+        import json
+        from drlink_control_plane import ControlPlane
+
+        plane = ControlPlane(self.tmp)
+        try:
+            for host in ("host-a", "host-b"):
+                plane.upsert_client(host, hostname=host)
+        finally:
+            plane.close()
+        job = self.engine.enqueue_rollout(
+            targets=("host-a", "host-b"), canary_targets=("host-a",),
+            requested_by="admin-a",
+            artifact={"version": "3.0.0-rc.1", "source_ref": "a" * 40,
+                      "sha256": "b" * 64},
+            wave_size=2, now=self.now,
+        )
+        original = job["payload"]
+        malformed = (
+            {**original, "operator_paused": 0},
+            {**original, "operator_paused": None},
+            {**original, "operator_paused": ""},
+            {**original, "artifact": {}},
+            {**original, "artifact": {**original["artifact"], "source_ref": "main"}},
+            {**original, "artifact": {**original["artifact"], "sha256": "bad"}},
+        )
+        for invalid in malformed:
+            raw = json.dumps(invalid)
+            with self.subTest(raw=raw[:90]):
+                self.engine.conn.execute(
+                    "UPDATE management_jobs SET payload_json=? WHERE id=?",
+                    (raw, job["id"]),
+                )
+                self.engine.conn.commit()
+                before = tuple(self.engine.conn.execute(
+                    "SELECT payload_json,status,updated_at FROM management_jobs WHERE id=?",
+                    (job["id"],),
+                ).fetchone())
+                self.assertEqual(
+                    self.engine.claim_targets(
+                        worker_id="offline-rollout-test", limit=2,
+                        now=self.now + timedelta(seconds=1),
+                    ), [],
+                    "Corrupt rollout authority must not lease any target",
+                )
+                after = tuple(self.engine.conn.execute(
+                    "SELECT payload_json,status,updated_at FROM management_jobs WHERE id=?",
+                    (job["id"],),
+                ).fetchone())
+                self.assertEqual(after, before)
+                states = self.engine.conn.execute(
+                    "SELECT status FROM management_job_targets WHERE job_id=?",
+                    (job["id"],),
+                ).fetchall()
+                self.assertTrue(all(row["status"] == QUEUED for row in states))
+        self.engine.conn.execute(
+            "UPDATE management_jobs SET payload_json=? WHERE id=?",
+            (json.dumps(original), job["id"]),
+        )
+        self.engine.conn.commit()
+        claims = self.engine.claim_targets(
+            worker_id="offline-rollout-test", limit=2,
+            now=self.now + timedelta(seconds=1),
+        )
+        self.assertEqual([claim["target_id"] for claim in claims], ["host-a"])
 
     def test_generic_job_api_cannot_bypass_rollout_artifact_and_canary_validation(self):
         with self.assertRaisesRegex(ControlPlaneError, "Rollout"):
@@ -286,6 +758,41 @@ class V30ManagementJobTests(unittest.TestCase):
         result_by_target = {item["target_id"]: item["result"] for item in final["targets"]}
         self.assertEqual(result_by_target[first["target_id"]], {"doctor": "pass"})
 
+    def test_core_failed_job_never_persists_unverified_result_payload(self):
+        job = self._enqueue(targets=("host-a",), timeout_seconds=3600)
+        claim = self.engine.claim_targets(
+            worker_id="worker-result", limit=1, now=self.now + timedelta(seconds=1)
+        )[0]
+        secret = "Bearer fixture-only-failed-core-result"
+        final = self.engine.complete_target(
+            job_id=claim["job_id"], target_id=claim["target_id"],
+            claim_token=claim["claim_token"], status=FAILED,
+            result={"untrusted_credentials": secret}, error="AGENT_JOB_EXECUTION_FAILED",
+            now=self.now + timedelta(seconds=2),
+        )
+        self.assertEqual(final["status"], FAILED)
+        self.assertEqual(final["targets"][0]["result"], {})
+        self.assertNotIn(secret, str(final))
+        self.assertNotIn(secret, str(self.engine.get(job["id"])))
+
+    def test_core_cancelled_job_never_persists_unverified_result_payload(self):
+        job = self._enqueue(targets=("host-a",), timeout_seconds=3600)
+        claim = self.engine.claim_targets(
+            worker_id="worker-cancel-result", limit=1,
+            now=self.now + timedelta(seconds=1),
+        )[0]
+        self.engine.cancel(job["id"], now=self.now + timedelta(seconds=1))
+        secret = "Bearer fixture-only-cancelled-result"
+        final = self.engine.complete_target(
+            job_id=claim["job_id"], target_id=claim["target_id"],
+            claim_token=claim["claim_token"], status=CANCELLED,
+            result={"untrusted_credentials": secret}, error="CANCELLED_BEFORE_RPC",
+            now=self.now + timedelta(seconds=2),
+        )
+        self.assertEqual(final["status"], CANCELLED)
+        self.assertEqual(final["targets"][0]["result"], {})
+        self.assertNotIn(secret, str(self.engine.get(job["id"])))
+
     def test_target_filtered_claim_cannot_take_another_agent_job(self):
         self._enqueue(targets=("agent-a",), now=self.now)
         self._enqueue(targets=("agent-b",), now=self.now)
@@ -354,6 +861,42 @@ class V30ManagementJobTests(unittest.TestCase):
         self.assertEqual(late["status"], FAILED)
         self.assertEqual(late["targets"][0]["error"], "WORKER_LEASE_EXPIRED")
         self.assertEqual(late["targets"][0]["result"], {})
+
+    def test_corrupt_running_lease_never_records_agent_success(self):
+        # A RUNNING row without a canonical unexpired Core lease is not
+        # proof that a late Agent completion may be acknowledged SUCCEEDED.
+        bad_leases = (
+            None,
+            "",
+            "invalid-time",
+            (self.now + timedelta(seconds=30)).isoformat(),
+        )
+        for index, bad_lease in enumerate(bad_leases):
+            with self.subTest(bad_lease=bad_lease):
+                job = self._enqueue(
+                    targets=(f"lease-corrupt-{index}",), timeout_seconds=120
+                )
+                claim = self.engine.claim_targets(
+                    worker_id="worker-corrupt-lease", limit=1,
+                    now=self.now + timedelta(seconds=1),
+                )[0]
+                self.engine.conn.execute(
+                    "UPDATE management_job_targets SET lease_expires_at=? "
+                    "WHERE job_id=? AND target_id=?",
+                    (bad_lease, claim["job_id"], claim["target_id"]),
+                )
+                final = self.engine.complete_target(
+                    job_id=job["id"], target_id=claim["target_id"],
+                    claim_token=claim["claim_token"], status=SUCCEEDED,
+                    result={"agent": "unverified"},
+                    now=self.now + timedelta(seconds=2),
+                )
+                self.assertEqual(final["status"], FAILED)
+                self.assertEqual(final["targets"][0]["status"], FAILED)
+                self.assertEqual(final["targets"][0]["result"], {})
+                self.assertEqual(
+                    final["targets"][0]["error"], "INVALID_EXECUTION_DEADLINE"
+                )
 
     def test_restart_fails_entire_partially_inflight_job(self):
         job = self._enqueue(targets=("host-a", "host-b"))
@@ -539,6 +1082,229 @@ class V30ManagementJobTests(unittest.TestCase):
         finally:
             release.set()
             pool.close()
+
+    def test_worker_pool_rejects_invalid_dispatch_limit_before_claim(self):
+        # The local worker limit is a Core lease input.  A coerced bool,
+        # fraction, text or non-positive value must never reserve jobs.
+        from unittest import mock
+
+        with BoundedAgentRpcWorkerPool(max_workers=2, max_pending=0) as pool:
+            with mock.patch.object(
+                self.engine, "claim_targets",
+                side_effect=AssertionError("invalid limit leased Core work"),
+            ) as claim:
+                for invalid in (0, -1, True, False, 1.5, "1", object()):
+                    with self.subTest(limit=repr(invalid)):
+                        with self.assertRaisesRegex(ControlPlaneError, "limit"):
+                            pool.dispatch_once(
+                                self.engine,
+                                lambda _claim: self.fail("invalid limit ran handler"),
+                                worker_id="rpc-worker",
+                                limit=invalid,
+                            )
+                claim.assert_not_called()
+            # Invalid admission must not consume bounded worker capacity.
+            self.assertTrue(pool._slots.acquire(blocking=False))
+            self.assertTrue(pool._slots.acquire(blocking=False))
+            pool._slots.release()
+            pool._slots.release()
+
+    def test_worker_pool_rejects_stale_or_invalid_core_claim_before_handler(self):
+        from unittest import mock
+
+        job = self._enqueue(targets=("host-a",), timeout_seconds=3600)
+        claim = self.engine.claim_targets(
+            worker_id="rpc-worker", limit=1, now=self.now + timedelta(seconds=1)
+        )[0]
+        late = self.now + timedelta(seconds=12)
+        cases = [
+            {"lease_expires_at": claim["lease_expires_at"]},
+            {"deadline_at": (self.now + timedelta(seconds=2)).strftime("%Y-%m-%dT%H:%M:%SZ"),
+             "lease_expires_at": (self.now + timedelta(minutes=1)).strftime("%Y-%m-%dT%H:%M:%SZ")},
+            {"lease_expires_at": {"untrusted": "secret"}},
+            {"deadline_at": "not-a-core-utc-date"},
+        ]
+        for change in cases:
+            offered = {**claim, **change}
+            with self.subTest(change=change), mock.patch(
+                "drlink_v30_jobs._utc_now", return_value=late
+            ), mock.patch.object(self.engine, "complete_target") as completed:
+                with self.assertRaisesRegex(ControlPlaneError, "claim UNKNOWN"):
+                    BoundedAgentRpcWorkerPool(max_workers=1, max_pending=0)._run_claim(
+                        self.engine, offered,
+                        lambda _claim: self.fail("Expired or malformed claim executed")
+                    )
+                completed.assert_not_called()
+        self.assertEqual(self.engine.get(job["id"])["status"], RUNNING)
+
+    def test_worker_pool_submit_failure_returns_reserved_capacity(self):
+        from unittest import mock
+
+        job = self._enqueue(targets=("host-a",), timeout_seconds=3600)
+        with BoundedAgentRpcWorkerPool(max_workers=1, max_pending=0) as pool:
+            with mock.patch.object(
+                pool._executor, "submit", side_effect=RuntimeError("executor shut down")
+            ):
+                with self.assertRaisesRegex(RuntimeError, "executor shut down"):
+                    pool.dispatch_once(
+                        self.engine, lambda _claim: {"operation": "doctor"},
+                        worker_id="rpc-dispatcher", limit=1,
+                    )
+            # Core keeps the claimed Job until lease recovery; a rejected
+            # local executor must not permanently exhaust the worker slots.
+            self.assertTrue(
+                pool._slots.acquire(blocking=False),
+                "executor rejection leaked bounded RPC capacity",
+            )
+            pool._slots.release()
+        self.assertEqual(self.engine.get(job["id"])["targets"][0]["status"], RUNNING)
+
+    def test_worker_pool_partial_submit_failure_preserves_inflight_capacity(self):
+        from concurrent.futures import Future
+        from unittest import mock
+
+        job = self._enqueue(
+            targets=("host-a", "host-b"), timeout_seconds=3600
+        )
+        in_flight = Future()
+        attempts = []
+
+        def submit_one_then_reject(*args):
+            attempts.append(args)
+            if len(attempts) == 1:
+                return in_flight
+            raise RuntimeError("second executor slot rejected")
+
+        with BoundedAgentRpcWorkerPool(max_workers=2, max_pending=0) as pool:
+            with mock.patch.object(
+                pool._executor, "submit", side_effect=submit_one_then_reject
+            ):
+                with self.assertRaisesRegex(RuntimeError, "slot rejected"):
+                    pool.dispatch_once(
+                        self.engine, lambda _claim: {"operation": "doctor"},
+                        worker_id="rpc-partial", limit=2,
+                    )
+            self.assertEqual(len(attempts), 2)
+            # Only the unscheduled claim's slot is returned immediately.
+            self.assertTrue(pool._slots.acquire(blocking=False))
+            self.assertFalse(pool._slots.acquire(blocking=False))
+            pool._slots.release()
+            in_flight.set_result({"status": SUCCEEDED})
+            self.assertTrue(pool._slots.acquire(blocking=False))
+            self.assertTrue(pool._slots.acquire(blocking=False))
+            pool._slots.release()
+            pool._slots.release()
+        self.assertEqual(
+            [t["status"] for t in self.engine.get(job["id"])["targets"]],
+            [RUNNING, RUNNING],
+            "No invented worker completions for mock rejected submissions",
+        )
+
+    def test_generic_rpc_worker_never_recompletes_after_ambiguous_success_ack(self):
+        from unittest import mock
+
+        job = self._enqueue(targets=("host-a",), timeout_seconds=3600)
+        claim = self.engine.claim_targets(
+            worker_id="worker-once", limit=1, now=self.now + timedelta(seconds=1)
+        )[0]
+        commit = self.engine.complete_target
+        statuses = []
+
+        def committed_but_unacknowledged(**kwargs):
+            statuses.append(kwargs["status"])
+            reply = commit(**kwargs, now=self.now + timedelta(seconds=2))
+            if kwargs["status"] == SUCCEEDED:
+                # A transaction can commit before its response is lost.
+                raise TimeoutError("lost receipt Bearer fixture-success-receipt-secret")
+            return reply
+
+        with BoundedAgentRpcWorkerPool(max_workers=1, max_pending=0) as pool, mock.patch.object(
+            self.engine, "complete_target", side_effect=committed_but_unacknowledged
+        ):
+            with self.assertRaisesRegex(
+                ControlPlaneError, "completion receipt UNKNOWN"
+            ) as caught:
+                pool._run_claim(
+                    self.engine, claim, lambda _claim: {"operation": "doctor"}
+                )
+        self.assertNotIn("fixture-success-receipt-secret", str(caught.exception))
+        self.assertEqual(statuses, [SUCCEEDED], "No contradictory FAILED completion")
+        self.assertEqual(self.engine.get(job["id"])["status"], SUCCEEDED)
+
+    def test_generic_rpc_worker_never_recompletes_after_ambiguous_cancel_ack(self):
+        from unittest import mock
+
+        job = self._enqueue(targets=("host-a",), timeout_seconds=3600)
+        claim = self.engine.claim_targets(
+            worker_id="worker-cancel-once", limit=1, now=self.now + timedelta(seconds=1)
+        )[0]
+        self.engine.cancel(job["id"], now=self.now + timedelta(seconds=1))
+        commit = self.engine.complete_target
+        statuses = []
+
+        def committed_but_unacknowledged(**kwargs):
+            statuses.append(kwargs["status"])
+            commit(**kwargs, now=self.now + timedelta(seconds=2))
+            raise TimeoutError("lost receipt Bearer fixture-cancel-receipt-secret")
+
+        with BoundedAgentRpcWorkerPool(max_workers=1, max_pending=0) as pool, mock.patch.object(
+            self.engine, "complete_target", side_effect=committed_but_unacknowledged
+        ):
+            with self.assertRaisesRegex(
+                ControlPlaneError, "completion receipt UNKNOWN"
+            ) as caught:
+                pool._run_claim(
+                    self.engine, claim, lambda _claim: self.fail(
+                        "cancelled claim must not run the handler"
+                    )
+                )
+        self.assertNotIn("fixture-cancel-receipt-secret", str(caught.exception))
+        self.assertEqual(statuses, [CANCELLED], "No contradictory FAILED completion")
+        self.assertEqual(self.engine.get(job["id"])["status"], CANCELLED)
+
+    def test_generic_rpc_worker_hides_handler_secrets_when_failure_receipt_is_unknown(self):
+        from unittest import mock
+
+        job = self._enqueue(targets=("host-a",), timeout_seconds=3600)
+        claim = self.engine.claim_targets(
+            worker_id="worker-failure", limit=1, now=self.now + timedelta(seconds=1)
+        )[0]
+        secret = "Bearer fixture-only-handler-secret"
+
+        def private_handler(_claim):
+            raise ValueError("private job handler failed: " + secret)
+
+        with BoundedAgentRpcWorkerPool(max_workers=1, max_pending=0) as pool, mock.patch.object(
+            self.engine, "complete_target", side_effect=OSError("Core DB unavailable")
+        ) as completion:
+            with self.assertRaisesRegex(
+                ControlPlaneError, "completion receipt UNKNOWN"
+            ) as caught:
+                pool._run_claim(self.engine, claim, private_handler)
+        self.assertNotIn(secret, str(caught.exception))
+        self.assertEqual(completion.call_count, 1)
+        self.assertEqual(completion.call_args.kwargs["status"], FAILED)
+        self.assertEqual(self.engine.get(job["id"])["status"], RUNNING)
+
+    def test_generic_rpc_worker_never_persists_handler_exception_secrets(self):
+        job = self._enqueue(targets=("host-a",), timeout_seconds=3600)
+        secret = "Bearer test-only-core-worker-credential"
+
+        def failing_handler(_claim):
+            raise ValueError("remote target refused " + secret)
+
+        with BoundedAgentRpcWorkerPool(max_workers=1, max_pending=0) as pool:
+            futures = pool.dispatch_once(
+                self.engine, failing_handler, worker_id="rpc-worker", limit=1
+            )
+            self.assertEqual(len(futures), 1)
+            result = futures[0].result(timeout=3)
+
+        self.assertEqual(result["status"], FAILED)
+        self.assertEqual(result["targets"][0]["error"], "AGENT_JOB_EXECUTION_FAILED")
+        self.assertEqual(result["last_error"], "AGENT_JOB_EXECUTION_FAILED")
+        self.assertNotIn(secret, str(result))
+        self.assertNotIn(secret, str(self.engine.get(job["id"])))
 
 
 if __name__ == "__main__":

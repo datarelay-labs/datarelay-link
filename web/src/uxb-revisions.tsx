@@ -1,5 +1,15 @@
 import React, {useEffect,useRef,useState} from "react";
 import {isPartialCorePage,requireObservedMenuPayload,selectMenuPage,type MenuPagePosition} from "./uxb-menu-evidence";
+import {isObservedAbsoluteTime} from "./uxb-integrations-state";
+
+/** Revision metadata may have been imported from legacy Core state; it does
+ * not gain UI display trust merely by arriving in a valid ordered page. */
+const BAD_REVISION_TEXT=/[\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/;
+function displayRevisionText(input:unknown,fallback="UNKNOWN"):string{
+  if(typeof input!=="string"||input.length>240||BAD_REVISION_TEXT.test(input))
+    return fallback;
+  return input.trim()||fallback;
+}
 
 /** A successful Core HTTP read still must be a genuine bounded revision page.
  * A structurally valid but wrong-family page is UNKNOWN, never an empty history. */
@@ -89,9 +99,11 @@ export function RevisionHistory({initial,api}:{
         {rows.length?<div className="dr-table-scroll"><table className="dr-resource-table">
           <thead><tr><th>Revision</th><th>Time</th><th>Actor</th><th>Command</th><th>Summary</th></tr></thead>
           <tbody>{rows.map((item:any,i:number)=><tr key={item.revision??i}>
-            <td>{item.revision??"—"}</td><td>{item.created_at||"UNKNOWN"}</td>
-            <td>{item.actor||"UNKNOWN"}</td><td>{item.command||"—"}</td>
-            <td>{item.summary||"—"}</td>
+            <td>{item.revision??"—"}</td>
+            <td>{isObservedAbsoluteTime(item.created_at)?item.created_at:"UNKNOWN"}</td>
+            <td>{displayRevisionText(item.actor)}</td>
+            <td>{displayRevisionText(item.command,"—")}</td>
+            <td>{displayRevisionText(item.summary,"—")}</td>
           </tr>)}</tbody></table></div>:
           <p className="dr-empty-state">No configuration revisions on this observed Core page.</p>}
         {(older||newer)&&<div className="toolbar" role="group" aria-label="Change History pagination">

@@ -37,7 +37,7 @@ def _past(hours: int = 2) -> str:
 
 
 class V30SchemaMigrationTests(unittest.TestCase):
-    def test_v2_database_migrates_to_v3_management_foundation(self):
+    def test_v2_database_migrates_through_v3_to_v4_ui06(self):
         conn = sqlite3.connect(":memory:", isolation_level=None)
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA foreign_keys = ON")
@@ -55,7 +55,7 @@ class V30SchemaMigrationTests(unittest.TestCase):
 
         DB.initialize(conn)
 
-        self.assertEqual(DB.current_schema_version(conn), 3)
+        self.assertEqual(DB.current_schema_version(conn), 4)
         policy_cols = {r[1] for r in conn.execute("PRAGMA table_info(policy_rules)")}
         ai_cols = {r[1] for r in conn.execute("PRAGMA table_info(ai_policy_rules)")}
         self.assertIn("expires_at", policy_cols)
@@ -69,6 +69,15 @@ class V30SchemaMigrationTests(unittest.TestCase):
             "SELECT name FROM schema_migrations WHERE version = 3"
         ).fetchone()
         self.assertEqual(migration["name"], "v30_management_foundation")
+        ui06 = conn.execute(
+            "SELECT name FROM schema_migrations WHERE version = 4"
+        ).fetchone()
+        self.assertEqual(ui06["name"], "ui06_two_person_temporary_access")
+        self.assertIsNotNone(
+            conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name='temporary_access_requests'"
+            ).fetchone()
+        )
         conn.close()
 
 

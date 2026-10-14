@@ -22,6 +22,60 @@ export const firstUseStages = {
   ai:["Select AI Identity","Choose a Permission Object","Define an AI Access rule","Verify the permission"],
 } as const;
 
+/** Navigate from the guided editor into read-only diagnosis with non-secret
+ * form intent only. Partial/invalid form values are never treated as Core proof,
+ * so the destination opens with its correct plane and blank selectors.
+ */
+export function connectionReviewContext(plane:AccessPlane,source:unknown,destination:unknown,selector:unknown){
+  const family=plane==="internet"||plane==="ai"?plane:"remote";
+  const values=[source,destination,selector];
+  if(values.some(value=>typeof value!=="string"||!value.trim()||value.length>160
+    ||/[\x00-\x1f\x7f-\x9f\u202a-\u202e\u2066-\u2069]/.test(value)))return {plane:family};
+  return {plane:family,source:(source as string).trim(),
+    destination:(destination as string).trim(),selector:(selector as string).trim()};
+}
+
+/** UX-3/8: the bounded, role-authorized Core inventory must be structurally
+ * observed before the wizard offers a selectable owner or published service.
+ * A malformed, cross-resource or spoofed page is UNKNOWN, never empty.
+ */
+const SETUP_UNSAFE_TEXT=/[\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/;
+const safeSetupName=(v:unknown):v is string=>
+  typeof v==="string"&&!!v.trim()&&v.length<=160&&!SETUP_UNSAFE_TEXT.test(v);
+export function observedSetupInventory(
+ input:unknown,kind:"managed-host"|"remote-service"
+):any[]|null{
+ if(!input||typeof input!=="object"||Array.isArray(input))return null;
+ const page=input as Record<string,any>;
+ if(page.resource_type!==undefined&&page.resource_type!==kind)return null;
+ if(!Array.isArray(page.items)||page.items.length>100
+   ||(page.limit!==undefined
+     &&(!Number.isSafeInteger(page.limit)||page.limit<1||page.limit>100))
+   ||(page.next_cursor!==undefined&&page.next_cursor!==null
+     &&(typeof page.next_cursor!=="string"||!page.next_cursor
+       ||page.next_cursor.length>1024||SETUP_UNSAFE_TEXT.test(page.next_cursor))))
+   return null;
+ const seen=new Set<string>();
+ for(const row of page.items){
+   if(!row||typeof row!=="object"||Array.isArray(row)
+     ||!safeSetupName(row.id)||seen.has(row.id)
+     ||["name","label"].some(key=>row[key]!==undefined&&row[key]!==null
+       &&(typeof row[key]!=="string"||row[key].length>160
+         ||SETUP_UNSAFE_TEXT.test(row[key]))))return null;
+   seen.add(row.id);
+ }
+ return page.items;
+}
+/** A SQLite 0/1 or real boolean is the only observed service enablement;
+ * untyped Core strings/objects cannot announce a published service as ready.
+ */
+export function observedRemoteServiceReadiness(value:unknown):
+  "CONFIGURED · VERIFY JOB"|"DISABLED · VERIFY JOB"|"UNKNOWN"{
+ if(value===true||value===1)return "CONFIGURED · VERIFY JOB";
+ if(value===false||value===0)return "DISABLED · VERIFY JOB";
+ return "UNKNOWN";
+}
+
 /** Only a deliberate owner change resets a resumed, non-secret first-use draft.
  * It does not touch the Core: old preview/confirmation belongs to the editor. */
 export function retargetRemoteHost(draft:SetupDraft,hostId:string):SetupDraft{
@@ -40,6 +94,31 @@ export function reconcileHostBoundDraft(draft?:SetupDraft|null):SetupDraft{
   if(storedOwner&&storedOwner!==selectedHost)
     return retargetRemoteHost(draft,selectedHost);
   return draft;
+}
+
+/** UX-3/8: an in-memory resumed draft is navigation state, not a Core
+ * capability or grant. Reject non-string/bidi/oversized values before using
+ * them in controlled inputs or selecting a former Agent; never stringify
+ * arbitrary nested values or retain prior mutation/credential evidence.
+ */
+export function safeResumedSetupDraft(input:unknown):SetupDraft{
+ const original=input!==null&&typeof input==="object"&&!Array.isArray(input)
+   ?input as Record<string,any>:{};
+ const plane:AccessPlane=original.plane==="internet"||original.plane==="ai"
+   ?original.plane:"remote";
+ const step=Number.isSafeInteger(original.step)&&original.step>=1
+   &&original.step<=4?original.step:1;
+ const name=(value:unknown):string=>safeSetupName(value)?value.trim():"";
+ const raw=original.service!==null&&typeof original.service==="object"
+   &&!Array.isArray(original.service)?original.service as Record<string,unknown>:{};
+ const draft:SetupDraft={
+   plane,step,selectedHost:name(original.selectedHost),
+   serviceName:name(original.serviceName),source:name(original.source),
+   destination:name(original.destination),selector:name(original.selector),
+   service:{owner:name(raw.owner),name:name(raw.name),service:name(raw.service),
+     destination:name(raw.destination)||"this-host"}
+ };
+ return reconcileHostBoundDraft(draft);
 }
 
 export function firstConnectionGuidance(
@@ -94,7 +173,7 @@ export function FirstConnectionSetup({api,operator,onNavigate,initialDraft,onDra
   api:LinkApi,operator:any,onNavigate?:Navigate,initialDraft?:SetupDraft|null,
   onDraftChange?:(draft:SetupDraft)=>void,
 }){
-  const restoredDraft=reconcileHostBoundDraft(initialDraft);
+  const restoredDraft=safeResumedSetupDraft(initialDraft);
   const [plane,setPlane]=useState<AccessPlane>(restoredDraft.plane||"remote");
   const [step,setStep]=useState(Math.min(4,Math.max(1,restoredDraft.step||1)));
   const [hosts,setHosts]=useState<any[]|null>(null),[services,setServices]=useState<any[]|null>(null);
@@ -116,6 +195,13 @@ export function FirstConnectionSetup({api,operator,onNavigate,initialDraft,onDra
   const [destination,setDestination]=useState(restoredDraft.destination||"");
   const [selector,setSelector]=useState(restoredDraft.selector||"");
   const canEdit=operator?.role==="Admin"||operator?.role==="Operator";
+  const reviewContext=connectionReviewContext(plane,source,destination,selector);
+  const hasCompleteReviewFlow="source" in reviewContext;
+  // The guided policy form and Access Workspace consume the same explicit,
+  // untrusted user selection. Neither navigation nor a stage transition mutates Core.
+  function navigateFromSetup(id:string,groupId?:string,context?:any){
+    onNavigate?.(id,groupId,id==="access"?reviewContext:context);
+  }
   const selected=hosts?.find(h=>String(h.id)===selectedHost)||null;
   const service=services?.find(s=>String(s.name||s.id)===serviceName)||null;
   function chooseRemoteHost(nextHost:string){
@@ -145,8 +231,10 @@ export function FirstConnectionSetup({api,operator,onNavigate,initialDraft,onDra
     ]);
     // An older Core snapshot cannot override a newer completed refresh.
     if(refreshGeneration.current!==generation)return;
-    if(r[0].status==="fulfilled"&&Array.isArray(r[0].value?.items)){
-      const list=r[0].value.items;setHosts(list);
+    const observedHosts=r[0].status==="fulfilled"
+      ?observedSetupInventory(r[0].value,"managed-host"):null;
+    if(observedHosts!==null){
+      const list=observedHosts;setHosts(list);
       // Do not silently switch the owning Agent to the first list entry.
       // Also discard the retained editor owner when its formerly selected
       // Agent vanishes; a remounted editor must not revive that old target.
@@ -161,8 +249,9 @@ export function FirstConnectionSetup({api,operator,onNavigate,initialDraft,onDra
       }
     }else{setHosts(null);setError("Managed Host inventory unavailable; prerequisite state is UNKNOWN.");
       if(planeRef.current==="remote"&&selectedHostRef.current)chooseRemoteHost("");}
-    if(r[1].status==="fulfilled"&&Array.isArray(r[1].value?.items))setServices(r[1].value.items);
-    else setServices(null);
+    const observedServices=r[1].status==="fulfilled"
+      ?observedSetupInventory(r[1].value,"remote-service"):null;
+    setServices(observedServices); // UNKNOWN on malformed/cross-type Core page.
     if(r[2].status==="fulfilled"&&Array.isArray(r[2].value?.items))setEnrollments(r[2].value);
     else setEnrollments(null); // UNKNOWN, never a fabricated empty enrollment list.
     if(r[3].status==="fulfilled"&&r[3].value?.resources&&typeof r[3].value.resources==="object")
@@ -216,7 +305,7 @@ export function FirstConnectionSetup({api,operator,onNavigate,initialDraft,onDra
       {error&&<p className="warning-box" role="alert">{error}</p>}
       {plane==="remote"&&<div className="dr-uxb-evidence-strip">
         <span>Agent: {selected?hostReadinessLabel(selected):hosts===null?"UNKNOWN":"NO HOST SELECTED"}</span>
-        <span>Remote Service: {service?String(service.enabled?"CONFIGURED · VERIFY JOB":"DISABLED · VERIFY JOB"):services===null?"UNKNOWN":"NOT SELECTED"}</span>
+        <span>Remote Service: {service?observedRemoteServiceReadiness(service.enabled):services===null?"UNKNOWN":"NOT SELECTED"}</span>
         <span>Core policy reachability: NOT VERIFIED</span>
       </div>}
     </section>
@@ -286,11 +375,28 @@ export function FirstConnectionSetup({api,operator,onNavigate,initialDraft,onDra
           :plane==="internet"?"Outbound access requires an explicitly selected network source, destination and service. No Remote Service is required."
           :"AI Access uses a verified AI Identity, destination and Permission Object; it is separate from Remote Access."}</p>
       </div>
+      <div className="dr-uxb-selection-note" role="status">
+        <strong>Selected, not authorized · {plane==="remote"?"Remote":plane==="internet"?"Internet":"AI"} Access</strong>
+        <p>Source: {source.slice(0,160)||"UNKNOWN"} · Destination: {destination.slice(0,160)||"UNKNOWN"}
+          · {plane==="ai"?"Permission":"Service"}: {selector.slice(0,160)||"UNKNOWN"}</p>
+        <small>A selected object is not a Core policy result, a saved rule, or a verified connection.</small>
+      </div>
       {canEdit?<GuidedPolicyJourney key={plane} api={api} initialPlane={plane} lockedPlane resourceCatalog={catalog}
         onBusyChange={setPolicyBusy}
         initialFlow={{source,destination,selector}}
-        onFlowChange={f=>{setSource(f.source);setDestination(f.destination);setSelector(f.selector)}} onNavigate={onNavigate}/>:
+        onFlowChange={f=>{setSource(f.source);setDestination(f.destination);setSelector(f.selector)}} onNavigate={navigateFromSetup}/>:
         <p className="warning-box">Your role is read-only. You can test access but cannot create or apply a rule.</p>}
+      <section className="dr-uxb-context" aria-label="Continue with Core diagnosis">
+        <strong>Explain this rule with Core</strong>
+        <p>Open the matching access plane and preserve the selected objects for diagnosis.
+          This is navigation only: no policy change, test result or verified connection is implied.</p>
+        {!hasCompleteReviewFlow&&<p className="muted" role="status">Source, destination or selector is incomplete.
+          The Access Workspace will ask for the missing Core names.</p>}
+        <button type="button" className="secondary" disabled={wizardBusy}
+          onClick={()=>navigateFromSetup("access","access")}>
+          Test &amp; explain selected access →
+        </button>
+      </section>
     </div>}
     {step===4&&<div className="dr-uxb-setup-section">
       <div className="dr-uxb-context"><strong>Verify the actual Core decision</strong>
@@ -308,7 +414,10 @@ export function FirstConnectionSetup({api,operator,onNavigate,initialDraft,onDra
         <label className="dr-field"><span>{plane==="ai"?"Permission":"Service"} Object / Group</span><input value={selector} onChange={e=>setSelector(e.target.value)} placeholder="Actual Core name"/></label>
       </div>
       <AccessEvidenceExplorer api={api} plane={plane} source={source} destination={destination} selector={selector}
-        onSelect={f=>{setSource(f.source);setDestination(f.destination);setSelector(f.selector)}} onNavigate={onNavigate}/>
+        onSelect={f=>{setSource(f.source);setDestination(f.destination);setSelector(f.selector)}} onNavigate={navigateFromSetup}/>
+      {canEdit&&<button type="button" className="secondary" disabled={wizardBusy||!hasCompleteReviewFlow}
+        onClick={()=>setStep(3)}>Review selected flow in Guided Policy →</button>}
+      <p className="muted">Returning to rule definition starts a fresh Core Preview. It never applies the previously inspected access decision.</p>
       <p className="muted">To prove end-to-end network reachability, test from the intended client and inspect actual Agent/job/target evidence separately.</p>
     </div>}
   </div>;

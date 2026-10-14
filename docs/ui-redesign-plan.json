@@ -1,0 +1,3071 @@
+{
+  "schema_version": 1,
+  "revision": 9,
+  "repository": "datarelay-labs/datarelay-link",
+  "roadmap": 184,
+  "packet": 182,
+  "pr": 206,
+  "branch": "feat/drl3-ux-saved-admission-pfci",
+  "baseline_head": "914d5c459a99d6e4cfae28f6b51468fa73a80c3a",
+  "implementer": "CHATGPT_CHAT",
+  "priority": "P0_EXCLUSIVE_UI_REDESIGN",
+  "exclusive": true,
+  "scope_complete": false,
+  "next_task": "UXR-7.1",
+  "owner_acceptance": null,
+  "scope_change_approval": null,
+  "milestones": [
+    {
+      "id": "UXR-0",
+      "title": "Evidence and exclusive execution baseline",
+      "exit": "Every retained source/finding/promise mapped; obsolete priorities archived; no WIP overwritten."
+    },
+    {
+      "id": "UXR-1",
+      "title": "V1: complete Servers screen",
+      "exit": "True-empty/list/selected-detail/actions form ONE mounted product screen; all old default clutter removed; context and authority preserved."
+    },
+    {
+      "id": "UXR-2",
+      "title": "V2: first server to usable service",
+      "exit": "Supported platform -> install/detect -> review -> publish -> narrow policy -> connection information; no false completion or ID re-entry."
+    },
+    {
+      "id": "UXR-3",
+      "title": "V3: Access rules and selected-resource explanation",
+      "exit": "Focused input and exact relationships, separate policy/transport outcomes, truthful Remote/Internet/AI semantics and contextual diagnosis."
+    },
+    {
+      "id": "UXR-4",
+      "title": "V3: Home, Activity, discovery and Administration",
+      "exit": "Useful next actions; every historical selected feature retained in contextual layout; common Foundation UI not duplicated."
+    },
+    {
+      "id": "UXR-5",
+      "title": "Shared visual, responsive, accessibility and security",
+      "exit": "All affected screens satisfy Foundation styles, data/role/theme/viewport/keyboard criteria with genuine browser evidence."
+    },
+    {
+      "id": "UXR-6",
+      "title": "Mandatory UI-06 distinct-reviewer request",
+      "exit": "Approved durable Core contract and real requester/different reviewer/expiry/revoke/audit proof; approval dependency remains explicit."
+    },
+    {
+      "id": "UXR-7",
+      "title": "Private dev delivery and user acceptance",
+      "exit": "Same-source served assets, before-after interaction proof, all route/UXE cases, real usability observations and owner acceptance; no unreviewed omission."
+    }
+  ],
+  "tasks": [
+    {
+      "id": "UXR-0.1",
+      "milestone": "UXR-0",
+      "title": "Research and proposal inventory",
+      "deliverable_and_removal": "Bind original 19-product history, later 13-product audit, all CUI/G/UX/UI/UXB/UXE, PDF and illustrative HTML; no new research loop.",
+      "verification": "Compare exact source revisions, SHA256 and identifier sets; retain source URLs/license/REA limits.",
+      "pass_criteria": "Every source and finding has a disposition and WBS; zero unmapped promises. Source APPLIED is not browser acceptance.",
+      "code_anchors": [
+        "docs/COMPETITOR_UI_SCREEN_EVIDENCE_2026-10-11.md"
+      ],
+      "depends_on": [],
+      "owner": "CHATGPT_CHAT",
+      "status": "IMPLEMENTED",
+      "approval_required": false,
+      "evidence": {
+        "source_register": "docs/UI_REDESIGN_WBS_2026-10-14.md#no-omission-source-register",
+        "historical_head": "914d5c459a99d6e4cfae28f6b51468fa73a80c3a",
+        "verified_hashes": {
+          "docs/COMPETITOR_UI_SCREEN_EVIDENCE_2026-10-11.md": "360cfd07729609bd1ddda9f1461bf5ea248ae3b8e78c8f01c024cb913464f08e",
+          "docs/COMPETITOR_UI_APPLIED_MATRIX_2026-10-12.md": "469a3cb071ae4a16d362032d16f50885dade85277180de058ab21060da5bc9cc",
+          "docs/WEB_UX_COMPETITIVE_AUDIT_2026-10.md": "2bdf53aac57375038f19a16477f0b74255ea3d6ee407762bcd98ab9ba24937a0"
+        },
+        "pdf_registry": "DRLink_UI_Reanalysis_Decision_20261014.pdf SHA256 10dc9a02f969b4268d77bd2a439d055ba1fd0a2827b77ebdf77b5531eb4ff300; attachment absent in current Project/Library, so no new visual claim is made.",
+        "qualification": "Historical research/proposal inventory is frozen and mapped; no new competitor research or browser acceptance inferred."
+      }
+    },
+    {
+      "id": "UXR-0.2",
+      "milestone": "UXR-0",
+      "title": "OLD to NEW capability inventory",
+      "deliverable_and_removal": "Map all 20 routes plus shell actions to retained routes/drawers/review or explicit non-adoption; remove duplicate entries, not capability.",
+      "verification": "Diff actual route/action lists before/after; check legacy aliases and negative-scope decisions.",
+      "pass_criteria": "No supported action orphaned; every removed default element has a tested new destination.",
+      "code_anchors": [
+        "web/src/uxb-navigation.ts"
+      ],
+      "depends_on": [
+        "UXR-0.1"
+      ],
+      "owner": "CHATGPT_CHAT",
+      "status": "IMPLEMENTED",
+      "approval_required": false,
+      "evidence": {
+        "route_source": "web/src/uxb-navigation.ts",
+        "route_count": 20,
+        "verification": "Programmatic census: overview + 15 grouped + 4 contextual routes = 20 unique IDs; every route has page description and legacy alias entry.",
+        "qualification": "Capability/navigation mapping only; this does not prove logged-in route acceptance."
+      }
+    },
+    {
+      "id": "UXR-0.3",
+      "milestone": "UXR-0",
+      "title": "Rejected baseline and dataset",
+      "deliverable_and_removal": "Record owner screenshot, source/assets, role, data scope, theme, viewport and measured task baseline. Never invent observations.",
+      "verification": "Same-condition captures: real zero, 1/10/50 rows, pending, partial, stale/error and existing 100-row boundary; distinguish fixtures.",
+      "pass_criteria": "Before evidence identifies source/role/data/viewport; missing real observations remain unverified.",
+      "code_anchors": [
+        "docs/UXB_06F_B2_BROWSER_ACCEPTANCE_LEDGER.md"
+      ],
+      "depends_on": [
+        "UXR-0.1"
+      ],
+      "owner": "CHATGPT_CHAT",
+      "status": "IMPLEMENTED",
+      "approval_required": false,
+      "evidence": {
+        "owner_capture": "Library /02. DataRelay Link/image(20261014-010534).png",
+        "capture_pixels": "2048x1420",
+        "visible_role": "admin / Admin",
+        "visible_data_scope": "0 managed hosts; old Servers & Agents zero-host screen with targetless management forms visible",
+        "visible_theme": "dark",
+        "preview_identity_source": "Issue #182 NEXT_CHAT_START comment 6159728889",
+        "preview_source_head": "810d162fb133a825041df5cb4ffb121ab07fd45e",
+        "preview_pointer": "dev-installed-current -> dev-installed-810d162f",
+        "preview_app_sha256": "934e17568f8cfddb88b0a57ac7ea7496cebf840b73ad03f7dcb110bdc32cd5c2",
+        "preview_styles_sha256": "ed9163d376e84b5ea776695be5a95e1e7b26c52fd83cee1b58fdaef08ca2c322",
+        "preview_foundation_css_sha256": "3049f76b67d9341920254bcbe1b26b48d52b05e9faa9bc992f0d51f6887928d7",
+        "qualification": "Genuine owner rejected baseline is identified by source/assets, role, data scope, dark theme and capture dimensions. Capture pixel size includes browser chrome; no unmeasured CSS viewport or usability timing is invented."
+      }
+    },
+    {
+      "id": "UXR-0.4",
+      "milestone": "UXR-0",
+      "title": "Preserve ongoing V1 implementation",
+      "deliverable_and_removal": "Preserve workflow-servers.tsx, its test and dirty journey-roadmap edit. Reuse current component before inventing another; bind actual route.",
+      "verification": "Inspect WIP hashes/diff, import and route mount; do not stage/reset another task's files.",
+      "pass_criteria": "Existing WIP intact; tests target the actual Servers route, not an isolated demo helper.",
+      "code_anchors": [
+        "web/src/workflow-servers.tsx",
+        "web/tests/workflow-servers.test.mjs",
+        "web/src/main.tsx"
+      ],
+      "depends_on": [
+        "UXR-0.1"
+      ],
+      "owner": "CHATGPT_CHAT",
+      "status": "IMPLEMENTED",
+      "approval_required": false,
+      "evidence": {
+        "source_commit": "06bd16e843083d46d8a136d4aa0830069dc7faa6",
+        "implementation_report": "docs/UI_REDESIGN_IMPLEMENTATION_2026-10-14.md",
+        "focused_tests": "docs/ui-redesign-servers-evidence-20261014.json",
+        "qualification": "Source only; not deployed, live-browser-verified or accepted."
+      }
+    },
+    {
+      "id": "UXR-0.5",
+      "milestone": "UXR-0",
+      "title": "Exclusive roadmap and executable plan guard",
+      "deliverable_and_removal": "Update existing #184, #182 and NEXT_CHAT_START; only this UI scope until accepted. Archive obsolete bodies instead of retaining conflicting scheduling.",
+      "verification": "Read back GitHub bodies; check coverage/dependencies/evidence; negative tests remove mapping, turn exclusivity off or fake completion.",
+      "pass_criteria": "All canonical records agree; validator rejects omission and false closure; plan PASS is not product PASS.",
+      "code_anchors": [
+        "scripts/check-ui-redesign-plan.py",
+        "docs/ui-redesign-plan.json"
+      ],
+      "depends_on": [
+        "UXR-0.1"
+      ],
+      "owner": "CHATGPT_CHAT",
+      "status": "IMPLEMENTED",
+      "approval_required": false,
+      "evidence": {
+        "plan": "docs/ui-redesign-plan.json",
+        "guard": "scripts/check-ui-redesign-plan.py",
+        "tests": "tests/test-ui-redesign-plan.py",
+        "verification": "16/16 plan integrity tests PASS; validator reports 66 WBS, 40 CUI, 37 gaps, 22 vendors, 24 UXE versions and exclusive=true; negative tests reject omission, false ACCEPTED and fake scope unlock.",
+        "github_records": "Issue #184 roadmap + ACTIVE #182 packet retain exclusive UI scope.",
+        "qualification": "Executable-plan governance implemented; product acceptance remains 0/66 until acceptance gates are met."
+      }
+    },
+    {
+      "id": "UXR-1.1",
+      "milestone": "UXR-1",
+      "title": "Actual-route data-state model",
+      "deliverable_and_removal": "Separate true complete/unfiltered empty, loading, unavailable, no-match, partial and stale. No error-to-empty coercion.",
+      "verification": "RED mounted-route tests against current UI: 401/403/5xx/timeout/partial/late replies and normal zero.",
+      "pass_criteria": "Each state correct; failed/incomplete fetch never shows first-use empty; no target mutation without valid selection.",
+      "code_anchors": [
+        "web/src/main.tsx",
+        "web/src/workflow-servers.tsx"
+      ],
+      "depends_on": [
+        "UXR-0.4"
+      ],
+      "owner": "CHATGPT_CHAT",
+      "status": "IMPLEMENTED",
+      "approval_required": false,
+      "evidence": {
+        "source_commit": "06bd16e843083d46d8a136d4aa0830069dc7faa6",
+        "implementation_report": "docs/UI_REDESIGN_IMPLEMENTATION_2026-10-14.md",
+        "focused_tests": "docs/ui-redesign-servers-evidence-20261014.json",
+        "qualification": "Source only; not deployed, live-browser-verified or accepted.",
+        "followup_source_commit": "3e00e6d5475d7a7dce3de25f505d862a0a6935fa",
+        "followup_evidence": "docs/ui-redesign-servers-evidence-20261014.json#followups"
+      }
+    },
+    {
+      "id": "UXR-1.2",
+      "milestone": "UXR-1",
+      "title": "First-server screen",
+      "deliverable_and_removal": "One Servers title, short connection diagram, Add server primary, existing-Agent secondary; no toolbar/sort/filter/Table-Cards or targetless forms.",
+      "verification": "Mounted empty states for all three roles, keyboard and Add/existing-Agent navigation.",
+      "pass_criteria": "One dominant authorized next action; zero metadata/plan/admission/lifecycle forms; links reach real routes.",
+      "code_anchors": [
+        "web/src/workflow-servers.tsx",
+        "web/src/uxb-navigation.ts"
+      ],
+      "depends_on": [
+        "UXR-1.1"
+      ],
+      "owner": "CHATGPT_CHAT",
+      "status": "IMPLEMENTED",
+      "approval_required": false,
+      "evidence": {
+        "source_commit": "06bd16e843083d46d8a136d4aa0830069dc7faa6",
+        "implementation_report": "docs/UI_REDESIGN_IMPLEMENTATION_2026-10-14.md",
+        "focused_tests": "docs/ui-redesign-servers-evidence-20261014.json",
+        "qualification": "Source only; not deployed, live-browser-verified or accepted."
+      }
+    },
+    {
+      "id": "UXR-1.3",
+      "milestone": "UXR-1",
+      "title": "Compact server inventory",
+      "deliverable_and_removal": "One title and toolbar; six default columns: Server, Agent connection, Approval, Services, Last observed, Action. Remove repeated headings/caveats.",
+      "verification": "1/10/50 and 100/101-boundary datasets, unknown service counts, partial scope; desktop screenshots.",
+      "pass_criteria": "Six default columns; one compact toolbar; no invented total/service count; OS/name readable.",
+      "code_anchors": [
+        "web/src/workflow-servers.tsx",
+        "web/src/uxb-host-detail.ts"
+      ],
+      "depends_on": [
+        "UXR-1.1"
+      ],
+      "owner": "CHATGPT_CHAT",
+      "status": "IMPLEMENTED",
+      "approval_required": false,
+      "evidence": {
+        "source_commit": "06bd16e843083d46d8a136d4aa0830069dc7faa6",
+        "implementation_report": "docs/UI_REDESIGN_IMPLEMENTATION_2026-10-14.md",
+        "focused_tests": "docs/ui-redesign-servers-evidence-20261014.json",
+        "qualification": "Source only; not deployed, live-browser-verified or accepted."
+      }
+    },
+    {
+      "id": "UXR-1.4",
+      "milestone": "UXR-1",
+      "title": "Preserve compact filters/search/sort",
+      "deliverable_and_removal": "Keep admission/connection, loaded-only typed search, review/name sort, chips/reset, saved admission and paging; advanced syntax in Filters/help.",
+      "verification": "Existing G11/12/15/17 and Host search/saved-view regressions plus mounted filter/reset/return.",
+      "pass_criteria": "All prior behavior retained, actor scope unchanged, no-match not denial; no stacked default control wall.",
+      "code_anchors": [
+        "web/src/uxb-host-search.ts",
+        "web/src/uxb-host-sort.ts",
+        "web/src/uxb-host-filter-chips.ts"
+      ],
+      "depends_on": [
+        "UXR-1.3"
+      ],
+      "owner": "CHATGPT_CHAT",
+      "status": "IMPLEMENTED",
+      "approval_required": false,
+      "evidence": {
+        "source_commit": "06bd16e843083d46d8a136d4aa0830069dc7faa6",
+        "implementation_report": "docs/UI_REDESIGN_IMPLEMENTATION_2026-10-14.md",
+        "focused_tests": "docs/ui-redesign-servers-evidence-20261014.json",
+        "qualification": "Source only; not deployed, live-browser-verified or accepted."
+      }
+    },
+    {
+      "id": "UXR-1.5",
+      "milestone": "UXR-1",
+      "title": "Selected server detail",
+      "deliverable_and_removal": "Overview/Services/Activity/Settings, bounded allowed fields and related services. Remove raw object dumps and duplicated management sections.",
+      "verification": "Valid/missing/ambiguous ID; actor change; related-service errors; keyboard open/close.",
+      "pass_criteria": "Exact authorized server only; each tab works; no secrets or unauthorized by-ID fetch.",
+      "code_anchors": [
+        "web/src/workflow-servers.tsx",
+        "web/src/uxb-host-detail.ts"
+      ],
+      "depends_on": [
+        "UXR-1.3"
+      ],
+      "owner": "CHATGPT_CHAT",
+      "status": "IMPLEMENTED",
+      "approval_required": false,
+      "evidence": {
+        "source_commit": "06bd16e843083d46d8a136d4aa0830069dc7faa6",
+        "implementation_report": "docs/UI_REDESIGN_IMPLEMENTATION_2026-10-14.md",
+        "focused_tests": "docs/ui-redesign-servers-evidence-20261014.json",
+        "qualification": "Source only; not deployed, live-browser-verified or accepted.",
+        "followup_source_commit": "3e00e6d5475d7a7dce3de25f505d862a0a6935fa",
+        "followup_evidence": "docs/ui-redesign-servers-evidence-20261014.json#followups"
+      }
+    },
+    {
+      "id": "UXR-1.6",
+      "milestone": "UXR-1",
+      "title": "Contextual metadata edit",
+      "deliverable_and_removal": "Settings -> Edit details -> Review -> explicit Apply using selected ID; remove targetless form/ID re-entry.",
+      "verification": "Changed target/input invalidates plan; label/tags/blank-clear; cancel; exact receipt/audit.",
+      "pass_criteria": "Correct current target applied once; no manual ID transfer, stale Apply or false success.",
+      "code_anchors": [
+        "web/src/main.tsx::ManagedHostMetadataPanel",
+        "web/src/main.tsx::GuidedApplyPanel"
+      ],
+      "depends_on": [
+        "UXR-1.5"
+      ],
+      "owner": "CHATGPT_CHAT",
+      "status": "IMPLEMENTED",
+      "approval_required": false,
+      "evidence": {
+        "source_commit": "509441641f5fe3d5220819487c7fea5f813d5ac5",
+        "focused_tests": "Servers 14/14; mounted Chromium 35/35; Journey 426/426; Administration 20/20; P0 42/42",
+        "qualification": "Source implemented and deterministic/browser-fixture verified; live logged-in acceptance remains open."
+      }
+    },
+    {
+      "id": "UXR-1.7",
+      "milestone": "UXR-1",
+      "title": "Approval/quarantine/lifecycle actions",
+      "deliverable_and_removal": "Pending -> Review; disconnected -> Diagnose; eligible no-service -> Publish; separate dangerous Actions with visible impact.",
+      "verification": "Wrong target/revision/confirmation, expiry, double submit, API/role denials; identity/reservation regressions.",
+      "pass_criteria": "No unauthorized/wrong-target effects; original preview and confirmations retained; quarantine not described as terminating existing sessions.",
+      "code_anchors": [
+        "web/src/main.tsx::ManagedHostAdmissionPanel",
+        "web/src/main.tsx::ManagedHostLifecyclePanel"
+      ],
+      "depends_on": [
+        "UXR-1.5"
+      ],
+      "owner": "CHATGPT_CHAT",
+      "status": "IMPLEMENTED",
+      "approval_required": false,
+      "evidence": {
+        "source_commit": "509441641f5fe3d5220819487c7fea5f813d5ac5",
+        "focused_tests": "Servers 14/14; mounted Chromium 35/35; Journey 426/426; Administration 20/20; P0 42/42",
+        "qualification": "Source implemented and deterministic/browser-fixture verified; live logged-in acceptance remains open."
+      }
+    },
+    {
+      "id": "UXR-1.8",
+      "milestone": "UXR-1",
+      "title": "Return context and focus",
+      "deliverable_and_removal": "Preserve selected ID/filter/scroll/focus across detail/edit/service/audit and cancel/back; remove restart/retype behavior.",
+      "verification": "Browser list -> detail -> edit/audit -> back, refresh and actor switch.",
+      "pass_criteria": "Same authorized context restored; no private-state leak or stale reply overwriting current intent.",
+      "code_anchors": [
+        "web/src/workflow-servers.tsx",
+        "web/src/uxb-navigation.ts"
+      ],
+      "depends_on": [
+        "UXR-1.5"
+      ],
+      "owner": "CHATGPT_CHAT",
+      "status": "IMPLEMENTED",
+      "approval_required": false,
+      "evidence": {
+        "source_commit": "06bd16e843083d46d8a136d4aa0830069dc7faa6",
+        "implementation_report": "docs/UI_REDESIGN_IMPLEMENTATION_2026-10-14.md",
+        "focused_tests": "docs/ui-redesign-servers-evidence-20261014.json",
+        "qualification": "Source only; not deployed, live-browser-verified or accepted."
+      }
+    },
+    {
+      "id": "UXR-1.9",
+      "milestone": "UXR-1",
+      "title": "Truthful concise status",
+      "deliverable_and_removal": "Separate approval/trust/Agent connection/Core health/heartbeat; short icon+label with Technical details. Remove broad Healthy and caveat paragraphs.",
+      "verification": "Missing/malformed/old timestamps, bool/0/1 flags, connected-untrusted/pending/quarantined.",
+      "pass_criteria": "Unknown never healthy/disconnected; distinct facts visible without long default prose.",
+      "code_anchors": [
+        "web/src/uxb-host-detail.ts",
+        "web/src/uxb-health-state.ts"
+      ],
+      "depends_on": [
+        "UXR-1.3"
+      ],
+      "owner": "CHATGPT_CHAT",
+      "status": "IMPLEMENTED",
+      "approval_required": false,
+      "evidence": {
+        "source_commit": "06bd16e843083d46d8a136d4aa0830069dc7faa6",
+        "implementation_report": "docs/UI_REDESIGN_IMPLEMENTATION_2026-10-14.md",
+        "focused_tests": "docs/ui-redesign-servers-evidence-20261014.json",
+        "qualification": "Source only; not deployed, live-browser-verified or accepted.",
+        "followup_source_commit": "3e00e6d5475d7a7dce3de25f505d862a0a6935fa",
+        "followup_evidence": "docs/ui-redesign-servers-evidence-20261014.json#followups"
+      }
+    },
+    {
+      "id": "UXR-1.10",
+      "milestone": "UXR-1",
+      "title": "Coherent V1 product integration",
+      "deliverable_and_removal": "Replace current default route with empty/list/detail/actions together; Table default plus optional preserved preference.",
+      "verification": "Actual route mount, affected suites, private dev asset parity, before/after interaction review.",
+      "pass_criteria": "V1-A/B/C visible in product; old default forms absent; no lost feature; helper-only success insufficient.",
+      "code_anchors": [
+        "web/src/main.tsx",
+        "web/src/workflow-servers.tsx"
+      ],
+      "depends_on": [
+        "UXR-1.2",
+        "UXR-1.4",
+        "UXR-1.6",
+        "UXR-1.7",
+        "UXR-1.8",
+        "UXR-1.9"
+      ],
+      "owner": "CHATGPT_CHAT",
+      "status": "IMPLEMENTED",
+      "approval_required": false,
+      "evidence": {
+        "source_commit": "509441641f5fe3d5220819487c7fea5f813d5ac5",
+        "focused_tests": "Servers 14/14; mounted Chromium 35/35; Journey 426/426; Administration 20/20; P0 42/42",
+        "qualification": "Source implemented and deterministic/browser-fixture verified; live logged-in acceptance remains open."
+      }
+    },
+    {
+      "id": "UXR-2.1",
+      "milestone": "UXR-2",
+      "title": "Focused supported platform chooser",
+      "deliverable_and_removal": "Separate Add server task with local OS icons, supported platforms only and collapsed advanced options.",
+      "verification": "Enumerate actual platform contract; keyboard and platform-change cases.",
+      "pass_criteria": "Only supported choices; flow not appended to list; necessary advanced capabilities retained.",
+      "code_anchors": [
+        "web/src/p0-enrollment.tsx"
+      ],
+      "depends_on": [
+        "UXR-1.10"
+      ],
+      "owner": "CHATGPT_CHAT",
+      "status": "DEV_DEPLOYED",
+      "approval_required": false,
+      "evidence": {
+        "source_commit": "1121c0ac81d5f36a5436947164b802aa13805480",
+        "deployed_source_head": "df12fde730a8f40bb961821888302de90492d7b7",
+        "private_bundle_sha256": "98dd9d687fbcb75f4e887a6ee96f8f5b8b38e938ad6089de827f5bd3f687fc4a",
+        "preview": "https://dev-preview.example.invalid:19044",
+        "focused_tests": "Platform chooser source/P0 regressions plus enrollment browser fixture; supported Linux/macOS/Windows only.",
+        "qualification": "Development source and exact-head private preview only; live authenticated browser/user/Agent acceptance remains open."
+      }
+    },
+    {
+      "id": "UXR-2.2",
+      "milestone": "UXR-2",
+      "title": "Single-use invitation and expiry",
+      "deliverable_and_removal": "Preserve actor+role+platform+TTL exact intent, one-time display and safe copy. No automatic reissue or secret logs.",
+      "verification": "Existing issuance tests, double click, late response, user/role/form changes, copy denial and expiry.",
+      "pass_criteria": "One explicit issue; no stale credential; no secret in search/history/telemetry.",
+      "code_anchors": [
+        "web/src/p0-enrollment.tsx"
+      ],
+      "depends_on": [
+        "UXR-2.1"
+      ],
+      "owner": "CHATGPT_CHAT",
+      "status": "DEV_DEPLOYED",
+      "approval_required": false,
+      "evidence": {
+        "source_commit": "455bbec2faa13464da34eab9da3c3b3039265fb1",
+        "deployed_source_head": "df12fde730a8f40bb961821888302de90492d7b7",
+        "private_bundle_sha256": "98dd9d687fbcb75f4e887a6ee96f8f5b8b38e938ad6089de827f5bd3f687fc4a",
+        "preview": "https://dev-preview.example.invalid:19044",
+        "focused_tests": "Exact issuance-intent, one-shot request lock, expiry and actor/role invalidation deterministic regressions.",
+        "qualification": "Development source and exact-head private preview only; live authenticated browser/user/Agent acceptance remains open."
+      }
+    },
+    {
+      "id": "UXR-2.3",
+      "milestone": "UXR-2",
+      "title": "Install/detect and recovery",
+      "deliverable_and_removal": "Copy/install/detected/approval/connected are distinct states; bounded supported polling and in-step timeout/error/expiry recovery.",
+      "verification": "Regression delays/out-of-order errors plus actual permitted Agent detection; reload/interruption.",
+      "pass_criteria": "No false install/connection success; no duplicate issue or automatic approval on retry.",
+      "code_anchors": [
+        "web/src/p0-enrollment.tsx"
+      ],
+      "depends_on": [
+        "UXR-2.2"
+      ],
+      "owner": "CHATGPT_CHAT",
+      "status": "DEV_DEPLOYED",
+      "approval_required": false,
+      "evidence": {
+        "source_commit": "455bbec2faa13464da34eab9da3c3b3039265fb1",
+        "deployed_source_head": "df12fde730a8f40bb961821888302de90492d7b7",
+        "private_bundle_sha256": "98dd9d687fbcb75f4e887a6ee96f8f5b8b38e938ad6089de827f5bd3f687fc4a",
+        "preview": "https://dev-preview.example.invalid:19044",
+        "focused_tests": "Exact enrollment_id detection, 10-attempt bounded polling, 10s inventory timeout/retry; Journey exact-head green. Actual Agent detection remains open.",
+        "qualification": "Development source and exact-head private preview only; live authenticated browser/user/Agent acceptance remains open."
+      }
+    },
+    {
+      "id": "UXR-2.4",
+      "milestone": "UXR-2",
+      "title": "Detected-server review and approval",
+      "deliverable_and_removal": "Show exact server identity; review trust/admission independently; advance only on current valid Core APPLIED/revision.",
+      "verification": "Wrong host/operation/stale revision; approved-but-not-connected; real permitted approval.",
+      "pass_criteria": "Exact receipt drives approval; detection/trust/connectivity remain separate; no silent preapproval.",
+      "code_anchors": [
+        "web/src/p0-enrollment.tsx"
+      ],
+      "depends_on": [
+        "UXR-2.3"
+      ],
+      "owner": "CHATGPT_CHAT",
+      "status": "DEV_DEPLOYED",
+      "approval_required": false,
+      "evidence": {
+        "source_commit": "455bbec2faa13464da34eab9da3c3b3039265fb1",
+        "deployed_source_head": "df12fde730a8f40bb961821888302de90492d7b7",
+        "private_bundle_sha256": "98dd9d687fbcb75f4e887a6ee96f8f5b8b38e938ad6089de827f5bd3f687fc4a",
+        "preview": "https://dev-preview.example.invalid:19044",
+        "focused_tests": "Exact Host admission preview/apply revision/receipt/expiry and false-success guards; live approval remains open.",
+        "qualification": "Development source and exact-head private preview only; live authenticated browser/user/Agent acceptance remains open."
+      }
+    },
+    {
+      "id": "UXR-2.5",
+      "milestone": "UXR-2",
+      "title": "Server -> service -> rule continuity",
+      "deliverable_and_removal": "Next Publish service, prefilled selected identity, narrow rule and test context. Preserve four security stages within simplified flow.",
+      "verification": "Linked mounted journey, back/cancel/reload, actor eligibility.",
+      "pass_criteria": "No ID copying or menu hunting; publish/allow/verify are distinct authoritative effects.",
+      "code_anchors": [
+        "web/src/uxb-navigation.ts",
+        "web/src/uxb-remote-service.tsx"
+      ],
+      "depends_on": [
+        "UXR-2.4"
+      ],
+      "owner": "CHATGPT_CHAT",
+      "status": "DEV_DEPLOYED",
+      "approval_required": false,
+      "evidence": {
+        "source_commit": "98a1d2c5f103ad1a70d59578b3aea7caf20e0f3f",
+        "deployed_source_head": "df12fde730a8f40bb961821888302de90492d7b7",
+        "private_bundle_sha256": "98dd9d687fbcb75f4e887a6ee96f8f5b8b38e938ad6089de827f5bd3f687fc4a",
+        "preview": "https://dev-preview.example.invalid:19044",
+        "focused_tests": "Mounted setup browser 2/2 PASS: selected Host to Service to rule without ID re-entry; Host switch clears dependent intent.",
+        "qualification": "Development source and exact-head private preview only; live authenticated browser/user/Agent acceptance remains open."
+      }
+    },
+    {
+      "id": "UXR-2.6",
+      "milestone": "UXR-2",
+      "title": "Actionable service catalog",
+      "deliverable_and_removal": "Type icon/name/owner/endpoint, separate policy and transport states; preserve explicit Card/Table preference, search and facets.",
+      "verification": "0/1/10/50/partial cases, malformed identity, actor preference and existing G13/G19 tests.",
+      "pass_criteria": "Correct resource actions and scope; no Enabled=reachable; no automatic preference change or lost filters.",
+      "code_anchors": [
+        "web/src/main.tsx::ResourceWorkspace",
+        "web/src/uxb-resource-cards.ts"
+      ],
+      "depends_on": [
+        "UXR-1.10"
+      ],
+      "owner": "CHATGPT_CHAT",
+      "status": "DEV_DEPLOYED",
+      "approval_required": false,
+      "evidence": {
+        "source_commit": "df12fde730a8f40bb961821888302de90492d7b7",
+        "deployed_source_head": "df12fde730a8f40bb961821888302de90492d7b7",
+        "private_bundle_sha256": "98dd9d687fbcb75f4e887a6ee96f8f5b8b38e938ad6089de827f5bd3f687fc4a",
+        "preview": "https://dev-preview.example.invalid:19044",
+        "focused_tests": "Service catalog source regressions separate configuration from policy/transport and remove targetless editor.",
+        "qualification": "Development source and exact-head private preview only; live authenticated browser/user/Agent acceptance remains open."
+      }
+    },
+    {
+      "id": "UXR-2.7",
+      "milestone": "UXR-2",
+      "title": "Protocol-specific usable actions",
+      "deliverable_and_removal": "SSH Copy command; safe verified HTTP(S) Copy/Open; TCP Copy endpoint; Test & explain/Details. No fake browser terminal.",
+      "verification": "Escaping, unsafe schemes/host/port, missing username, clipboard failure, stale endpoint.",
+      "pass_criteria": "Confirmed safe output; no automatic shell execution or invented endpoint; explicit failure/unsupported state.",
+      "code_anchors": [
+        "web/src/uxb-service-detail.ts",
+        "web/src/main.tsx"
+      ],
+      "depends_on": [
+        "UXR-2.6"
+      ],
+      "owner": "CHATGPT_CHAT",
+      "status": "DEV_DEPLOYED",
+      "approval_required": false,
+      "evidence": {
+        "source_commit": "df12fde730a8f40bb961821888302de90492d7b7",
+        "deployed_source_head": "df12fde730a8f40bb961821888302de90492d7b7",
+        "private_bundle_sha256": "98dd9d687fbcb75f4e887a6ee96f8f5b8b38e938ad6089de827f5bd3f687fc4a",
+        "preview": "https://dev-preview.example.invalid:19044",
+        "focused_tests": "Protocol action regressions for SSH/HTTP/HTTPS/TCP, invalid hosts/ports and non-enabled states.",
+        "qualification": "Development source and exact-head private preview only; live authenticated browser/user/Agent acceptance remains open."
+      }
+    },
+    {
+      "id": "UXR-2.8",
+      "milestone": "UXR-2",
+      "title": "Publish service focused form",
+      "deliverable_and_removal": "Selected server prefilled, name/type/internal target+port first; advanced options collapsed; diagram marks proposed vs confirmed address.",
+      "verification": "Port/address validation, selected target switch, absent allocator response, keyboard/error labels.",
+      "pass_criteria": "No known ID re-entry; only relevant fields; public endpoint final only after Core confirmation.",
+      "code_anchors": [
+        "web/src/uxb-remote-service.tsx"
+      ],
+      "depends_on": [
+        "UXR-2.5"
+      ],
+      "owner": "CHATGPT_CHAT",
+      "status": "DEV_DEPLOYED",
+      "approval_required": false,
+      "evidence": {
+        "source_commit": "df12fde730a8f40bb961821888302de90492d7b7",
+        "deployed_source_head": "df12fde730a8f40bb961821888302de90492d7b7",
+        "private_bundle_sha256": "98dd9d687fbcb75f4e887a6ee96f8f5b8b38e938ad6089de827f5bd3f687fc4a",
+        "preview": "https://dev-preview.example.invalid:19044",
+        "focused_tests": "Selected-host focused service form regressions; advanced lifecycle collapsed and public endpoint remains unconfirmed until Core/Agent evidence.",
+        "qualification": "Development source and exact-head private preview only; live authenticated browser/user/Agent acceptance remains open."
+      }
+    },
+    {
+      "id": "UXR-2.9",
+      "milestone": "UXR-2",
+      "title": "Service review and lifecycle",
+      "deliverable_and_removal": "Linked diff/tests/impact/typed confirmation; retain create/edit/disable/release semantics; no always-open Change Plan.",
+      "verification": "Stale/expired preview, failed tests, busy/double submit, cancel, ambiguous response and audit.",
+      "pass_criteria": "Exactly one intended valid change; cancel no effect; disable does not silently release reservation.",
+      "code_anchors": [
+        "web/src/uxb-remote-service.tsx",
+        "web/src/main.tsx::GuidedApplyPanel"
+      ],
+      "depends_on": [
+        "UXR-2.8"
+      ],
+      "owner": "CHATGPT_CHAT",
+      "status": "DEV_DEPLOYED",
+      "approval_required": false,
+      "evidence": {
+        "source_commit": "df12fde730a8f40bb961821888302de90492d7b7",
+        "deployed_source_head": "df12fde730a8f40bb961821888302de90492d7b7",
+        "private_bundle_sha256": "98dd9d687fbcb75f4e887a6ee96f8f5b8b38e938ad6089de827f5bd3f687fc4a",
+        "preview": "https://dev-preview.example.invalid:19044",
+        "focused_tests": "One-shot Preview/Apply, expiry, ambiguous outcome, duplicate lock and local-only cancel regressions.",
+        "qualification": "Development source and exact-head private preview only; live authenticated browser/user/Agent acceptance remains open."
+      }
+    },
+    {
+      "id": "UXR-2.10",
+      "milestone": "UXR-2",
+      "title": "Coherent V2 acceptance",
+      "deliverable_and_removal": "Complete first server through connection information and next test; preserve truthful untested state.",
+      "verification": "Real authorized linked user scenario plus failed/retry path; distinguish fixture evidence.",
+      "pass_criteria": "No false success, duplicate issue, wrong target or lost context; deployed V2 matches tested build.",
+      "code_anchors": [
+        "web/src/p0-enrollment.tsx",
+        "web/src/uxb-remote-service.tsx"
+      ],
+      "depends_on": [
+        "UXR-2.7",
+        "UXR-2.9"
+      ],
+      "owner": "CHATGPT_CHAT",
+      "status": "DEV_DEPLOYED",
+      "approval_required": false,
+      "evidence": {
+        "source_commit": "df12fde730a8f40bb961821888302de90492d7b7",
+        "deployed_source_head": "df12fde730a8f40bb961821888302de90492d7b7",
+        "private_bundle_sha256": "98dd9d687fbcb75f4e887a6ee96f8f5b8b38e938ad6089de827f5bd3f687fc4a",
+        "preview": "https://dev-preview.example.invalid:19044",
+        "focused_tests": "Coherent V2 exact-head private build: Administration 20/20, Journey 430/430, P0 44/44; deployed asset parity PASS. Real authorized linked-user/Agent scenario remains open.",
+        "qualification": "Development source and exact-head private preview only; live authenticated browser/user/Agent acceptance remains open."
+      }
+    },
+    {
+      "id": "UXR-3.1",
+      "milestone": "UXR-3",
+      "title": "Distinct policy-plane purpose",
+      "deliverable_and_removal": "Remote server/service, Internet source network/FQDN/port, AI identity/permission/provider; task-first choice.",
+      "verification": "Per-plane selectors/API and cross-plane/role negatives; Internet without Agent path.",
+      "pass_criteria": "No semantics/privilege transfer or Web-login identity substituted for network source.",
+      "code_anchors": [
+        "web/src/p0-access-policy.tsx",
+        "web/src/uxb-core-choices.tsx"
+      ],
+      "depends_on": [
+        "UXR-1.10"
+      ],
+      "owner": "CHATGPT_CHAT",
+      "status": "DEV_DEPLOYED",
+      "approval_required": false,
+      "evidence": {
+        "source_commit": "79040bbbad40cca820642047c09e2b3a17ee432a",
+        "deployed_source_head": "1c90e9ef0029fe53340f5bf2793eac60cf8da011",
+        "private_bundle_sha256": "439ad4de4d7181f9aba4c41a0c8b193cad29bbc1b05b41c802788242f2f6fd4b",
+        "preview": "https://dev-preview.example.invalid:19044",
+        "focused_tests": "Remote/Internet/AI plane semantics and source identity separation; explicit Agent prerequisite only for Remote. Focused policy/access suite 153/153 PASS; P0 44/44; Journey 437/437 at current source.",
+        "qualification": "Development preview only; authenticated live-user/real-traffic acceptance remains open."
+      }
+    },
+    {
+      "id": "UXR-3.2",
+      "milestone": "UXR-3",
+      "title": "Basic rule editor and advanced disclosure",
+      "deliverable_and_removal": "Source/target/service-or-permission/purpose first; advanced JSON/draft separate; existing authoritative workflow retained.",
+      "verification": "Basic and advanced paths, incomplete references, purpose persistence vs screen-only facts.",
+      "pass_criteria": "Normal task requires no JSON; advanced supported behavior remains; no second policy engine.",
+      "code_anchors": [
+        "web/src/p0-access-policy.tsx::GuidedPolicyJourney"
+      ],
+      "depends_on": [
+        "UXR-3.1"
+      ],
+      "owner": "CHATGPT_CHAT",
+      "status": "DEV_DEPLOYED",
+      "approval_required": false,
+      "evidence": {
+        "source_commit": "1c90e9ef0029fe53340f5bf2793eac60cf8da011",
+        "deployed_source_head": "1c90e9ef0029fe53340f5bf2793eac60cf8da011",
+        "private_bundle_sha256": "439ad4de4d7181f9aba4c41a0c8b193cad29bbc1b05b41c802788242f2f6fd4b",
+        "preview": "https://dev-preview.example.invalid:19044",
+        "focused_tests": "Basic Core-choice rule editor with advanced exact-name disclosure; normal workflow has no raw JSON requirement. Focused policy/access suite 153/153 PASS; P0 44/44; Journey 437/437 at current source.",
+        "qualification": "Development preview only; authenticated live-user/real-traffic acceptance remains open."
+      }
+    },
+    {
+      "id": "UXR-3.3",
+      "milestone": "UXR-3",
+      "title": "Prepared set/delete intent",
+      "deliverable_and_removal": "Always show name/plane/source/target/selector/enabled/expiry/AI paths and NOT APPLIED; destructive delete impact explicit.",
+      "verification": "G06 set/delete, invalid expiry, absent values and AI optional paths.",
+      "pass_criteria": "Summary matches current form in BOTH modes; no missing value coercion; impact visible in review.",
+      "code_anchors": [
+        "web/src/p0-access-policy.tsx"
+      ],
+      "depends_on": [
+        "UXR-3.2"
+      ],
+      "owner": "CHATGPT_CHAT",
+      "status": "DEV_DEPLOYED",
+      "approval_required": false,
+      "evidence": {
+        "source_commit": "1c90e9ef0029fe53340f5bf2793eac60cf8da011",
+        "deployed_source_head": "1c90e9ef0029fe53340f5bf2793eac60cf8da011",
+        "private_bundle_sha256": "439ad4de4d7181f9aba4c41a0c8b193cad29bbc1b05b41c802788242f2f6fd4b",
+        "preview": "https://dev-preview.example.invalid:19044",
+        "focused_tests": "Prepared SET/DELETE intent exposes rule/plane/source/destination/selector/enabled/expiry before Preview. Focused policy/access suite 153/153 PASS; P0 44/44; Journey 437/437 at current source.",
+        "qualification": "Development preview only; authenticated live-user/real-traffic acceptance remains open."
+      }
+    },
+    {
+      "id": "UXR-3.4",
+      "milestone": "UXR-3",
+      "title": "Diff/tests/impact/typed Apply",
+      "deliverable_and_removal": "Preserve saved regression tests, bounded blast radius, current plan and one-shot confirmation; no generic Save bypass.",
+      "verification": "Expired/reused plan, wrong phrase, failing tests, async old intent, duplicate POST and reply loss.",
+      "pass_criteria": "Unsafe/stale plan cannot Apply; one valid effect; no invented complete impact or silent retry.",
+      "code_anchors": [
+        "web/src/p0-access-policy.tsx",
+        "web/src/uxb-impact-evidence.ts"
+      ],
+      "depends_on": [
+        "UXR-3.3"
+      ],
+      "owner": "CHATGPT_CHAT",
+      "status": "DEV_DEPLOYED",
+      "approval_required": false,
+      "evidence": {
+        "source_commit": "1c90e9ef0029fe53340f5bf2793eac60cf8da011",
+        "deployed_source_head": "1c90e9ef0029fe53340f5bf2793eac60cf8da011",
+        "private_bundle_sha256": "439ad4de4d7181f9aba4c41a0c8b193cad29bbc1b05b41c802788242f2f6fd4b",
+        "preview": "https://dev-preview.example.invalid:19044",
+        "focused_tests": "Core Preview, bounded impact, required regression tests and typed one-shot Apply with expiry/concurrency/UNKNOWN handling. Focused policy/access suite 153/153 PASS; P0 44/44; Journey 437/437 at current source.",
+        "qualification": "Development preview only; authenticated live-user/real-traffic acceptance remains open."
+      }
+    },
+    {
+      "id": "UXR-3.5",
+      "milestone": "UXR-3",
+      "title": "Current/draft/preview context",
+      "deliverable_and_removal": "Explicit Core snapshot, proposed draft, preview time/revision labels; no browser-only authority or graph publish on click.",
+      "verification": "G05 current/proposed switch, stale revision/reply and mismatch.",
+      "pass_criteria": "Every view labeled with real evidence context; Live never implies verified reachability.",
+      "code_anchors": [
+        "web/src/p0-access-policy.tsx"
+      ],
+      "depends_on": [
+        "UXR-3.1"
+      ],
+      "owner": "CHATGPT_CHAT",
+      "status": "DEV_DEPLOYED",
+      "approval_required": false,
+      "evidence": {
+        "source_commit": "1c90e9ef0029fe53340f5bf2793eac60cf8da011",
+        "deployed_source_head": "1c90e9ef0029fe53340f5bf2793eac60cf8da011",
+        "private_bundle_sha256": "439ad4de4d7181f9aba4c41a0c8b193cad29bbc1b05b41c802788242f2f6fd4b",
+        "preview": "https://dev-preview.example.invalid:19044",
+        "focused_tests": "Current Core graph/trace, screen-only draft and authoritative Preview are separately labeled; no browser draft authority. Focused policy/access suite 153/153 PASS; P0 44/44; Journey 437/437 at current source.",
+        "qualification": "Development preview only; authenticated live-user/real-traffic acceptance remains open."
+      }
+    },
+    {
+      "id": "UXR-3.6",
+      "milestone": "UXR-3",
+      "title": "Focused relationship visualization",
+      "deliverable_and_removal": "Selected resource/source/rule focus, keyboard nodes and details; preserve bounded matching beyond old 16-row display; no whole-network decoration.",
+      "verification": "G01 after-index16 match, 400 snapshot, truncation, invalid edges and no-match.",
+      "pass_criteria": "Only evidenced edges/nodes; truthful loaded counts; no-match is not DENY; selected item discoverable.",
+      "code_anchors": [
+        "web/src/p0-access-policy.tsx::AccessEvidenceExplorer"
+      ],
+      "depends_on": [
+        "UXR-3.5"
+      ],
+      "owner": "CHATGPT_CHAT",
+      "status": "DEV_DEPLOYED",
+      "approval_required": false,
+      "evidence": {
+        "source_commit": "1c90e9ef0029fe53340f5bf2793eac60cf8da011",
+        "deployed_source_head": "1c90e9ef0029fe53340f5bf2793eac60cf8da011",
+        "private_bundle_sha256": "439ad4de4d7181f9aba4c41a0c8b193cad29bbc1b05b41c802788242f2f6fd4b",
+        "preview": "https://dev-preview.example.invalid:19044",
+        "focused_tests": "Focused loaded Core-modeled paths, >16 matching discovery, bounded/truncated warnings and no no-match=DENY claim. Focused policy/access suite 153/153 PASS; P0 44/44; Journey 437/437 at current source.",
+        "qualification": "Development preview only; authenticated live-user/real-traffic acceptance remains open."
+      }
+    },
+    {
+      "id": "UXR-3.7",
+      "milestone": "UXR-3",
+      "title": "Policy versus actual transport",
+      "deliverable_and_removal": "Separate policy source->rule->destination and public endpoint->Agent->target; allow Allowed + Not tested.",
+      "verification": "Allowed with absent transport, denied with historical flow, disconnected Agent and missing telemetry.",
+      "pass_criteria": "Policy allow never becomes connection success; untested segments clear; no guessed source identity.",
+      "code_anchors": [
+        "web/src/p0-access-policy.tsx",
+        "web/src/uxb-host-detail.ts"
+      ],
+      "depends_on": [
+        "UXR-3.6"
+      ],
+      "owner": "CHATGPT_CHAT",
+      "status": "DEV_DEPLOYED",
+      "approval_required": false,
+      "evidence": {
+        "source_commit": "79040bbbad40cca820642047c09e2b3a17ee432a",
+        "deployed_source_head": "1c90e9ef0029fe53340f5bf2793eac60cf8da011",
+        "private_bundle_sha256": "439ad4de4d7181f9aba4c41a0c8b193cad29bbc1b05b41c802788242f2f6fd4b",
+        "preview": "https://dev-preview.example.invalid:19044",
+        "focused_tests": "Policy, transport test and observed live-use evidence are separate; policy ALLOW never means connection success. Focused policy/access suite 153/153 PASS; P0 44/44; Journey 437/437 at current source.",
+        "qualification": "Development preview only; authenticated live-user/real-traffic acceptance remains open."
+      }
+    },
+    {
+      "id": "UXR-3.8",
+      "milestone": "UXR-3",
+      "title": "Exact Host/policy/Audit graph pivots",
+      "deliverable_and_removal": "Selected service to known owning Host, same-plane exact policy and bounded audit context/back.",
+      "verification": "Existing UI02/G03/G18/G22 regressions; duplicate/missing/unloaded IDs; actual click-through and return.",
+      "pass_criteria": "Only unique authorized identity linked; no new by-ID authority; no manual ID transfer.",
+      "code_anchors": [
+        "web/src/p0-access-policy.tsx",
+        "web/src/uxb-audit-context.ts"
+      ],
+      "depends_on": [
+        "UXR-3.6"
+      ],
+      "owner": "CHATGPT_CHAT",
+      "status": "DEV_DEPLOYED",
+      "approval_required": false,
+      "evidence": {
+        "source_commit": "1c90e9ef0029fe53340f5bf2793eac60cf8da011",
+        "deployed_source_head": "1c90e9ef0029fe53340f5bf2793eac60cf8da011",
+        "private_bundle_sha256": "439ad4de4d7181f9aba4c41a0c8b193cad29bbc1b05b41c802788242f2f6fd4b",
+        "preview": "https://dev-preview.example.invalid:19044",
+        "focused_tests": "Exact Service->Host, same-plane Policy and bounded Audit pivots use already-authorized identity only. Focused policy/access suite 153/153 PASS; P0 44/44; Journey 437/437 at current source.",
+        "qualification": "Development preview only; authenticated live-user/real-traffic acceptance remains open."
+      }
+    },
+    {
+      "id": "UXR-3.9",
+      "milestone": "UXR-3",
+      "title": "Compact policy triage preservation",
+      "deliverable_and_removal": "Keep state/expiry filters, cards/table, sort/chips/reset, AI source/provider/permission and safe name/description.",
+      "verification": "G09/G20/G21/G23..27/G29; malformed times/flags/objects, partial search and preferences.",
+      "pass_criteria": "All accepted findings retained without default control wall; missing is not Never/Disabled; no secret values.",
+      "code_anchors": [
+        "web/src/main.tsx::PolicyWorkspace",
+        "web/src/uxb-policy-table-display.ts"
+      ],
+      "depends_on": [
+        "UXR-3.2"
+      ],
+      "owner": "CHATGPT_CHAT",
+      "status": "DEV_DEPLOYED",
+      "approval_required": false,
+      "evidence": {
+        "source_commit": "1c90e9ef0029fe53340f5bf2793eac60cf8da011",
+        "deployed_source_head": "1c90e9ef0029fe53340f5bf2793eac60cf8da011",
+        "private_bundle_sha256": "439ad4de4d7181f9aba4c41a0c8b193cad29bbc1b05b41c802788242f2f6fd4b",
+        "preview": "https://dev-preview.example.invalid:19044",
+        "focused_tests": "Policy state/expiry/search/sort/chips/cards/table/AI mapping regressions retained. Focused policy/access suite 153/153 PASS; P0 44/44; Journey 437/437 at current source.",
+        "qualification": "Development preview only; authenticated live-user/real-traffic acceptance remains open."
+      }
+    },
+    {
+      "id": "UXR-3.10",
+      "milestone": "UXR-3",
+      "title": "Private policy views and verified context",
+      "deliverable_and_removal": "Keep G28 saved policy filter and safe prefilled draft; UI preference is not a grant.",
+      "verification": "Reopen, actor switch, unknown/legacy payload and graph->editor context.",
+      "pass_criteria": "Correct actor filter restored; no implicit grant or silently deleted unsupported entry.",
+      "code_anchors": [
+        "web/src/uxb-saved-views.tsx",
+        "web/src/uxb-saved-views.tsx"
+      ],
+      "depends_on": [
+        "UXR-3.9"
+      ],
+      "owner": "CHATGPT_CHAT",
+      "status": "DEV_DEPLOYED",
+      "approval_required": false,
+      "evidence": {
+        "source_commit": "1c90e9ef0029fe53340f5bf2793eac60cf8da011",
+        "deployed_source_head": "1c90e9ef0029fe53340f5bf2793eac60cf8da011",
+        "private_bundle_sha256": "439ad4de4d7181f9aba4c41a0c8b193cad29bbc1b05b41c802788242f2f6fd4b",
+        "preview": "https://dev-preview.example.invalid:19044",
+        "focused_tests": "Actor-private policy Saved Views and safe carried flow context retained; UI preference never grants access. Focused policy/access suite 153/153 PASS; P0 44/44; Journey 437/437 at current source.",
+        "qualification": "Development preview only; authenticated live-user/real-traffic acceptance remains open."
+      }
+    },
+    {
+      "id": "UXR-3.11",
+      "milestone": "UXR-3",
+      "title": "Why denied / diagnose selected service",
+      "deliverable_and_removal": "Contextual supported checks, observation time and next remediation route; preserve unknown/partial evidence.",
+      "verification": "Real authorized allow/deny traffic where available; absent checks, errors and diagnostic return.",
+      "pass_criteria": "Explain evidenced reason without JSON; no guessed root cause or single-port false health; target preserved.",
+      "code_anchors": [
+        "web/src/p0-access-policy.tsx",
+        "web/src/uxb-doctor.tsx"
+      ],
+      "depends_on": [
+        "UXR-3.7",
+        "UXR-3.8"
+      ],
+      "owner": "CHATGPT_CHAT",
+      "status": "DEV_DEPLOYED",
+      "approval_required": false,
+      "evidence": {
+        "source_commit": "19b95265c87abf7f87dbe1b280300b6c0fd3a5bf",
+        "deployed_source_head": "1c90e9ef0029fe53340f5bf2793eac60cf8da011",
+        "private_bundle_sha256": "439ad4de4d7181f9aba4c41a0c8b193cad29bbc1b05b41c802788242f2f6fd4b",
+        "preview": "https://dev-preview.example.invalid:19044",
+        "focused_tests": "Selected-service diagnosis preserves return target, labels browser receipt time vs missing Core timestamp, and exposes Core next action without network-probe invention. Focused policy/access suite 153/153 PASS; P0 44/44; Journey 437/437 at current source.",
+        "qualification": "Development preview only; authenticated live-user/real-traffic acceptance remains open."
+      }
+    },
+    {
+      "id": "UXR-4.1",
+      "milestone": "UXR-4",
+      "title": "Purpose-first Home",
+      "deliverable_and_removal": "Core-observed first-use vs configured/unknown; Remote/Internet and supported AI cards with one next prerequisite.",
+      "verification": "All setup states/roles and purpose paths; resume failed stage.",
+      "pass_criteria": "No decorative zero dashboard, invented completion flag or Agent requirement for Internet.",
+      "code_anchors": [
+        "web/src/uxb-home.tsx",
+        "web/src/main.tsx::CommandCenter"
+      ],
+      "depends_on": [
+        "UXR-2.10"
+      ],
+      "owner": "CHATGPT_CHAT",
+      "status": "DEV_DEPLOYED",
+      "approval_required": false,
+      "evidence": {
+        "source_commit": "7b279aef5255e8ac9fcc5cf46a4dfb4208a20abe",
+        "deployed_source_head": "1c90e9ef0029fe53340f5bf2793eac60cf8da011",
+        "private_bundle_sha256": "439ad4de4d7181f9aba4c41a0c8b193cad29bbc1b05b41c802788242f2f6fd4b",
+        "preview": "https://dev-preview.example.invalid:19044",
+        "focused_tests": "Purpose-first Home keeps next tasks primary and moves fleet counters into secondary evidence disclosure. Focused Home/Audit/Saved Views/Search/Admin/operations suite 163/163 PASS; Journey 437/437.",
+        "qualification": "Development preview only; authenticated three-role browser acceptance remains open."
+      }
+    },
+    {
+      "id": "UXR-4.2",
+      "milestone": "UXR-4",
+      "title": "Actionable attention and health",
+      "deliverable_and_removal": "Bounded real counts/time/scope and direct target/job/policy action; separate management health from services.",
+      "verification": "G37 partial/unknown/count/time and every item click/back.",
+      "pass_criteria": "All items actionable and true; no dead KPI, fabricated traffic/risk or failure-to-healthy-zero.",
+      "code_anchors": [
+        "web/src/uxb-home.tsx",
+        "web/src/uxb-health-state.ts"
+      ],
+      "depends_on": [
+        "UXR-4.1"
+      ],
+      "owner": "CHATGPT_CHAT",
+      "status": "DEV_DEPLOYED",
+      "approval_required": false,
+      "evidence": {
+        "source_commit": "1c90e9ef0029fe53340f5bf2793eac60cf8da011",
+        "deployed_source_head": "1c90e9ef0029fe53340f5bf2793eac60cf8da011",
+        "private_bundle_sha256": "439ad4de4d7181f9aba4c41a0c8b193cad29bbc1b05b41c802788242f2f6fd4b",
+        "preview": "https://dev-preview.example.invalid:19044",
+        "focused_tests": "Core-derived attention and health rows remain actionable with bounded count/time/scope and UNKNOWN handling. Focused Home/Audit/Saved Views/Search/Admin/operations suite 163/163 PASS; Journey 437/437.",
+        "qualification": "Development preview only; authenticated three-role browser acceptance remains open."
+      }
+    },
+    {
+      "id": "UXR-4.3",
+      "milestone": "UXR-4",
+      "title": "Useful services and recent work",
+      "deliverable_and_removal": "Authorized services/recent changes; retain personal starting page; actor-scoped preference only if supported.",
+      "verification": "Empty/stale/error feeds, actor change, actual service/change actions.",
+      "pass_criteria": "No demo feed or invented popularity; correct destination; preference preserved.",
+      "code_anchors": [
+        "web/src/uxb-home.tsx",
+        "web/src/uxb-start-page.ts"
+      ],
+      "depends_on": [
+        "UXR-4.1"
+      ],
+      "owner": "CHATGPT_CHAT",
+      "status": "DEV_DEPLOYED",
+      "approval_required": false,
+      "evidence": {
+        "source_commit": "7b279aef5255e8ac9fcc5cf46a4dfb4208a20abe",
+        "deployed_source_head": "1c90e9ef0029fe53340f5bf2793eac60cf8da011",
+        "private_bundle_sha256": "439ad4de4d7181f9aba4c41a0c8b193cad29bbc1b05b41c802788242f2f6fd4b",
+        "preview": "https://dev-preview.example.invalid:19044",
+        "focused_tests": "Home exposes only observed enabled loaded services as actions and never calls them reachable/popular. Focused Home/Audit/Saved Views/Search/Admin/operations suite 163/163 PASS; Journey 437/437.",
+        "qualification": "Development preview only; authenticated three-role browser acceptance remains open."
+      }
+    },
+    {
+      "id": "UXR-4.4",
+      "milestone": "UXR-4",
+      "title": "Readable Activity and selected event",
+      "deliverable_and_removal": "Who/what/when/result list; selected bounded detail, actual correlation/timeline and related target/back.",
+      "verification": "G07 whitelist/redaction, malformed event, keyboard, partial/empty/error.",
+      "pass_criteria": "Exact event only; no expanded all-event card wall, raw-log default or fake session replay.",
+      "code_anchors": [
+        "web/src/main.tsx::AuditExplorer",
+        "web/src/uxb-audit-context.ts"
+      ],
+      "depends_on": [
+        "UXR-1.8"
+      ],
+      "owner": "CHATGPT_CHAT",
+      "status": "DEV_DEPLOYED",
+      "approval_required": false,
+      "evidence": {
+        "source_commit": "7b279aef5255e8ac9fcc5cf46a4dfb4208a20abe",
+        "deployed_source_head": "1c90e9ef0029fe53340f5bf2793eac60cf8da011",
+        "private_bundle_sha256": "439ad4de4d7181f9aba4c41a0c8b193cad29bbc1b05b41c802788242f2f6fd4b",
+        "preview": "https://dev-preview.example.invalid:19044",
+        "focused_tests": "Activity uses six human columns and one selected bounded Core event; raw nested payloads remain hidden. Focused Home/Audit/Saved Views/Search/Admin/operations suite 163/163 PASS; Journey 437/437.",
+        "qualification": "Development preview only; authenticated three-role browser acceptance remains open."
+      }
+    },
+    {
+      "id": "UXR-4.5",
+      "milestone": "UXR-4",
+      "title": "Audit time/paging/refresh/export",
+      "deliverable_and_removal": "Retain UTC presets, applied query/cursor, actor/result/time context, same-query refresh and authorized export/retention.",
+      "verification": "G08/G22/G36, back/reload/paging, retention/API denial.",
+      "pass_criteria": "Exact current query/page preserved; no retention completeness claim or unauthorized purge.",
+      "code_anchors": [
+        "web/src/uxb-audit-presets.ts",
+        "web/src/uxb-audit-refresh.ts"
+      ],
+      "depends_on": [
+        "UXR-4.4"
+      ],
+      "owner": "CHATGPT_CHAT",
+      "status": "DEV_DEPLOYED",
+      "approval_required": false,
+      "evidence": {
+        "source_commit": "1c90e9ef0029fe53340f5bf2793eac60cf8da011",
+        "deployed_source_head": "1c90e9ef0029fe53340f5bf2793eac60cf8da011",
+        "private_bundle_sha256": "439ad4de4d7181f9aba4c41a0c8b193cad29bbc1b05b41c802788242f2f6fd4b",
+        "preview": "https://dev-preview.example.invalid:19044",
+        "focused_tests": "Audit UTC presets, applied query/page refresh, pagination, export and retention guards retained. Focused Home/Audit/Saved Views/Search/Admin/operations suite 163/163 PASS; Journey 437/437.",
+        "qualification": "Development preview only; authenticated three-role browser acceptance remains open."
+      }
+    },
+    {
+      "id": "UXR-4.6",
+      "milestone": "UXR-4",
+      "title": "Saved Views complete preservation",
+      "deliverable_and_removal": "Search/sort/type/chips/reset/25-row pages/reopen; keep legacy unsupported entries with truthful states.",
+      "verification": "G30..35, 0/25/26/100 rows, actor changes and partial Core pages.",
+      "pass_criteria": "All six findings retained; private scope correct; no raw secret or false total/permission.",
+      "code_anchors": [
+        "web/src/uxb-saved-views.tsx",
+        "web/src/uxb-saved-views-page.ts"
+      ],
+      "depends_on": [
+        "UXR-1.4"
+      ],
+      "owner": "CHATGPT_CHAT",
+      "status": "DEV_DEPLOYED",
+      "approval_required": false,
+      "evidence": {
+        "source_commit": "1c90e9ef0029fe53340f5bf2793eac60cf8da011",
+        "deployed_source_head": "1c90e9ef0029fe53340f5bf2793eac60cf8da011",
+        "private_bundle_sha256": "439ad4de4d7181f9aba4c41a0c8b193cad29bbc1b05b41c802788242f2f6fd4b",
+        "preview": "https://dev-preview.example.invalid:19044",
+        "focused_tests": "Saved Views search/sort/type/chips/reset/25-row page/private reopen behavior retained including legacy unsupported state. Focused Home/Audit/Saved Views/Search/Admin/operations suite 163/163 PASS; Journey 437/437.",
+        "qualification": "Development preview only; authenticated three-role browser acceptance remains open."
+      }
+    },
+    {
+      "id": "UXR-4.7",
+      "milestone": "UXR-4",
+      "title": "Search and migration aliases",
+      "deliverable_and_removal": "Ctrl/Cmd+K, type-labeled exact results, old/new names and contextual help; What changed tour link.",
+      "verification": "G18/old names, keyboard, ambiguous/unloaded IDs, role boundaries.",
+      "pass_criteria": "All existing routes discoverable; only exact authorized targets open; no private/secret leakage.",
+      "code_anchors": [
+        "web/src/uxb-navigation.ts",
+        "web/src/uxb-global-search-target.ts"
+      ],
+      "depends_on": [
+        "UXR-1.5"
+      ],
+      "owner": "CHATGPT_CHAT",
+      "status": "DEV_DEPLOYED",
+      "approval_required": false,
+      "evidence": {
+        "source_commit": "1c90e9ef0029fe53340f5bf2793eac60cf8da011",
+        "deployed_source_head": "1c90e9ef0029fe53340f5bf2793eac60cf8da011",
+        "private_bundle_sha256": "439ad4de4d7181f9aba4c41a0c8b193cad29bbc1b05b41c802788242f2f6fd4b",
+        "preview": "https://dev-preview.example.invalid:19044",
+        "focused_tests": "Ctrl/Cmd+K Search retains old aliases, exact typed results and adds keyboard-readable What changed navigation help. Focused Home/Audit/Saved Views/Search/Admin/operations suite 163/163 PASS; Journey 437/437.",
+        "qualification": "Development preview only; authenticated three-role browser acceptance remains open."
+      }
+    },
+    {
+      "id": "UXR-4.8",
+      "milestone": "UXR-4",
+      "title": "Task-oriented common shell",
+      "deliverable_and_removal": "Home plus four groups, single title, breadcrumb, sticky header, theme/collapse preferences and icon+text nav.",
+      "verification": "All routes, legacy aliases, collapsed menu, theme/session refresh, tour dismiss/reopen.",
+      "pass_criteria": "Bounded hierarchy and preferences intact; no minor-feature root explosion or icon-only meanings.",
+      "code_anchors": [
+        "web/src/uxb-navigation.ts",
+        "web/src/main.tsx::Shell"
+      ],
+      "depends_on": [
+        "UXR-1.10"
+      ],
+      "owner": "CHATGPT_CHAT",
+      "status": "DEV_DEPLOYED",
+      "approval_required": false,
+      "evidence": {
+        "source_commit": "1c90e9ef0029fe53340f5bf2793eac60cf8da011",
+        "deployed_source_head": "1c90e9ef0029fe53340f5bf2793eac60cf8da011",
+        "private_bundle_sha256": "439ad4de4d7181f9aba4c41a0c8b193cad29bbc1b05b41c802788242f2f6fd4b",
+        "preview": "https://dev-preview.example.invalid:19044",
+        "focused_tests": "Home plus four task groups, single title/breadcrumb/sticky shell, theme/collapse and icon+text navigation retained. Focused Home/Audit/Saved Views/Search/Admin/operations suite 163/163 PASS; Journey 437/437.",
+        "qualification": "Development preview only; authenticated three-role browser acceptance remains open."
+      }
+    },
+    {
+      "id": "UXR-4.9",
+      "milestone": "UXR-4",
+      "title": "Foundation Administration integration",
+      "deliverable_and_removal": "Canonical four groups; routine/advanced/destructive; available vs unsupported vs role-denied. Reuse login/Users/MFA/System/Integrations common components.",
+      "verification": "Actual task catalog, API roles, supported/unsupported states and Web-vs-MCP TLS labels.",
+      "pass_criteria": "No duplicated Foundation UI or authority; all supported tasks reachable and restrictions accurate.",
+      "code_anchors": [
+        "web/src/foundation-administration.ts",
+        "web/src/main.tsx::SystemAdministrationWorkspace"
+      ],
+      "depends_on": [
+        "UXR-4.8"
+      ],
+      "owner": "CHATGPT_CHAT",
+      "status": "DEV_DEPLOYED",
+      "approval_required": false,
+      "evidence": {
+        "source_commit": "1c90e9ef0029fe53340f5bf2793eac60cf8da011",
+        "deployed_source_head": "1c90e9ef0029fe53340f5bf2793eac60cf8da011",
+        "private_bundle_sha256": "439ad4de4d7181f9aba4c41a0c8b193cad29bbc1b05b41c802788242f2f6fd4b",
+        "preview": "https://dev-preview.example.invalid:19044",
+        "focused_tests": "Foundation Administration canonical role/task integration retained without duplicating common auth/users/MFA authority. Focused Home/Audit/Saved Views/Search/Admin/operations suite 163/163 PASS; Journey 437/437.",
+        "qualification": "Development preview only; authenticated three-role browser acceptance remains open."
+      }
+    },
+    {
+      "id": "UXR-4.10",
+      "milestone": "UXR-4",
+      "title": "Operational detail/help preserved",
+      "deliverable_and_removal": "Health/Doctor/jobs/cancel/version/revisions/export/support/integration status concise with detail; existing UI only.",
+      "verification": "Existing receipt tests; actual read-only paths; absent tools/malformed job/cert/Webhook replies.",
+      "pass_criteria": "Pending/Unknown/Failed truthful; capabilities retained; no unrelated Core/OS/backup redesign or unsafe action.",
+      "code_anchors": [
+        "web/src/uxb-doctor.tsx",
+        "web/src/uxb-versions.tsx",
+        "web/src/uxb-revisions.tsx"
+      ],
+      "depends_on": [
+        "UXR-4.9"
+      ],
+      "owner": "CHATGPT_CHAT",
+      "status": "DEV_DEPLOYED",
+      "approval_required": false,
+      "evidence": {
+        "source_commit": "1c90e9ef0029fe53340f5bf2793eac60cf8da011",
+        "deployed_source_head": "1c90e9ef0029fe53340f5bf2793eac60cf8da011",
+        "private_bundle_sha256": "439ad4de4d7181f9aba4c41a0c8b193cad29bbc1b05b41c802788242f2f6fd4b",
+        "preview": "https://dev-preview.example.invalid:19044",
+        "focused_tests": "Health/Doctor/jobs/version/revisions/export/support/integration operations retain truthful Pending/UNKNOWN/Failed evidence. Focused Home/Audit/Saved Views/Search/Admin/operations suite 163/163 PASS; Journey 437/437.",
+        "qualification": "Development preview only; authenticated three-role browser acceptance remains open."
+      }
+    },
+    {
+      "id": "UXR-5.1",
+      "milestone": "UXR-5",
+      "title": "Readable Foundation visual system",
+      "deliverable_and_removal": "Foundation typography/spacing/tokens; title about24px, body14-16px, support12-13px, primary targets >=44px; no parallel design system.",
+      "verification": "Computed styles and before/after both themes/desktop viewports.",
+      "pass_criteria": "Measured targets met or explicit reviewed token deviation; no tiny/clipped labels or density wall.",
+      "code_anchors": [
+        "web/dist/styles.css",
+        "Foundation shared components"
+      ],
+      "depends_on": [
+        "UXR-1.3"
+      ],
+      "owner": "CHATGPT_CHAT",
+      "status": "DEV_DEPLOYED",
+      "approval_required": false,
+      "evidence": {
+        "source_commit": "971f35e250a3a724803478ed68091cf61e6786fc",
+        "deployed_source_head": "971f35e250a3a724803478ed68091cf61e6786fc",
+        "preview": "https://dev-preview.example.invalid:19044",
+        "private_bundle_sha256": "53558225b27f7973544a81c7e48c17fff5876aea51e09027a7c08ac09dab2f08",
+        "verification": "Shared readable headings, 44px primary interaction baseline and common focus-trap contract. Responsive matrix passes after RED 35.5–40px controls were corrected.",
+        "qualification": "Exact-head private development deployment; no production/release or live-user acceptance inferred."
+      }
+    },
+    {
+      "id": "UXR-5.2",
+      "milestone": "UXR-5",
+      "title": "Disclosure and semantic labels",
+      "deliverable_and_removal": "Short 1-2-line default explanations, icon+label+color; accessible Technical details; critical impact remains in confirmation.",
+      "verification": "Default-absence and detail expansion assertions; actual read/review flow.",
+      "pass_criteria": "No permanent implementation prose; no color-only state or hidden essential warning.",
+      "code_anchors": [
+        "web/src/main.tsx",
+        "web/dist/styles.css"
+      ],
+      "depends_on": [
+        "UXR-1.9"
+      ],
+      "owner": "CHATGPT_CHAT",
+      "status": "DEV_DEPLOYED",
+      "approval_required": false,
+      "evidence": {
+        "source_commit": "971f35e250a3a724803478ed68091cf61e6786fc",
+        "deployed_source_head": "971f35e250a3a724803478ed68091cf61e6786fc",
+        "preview": "https://dev-preview.example.invalid:19044",
+        "private_bundle_sha256": "53558225b27f7973544a81c7e48c17fff5876aea51e09027a7c08ac09dab2f08",
+        "verification": "Technical details disclosures normalized; critical warnings and required-test text remain outside disclosure. Focused 99/99 and Journey 439/439 PASS before exact-head build.",
+        "qualification": "Exact-head private development deployment; no production/release or live-user acceptance inferred."
+      }
+    },
+    {
+      "id": "UXR-5.3",
+      "milestone": "UXR-5",
+      "title": "Complete offline/local assets",
+      "deliverable_and_removal": "Brand/logo/favicon/icons/help/styles/fonts render from same-origin approved private bundle; fix actual preview 404s.",
+      "verification": "Served URL/MIME/SHA, visual rendering and network-offline check.",
+      "pass_criteria": "Every referenced asset valid/rendered; no runtime CDN or private package source exposed by static route.",
+      "code_anchors": [
+        "web/dist/index.html",
+        "lib/web-project-files.manifest"
+      ],
+      "depends_on": [
+        "UXR-1.10"
+      ],
+      "owner": "CHATGPT_CHAT",
+      "status": "DEV_DEPLOYED",
+      "approval_required": false,
+      "evidence": {
+        "source_commit": "971f35e250a3a724803478ed68091cf61e6786fc",
+        "deployed_source_head": "971f35e250a3a724803478ed68091cf61e6786fc",
+        "preview": "https://dev-preview.example.invalid:19044",
+        "private_bundle_sha256": "53558225b27f7973544a81c7e48c17fff5876aea51e09027a7c08ac09dab2f08",
+        "verification": "Local runtime asset gate 3/3 PASS; index/app/CSS/favicon/logo are same-origin with self-only CSP. Deployed six-asset HTTP 200 and byte-parity verified.",
+        "qualification": "Exact-head private development deployment; no production/release or live-user acceptance inferred."
+      }
+    },
+    {
+      "id": "UXR-5.4",
+      "milestone": "UXR-5",
+      "title": "Responsive all affected screens",
+      "deliverable_and_removal": "1440x900/1280x800/375x812/320x568, light/dark; usable full-screen mobile detail and bounded table overflow.",
+      "verification": "Actual browser resize, menus, forms/review/errors and explicit Card/Table preference.",
+      "pass_criteria": "No page overflow or clipped critical action; no forced preference switch; all primary flows usable.",
+      "code_anchors": [
+        "web/dist/styles.css",
+        "web/src/workflow-servers.tsx"
+      ],
+      "depends_on": [
+        "UXR-1.10"
+      ],
+      "owner": "CHATGPT_CHAT",
+      "status": "DEV_DEPLOYED",
+      "approval_required": false,
+      "evidence": {
+        "source_commit": "971f35e250a3a724803478ed68091cf61e6786fc",
+        "deployed_source_head": "971f35e250a3a724803478ed68091cf61e6786fc",
+        "preview": "https://dev-preview.example.invalid:19044",
+        "private_bundle_sha256": "53558225b27f7973544a81c7e48c17fff5876aea51e09027a7c08ac09dab2f08",
+        "verification": "Production View responsive browser matrix PASS: 8 route/error modes × 4 viewports × 2 themes; no page-wide overflow, browser errors or fixture writes.",
+        "qualification": "Exact-head private development deployment; no production/release or live-user acceptance inferred."
+      }
+    },
+    {
+      "id": "UXR-5.5",
+      "milestone": "UXR-5",
+      "title": "Keyboard/focus/accessibility",
+      "deliverable_and_removal": "Enter/Space/Esc, focus trap+restore, labels/errors/status announcements and text contrast >=4.5:1.",
+      "verification": "Keyboard-only flow, accessibility tree and manual focus/contrast review.",
+      "pass_criteria": "Zero unresolved serious/blocking accessibility findings; all actions named and reachable, primary targets44px.",
+      "code_anchors": [
+        "web/src/main.tsx",
+        "web/dist/styles.css"
+      ],
+      "depends_on": [
+        "UXR-1.10"
+      ],
+      "owner": "CHATGPT_CHAT",
+      "status": "DEV_DEPLOYED",
+      "approval_required": false,
+      "evidence": {
+        "source_commit": "971f35e250a3a724803478ed68091cf61e6786fc",
+        "deployed_source_head": "971f35e250a3a724803478ed68091cf61e6786fc",
+        "preview": "https://dev-preview.example.invalid:19044",
+        "private_bundle_sha256": "53558225b27f7973544a81c7e48c17fff5876aea51e09027a7c08ac09dab2f08",
+        "verification": "Responsive/accessibility browser 2/2 PASS; 11 unnamed visible Policy/Access inputs fixed, dialog focus contained/restored, shared light/dark text-token pairs >=4.5:1.",
+        "qualification": "Exact-head private development deployment; no production/release or live-user acceptance inferred."
+      }
+    },
+    {
+      "id": "UXR-5.6",
+      "milestone": "UXR-5",
+      "title": "Role and session safeguards",
+      "deliverable_and_removal": "Preserve Admin/Operator/Read Only, CSRF/session/MFA/redaction; no reset of owner's login to make testing convenient.",
+      "verification": "Independent permitted sessions, actual login/MFA when configured, expiry, role change and direct denied API effect checks.",
+      "pass_criteria": "No unauthorized mutation/secret leak; current account/TLS/state preserved absent separate approval.",
+      "code_anchors": [
+        "web/src/uxb-web-session.ts",
+        "lib/drlink_web_auth.py"
+      ],
+      "depends_on": [
+        "UXR-1.10"
+      ],
+      "owner": "CHATGPT_CHAT",
+      "status": "DEV_DEPLOYED",
+      "approval_required": false,
+      "evidence": {
+        "source_commit": "971f35e250a3a724803478ed68091cf61e6786fc",
+        "deployed_source_head": "971f35e250a3a724803478ed68091cf61e6786fc",
+        "preview": "https://dev-preview.example.invalid:19044",
+        "private_bundle_sha256": "53558225b27f7973544a81c7e48c17fff5876aea51e09027a7c08ac09dab2f08",
+        "verification": "Core auth 12/12, MFA policy 5/5, Web session 5/5, three-role App/Shell 3/3 and direct guarded Web effects 6/6 PASS. Existing live preview credential was not reset; authenticated live-login acceptance remains open.",
+        "qualification": "Exact-head private development deployment; no production/release or live-user acceptance inferred."
+      }
+    },
+    {
+      "id": "UXR-5.7",
+      "milestone": "UXR-5",
+      "title": "Bounded async/stale robustness",
+      "deliverable_and_removal": "Retain paging/100-host limits, responsive loading and interrupted flow recovery; no unsupported scale work.",
+      "verification": "Out-of-order errors, stale actors, navigation during request, double submit and 100/101 fixtures.",
+      "pass_criteria": "No stale effect/lost input/unbounded fetch; timings recorded honestly, no invented improvement rate.",
+      "code_anchors": [
+        "web/src/uxb-menu-evidence.ts",
+        "web/src/main.tsx"
+      ],
+      "depends_on": [
+        "UXR-1.10"
+      ],
+      "owner": "CHATGPT_CHAT",
+      "status": "DEV_DEPLOYED",
+      "approval_required": false,
+      "evidence": {
+        "source_commit": "971f35e250a3a724803478ed68091cf61e6786fc",
+        "deployed_source_head": "971f35e250a3a724803478ed68091cf61e6786fc",
+        "preview": "https://dev-preview.example.invalid:19044",
+        "private_bundle_sha256": "53558225b27f7973544a81c7e48c17fff5876aea51e09027a7c08ac09dab2f08",
+        "verification": "Mounted Servers async 35/35 and additional async/paging unit 68/68 PASS, including 100/101 paging, actor/route invalidation, real timeout, superseded refresh and non-idempotent locks.",
+        "qualification": "Exact-head private development deployment; no production/release or live-user acceptance inferred."
+      }
+    },
+    {
+      "id": "UXR-6.1",
+      "milestone": "UXR-6",
+      "title": "Mandatory UI06 contract and approval",
+      "deliverable_and_removal": "Retain genuine requester/different reviewer/target/duration/expiry/revoke/audit; document minimal Core threat/schema/rollback design. Explicit security approval required.",
+      "verification": "Review current Core, concrete transaction/roles and owner decision scope.",
+      "pass_criteria": "Approved exact contract before privileged implementation; otherwise APPROVAL_REQUIRED, not excluded/completed; UI-only lock stays.",
+      "code_anchors": [
+        "docs/WEB_USER_JOURNEY_UX_ROADMAP.md",
+        "Core contract decision"
+      ],
+      "depends_on": [
+        "UXR-3.4"
+      ],
+      "owner": "CHATGPT_CHAT",
+      "status": "IMPLEMENTED",
+      "approval_required": true,
+      "evidence": {
+        "security_contract": "docs/UI06_TWO_PERSON_TEMPORARY_ACCESS_SECURITY_CONTRACT_2026-10-14.md",
+        "approval_ref": "GitHub Issue #182 ACTIVE Work Packet / roadmap #184; owner/security UXR-6.1 approval recorded 2026-10-14 KST",
+        "saved_record": "GitHub Issue #182 ACTIVE Work Packet plus frozen repository contract",
+        "qualification": "Exact UXR-6.1 scope approved for UXR-6.2–6.4 implementation; source implementation is not UXR-6.5 or ACCEPTED proof."
+      }
+    },
+    {
+      "id": "UXR-6.2",
+      "milestone": "UXR-6",
+      "title": "Durable distinct-reviewer Core integration",
+      "deliverable_and_removal": "After UXR6.1 approval only: minimal persisted request/decision authority, no parallel frontend datastore/workflow engine.",
+      "verification": "Migration/rollback, distinct reviewer/self-review, target/duration bounds, transaction/audit tests.",
+      "pass_criteria": "Survives restart; unauthorized/self-review denied; no grant beyond approved target/expiry.",
+      "code_anchors": [
+        "Core implementation selected by approved UXR-6.1"
+      ],
+      "depends_on": [
+        "UXR-6.1"
+      ],
+      "owner": "CHATGPT_CHAT",
+      "status": "IMPLEMENTED",
+      "approval_required": true,
+      "evidence": {
+        "schema": "Core schema v4 temporary_access_requests with transactional v3 upgrade/fresh/repeat/rollback/read-only coverage",
+        "rbac": "dedicated management-access-request-review; Admin reviewer, distinct actor; Operator requester; Read Only no mutation",
+        "core": "lib/drlink_management_temporary_access_requests.py plus Management Core/Web adapter routes",
+        "focused_tests": "tests/test-v30-temporary-access-requests.py 17/17 PASS; migration and concurrency included",
+        "qualification": "Durable source integration implemented; genuine deployed two-user proof remains UXR-6.5."
+      }
+    },
+    {
+      "id": "UXR-6.3",
+      "milestone": "UXR-6",
+      "title": "Requester/reviewer real UI",
+      "deliverable_and_removal": "Pending/approved/rejected/expired/revoked, resource/purpose/requested-vs-approved duration/history; actual API, not placeholder approvals.",
+      "verification": "Real request/list/detail/review paths, wrong actor and stale target.",
+      "pass_criteria": "Different authorized personas execute real review; state/duration exactly match Core.",
+      "code_anchors": [
+        "UI integration selected by approved UXR-6.1"
+      ],
+      "depends_on": [
+        "UXR-6.2"
+      ],
+      "owner": "CHATGPT_CHAT",
+      "status": "IMPLEMENTED",
+      "approval_required": true,
+      "evidence": {
+        "web": "Policies mounts TemporaryAccessRequestsPanel over request/list/detail/review/revoke APIs; direct one-actor Apply retained only under Advanced",
+        "states": "PENDING/APPROVED/REJECTED/EXPIRED/REVOKED; requested-vs-approved duration and bounded request history",
+        "role_ui": "Read Only has no request/review/revoke affordance",
+        "focused_tests": "web/tests/uxb-temporary-access-requests.test.mjs 5/5 PASS; prior full Web service focused suite 31/31 PASS",
+        "qualification": "Actual source/API integration implemented; no deployed-persona acceptance inferred."
+      }
+    },
+    {
+      "id": "UXR-6.4",
+      "milestone": "UXR-6",
+      "title": "Review concurrency/expiry/revoke safety",
+      "deliverable_and_removal": "Atomic decision, replay protection, enforced expiry and bounded revocation with coherent audit.",
+      "verification": "Concurrent/repeated decisions, expired approval, stale revision, unauthorized revoke and access after expiry.",
+      "pass_criteria": "At most one valid decision; Core denies expired access; each effect traceable; no client-badge-only expiry.",
+      "code_anchors": [
+        "Approved Core request/decision and UI"
+      ],
+      "depends_on": [
+        "UXR-6.2"
+      ],
+      "owner": "CHATGPT_CHAT",
+      "status": "IMPLEMENTED",
+      "approval_required": true,
+      "evidence": {
+        "focused_tests": "tests/test-v30-temporary-access-requests.py 17/17 PASS",
+        "covered": "approve-vs-reject concurrency, replay/lost reply, stale revision, target recheck on approve/reject, duration bounds, safety fail/truncation, expiry, revoke, restart, audit redaction",
+        "qualification": "Core safety source implementation verified; real two-user behavior remains UXR-6.5."
+      }
+    },
+    {
+      "id": "UXR-6.5",
+      "milestone": "UXR-6",
+      "title": "Two-user UI06 proof",
+      "deliverable_and_removal": "Same candidate requester plus independent reviewer exercise approve/reject/expiry/revoke and authoritative readback.",
+      "verification": "Genuine two-user actions and negative authorization path; preserve evidence/source identity.",
+      "pass_criteria": "All agreed behavior proved; one actor or mocked response cannot close UI06; no silent waiver.",
+      "code_anchors": [
+        "UI06 browser/API/audit evidence"
+      ],
+      "depends_on": [
+        "UXR-6.3",
+        "UXR-6.4"
+      ],
+      "owner": "CHATGPT_CHAT",
+      "status": "SPEC_BOUND",
+      "approval_required": true,
+      "evidence": {
+        "blocker": "Genuine deployed requester plus independent authorized reviewer proof has not yet been executed on one immutable candidate.",
+        "acceptance_claimed": false
+      }
+    },
+    {
+      "id": "UXR-7.1",
+      "milestone": "UXR-7",
+      "title": "Reproducible private UI candidate",
+      "deliverable_and_removal": "Exact RC41 pins, current source, all JS/CSS/brand assets, source/hash receipt and usable rollback; no proprietary public artifact.",
+      "verification": "Affected suites, ten package digests, deterministic twice-build and install/static parity.",
+      "pass_criteria": "Current source and complete assets match; no stale private-copy build or secret/private TAR committed publicly.",
+      "code_anchors": [
+        "tools/build-private-link-foundation-rc41-web.py"
+      ],
+      "depends_on": [
+        "UXR-1.10"
+      ],
+      "owner": "CHATGPT_CHAT",
+      "status": "IMPLEMENTED",
+      "approval_required": false,
+      "evidence": {
+        "source_commit": "971f35e250a3a724803478ed68091cf61e6786fc",
+        "bundle_sha256": "53558225b27f7973544a81c7e48c17fff5876aea51e09027a7c08ac09dab2f08",
+        "foundation_head": "46ddb60cad8eae7b1718588cd19421e61b5300e7",
+        "foundation_package_count": 10,
+        "private_candidate": "dev-installed-971f35e2",
+        "qualification": "Exact-head deterministic private RC41 build, Web suites and disposable install PASS; not release acceptance."
+      }
+    },
+    {
+      "id": "UXR-7.2",
+      "milestone": "UXR-7",
+      "title": "Approved dev HTTPS deployment",
+      "deliverable_and_removal": "Apply coherent screen batches to existing authorized preview; preserve admin/TLS/Core data and previous candidate. No production effect.",
+      "verification": "Served JS/CSS/source SHA, reachability/login route, anonymous API denial, process endpoint and rollback integrity.",
+      "pass_criteria": "Owner reaches intended preview; served assets equal tested source; existing state preserved.",
+      "code_anchors": [
+        "Existing authorized dev preview and build receipt"
+      ],
+      "depends_on": [
+        "UXR-7.1"
+      ],
+      "owner": "CHATGPT_CHAT",
+      "status": "DEV_DEPLOYED",
+      "approval_required": false,
+      "evidence": {
+        "source_commit": "1e50c66cccc486df163b220fded71d486d5c7d78",
+        "deployed_source_head": "1e50c66cccc486df163b220fded71d486d5c7d78",
+        "preview": "approved-development-preview",
+        "app_sha256": "6979cd33c876d4d973255056a347dc2161208d8491814e658bf45319dbc2bc70",
+        "styles_sha256": "3cd48eb87dae27792760425e1183fd9d25b542cfedd1b7c4c3902382cd9f3c7a",
+        "foundation_css_sha256": "3049f76b67d9341920254bcbe1b26b48d52b05e9faa9bc992f0d51f6887928d7",
+        "favicon_sha256": "7ec193f6192213c31b63cc5cee2e8bb5439efaaa79b07534a1916c3f3b897462",
+        "logo_sha256": "5e90dfa40d1400eb24ec8e02adf9016d8b43b9995b8953cd59472789904657aa",
+        "anonymous_session_http": 401,
+        "previous_candidate": "dev-installed-1c90e9ef",
+        "active_candidate": "dev-installed-1e50c66c",
+        "preview_state_preserved": {
+          "db_sha256": "e3ba06536f7dbba337dee3c1c5f01b43660ce276abb54c5cee2d5defc5b970aa",
+          "cert_sha256": "f990aa9f0b6dd8433dac5c9c072152088ff2ef5116dfaf49373f83c66b15dfbf",
+          "key_sha256": "5ebbabca902feb4709d8d98a9b5a4b4977877b6e1f888f5613f510d608bd1fb6"
+        },
+        "qualification": "Approved development preview pointer updated; assets byte-identical and existing DB/TLS unchanged. Authenticated live-browser acceptance remains open.",
+        "private_bundle_sha256": "53558225b27f7973544a81c7e48c17fff5876aea51e09027a7c08ac09dab2f08"
+      }
+    },
+    {
+      "id": "UXR-7.3",
+      "milestone": "UXR-7",
+      "title": "Per-batch real visual fidelity",
+      "deliverable_and_removal": "Same data/role/theme/viewport before-after and actual interactions; verify every default removal and new destination.",
+      "verification": "PDF3-5 comparison on V1 then V2 then V3; record/fix deviations and rerun affected checks.",
+      "pass_criteria": "Zero undisposed visual deviation; source/assets/screens/interactions bound together; HTML/PDF/DOM alone insufficient.",
+      "code_anchors": [
+        "docs/UXB_06F_B2_BROWSER_ACCEPTANCE_LEDGER.md"
+      ],
+      "depends_on": [
+        "UXR-7.2"
+      ],
+      "owner": "CHATGPT_CHAT",
+      "status": "BLOCKED",
+      "approval_required": false,
+      "evidence": {
+        "status_record": "docs/UI_REDESIGN_UXR7_ACCEPTANCE_STATUS_2026-10-14.md",
+        "fixture_visual_old_manifest_sha256": "fde3201624a754453e9555625c32e240e461d904df8833f1aa438dea543789e3",
+        "fixture_visual_current_manifest_sha256": "6cab53564b291c536422f1fdb3f838f66b76e3c285e06d266e0d74954a9370c1",
+        "fixture_matrix": "32 + 32 same-name Server cases; 0 overflow, undersized controls, runtime errors, writes",
+        "blocker": "Same-condition authenticated deployed-browser interactions remain required; source/fixture evidence cannot substitute.",
+        "acceptance_claimed": false,
+        "pdf_source": "DRLink_UI_Reanalysis_Decision_20261014.pdf; owner-provided five-page Library artifact; roadmap SHA256 10dc9a02f969b4268d77bd2a439d055ba1fd0a2827b77ebdf77b5531eb4ff300",
+        "pdf_fidelity_matrix": "docs/UI_REDESIGN_PDF3_5_FIDELITY_2026-10-14.md",
+        "pdf_pages_reviewed": "3-5",
+        "pdf_source_available": true,
+        "source_fixture_deviation": "NONE FOUND in mapped V1/V2/V3 requirements",
+        "focused_post_recovery": "Servers browser 35/35; Setup continuity browser PASS; related V1/V2/V3 source tests 78/78; responsive/accessibility 2/2"
+      }
+    },
+    {
+      "id": "UXR-7.4",
+      "milestone": "UXR-7",
+      "title": "20-route and three-role browser acceptance",
+      "deliverable_and_removal": "All current routes+shell; applicable data/theme/viewport states, supported actions and API denials.",
+      "verification": "Read whole current browser contract; execute normal logged-in flows; record each case and blockers.",
+      "pass_criteria": "All applicable cases evidenced; no unexplained skip, secret leak, unauthorized effect or inaccessible main action.",
+      "code_anchors": [
+        "docs/UXB_06F_B2_BROWSER_ACCEPTANCE_LEDGER.md"
+      ],
+      "depends_on": [
+        "UXR-5.4",
+        "UXR-5.5",
+        "UXR-5.6",
+        "UXR-7.3"
+      ],
+      "owner": "CHATGPT_CHAT",
+      "status": "BLOCKED",
+      "approval_required": false,
+      "evidence": {
+        "ledger": "docs/UXB_06F_B2_BROWSER_ACCEPTANCE_LEDGER.md",
+        "deployed_source_head": "1e50c66cccc486df163b220fded71d486d5c7d78",
+        "preview_operator_census": "1 enabled Admin; 0 provisioned Operator; 0 provisioned Read Only",
+        "blocker": "Three independent permitted authenticated role sessions are required. No account/password/role reset is authorized for test convenience.",
+        "real_browser_cases_verified": 0,
+        "acceptance_claimed": false
+      }
+    },
+    {
+      "id": "UXR-7.5",
+      "milestone": "UXR-7",
+      "title": "All UXE meanings and same-head user journeys",
+      "deliverable_and_removal": "Retain historical/current UXE01..12 meanings, real Agent allow/deny, Internet/AI, Web rollback/isolation and same-head independent users; read entire relevant contracts first.",
+      "verification": "Actual authorized lab/UI scenarios with exact Web/Core/Agent identity; no mocked traffic/SSR substituted for real evidence.",
+      "pass_criteria": "All UI-linked scenarios proved; full-product CLI/Full User E2E and release are not inferred or waived by UI acceptance.",
+      "code_anchors": [
+        "docs/FULL_USER_E2E_SCENARIOS.md",
+        "docs/CLI_FEATURE_SCENARIO_RECONCILIATION.md"
+      ],
+      "depends_on": [
+        "UXR-7.4",
+        "UXR-2.10",
+        "UXR-3.11",
+        "UXR-6.5"
+      ],
+      "owner": "CHATGPT_CHAT",
+      "status": "BLOCKED",
+      "approval_required": false,
+      "evidence": {
+        "blockers": [
+          "UXR-7.4 genuine three-role Browser acceptance",
+          "UXR-6.5 genuine two-user UI-06 proof"
+        ],
+        "qualification": "Real Agent/traffic/user evidence cannot be replaced by fixture/SSR/CI."
+      }
+    },
+    {
+      "id": "UXR-7.6",
+      "milestone": "UXR-7",
+      "title": "Real novice usability measurements",
+      "deliverable_and_removal": "Five independent novices; identical before-after tasks; discovery time, clicks, wrong menus and assistance recorded; no fake personas.",
+      "verification": "Find next action, pending review, service publication, explanation and return. Predeclare10s discovery target.",
+      "pass_criteria": "All complete applicable tasks without raw-ID transfer/unprompted help; >=4/5 find first next action within10s; failures corrected and real results retained.",
+      "code_anchors": [
+        "Usability evidence in existing ledger"
+      ],
+      "depends_on": [
+        "UXR-7.3"
+      ],
+      "owner": "CHATGPT_CHAT",
+      "status": "BLOCKED",
+      "approval_required": false,
+      "evidence": {
+        "protocol": "docs/UI_REDESIGN_NOVICE_USABILITY_PROTOCOL_2026-10-14.md",
+        "participants_recorded": 0,
+        "required_participants": 5,
+        "discovery_target_seconds": 10,
+        "blocker": "Five independent real novice humans are required; scripted/LLM personas cannot substitute.",
+        "acceptance_claimed": false
+      }
+    },
+    {
+      "id": "UXR-7.7",
+      "milestone": "UXR-7",
+      "title": "Exact-head UI CI and review closure",
+      "deliverable_and_removal": "All affected suites/RC41/build/review; only minimal direct WBS prerequisites, not unrelated CI cleanup.",
+      "verification": "Inspect actual job logs/review threads, separate inherited vs new, bind exact candidate.",
+      "pass_criteria": "UI-related checks green; actionable UI findings resolved; unrelated failures still reported and global release not falsely green.",
+      "code_anchors": [
+        "tests/run-all.sh",
+        ".github/workflows/foundation-rc41-consumer.yml"
+      ],
+      "depends_on": [
+        "UXR-7.1"
+      ],
+      "owner": "CHATGPT_CHAT",
+      "status": "IMPLEMENTED",
+      "approval_required": false,
+      "evidence": {
+        "product_ui_source_head": "89dd5ff7fb59c0144b0c919f9ef9f62245cb8177",
+        "local_ui_closure": "Plan 16/16; Administration 20/20; P0 44/44; Journey 439/439; local assets 3/3; production build and git diff check PASS.",
+        "generated_asset_parity": "web/dist/app.js rebuilt twice identically then committed; subsequent production build leaves worktree clean.",
+        "public_metadata_scan": "PASS; live IPv4=0, fingerprints=0, non-doc IPv6=0.",
+        "review_threads": "PR #206 inline review threads = 0 at verification time.",
+        "github_ci_binding": "Exact final-branch workflow status is recorded in Issue #182 and PR #206 after terminal completion; prior-head CI is never reused.",
+        "status_record": "docs/UI_REDESIGN_UXR7_ACCEPTANCE_STATUS_2026-10-14.md",
+        "qualification": "Implementation/CI closure evidence only; not Browser/User acceptance, merge or release."
+      }
+    },
+    {
+      "id": "UXR-7.8",
+      "milestone": "UXR-7",
+      "title": "Final no-omission acceptance and scope unlock",
+      "deliverable_and_removal": "All required WBS including UI06, removed clutter and retained capabilities reconciled; owner feedback and source-identical final review.",
+      "verification": "Run plan integrity and closure checks; compare every PASS criterion to actual evidence/defects.",
+      "pass_criteria": "Every required item accepted, no unresolved UI defect/deviation and owner acceptance OR explicit later owner scope change. Otherwise exclusive lock stays; no automatic merge/release.",
+      "code_anchors": [
+        "docs/ui-redesign-plan.json",
+        "GitHub184",
+        "GitHub182"
+      ],
+      "depends_on": [
+        "UXR-7.5",
+        "UXR-7.6",
+        "UXR-7.7"
+      ],
+      "owner": "CHATGPT_CHAT",
+      "status": "BLOCKED",
+      "approval_required": false,
+      "evidence": {
+        "blockers": [
+          "UXR-7.5",
+          "UXR-7.6",
+          "final owner acceptance"
+        ],
+        "closure_check": "Must remain nonzero until every required WBS is ACCEPTED.",
+        "qualification": "Exclusive UI lock remains enabled; no automatic merge/release."
+      }
+    }
+  ],
+  "source_register": [
+    {
+      "path": "docs/COMPETITOR_UI_SCREEN_EVIDENCE_2026-10-11.md",
+      "ref": "914d5c459a99d6e4cfae28f6b51468fa73a80c3a",
+      "sha256": "360cfd07729609bd1ddda9f1461bf5ea248ae3b8e78c8f01c024cb913464f08e"
+    },
+    {
+      "path": "docs/COMPETITOR_UI_APPLIED_MATRIX_2026-10-12.md",
+      "ref": "914d5c459a99d6e4cfae28f6b51468fa73a80c3a",
+      "sha256": "469a3cb071ae4a16d362032d16f50885dade85277180de058ab21060da5bc9cc"
+    },
+    {
+      "path": "docs/WEB_UX_COMPETITIVE_AUDIT_2026-10.md",
+      "ref": "914d5c459a99d6e4cfae28f6b51468fa73a80c3a",
+      "sha256": "2bdf53aac57375038f19a16477f0b74255ea3d6ee407762bcd98ab9ba24937a0"
+    },
+    {
+      "path": "docs/WEB_SAAS_UX_SYSTEM.md",
+      "ref": "914d5c459a99d6e4cfae28f6b51468fa73a80c3a",
+      "sha256": "c92c139771436afffdc3b842523082ccf02c6741b98cd1a6e1156fc63b0c8def"
+    },
+    {
+      "path": "docs/WEB_P0_UX_IMPLEMENTATION.md",
+      "ref": "914d5c459a99d6e4cfae28f6b51468fa73a80c3a",
+      "sha256": "5a41fee57a6967b7b8c25c80bb1474bf8668af6a86050e388fab3f64da066a42"
+    },
+    {
+      "path": "docs/PFCI_DRLINK_HOST_UX_SOURCE_CANDIDATE.md",
+      "ref": "914d5c459a99d6e4cfae28f6b51468fa73a80c3a",
+      "sha256": "4af3707fbd839b3efd1b92d6a6b4089cbcc9735eb0363f5470d97a2b6a66d23a"
+    },
+    {
+      "path": "docs/HUMAN_UX_ADVERSARIAL_E2E.md",
+      "ref": "914d5c459a99d6e4cfae28f6b51468fa73a80c3a",
+      "sha256": "bb24688ac9c4ed7bef4e19c463e7e65dd89c596a284d3997b2b271aefbf0f3c1"
+    },
+    {
+      "path": "docs/UXB_06F_B2_BROWSER_ACCEPTANCE_LEDGER.md",
+      "ref": "914d5c459a99d6e4cfae28f6b51468fa73a80c3a",
+      "sha256": "e3003e2c2542d7396907439544f2922733dc664fd021e4d0fee6e933c76ef50a"
+    },
+    {
+      "path": "docs/WEB_USER_JOURNEY_UX_ROADMAP.md",
+      "ref": "914d5c459a99d6e4cfae28f6b51468fa73a80c3a",
+      "sha256": "542ac2c68a3bfb8f6ab50c0831ba89a6fe66fe59317cfa37dcfb0be26c92b3ea"
+    },
+    {
+      "path": "docs/DATA_RELAY_ROADMAP.md",
+      "ref": "914d5c459a99d6e4cfae28f6b51468fa73a80c3a",
+      "sha256": "5cad585c315b1cfce058ecfe92e86f82eadc6d2a63fbac2b5bf0d77d23056470"
+    },
+    {
+      "path": "docs/FOUNDATION_RC41_LINK_CONSUMER.md",
+      "ref": "914d5c459a99d6e4cfae28f6b51468fa73a80c3a",
+      "sha256": "20732d1539906ccea4d19cb4f8a6ba8fb7a38249d558f9482883c6827ec80ac4"
+    },
+    {
+      "path": "docs/WEB_USER_JOURNEY_UX_ROADMAP.md",
+      "ref": "c14b3c0b044504ee8d20fe806d95541a7bd69573",
+      "sha256": "75c885b7812868ba7a4eb8c2aeacf83e0dcef9b4d8a39f8eb7eb111f58be9a7a",
+      "role": "Original19"
+    },
+    {
+      "path": "DRLink_UI_Reanalysis_Decision_20261014.pdf",
+      "sha256": "10dc9a02f969b4268d77bd2a439d055ba1fd0a2827b77ebdf77b5531eb4ff300",
+      "role": "Five pages, all decisions restated; attachment not required at resume"
+    },
+    {
+      "path": "DRLink_Workflow_UI_Proposal.html",
+      "role": "Eight illustrative screens, no API/acceptance evidence"
+    },
+    {
+      "path": "#184#issuecomment-6159404029;#182#issuecomment-6159409064",
+      "role": "Existing fidelity contract and next action"
+    }
+  ],
+  "competitor_references": [
+    {
+      "id": "CUI-001",
+      "vendor": "NetBird",
+      "idea": "Selected peer/policy and Current/Draft",
+      "gaps": [
+        "G-01",
+        "G-05",
+        "G-37"
+      ],
+      "wbs": [
+        "UXR-3.5",
+        "UXR-3.6",
+        "UXR-4.2"
+      ],
+      "disposition": "ADOPT_PRESERVE_AND_VERIFY",
+      "reason": "Retain original source-supported concept, integrate and revalidate; not historical browser PASS."
+    },
+    {
+      "id": "CUI-002",
+      "vendor": "Tailscale",
+      "idea": "Basic rules/tests/advanced",
+      "gaps": [
+        "G-02",
+        "G-06"
+      ],
+      "wbs": [
+        "UXR-3.2",
+        "UXR-3.3",
+        "UXR-3.4"
+      ],
+      "disposition": "ADOPT_PRESERVE_AND_VERIFY",
+      "reason": "Retain original source-supported concept, integrate and revalidate; not historical browser PASS."
+    },
+    {
+      "id": "CUI-003",
+      "vendor": "Twingate",
+      "idea": "Resource graph and exact policy/Host",
+      "gaps": [
+        "G-01",
+        "G-03"
+      ],
+      "wbs": [
+        "UXR-3.6",
+        "UXR-3.8"
+      ],
+      "disposition": "ADOPT_PRESERVE_AND_VERIFY",
+      "reason": "Retain original source-supported concept, integrate and revalidate; not historical browser PASS."
+    },
+    {
+      "id": "CUI-004",
+      "vendor": "Teleport",
+      "idea": "Distinct requester/reviewer",
+      "gaps": [
+        "G-04",
+        "G-20",
+        "G-21"
+      ],
+      "wbs": [
+        "UXR-3.9",
+        "UXR-6.1",
+        "UXR-6.2",
+        "UXR-6.3",
+        "UXR-6.4",
+        "UXR-6.5"
+      ],
+      "disposition": "GATED_REQUIRED",
+      "reason": "Retain original source-supported concept, integrate and revalidate; not historical browser PASS."
+    },
+    {
+      "id": "CUI-005",
+      "vendor": "StrongDM",
+      "idea": "Requests/duration/history",
+      "gaps": [
+        "G-04"
+      ],
+      "wbs": [
+        "UXR-6.1",
+        "UXR-6.2",
+        "UXR-6.3",
+        "UXR-6.4",
+        "UXR-6.5"
+      ],
+      "disposition": "GATED_REQUIRED",
+      "reason": "Retain original source-supported concept, integrate and revalidate; not historical browser PASS."
+    },
+    {
+      "id": "CUI-006",
+      "vendor": "Cloudflare One",
+      "idea": "Actor/time/result audit filters",
+      "gaps": [
+        "G-07",
+        "G-08"
+      ],
+      "wbs": [
+        "UXR-4.4",
+        "UXR-4.5"
+      ],
+      "disposition": "ADOPT_PRESERVE_AND_VERIFY",
+      "reason": "Retain original source-supported concept, integrate and revalidate; not historical browser PASS."
+    },
+    {
+      "id": "CUI-007",
+      "vendor": "StrongDM",
+      "idea": "Selected event details",
+      "gaps": [
+        "G-07"
+      ],
+      "wbs": [
+        "UXR-4.4"
+      ],
+      "disposition": "ADOPT_PRESERVE_AND_VERIFY",
+      "reason": "Retain original source-supported concept, integrate and revalidate; not historical browser PASS."
+    },
+    {
+      "id": "CUI-008",
+      "vendor": "HashiCorp Boundary",
+      "idea": "Session broker/recording",
+      "gaps": [],
+      "wbs": [
+        "UXR-0.2"
+      ],
+      "disposition": "NOT_ADOPTED",
+      "reason": "No Link session broker/recording; preserve existing bounded observation only."
+    },
+    {
+      "id": "CUI-009",
+      "vendor": "Palo Alto",
+      "idea": "Audit UTC shortcuts",
+      "gaps": [
+        "G-08"
+      ],
+      "wbs": [
+        "UXR-4.5"
+      ],
+      "disposition": "ADOPT_PRESERVE_AND_VERIFY",
+      "reason": "Retain original source-supported concept, integrate and revalidate; not historical browser PASS."
+    },
+    {
+      "id": "CUI-010",
+      "vendor": "Zscaler",
+      "idea": "Investigation ranges, not vendor SLA",
+      "gaps": [
+        "G-08"
+      ],
+      "wbs": [
+        "UXR-4.5"
+      ],
+      "disposition": "ADOPT_PRESERVE_AND_VERIFY",
+      "reason": "Retain original source-supported concept, integrate and revalidate; not historical browser PASS. Vendor-specific retention/analytics SLA not adopted."
+    },
+    {
+      "id": "CUI-011",
+      "vendor": "Palo Alto",
+      "idea": "NOC traffic/risk analytics",
+      "gaps": [],
+      "wbs": [
+        "UXR-0.2"
+      ],
+      "disposition": "NOT_ADOPTED",
+      "reason": "No authoritative corresponding traffic/risk telemetry; fake/decorative NOC analytics rejected."
+    },
+    {
+      "id": "CUI-012",
+      "vendor": "NetBird",
+      "idea": "Policy state filter",
+      "gaps": [
+        "G-09"
+      ],
+      "wbs": [
+        "UXR-3.9"
+      ],
+      "disposition": "ADOPT_PRESERVE_AND_VERIFY",
+      "reason": "Retain original source-supported concept, integrate and revalidate; not historical browser PASS."
+    },
+    {
+      "id": "CUI-013",
+      "vendor": "Firezone",
+      "idea": "Service type/configuration filters",
+      "gaps": [
+        "G-13"
+      ],
+      "wbs": [
+        "UXR-2.6"
+      ],
+      "disposition": "ADOPT_PRESERVE_AND_VERIFY",
+      "reason": "Retain original source-supported concept, integrate and revalidate; not historical browser PASS."
+    },
+    {
+      "id": "CUI-014",
+      "vendor": "Firezone",
+      "idea": "Resource detail",
+      "gaps": [
+        "G-18"
+      ],
+      "wbs": [
+        "UXR-3.8",
+        "UXR-4.7"
+      ],
+      "disposition": "ADOPT_PRESERVE_AND_VERIFY",
+      "reason": "Retain original source-supported concept, integrate and revalidate; not historical browser PASS."
+    },
+    {
+      "id": "CUI-015",
+      "vendor": "Firezone",
+      "idea": "Preferred starting page",
+      "gaps": [
+        "G-14"
+      ],
+      "wbs": [
+        "UXR-4.1",
+        "UXR-4.3"
+      ],
+      "disposition": "ADOPT_PRESERVE_AND_VERIFY",
+      "reason": "Retain original source-supported concept, integrate and revalidate; not historical browser PASS."
+    },
+    {
+      "id": "CUI-016",
+      "vendor": "NetBird",
+      "idea": "Host sort",
+      "gaps": [
+        "G-15"
+      ],
+      "wbs": [
+        "UXR-1.4"
+      ],
+      "disposition": "ADOPT_PRESERVE_AND_VERIFY",
+      "reason": "Retain original source-supported concept, integrate and revalidate; not historical browser PASS."
+    },
+    {
+      "id": "CUI-017",
+      "vendor": "NetBird",
+      "idea": "Mesh-specific peer/IP sorting",
+      "gaps": [],
+      "wbs": [
+        "UXR-0.2"
+      ],
+      "disposition": "NOT_ADOPTED",
+      "reason": "Different mesh model; no invented IP/group/topology relation."
+    },
+    {
+      "id": "CUI-018",
+      "vendor": "NetBird",
+      "idea": "Heartbeat versus last seen",
+      "gaps": [
+        "G-16"
+      ],
+      "wbs": [
+        "UXR-1.9"
+      ],
+      "disposition": "ADOPT_PRESERVE_AND_VERIFY",
+      "reason": "Retain original source-supported concept, integrate and revalidate; not historical browser PASS."
+    },
+    {
+      "id": "CUI-019",
+      "vendor": "NetBird",
+      "idea": "Host filter chips",
+      "gaps": [
+        "G-17"
+      ],
+      "wbs": [
+        "UXR-1.4"
+      ],
+      "disposition": "ADOPT_PRESERVE_AND_VERIFY",
+      "reason": "Retain original source-supported concept, integrate and revalidate; not historical browser PASS."
+    },
+    {
+      "id": "CUI-020",
+      "vendor": "Teleport",
+      "idea": "Global search -> exact resource",
+      "gaps": [
+        "G-18"
+      ],
+      "wbs": [
+        "UXR-3.8",
+        "UXR-4.7"
+      ],
+      "disposition": "ADOPT_PRESERVE_AND_VERIFY",
+      "reason": "Retain original source-supported concept, integrate and revalidate; not historical browser PASS."
+    },
+    {
+      "id": "CUI-021",
+      "vendor": "Pomerium",
+      "idea": "Safe SSH connection copy",
+      "gaps": [
+        "G-10"
+      ],
+      "wbs": [
+        "UXR-2.7"
+      ],
+      "disposition": "ADOPT_PRESERVE_AND_VERIFY",
+      "reason": "Retain original source-supported concept, integrate and revalidate; not historical browser PASS."
+    },
+    {
+      "id": "CUI-022",
+      "vendor": "Teleport",
+      "idea": "Resource cards/table",
+      "gaps": [
+        "G-19"
+      ],
+      "wbs": [
+        "UXR-1.10",
+        "UXR-2.6"
+      ],
+      "disposition": "ADOPT_PRESERVE_AND_VERIFY",
+      "reason": "Retain original source-supported concept, integrate and revalidate; not historical browser PASS."
+    },
+    {
+      "id": "CUI-023",
+      "vendor": "Teleport",
+      "idea": "Expiry/duration triage",
+      "gaps": [
+        "G-20"
+      ],
+      "wbs": [
+        "UXR-3.9"
+      ],
+      "disposition": "ADOPT_PRESERVE_AND_VERIFY",
+      "reason": "Retain original source-supported concept, integrate and revalidate; not historical browser PASS."
+    },
+    {
+      "id": "CUI-024",
+      "vendor": "Teleport",
+      "idea": "Read-only policy review",
+      "gaps": [
+        "G-21"
+      ],
+      "wbs": [
+        "UXR-3.9"
+      ],
+      "disposition": "ADOPT_PRESERVE_AND_VERIFY",
+      "reason": "Retain original source-supported concept, integrate and revalidate; not historical browser PASS."
+    },
+    {
+      "id": "CUI-025",
+      "vendor": "Teleport",
+      "idea": "Policy -> Audit",
+      "gaps": [
+        "G-22"
+      ],
+      "wbs": [
+        "UXR-3.8",
+        "UXR-4.5"
+      ],
+      "disposition": "ADOPT_PRESERVE_AND_VERIFY",
+      "reason": "Retain original source-supported concept, integrate and revalidate; not historical browser PASS."
+    },
+    {
+      "id": "CUI-026",
+      "vendor": "NetBird",
+      "idea": "Policy name sort",
+      "gaps": [
+        "G-23"
+      ],
+      "wbs": [
+        "UXR-3.9"
+      ],
+      "disposition": "ADOPT_PRESERVE_AND_VERIFY",
+      "reason": "Retain original source-supported concept, integrate and revalidate; not historical browser PASS."
+    },
+    {
+      "id": "CUI-027",
+      "vendor": "NetBird",
+      "idea": "Policy reset/chips, legacy assigned slot",
+      "gaps": [
+        "G-24"
+      ],
+      "wbs": [
+        "UXR-3.9"
+      ],
+      "disposition": "ADOPT_PRESERVE_AND_VERIFY",
+      "reason": "Retain original source-supported concept, integrate and revalidate; not historical browser PASS. Historical crosswalk association, not a newly observed screen."
+    },
+    {
+      "id": "CUI-028",
+      "vendor": "NetBird",
+      "idea": "Source/target facts, legacy assigned slot",
+      "gaps": [
+        "G-25"
+      ],
+      "wbs": [
+        "UXR-3.9"
+      ],
+      "disposition": "ADOPT_PRESERVE_AND_VERIFY",
+      "reason": "Retain original source-supported concept, integrate and revalidate; not historical browser PASS. Historical crosswalk association, not a newly observed screen."
+    },
+    {
+      "id": "CUI-029",
+      "vendor": "NetBird",
+      "idea": "AI source/provider columns",
+      "gaps": [
+        "G-26"
+      ],
+      "wbs": [
+        "UXR-3.9"
+      ],
+      "disposition": "ADOPT_PRESERVE_AND_VERIFY",
+      "reason": "Retain original source-supported concept, integrate and revalidate; not historical browser PASS."
+    },
+    {
+      "id": "CUI-030",
+      "vendor": "NetBird",
+      "idea": "AI reference filters",
+      "gaps": [
+        "G-27"
+      ],
+      "wbs": [
+        "UXR-3.9"
+      ],
+      "disposition": "ADOPT_PRESERVE_AND_VERIFY",
+      "reason": "Retain original source-supported concept, integrate and revalidate; not historical browser PASS."
+    },
+    {
+      "id": "CUI-031",
+      "vendor": "Grafana",
+      "idea": "Saved policy query",
+      "gaps": [
+        "G-28"
+      ],
+      "wbs": [
+        "UXR-3.10"
+      ],
+      "disposition": "ADOPT_PRESERVE_AND_VERIFY",
+      "reason": "Retain original source-supported concept, integrate and revalidate; not historical browser PASS."
+    },
+    {
+      "id": "CUI-032",
+      "vendor": "NetBird",
+      "idea": "Safe rule name/description",
+      "gaps": [
+        "G-29"
+      ],
+      "wbs": [
+        "UXR-3.9"
+      ],
+      "disposition": "ADOPT_PRESERVE_AND_VERIFY",
+      "reason": "Retain original source-supported concept, integrate and revalidate; not historical browser PASS."
+    },
+    {
+      "id": "CUI-033",
+      "vendor": "Grafana",
+      "idea": "View name search",
+      "gaps": [
+        "G-30"
+      ],
+      "wbs": [
+        "UXR-4.6"
+      ],
+      "disposition": "ADOPT_PRESERVE_AND_VERIFY",
+      "reason": "Retain original source-supported concept, integrate and revalidate; not historical browser PASS."
+    },
+    {
+      "id": "CUI-034",
+      "vendor": "Grafana",
+      "idea": "View newest/oldest",
+      "gaps": [
+        "G-31"
+      ],
+      "wbs": [
+        "UXR-4.6"
+      ],
+      "disposition": "ADOPT_PRESERVE_AND_VERIFY",
+      "reason": "Retain original source-supported concept, integrate and revalidate; not historical browser PASS."
+    },
+    {
+      "id": "CUI-035",
+      "vendor": "Grafana",
+      "idea": "View target type",
+      "gaps": [
+        "G-32"
+      ],
+      "wbs": [
+        "UXR-4.6"
+      ],
+      "disposition": "ADOPT_PRESERVE_AND_VERIFY",
+      "reason": "Retain original source-supported concept, integrate and revalidate; not historical browser PASS."
+    },
+    {
+      "id": "CUI-036",
+      "vendor": "NetBird",
+      "idea": "View reset",
+      "gaps": [
+        "G-33"
+      ],
+      "wbs": [
+        "UXR-4.6"
+      ],
+      "disposition": "ADOPT_PRESERVE_AND_VERIFY",
+      "reason": "Retain original source-supported concept, integrate and revalidate; not historical browser PASS."
+    },
+    {
+      "id": "CUI-037",
+      "vendor": "NetBird",
+      "idea": "View chips",
+      "gaps": [
+        "G-34"
+      ],
+      "wbs": [
+        "UXR-4.6"
+      ],
+      "disposition": "ADOPT_PRESERVE_AND_VERIFY",
+      "reason": "Retain original source-supported concept, integrate and revalidate; not historical browser PASS."
+    },
+    {
+      "id": "CUI-038",
+      "vendor": "NetBird",
+      "idea": "25-row paging",
+      "gaps": [
+        "G-35"
+      ],
+      "wbs": [
+        "UXR-4.6"
+      ],
+      "disposition": "ADOPT_PRESERVE_AND_VERIFY",
+      "reason": "Retain original source-supported concept, integrate and revalidate; not historical browser PASS."
+    },
+    {
+      "id": "CUI-039",
+      "vendor": "NetBird",
+      "idea": "Same-scope refresh",
+      "gaps": [
+        "G-36"
+      ],
+      "wbs": [
+        "UXR-4.5"
+      ],
+      "disposition": "ADOPT_PRESERVE_AND_VERIFY",
+      "reason": "Retain original source-supported concept, integrate and revalidate; not historical browser PASS."
+    },
+    {
+      "id": "CUI-040",
+      "vendor": "NetBird/Twingate",
+      "idea": "Home scoped evidence drilldown",
+      "gaps": [
+        "G-37"
+      ],
+      "wbs": [
+        "UXR-4.2"
+      ],
+      "disposition": "ADOPT_PRESERVE_AND_VERIFY",
+      "reason": "Retain original source-supported concept, integrate and revalidate; not historical browser PASS."
+    }
+  ],
+  "gap_to_wbs": {
+    "G-01": [
+      "UXR-3.6"
+    ],
+    "G-02": [
+      "UXR-3.2",
+      "UXR-3.4"
+    ],
+    "G-03": [
+      "UXR-3.8"
+    ],
+    "G-04": [
+      "UXR-6.1",
+      "UXR-6.2",
+      "UXR-6.3",
+      "UXR-6.4",
+      "UXR-6.5"
+    ],
+    "G-05": [
+      "UXR-3.5"
+    ],
+    "G-06": [
+      "UXR-3.3",
+      "UXR-3.4"
+    ],
+    "G-07": [
+      "UXR-4.4"
+    ],
+    "G-08": [
+      "UXR-4.5"
+    ],
+    "G-09": [
+      "UXR-3.9"
+    ],
+    "G-10": [
+      "UXR-2.7"
+    ],
+    "G-11": [
+      "UXR-1.4"
+    ],
+    "G-12": [
+      "UXR-1.4"
+    ],
+    "G-13": [
+      "UXR-2.6"
+    ],
+    "G-14": [
+      "UXR-4.1",
+      "UXR-4.3"
+    ],
+    "G-15": [
+      "UXR-1.4"
+    ],
+    "G-16": [
+      "UXR-1.9"
+    ],
+    "G-17": [
+      "UXR-1.4"
+    ],
+    "G-18": [
+      "UXR-4.7",
+      "UXR-3.8"
+    ],
+    "G-19": [
+      "UXR-2.6",
+      "UXR-1.10"
+    ],
+    "G-20": [
+      "UXR-3.9"
+    ],
+    "G-21": [
+      "UXR-3.9"
+    ],
+    "G-22": [
+      "UXR-3.8",
+      "UXR-4.5"
+    ],
+    "G-23": [
+      "UXR-3.9"
+    ],
+    "G-24": [
+      "UXR-3.9"
+    ],
+    "G-25": [
+      "UXR-3.9"
+    ],
+    "G-26": [
+      "UXR-3.9"
+    ],
+    "G-27": [
+      "UXR-3.9"
+    ],
+    "G-28": [
+      "UXR-3.10"
+    ],
+    "G-29": [
+      "UXR-3.9"
+    ],
+    "G-30": [
+      "UXR-4.6"
+    ],
+    "G-31": [
+      "UXR-4.6"
+    ],
+    "G-32": [
+      "UXR-4.6"
+    ],
+    "G-33": [
+      "UXR-4.6"
+    ],
+    "G-34": [
+      "UXR-4.6"
+    ],
+    "G-35": [
+      "UXR-4.6"
+    ],
+    "G-36": [
+      "UXR-4.5"
+    ],
+    "G-37": [
+      "UXR-4.2"
+    ]
+  },
+  "objective_to_wbs": {
+    "UX-1": [
+      "UXR-3.6",
+      "UXR-3.7",
+      "UXR-3.8",
+      "UXR-3.11"
+    ],
+    "UX-2": [
+      "UXR-1.6",
+      "UXR-2.8",
+      "UXR-3.2",
+      "UXR-3.4"
+    ],
+    "UX-3": [
+      "UXR-1.2",
+      "UXR-2.1",
+      "UXR-2.2",
+      "UXR-2.3",
+      "UXR-2.4",
+      "UXR-2.5"
+    ],
+    "UX-4": [
+      "UXR-1.9",
+      "UXR-3.5",
+      "UXR-4.2"
+    ],
+    "UX-5": [
+      "UXR-3.8",
+      "UXR-4.4",
+      "UXR-4.5"
+    ],
+    "UX-6": [
+      "UXR-4.9",
+      "UXR-5.6"
+    ],
+    "UX-7": [
+      "UXR-5.4",
+      "UXR-5.5",
+      "UXR-7.4"
+    ],
+    "UX-8": [
+      "UXR-1.1",
+      "UXR-1.4",
+      "UXR-4.6",
+      "UXR-4.7",
+      "UXR-5.2",
+      "UXR-5.7"
+    ],
+    "UI-01": [
+      "UXR-3.6",
+      "UXR-3.7"
+    ],
+    "UI-02": [
+      "UXR-3.8"
+    ],
+    "UI-03": [
+      "UXR-1.8",
+      "UXR-2.5",
+      "UXR-3.8",
+      "UXR-3.10"
+    ],
+    "UI-04": [
+      "UXR-1.10",
+      "UXR-4.1",
+      "UXR-4.9"
+    ],
+    "UI-05": [
+      "UXR-2.9",
+      "UXR-3.4"
+    ],
+    "UI-06": [
+      "UXR-6.1",
+      "UXR-6.2",
+      "UXR-6.3",
+      "UXR-6.4",
+      "UXR-6.5"
+    ],
+    "UXB-00": [
+      "UXR-0.1",
+      "UXR-0.2",
+      "UXR-0.5"
+    ],
+    "UXB-01": [
+      "UXR-4.7",
+      "UXR-4.8"
+    ],
+    "UXB-02": [
+      "UXR-4.1",
+      "UXR-4.2"
+    ],
+    "UXB-03": [
+      "UXR-2.10",
+      "UXR-3.1",
+      "UXR-3.4"
+    ],
+    "UXB-04": [
+      "UXR-1.8",
+      "UXR-3.8",
+      "UXR-3.11"
+    ],
+    "UXB-05": [
+      "UXR-4.9",
+      "UXR-5.2"
+    ],
+    "UXB-06": [
+      "UXR-7.4",
+      "UXR-7.5",
+      "UXR-7.6",
+      "UXR-7.8"
+    ],
+    "V1-A": [
+      "UXR-1.1",
+      "UXR-1.2"
+    ],
+    "V1-B": [
+      "UXR-1.3",
+      "UXR-1.4",
+      "UXR-1.9"
+    ],
+    "V1-C": [
+      "UXR-1.5",
+      "UXR-1.6",
+      "UXR-1.7",
+      "UXR-1.8",
+      "UXR-1.10"
+    ],
+    "V2-A": [
+      "UXR-2.1",
+      "UXR-2.2",
+      "UXR-2.3",
+      "UXR-2.4",
+      "UXR-2.5"
+    ],
+    "V2-B": [
+      "UXR-2.6",
+      "UXR-2.7",
+      "UXR-2.8",
+      "UXR-2.9",
+      "UXR-2.10"
+    ],
+    "V3-A": [
+      "UXR-3.1",
+      "UXR-3.2",
+      "UXR-3.3",
+      "UXR-3.4",
+      "UXR-3.5",
+      "UXR-3.6",
+      "UXR-3.7",
+      "UXR-3.8",
+      "UXR-3.9",
+      "UXR-3.10",
+      "UXR-3.11"
+    ],
+    "V3-B": [
+      "UXR-4.1",
+      "UXR-4.2",
+      "UXR-4.3",
+      "UXR-4.4",
+      "UXR-4.5"
+    ],
+    "WU1": [
+      "UXR-1.10"
+    ],
+    "WU2": [
+      "UXR-2.10"
+    ],
+    "WU3": [
+      "UXR-3.11"
+    ],
+    "WU4": [
+      "UXR-4.1",
+      "UXR-5.4",
+      "UXR-7.8"
+    ],
+    "UX-P1-A": [
+      "UXR-1.4"
+    ],
+    "UX-P1-B": [
+      "UXR-1.4"
+    ],
+    "UX-P1-C": [
+      "UXR-1.5"
+    ]
+  },
+  "vendor_to_wbs": [
+    {
+      "name": "Tailscale",
+      "wbs": [
+        "UXR-2.1",
+        "UXR-3.2"
+      ],
+      "source": "LEGACY19"
+    },
+    {
+      "name": "NetBird",
+      "wbs": [
+        "UXR-1.3",
+        "UXR-3.5",
+        "UXR-3.6"
+      ],
+      "source": "LEGACY19"
+    },
+    {
+      "name": "Twingate",
+      "wbs": [
+        "UXR-3.8",
+        "UXR-2.5"
+      ],
+      "source": "LEGACY19"
+    },
+    {
+      "name": "Firezone",
+      "wbs": [
+        "UXR-2.5",
+        "UXR-2.6",
+        "UXR-4.3"
+      ],
+      "source": "LEGACY19"
+    },
+    {
+      "name": "Cloudflare One",
+      "wbs": [
+        "UXR-4.7",
+        "UXR-4.8"
+      ],
+      "source": "LEGACY19"
+    },
+    {
+      "name": "Teleport",
+      "wbs": [
+        "UXR-2.3",
+        "UXR-2.7",
+        "UXR-6.3"
+      ],
+      "source": "LEGACY19"
+    },
+    {
+      "name": "StrongDM",
+      "wbs": [
+        "UXR-6.3",
+        "UXR-4.4"
+      ],
+      "source": "LEGACY19"
+    },
+    {
+      "name": "HashiCorp Boundary",
+      "wbs": [
+        "UXR-1.5",
+        "UXR-2.5"
+      ],
+      "source": "LEGACY19"
+    },
+    {
+      "name": "BeyondTrust PRA",
+      "wbs": [
+        "UXR-4.9"
+      ],
+      "source": "LEGACY19"
+    },
+    {
+      "name": "Microsoft Entra Private Access",
+      "wbs": [
+        "UXR-2.5",
+        "UXR-3.1"
+      ],
+      "source": "LEGACY19"
+    },
+    {
+      "name": "ZeroTier",
+      "wbs": [
+        "UXR-2.3",
+        "UXR-2.4"
+      ],
+      "source": "LEGACY19"
+    },
+    {
+      "name": "Netmaker",
+      "wbs": [
+        "UXR-2.8",
+        "UXR-3.2"
+      ],
+      "source": "LEGACY19"
+    },
+    {
+      "name": "NordLayer",
+      "wbs": [
+        "UXR-5.1",
+        "UXR-5.4",
+        "UXR-5.5"
+      ],
+      "source": "LEGACY19"
+    },
+    {
+      "name": "JumpCloud",
+      "wbs": [
+        "UXR-4.1",
+        "UXR-4.7",
+        "UXR-4.9"
+      ],
+      "source": "LEGACY19"
+    },
+    {
+      "name": "Palo Alto Prisma Access / Strata",
+      "wbs": [
+        "UXR-4.2"
+      ],
+      "source": "LEGACY19"
+    },
+    {
+      "name": "Zscaler ZPA",
+      "wbs": [
+        "UXR-4.5",
+        "UXR-3.11"
+      ],
+      "source": "LEGACY19"
+    },
+    {
+      "name": "Appgate SDP",
+      "wbs": [
+        "UXR-3.1",
+        "UXR-5.6"
+      ],
+      "source": "LEGACY19"
+    },
+    {
+      "name": "OpenZiti ZAC",
+      "wbs": [
+        "UXR-4.8",
+        "UXR-5.3"
+      ],
+      "source": "LEGACY19"
+    },
+    {
+      "name": "Netskope",
+      "wbs": [
+        "UXR-3.11",
+        "UXR-4.2"
+      ],
+      "source": "LEGACY19"
+    },
+    {
+      "name": "MeshCentral",
+      "wbs": [
+        "UXR-1.4",
+        "UXR-1.5"
+      ],
+      "source": "SUPPLEMENTARY"
+    },
+    {
+      "name": "Pomerium",
+      "wbs": [
+        "UXR-2.7"
+      ],
+      "source": "SUPPLEMENTARY"
+    },
+    {
+      "name": "Grafana",
+      "wbs": [
+        "UXR-3.10",
+        "UXR-4.6"
+      ],
+      "source": "SUPPLEMENTARY"
+    }
+  ],
+  "uxe_to_wbs": [
+    {
+      "id": "LEGACY19-UXE-01",
+      "meaning": "New Admin logs in and locates “Add Agent” without instructions | Can discover action and distinguish on-prem install roles",
+      "source_line": 229,
+      "wbs": [
+        "UXR-7.5"
+      ]
+    },
+    {
+      "id": "LEGACY19-UXE-02",
+      "meaning": "New Admin registers Linux Agent, reviews admission, approves with explicit confirmation | Shows installation/waiting/trust/connection as separate states",
+      "source_line": 230,
+      "wbs": [
+        "UXR-7.5"
+      ]
+    },
+    {
+      "id": "LEGACY19-UXE-03",
+      "meaning": "Same Admin publishes only SSH service, creates narrow Remote WHITELIST and tests it | One understandable path; Core outcome confirmed and runtime evidence reported honestly",
+      "source_line": 231,
+      "wbs": [
+        "UXR-7.5"
+      ]
+    },
+    {
+      "id": "LEGACY19-UXE-04",
+      "meaning": "An intentionally denied source tries to connect | A single “Why denied?” workflow shows truthful reason, policy and next action; no false ALLOW",
+      "source_line": 232,
+      "wbs": [
+        "UXR-7.5"
+      ]
+    },
+    {
+      "id": "LEGACY19-UXE-05",
+      "meaning": "Admin sets Internet Access (protected source to approved external destination) | Correct distinct plane and selector semantics",
+      "source_line": 233,
+      "wbs": [
+        "UXR-7.5"
+      ]
+    },
+    {
+      "id": "LEGACY19-UXE-06",
+      "meaning": "Admin defines AI Identity permission and tests AI Access | Permission Object/Group semantics, not Remote/Internet port confusion",
+      "source_line": 234,
+      "wbs": [
+        "UXR-7.5"
+      ]
+    },
+    {
+      "id": "LEGACY19-UXE-07",
+      "meaning": "Operator reviews Jobs, pending changes and Activity evidence | Finds evidence without navigating obscure internals or elevating permissions",
+      "source_line": 235,
+      "wbs": [
+        "UXR-7.5"
+      ]
+    },
+    {
+      "id": "LEGACY19-UXE-08",
+      "meaning": "Read Only attempts admin-only action; Admin tests local MFA/recovery path | View affordances and Core denial match; no secret disclosure",
+      "source_line": 236,
+      "wbs": [
+        "UXR-7.5"
+      ]
+    },
+    {
+      "id": "LEGACY19-UXE-09",
+      "meaning": "Fresh/no-data or Core temporarily unavailable | Honest empty vs error vs UNKNOWN; visible recovery guidance",
+      "source_line": 237,
+      "wbs": [
+        "UXR-7.5"
+      ]
+    },
+    {
+      "id": "LEGACY19-UXE-10",
+      "meaning": "Repeat UXE-01..09 on desktop, **375px and 320px**, keyboard and accessible focus | No critical action clipped or inaccessible; dialogs, tables, error/help and onboarding work",
+      "source_line": 238,
+      "wbs": [
+        "UXR-7.5"
+      ]
+    },
+    {
+      "id": "LEGACY19-UXE-11",
+      "meaning": "Change plan proposed then modified, tests fail, preview expires and wrong confirmation entered | No stale-plan Apply, hidden bypass, silent save, unauthorized effect or erroneous success",
+      "source_line": 239,
+      "wbs": [
+        "UXR-7.5"
+      ]
+    },
+    {
+      "id": "LEGACY19-UXE-12",
+      "meaning": "Offline install/reinstall, original Web/Core/CLI regression | No CDN/new infrastructure dependency; Web remains optional and not authoritative",
+      "source_line": 240,
+      "wbs": [
+        "UXR-7.5"
+      ]
+    },
+    {
+      "id": "CURRENT-UXE-01",
+      "meaning": "Admin first login, Home, every root menu and Help orientation",
+      "source_line": 103,
+      "wbs": [
+        "UXR-7.5"
+      ]
+    },
+    {
+      "id": "CURRENT-UXE-02",
+      "meaning": "Real enrollment code and Managed Host pending admission",
+      "source_line": 104,
+      "wbs": [
+        "UXR-7.5"
+      ]
+    },
+    {
+      "id": "CURRENT-UXE-03",
+      "meaning": "Approve vs quarantine, operator rights and Core revision",
+      "source_line": 105,
+      "wbs": [
+        "UXR-7.5"
+      ]
+    },
+    {
+      "id": "CURRENT-UXE-04",
+      "meaning": "Narrow SSH Remote Service, draft and policy preview",
+      "source_line": 106,
+      "wbs": [
+        "UXR-7.5"
+      ]
+    },
+    {
+      "id": "CURRENT-UXE-05",
+      "meaning": "Actual allowed traffic, peer/Agent and evidence readback",
+      "source_line": 107,
+      "wbs": [
+        "UXR-7.5"
+      ]
+    },
+    {
+      "id": "CURRENT-UXE-06",
+      "meaning": "Actual denied traffic, Core decision, explanation and audit",
+      "source_line": 108,
+      "wbs": [
+        "UXR-7.5"
+      ]
+    },
+    {
+      "id": "CURRENT-UXE-07",
+      "meaning": "Internet Access separate policy and observation",
+      "source_line": 109,
+      "wbs": [
+        "UXR-7.5"
+      ]
+    },
+    {
+      "id": "CURRENT-UXE-08",
+      "meaning": "AI Access separate identity/permission policy",
+      "source_line": 110,
+      "wbs": [
+        "UXR-7.5"
+      ]
+    },
+    {
+      "id": "CURRENT-UXE-09",
+      "meaning": "Operator activity, jobs, diagnoses and role write limits",
+      "source_line": 111,
+      "wbs": [
+        "UXR-7.5"
+      ]
+    },
+    {
+      "id": "CURRENT-UXE-10",
+      "meaning": "Read Only menu visibility and mutation denial",
+      "source_line": 112,
+      "wbs": [
+        "UXR-7.5"
+      ]
+    },
+    {
+      "id": "CURRENT-UXE-11",
+      "meaning": "Stale/invalid plan, unknown/partial/no-data and recovery",
+      "source_line": 113,
+      "wbs": [
+        "UXR-7.5"
+      ]
+    },
+    {
+      "id": "CURRENT-UXE-12",
+      "meaning": "Desktop 1440px, phone 375/320px, keyboard, Web uninstall/Core isolation",
+      "source_line": 114,
+      "wbs": [
+        "UXR-7.5"
+      ]
+    }
+  ]
+}

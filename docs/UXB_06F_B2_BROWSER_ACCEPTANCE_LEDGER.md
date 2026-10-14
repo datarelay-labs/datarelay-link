@@ -7,6 +7,67 @@ inventory: the tester must independently discover and traverse the **actual**
 browser at the **installed candidate HEAD**, without using a scripted/SSR run as
 a substitute.
 
+## 0. Owner-selected DRLink 3.0 test target (2026-10-11 KST)
+
+**This target selection supersedes historical DRLink 3.0 test-server references, but
+does not supersede any release, access, production, safety or Browser/E2E gate.**
+
+| Purpose | Authoritative target / observed fact | Status |
+| --- | --- | --- |
+| Source development, Node/Python tests, detached worktrees | `dev-drlink` (development host) | Separate from any installed product test server |
+| **Future DRLink 3.0 installed Server/Agent/Browser E2E test target** | **`mcp.link.datarelay.run`** | **SELECTED, NOT YET QUALIFIED FOR 3.0** |
+| Prior host `remote.xdr.ooo` | **Excluded from all future 3.0 test execution**; owner plans separate 3.0 data cleanup | DO NOT connect, deploy, delete or use it as a 3.0 fallback |
+| New-target SSH access | Existing `mcp-link` alias on `dev-drlink` resolves to `mcp.link.datarelay.run` | Read-only SSH discovery succeeded; this does not prove Browser/MCP/Server availability |
+| New-target installed version at observation | `/etc/drlink/version`: `PROJECT_VERSION=2.4.0` | **NOT a 3.0 installed candidate** |
+| New-target observed services | `drlink-client`, `drlink-ai-agent`, `drlink-lifecycle` active; `drlink-server`, `drlink-web`, `drlink-allocator` inactive | Browser/3-role E2E **BLOCKED** until separately authorized qualified 3.0 Server/Agent/Web target |
+| New-target TCP/HTTPS | TCP/443 listening; local HTTPS root read returned HTTP 404 | Not evidence of working DRLink 3.0 Web or MCP |
+| DNS observation on `dev-drlink` | New FQDN resolved to the owner-provided new test host address | DNS mapping observed, not a deployment or certificate approval |
+
+**Safety/continuity:** No service restart, install, uninstall, migration, production
+change, credential/ACL modification or deletion is approved by this target change.
+Do not overwrite the existing 2.4.0 installation. The existing Browser/preview
+and Client-fixture tool denials remain binding. Before any real 3.0 test, independently
+confirm the **installed** Server/Agent/Web build identity matches the immutable
+candidate HEAD, that an explicitly permitted isolated preview and authenticated
+Admin/Operator/Read Only roles exist, and that all prior safety holds are legitimately
+resolved. Until then, source/localhost fixtures are supplemental only and **0/N real
+Browser cases** remain verified.
+
+The legacy `remote.xdr.ooo` values in existing v2.4 source tests and example
+URLs are **fixtures**, not permission to use that host for v3 tests. Do not mass-edit
+or execute those legacy references against a live server. Destructive cleanup of
+the previous host is a distinct owner-controlled operation, not part of this update.
+
+## 0a. Post-clean test-host observation (2026-10-11 KST, latest)
+
+**This section supersedes the historical pre-clean 2.4.0 installation observations
+in §0 and §1. The owner explicitly authorized clearing the previous configuration
+to reserve this host for DRLink 3.0 testing.** No release or Browser authorization
+is inferred.
+
+| Gate | Actual observed outcome | Disposition |
+| --- | --- | --- |
+| Host identity | Existing authorized `mcp-link` SSH alias connected to `mcp.link.datarelay.run` | SSH reachable, management retained |
+| Pre-clean safety | Root-only 0600 recovery archives of previous v2.4 product files and old MCP Nginx/TLS settings stored **on target only** | Recovery evidence retained, not an active installation |
+| DRLink v2.4 local uninstall | Installed product-owned public `uninstall-client.sh` exit 0; Client, AI Agent and Lifecycle units inactive/removed; v2.4 executables, config and DB paths absent; `frpc` absent | **CLEANROOM PASS** for removed product role |
+| Previous MCP/OAuth Nginx site | Service disabled/stopped, old virtual host removed; existing cert and renewal record removed, old unused ACME account removed; Certbot timer disabled | Previous **public** Web configuration retired, SSH preserved |
+| Dedicated public endpoints | Target public TCP/80 and TCP/443 no longer have the old Nginx listener | Available for separately qualified v3 candidate |
+| Legacy loopback SSH forward | Old `127.0.0.1:16103` SSH session disconnected once but auto-reconnected; source traced to **`dev-drlink:drlink-mcp-reverse-tunnel.service`** | **PLATFORM_BLOCKED**: direct service inspection and direct disable attempts each returned `Command not allowed`. Unit is not confirmed stopped, no bypass; loopback only, not publicly exposed |
+| Installed v3 Server/Web/Agent | **No v3 installed**; no authenticated Browser/role/real Agent session validated | **NOT_VERIFIED / NOT_RUN** |
+| Exact-head release candidate | Existing Web Draft branch head differs from tracked release manifest source ref; full native Linux CI still fails at allocator-to-Core enrollment; prior package/Browser restrictions remain | **NOT QUALIFIED** for installed v3/E2E/release |
+
+The former `remote.xdr.ooo` endpoint remains **excluded from all future v3
+testing**. Do not reinstall v2.4, re-enable the previous MCP/OAuth Nginx site,
+use the historical generator with an unresolved safety hold, or claim Browser
+PASS from a clean host. Native Web source and isolated API tests belong to
+their exact development HEAD, not to this not-yet-installed target. The remaining
+legacy SSH forward is generated by a distinct dev-drlink systemd unit. Its
+direct stop/disable was **explicitly refused by the connected tool**, not
+mistaken for missing SSH access or a permissions issue. Do not switch tools,
+modify SSH daemon policy or stop unrelated services to bypass that refusal.
+The old public MCP nginx/OAuth endpoint stays retired regardless of this
+loopback-only residual management connection.
+
 ## 1. Entry facts observed on 2026-10-10 (preflight only)
 
 | Requirement | Observed fact / evidence | Disposition |

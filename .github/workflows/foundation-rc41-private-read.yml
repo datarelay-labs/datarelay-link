@@ -1,0 +1,112 @@
+name: Foundation RC41 Private Package Read
+
+on:
+  pull_request:
+    types: [opened, reopened, synchronize]
+
+permissions:
+  contents: read
+
+jobs:
+  private-package-read:
+    # Only the owner's existing same-repository Foundation adoption branch.
+    # Never send a private package credential to a fork or PR-target context.
+    if: >-
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.head.ref == 'feat/drl3-ux-saved-admission-pfci'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Read-only RC41 GitHub Packages identity and SHA256
+        env:
+          FOUNDATION_READ_TOKEN: ${{ secrets.FOUNDATION_READ_TOKEN }}
+          NPM_CONFIG_UPDATE_NOTIFIER: 'false'
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "${FOUNDATION_READ_TOKEN:-}" ]]; then
+            echo "FOUNDATION_RC41_PRIVATE_READ=BLOCKED_MISSING_ACTIONS_SECRET"
+            exit 2
+          fi
+          umask 077
+          scratch="$(mktemp -d)"
+          trap 'rm -rf "$scratch"' EXIT
+          # Verify the actual secret's classic PAT scopes without printing
+          # token content, response headers, or private account metadata.
+          http="$(curl --silent --show-error --max-time 20 --retry 0 \
+            --dump-header "$scratch/auth-headers" \
+            --output "$scratch/auth-response" --write-out '%{http_code}' \
+            --header 'Accept: application/vnd.github+json' \
+            --header "Authorization: Bearer $FOUNDATION_READ_TOKEN" \
+            https://api.github.com/user)"
+          if [[ "$http" != '200' ]]; then
+            echo "FOUNDATION_TOKEN_AUTHENTICATION=BLOCKED_HTTP_$http"
+            exit 2
+          fi
+          if ! grep -iq '^x-oauth-scopes:.*read:packages' "$scratch/auth-headers"; then
+            echo 'FOUNDATION_TOKEN_SCOPE=BLOCKED_MISSING_READ_PACKAGES'
+            exit 2
+          fi
+          echo 'FOUNDATION_TOKEN_AUTHENTICATION=PASS'
+          echo 'FOUNDATION_TOKEN_READ_PACKAGES_SCOPE=PASS'
+          # Let npm interpolate the env var; the token itself never enters
+          # GitHub Actions logs or a tracked repository file.
+          printf '%s\n' \
+            '@datarelay-labs:registry=https://npm.pkg.github.com' \
+            '//npm.pkg.github.com/:_authToken=${FOUNDATION_READ_TOKEN}' \
+            > "$scratch/.npmrc"
+          export NPM_CONFIG_USERCONFIG="$scratch/.npmrc"
+          mkdir "$scratch/packs"
+          # This is a read-only package metadata/download probe. No checkout,
+          # dependency installation, lifecycle scripts or published artifacts.
+          declare -A expected=(
+            [auth-ui]=4f106957a23833469d990eda1e5f8252137365290cd1170a0b8a9093051557d5
+            [foundation]=febb1afabe218e57326cdb668bd1d193c15fec90bf166ad5012a4c7d077368e5
+            [foundation-cli]=a422f71f131ae290c38a47c0a92263c0041b0753239e6fb007263e60c5ef5049
+            [icons]=9be6ed7a7b6a4997a977ea4cfbefaf004552c337330fff5feb907ffddd0aaed1
+            [product-shell]=804588099b48379a36bd80b61e5c90dbfd23a2d53afa02865b99ab1f2308f49e
+            [system-admin-ui]=ac6ab650af6bb60fc17497be8858b298d87feb6a0573833e948a4c75867f4666
+            [system-contracts]=441cbee69f52f5eacb9246525de0ac1211b18cd32299e13e14e1c97a862de8ff
+            [testkit]=9764f6f90f3eb3814ddb7e21512aac11d069f706fd696682c2d381080cb7bcf0
+            [tokens]=8e97a56bfcfcd2107a394d40cf072f514e2457ebef105b34badc55b9bd8e8574
+            [ui]=b4232099d614c73480983416c5ecb5aa2a5f8390ad68cf044289f3edcf141940
+          )
+          for name in "${!expected[@]}"; do
+            target="@datarelay-labs/$name@0.1.0-rc.41"
+            if ! npm view "$target" version --registry https://npm.pkg.github.com \
+                --fetch-retries=0 --json > "$scratch/metadata" 2> "$scratch/errors"; then
+              if grep -q 'E401' "$scratch/errors"; then
+                echo "FOUNDATION_RC41_PRIVATE_READ=BLOCKED_REGISTRY_AUTH_401"
+              elif grep -q 'E403' "$scratch/errors"; then
+                echo "FOUNDATION_RC41_PRIVATE_READ=BLOCKED_REGISTRY_ACCESS_403"
+              elif grep -q 'E404' "$scratch/errors"; then
+                echo "FOUNDATION_RC41_PRIVATE_READ=BLOCKED_PACKAGE_UNAVAILABLE_404:$name"
+              else
+                echo "FOUNDATION_RC41_PRIVATE_READ=BLOCKED_REGISTRY_QUERY:$name"
+              fi
+              exit 2
+            fi
+            if [[ "$(tr -d '"[:space:]' < "$scratch/metadata")" != '0.1.0-rc.41' ]]; then
+              echo "FOUNDATION_RC41_PRIVATE_READ=BLOCKED_WRONG_VERSION:$name"
+              exit 2
+            fi
+            if ! npm pack "$target" --silent --ignore-scripts --pack-destination "$scratch/packs" \
+                --registry https://npm.pkg.github.com --fetch-retries=0 \
+                > "$scratch/packname" 2> "$scratch/errors"; then
+              echo "FOUNDATION_RC41_PRIVATE_READ=BLOCKED_PACKAGE_DOWNLOAD:$name"
+              exit 2
+            fi
+            filename="datarelay-labs-$name-0.1.0-rc.41.tgz"
+            if [[ ! -f "$scratch/packs/$filename" ]]; then
+              echo "FOUNDATION_RC41_PRIVATE_READ=BLOCKED_PACKAGE_FILENAME:$name"
+              exit 2
+            fi
+            digest="$(sha256sum "$scratch/packs/$filename" | cut -d' ' -f1)"
+            if [[ "$digest" != "${expected[$name]}" ]]; then
+              echo "FOUNDATION_RC41_PRIVATE_READ=BLOCKED_SHA256_MISMATCH:$name"
+              exit 2
+            fi
+            echo "FOUNDATION_RC41_PINNED_PACKAGE=PASS:$name"
+          done
+          echo "FOUNDATION_RC41_PRIVATE_READ=PASS_10_OF_10"
+          echo "PRIVATE_ARTIFACTS_PUBLISHED_TO_PUBLIC_ACTIONS=NO"

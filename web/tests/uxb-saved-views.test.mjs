@@ -8,14 +8,14 @@ import {build} from "esbuild";
 import React from "react";
 import {renderToStaticMarkup} from "react-dom/server";
 const root=dirname(dirname(fileURLToPath(import.meta.url)));
-let scratch,SavedViewsWorkspace,readSavedView,saveDraftForResource,conflictingSavedViewName;
+let scratch,SavedViewsWorkspace,readSavedView,saveDraftForResource,conflictingSavedViewName,validSavedViewName;
 before(async()=>{
  scratch=mkdtempSync(join(root,"node_modules",".uxb-saved-views-"));
  const outfile=join(scratch,"views.mjs");
  await build({entryPoints:[join(root,"src","uxb-saved-views.tsx")],outfile,
   bundle:true,platform:"node",format:"esm",jsx:"automatic",
   external:["react","react/jsx-runtime"],logLevel:"silent"});
- ({SavedViewsWorkspace,readSavedView,saveDraftForResource,conflictingSavedViewName}=await import(pathToFileURL(outfile).href));
+ ({SavedViewsWorkspace,readSavedView,saveDraftForResource,conflictingSavedViewName,validSavedViewName}=await import(pathToFileURL(outfile).href));
 });
 after(()=>{if(scratch)rmSync(scratch,{recursive:true,force:true})});
 const render=(items,initialDraft=null)=>renderToStaticMarkup(React.createElement(SavedViewsWorkspace,{
@@ -83,4 +83,97 @@ test("Saved Views prefill only an explicit canonical resource-filter draft; name
  assert.match(html,/Save filter/);
  assert.match(html,/disabled=""/);
  assert.doesNotMatch(render([],{resource_type:"access-rule",filter:"allow"}),/Pre-filled from/);
+});
+
+test("Host Saved Views may intentionally preserve an admission filter even with no text",()=>{
+ const saved={payload:{resource_type:"managed-host",filter:"",admission:"PENDING_APPROVAL"}};
+ assert.deepEqual(readSavedView(saved),{route:"hosts",filter:"",admission:"PENDING_APPROVAL"});
+ assert.deepEqual(saveDraftForResource("host","","PENDING_APPROVAL"),{
+  resource_type:"managed-host",filter:"",admission:"PENDING_APPROVAL"
+ });
+ assert.deepEqual(saveDraftForResource("host"," node ","QUARANTINED"),{
+  resource_type:"managed-host",filter:"node",admission:"QUARANTINED"
+ });
+ assert.deepEqual(saveDraftForResource("host"," node ","all"),{
+  resource_type:"managed-host",filter:"node"
+ });
+ const html=render([saved],saved.payload);
+ assert.match(html,/Pre-filled from.*Servers &amp; Agents/);
+ assert.match(html,/Filter Managed Host admission/);
+ assert.match(html,/Pending approval/);
+ assert.match(html,/Saved admission state/);
+});
+test("Fail closed for unknown admission and misplaced service admission",()=>{
+ for(const invalid of ["", "NONE", "pending", "PENDING", "PENDING_APPROVAL ", null, 5, {}, true]){
+  assert.equal(readSavedView({payload:{
+   resource_type:"managed-host",filter:"offline",admission:invalid
+  }}),null);
+  assert.equal(saveDraftForResource("host","offline",invalid),null);
+ }
+ assert.equal(readSavedView({payload:{
+  resource_type:"remote-service",filter:"ssh",admission:"QUARANTINED"
+ }}),null);
+ assert.equal(saveDraftForResource("service","ssh","QUARANTINED"),null);
+ assert.deepEqual(readSavedView({payload:{
+  resource_type:"managed-host",filter:"offline"
+ }}),{route:"hosts",filter:"offline"});
+ assert.equal(readSavedView({payload:{
+  resource_type:"managed-host",filter:"",admission:"all"
+ }}),null);
+});
+
+test("Malformed saved-view display metadata cannot crash the private list or reveal arbitrary Core fields",()=>{
+ const source=[{id:"view-1",name:{secret:"PRIVATE_NAME"},
+  updated_at:{token:"PRIVATE_UPDATED"},payload:{resource_type:"managed-host",filter:"offline"},
+  private_key:"PRIVATE_KEY"}];
+ const html=render(source);
+ assert.match(html,/UNKNOWN|Unnamed view/);
+ assert.match(html,/Open saved filter/);
+ assert.doesNotMatch(html,/PRIVATE_|\[object Object\]/);
+});
+test("Saved filter drafts and recalled filters reject bidi/control-text impersonation",()=>{
+ for(const bad of ["ssh\u202e", "host\nspoof", "server\u2066", "\u0000hidden"]){
+  assert.equal(saveDraftForResource("host",bad),null);
+  assert.equal(readSavedView({payload:{resource_type:"managed-host",filter:bad}}),null);
+  assert.equal(readSavedView({payload:{resource_type:"remote-service",filter:bad}}),null);
+ }
+});
+test("Saved-view update timestamp must be trusted absolute Core time or visibly UNKNOWN",()=>{
+ const good={id:"v1",name:"Good",updated_at:"2026-10-11T00:01:02Z",
+  payload:{resource_type:"managed-host",filter:"offline"}};
+ assert.match(render([good]),/2026-10-11T00:01:02Z/);
+ for(const bad of ["2026-02-31T00:00:00Z","yesterday","2026-10-11T00:00:00",42,{credential:"PRIVATE"}]){
+  const html=render([{...good,updated_at:bad}]);
+  assert.match(html,/UNKNOWN/);
+  assert.doesNotMatch(html,/PRIVATE|\[object Object\]/);
+ }
+});
+
+test("Missing or malformed Saved Views inventory shows UNKNOWN, never confirmed empty or editable form",()=>{
+ const renderRaw=data=>renderToStaticMarkup(React.createElement(SavedViewsWorkspace,{
+  data,api:async()=>{throw Error("SSR must not fetch Core")},
+  refresh:()=>{throw Error("SSR must not reload Core")}
+ }));
+ for(const malformed of [null,undefined,{}, {items:null}, {items:"not-an-array"},
+   {items:[null]}, {items:[12]}, {items:Array.from({length:101},()=>({}))}]){
+  const html=renderRaw(malformed);
+  assert.match(html,/Saved Views/);
+  assert.match(html,/UNKNOWN · Private saved filters were not verified/);
+  assert.match(html,/Refresh saved filters/);
+  assert.doesNotMatch(html,/No saved views yet|Save a resource filter|My saved filters/);
+ }
+ const confirmed=renderRaw({items:[]});
+ assert.match(confirmed,/No saved views yet/);
+ assert.match(confirmed,/Save a resource filter/);
+});
+
+test("Private view names must be printable and bounded before user-authorized replacement",()=>{
+ assert.equal(validSavedViewName("Offline hosts"),true);
+ assert.equal(validSavedViewName(" 한국어 필터 "),true);
+ for(const invalid of [null,0,"","  ","X".repeat(81),"spoof\nreplace",
+     "admin\u202e.txt","unsafe\u2066name","invisible\u0000name"]){
+  assert.equal(validSavedViewName(invalid),false,String(invalid));
+ }
+ assert.equal(conflictingSavedViewName([{name:"admin\u202e.txt"}],"admin\u202e.txt"),null);
+ assert.equal(conflictingSavedViewName([{name:"Offline hosts"}]," offline HOSTS "),"Offline hosts");
 });

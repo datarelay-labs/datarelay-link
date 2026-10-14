@@ -1,7 +1,7 @@
 // UXB-06F: supplementary contract evidence only; not a logged-in browser/User E2E.
 import assert from 'node:assert/strict';
 import {before,after,test} from 'node:test';
-import {mkdtempSync,rmSync} from 'node:fs';
+import {mkdtempSync,rmSync,readFileSync} from 'node:fs';
 import {dirname,join} from 'node:path';
 import {fileURLToPath,pathToFileURL} from 'node:url';
 import {build} from 'esbuild';
@@ -39,6 +39,21 @@ test('structurally required non-item Core pages remain UNKNOWN without evidence'
     assert.throws(()=>menu.requireObservedMenuPayload(route,broken),/Core|UNKNOWN/);
   }
 });
+test('Policy list and details never mislabel missing Core status or expiry as Disabled/Never',()=>{
+  for(const value of [true,1])assert.equal(menu.policyStateLabel(value),"Enabled");
+  for(const value of [false,0])assert.equal(menu.policyStateLabel(value),"Disabled");
+  for(const value of [null,undefined,"false",2,-1,[],{}])
+    assert.equal(menu.policyStateLabel(value),"UNKNOWN");
+  assert.equal(menu.policyExpiryLabel({expires_at:null}),"Never");
+  assert.equal(menu.policyExpiryLabel({expires_at:"2030-01-01T00:00:00Z"}),"2030-01-01T00:00:00Z");
+  for(const item of [{},{expires_at:undefined},{expires_at:""},{expires_at:0},
+    {expires_at:"X".repeat(300)},null])
+    assert.equal(menu.policyExpiryLabel(item),"UNKNOWN");
+  const source=readFileSync(join(root,"src","main.tsx"),"utf8");
+  assert.match(source,/policyStateLabel\(item.enabled\)/);
+  assert.match(source,/policyStateLabel\(selected.enabled\)/);
+  assert.match(source,/policyExpiryLabel\(item\)/);
+});
 test('Core pagination is visible and local filters never imply a complete list',()=>{
   for(const response of [null,undefined,{items:[]},{items:[],next_cursor:null},
     {items:[],next_cursor:''},{items:[],next_cursor:7}]){
@@ -62,6 +77,7 @@ test('Managed Host and Remote Service pagination accepts only matching observed 
       {...page,items:[{id:''}]},
       {...page,items:[{id:17}]},
       {...page,items:Array.from({length:101},(_,i)=>({id:String(i)}))},
+      {...page,items:[],next_cursor:'unearned-next-page'},
       {...page,next_cursor:cursor},
       {...page,items:null},
       {error:'Core unreachable'},
@@ -205,6 +221,11 @@ test('Access Hygiene inspect has only meaningful authorized destinations',()=>{
   assert.equal(menu.hygieneInspectTarget('service-account','Read Only'),null);
   assert.equal(menu.hygieneInspectTarget('unsupported','Admin'),null);
   assert.equal(menu.hygieneInspectTarget(null,'Admin'),null);
+  // Navigation hints must fail closed when the Web session role is missing or unrecognized.
+  for(const role of [null,undefined,'Guest','admin','UNKNOWN',{},'']){
+    for(const type of ['managed-host','object','access-rule','service-account'])
+      assert.equal(menu.hygieneInspectTarget(type,role),null,`${type}/${String(role)}`);
+  }
 });
 test('A diagnostic Job response cannot fabricate an accepted zero-target Queue from incomplete Core data',()=>{
   const valid={job:{id:'mjob_123',job_type:'doctor',status:'QUEUED',target_count:2},
@@ -412,4 +433,542 @@ test('partial Objects inventory remains available for its existing explicit UNKN
   for(const response of [{resources:{}},{resources:{'network-object':{items:[]}}}]){
     assert.equal(menu.requireObservedMenuPayload('objects',response),response);
   }
+});
+
+test("P0 Temporary Access UI never claims applied from HTTP 200 without exact Core Change Plan receipt",()=>{
+ const plan={change_plan_id:"cp_"+"a".repeat(24),operation:"temporary-access.set",
+  resource_type:"remote-access-rule",resource_ref:"ssh-prod",expected_revision:12,
+  valid_until:"2035-01-01T00:00:00Z",confirmation_class:"APPLY",
+  desired_expires_at:"2034-01-01T00:00:00Z",no_change:false};
+ const good={status:"APPLIED",operation:plan.operation,resource_type:plan.resource_type,
+  resource_ref:plan.resource_ref,expires_at:plan.desired_expires_at,revision:13};
+ assert.deepEqual(menu.requireObservedTemporaryAccessApplyForPlan(good,plan),{revision:13});
+ for(const wrong of [
+  null,{},[],{...good,status:"NO_CHANGE"},{...good,status:"PENDING"},
+  {...good,revision:12},{...good,revision:"13"},{...good,revision:13.5},
+  {...good,operation:"temporary-access.clear"},
+  {...good,resource_type:"ai-access-rule"},
+  {...good,resource_ref:"other-rule"},
+  {...good,expires_at:null}
+ ])assert.throws(()=>menu.requireObservedTemporaryAccessApplyForPlan(wrong,plan),
+   /UNKNOWN|Core|unverified/,JSON.stringify(wrong));
+ for(const bad of [
+  {...plan,no_change:true},
+  {...plan,confirmation_class:"DELETE"},
+  {...plan,valid_until:"2020-01-01T00:00:00Z"},
+  {...plan,expected_revision:undefined},
+  {...plan,resource_type:"managed-host"},
+  {...plan,change_plan_id:"untrusted"}
+ ])assert.throws(()=>menu.requireObservedTemporaryAccessApplyForPlan(good,bad),
+   /UNKNOWN|Core|unverified/,JSON.stringify(bad));
+ const source=readFileSync(join(root,"src","main.tsx"),"utf8");
+ const panel=source.split("function TemporaryAccessPanel(){")[1]?.split("function PolicySafetyPanel(",1)[0]||"";
+ assert.match(panel,/requireObservedTemporaryAccessApplyForPlan\(result,reviewedPlan\)/);
+ assert.match(panel,/setPreview\(null\);setConfirmation\(""\);/);
+ assert.match(panel,/not a requester\/reviewer approval/);
+});
+
+test("UX-8 Emergency Cutoff Apply requires exact Core plan and verified status, not HTTP 200",()=>{
+ const preview={change_plan_id:"cp_"+"a".repeat(32),operation_class:"INCIDENT_CHANGE",
+   resource_type:"emergency-cutoff",operation:"emergency-cutoff.apply",
+   resource_ref:"remote-service:service-1",scope_kind:"remote-service",
+   scope_ref:"service-1",desired_active:true,confirmation_class:"CONFIRM CUTOFF",
+   no_change:false,expected_revision:12,valid_until:"2032-01-01T00:00:00Z"};
+ const ack={status:"APPLIED",revision:13,operation:"emergency-cutoff.apply",
+   plane:"remote",scope_kind:"remote-service",scope_ref:"service-1",
+   active:true,active_sessions_terminated:false};
+ assert.deepEqual(menu.requireObservedEmergencyCutoffApplyForPlan(ack,preview,"remote","apply"),
+   {revision:13,active_sessions_terminated:false});
+ for(const [plane,kind,ref] of [["remote","plane",""],
+   ["internet","managed-host","host-1"],["ai","ai-identity","bot-1"]]){
+   const resource=kind==="plane"?plane:kind+":"+ref;
+   const p={...preview,resource_ref:resource,scope_kind:kind,scope_ref:ref};
+   const a={...ack,plane,scope_kind:kind,scope_ref:ref};
+   assert.deepEqual(menu.requireObservedEmergencyCutoffApplyForPlan(a,p,plane,"apply"),
+     {revision:13,active_sessions_terminated:false});
+ }
+ const clearPreview={...preview,operation:"emergency-cutoff.clear",desired_active:false};
+ const clearReceipt={...ack,operation:"emergency-cutoff.clear",active:false};
+ assert.deepEqual(menu.requireObservedEmergencyCutoffApplyForPlan(clearReceipt,
+   clearPreview,"remote","clear"),{revision:13,active_sessions_terminated:false});
+ for(const bad of [null,{},[],{...ack,status:"NO_CHANGE"},
+   {...ack,revision:12},{...ack,revision:"13"},{...ack,plane:"ai"},
+   {...ack,scope_ref:"service-2"},{...ack,scope_kind:"plane"},
+   {...ack,active:false},{...ack,active_sessions_terminated:true},
+   {...ack,operation:"emergency-cutoff.clear"}])
+   assert.throws(()=>menu.requireObservedEmergencyCutoffApplyForPlan(bad,preview,"remote","apply"),
+     /UNKNOWN|Core/,JSON.stringify(bad));
+ for(const bad of [{...preview,no_change:true},{...preview,expected_revision:"12"},
+   {...preview,confirmation_class:"APPLY"},{...preview,change_plan_id:""},
+   {...preview,operation_class:"CHANGE"},{...preview,resource_ref:"remote-service:other"},
+   {...preview,scope_kind:"managed-host"},{...preview,valid_until:"invalid"}])
+   assert.throws(()=>menu.requireObservedEmergencyCutoffApplyForPlan(ack,bad,"remote","apply"),/UNKNOWN|Core/);
+ const src=readFileSync(join(root,"src","main.tsx"),"utf8");
+ assert.match(src,/requireObservedEmergencyCutoffApplyForPlan\(result,currentCutoffPreview,plane,cutoffOperation\)/);
+ assert.match(src,/setCutoffMessage\(\(cutoffOperation==="clear"\?"Cutoff cleared":"Cutoff applied"\)\+" at revision "\+confirmed\.revision/);
+ assert.match(src,/setCutoffPreview\(null\);setCutoffConfirm\(""\)/);
+ assert.match(src,/Inspect Core cutoff inventory and Change History before any retry/);
+});
+
+test("UX-8 Live Access never presents malformed Core counts or unauthorized session metadata",()=>{
+ const core={plane:"ai",resource:null,resource_type:null,fidelity:"EXACT_PER_CONNECTION",
+   active_count:2,limit:50,next_cursor:null,reason:"",
+   observations:[{observation_kind:"AI_JOB",observation_id:"job-a",
+     job_id:"job-a",status:"RUNNING",ai_identity:"bot-a",
+     started_at:"2026-10-11T01:00:00Z",private_token:"SECRET_LIVE_TOKEN"}]};
+ const safe=menu.requireObservedLiveAccessView(core,"ai","");
+ assert.equal(safe.fidelity,"EXACT_PER_CONNECTION");
+ assert.equal(safe.active_count,2);
+ assert.equal(safe.observations.length,1);
+ assert.equal(safe.partial,false);
+ assert.equal(menu.requireObservedLiveAccessView({...core,next_cursor:"cursor-1"},
+   "ai","").partial,true);
+ assert.doesNotMatch(JSON.stringify(safe),/SECRET_LIVE_TOKEN/);
+ const unknown=menu.requireObservedLiveAccessView({plane:"remote",resource:null,
+   resource_type:null,fidelity:"UNKNOWN",active_count:null,limit:50,
+   next_cursor:null,reason:"official FRP cannot prove active lifecycle",observations:[]},
+   "remote","");
+ assert.equal(unknown.fidelity,"UNKNOWN");
+ assert.equal(unknown.active_count,null);
+ assert.deepEqual(unknown.observations,[]);
+ for(const invalid of [null,[],{},
+   {...core,plane:"remote"},{...core,fidelity:"UNKNOWN"},
+   {...core,active_count:undefined},{...core,active_count:"2"},
+   {...core,active_count:0},{...core,limit:500},
+   {...core,observations:[null]},{...core,observations:{secret:"hidden"}},
+   {...core,observations:[{observation_kind:"AI_JOB",observation_id:"job-a\u202e"}]},
+   {...core,observations:[{observation_kind:"NETWORK_SESSION",observation_id:"job-a"}]},
+   {...core,next_cursor:{key:"cursor"}}
+ ])assert.throws(()=>menu.requireObservedLiveAccessView(invalid,"ai",""),
+    /UNKNOWN|Core/,JSON.stringify(invalid));
+ assert.throws(()=>menu.requireObservedLiveAccessView(core,"internet",""),/UNKNOWN|Core/);
+ assert.throws(()=>menu.requireObservedLiveAccessView({...core,resource:"old"},
+   "ai","current"),/UNKNOWN|Core/);
+ const src=readFileSync(join(root,"src","main.tsx"),"utf8");
+ assert.match(src,/const valid=requireObservedLiveAccessView\(result,plane,liveResource\.trim\(\)\)/);
+ assert.match(src,/setLiveEvidence\(\{key:requestKey,value:valid\}\)/);
+ assert.match(src,/matchingLive\.partial&&<p className="dr-uxb-catalog-page-notice"/);
+});
+
+test("UX-8 Connection Diagnosis only displays consistent same-flow Core layer evidence",()=>{
+ const core={plane:"remote",input:{source:"src",destination:"dst",service:"ssh",
+    permission:"",path:""},side_effect_free:true,network_probe_performed:false,
+   overall:"UNKNOWN",next_action:"Collect evidence",
+   policy_trace:{private_secret:"DO_NOT_EXPOSE"},
+   layers:[{layer:"policy",status:"HEALTHY",summary:"Core ALLOW",evidence:{private:"PRIVATE"}},
+     {layer:"runtime",status:"UNKNOWN",summary:"No runtime observation"}]};
+ const safe=menu.requireObservedDiagnosisView(core,"remote","src","dst","ssh");
+ assert.equal(safe.overall,"UNKNOWN");
+ assert.equal(safe.layers.length,2);
+ assert.deepEqual(safe.layers[0],{layer:"policy",status:"HEALTHY",summary:"Core ALLOW"});
+ assert.doesNotMatch(JSON.stringify(safe),/DO_NOT_EXPOSE|PRIVATE/);
+ for(const invalid of [null,{},[],
+   {...core,plane:"ai"},{...core,network_probe_performed:true},
+   {...core,side_effect_free:"true"},{...core,overall:"HEALTHY"},
+   {...core,layers:[]},{...core,layers:[null]},
+   {...core,layers:[...core.layers,core.layers[0]]},
+   {...core,layers:[{layer:"policy",status:["HEALTHY"],summary:"Core ALLOW"}]},
+   {...core,layers:[{layer:"policy",status:"HEALTHY",summary:{secret:"bad"}}]},
+   {...core,layers:[{layer:"policy",status:"HEALTHY",summary:"spoof\u202e"}]},
+   {...core,next_action:{private_key:"secret"}},
+   {...core,input:{...core.input,service:"other"}}
+ ])assert.throws(()=>menu.requireObservedDiagnosisView(invalid,"remote","src","dst","ssh"),
+   /UNKNOWN|Core/,JSON.stringify(invalid));
+ assert.throws(()=>menu.requireObservedDiagnosisView(core,"remote","src","dst","other"),/UNKNOWN|Core/);
+ const src=readFileSync(join(root,"src","main.tsx"),"utf8");
+ assert.match(src,/const valid=requireObservedDiagnosisView\(result,plane,source\.trim\(\),destination\.trim\(\),selector\.trim\(\)\)/);
+ assert.match(src,/setDiagnosisEvidence\(\{key:requestKey,value:valid\}\)/);
+});
+
+test("UX-8 Emergency Cutoff Preview must match selected Core scope and expire before Apply",()=>{
+ const now=Date.parse("2031-01-01T00:00:00Z");
+ const preview={change_plan_id:"cp_"+"a".repeat(32),operation_class:"INCIDENT_CHANGE",
+   operation:"emergency-cutoff.apply",resource_type:"emergency-cutoff",
+   resource_ref:"remote-service:service-1",expected_revision:12,
+   valid_until:"2032-01-01T00:00:00Z",confirmation_class:"CONFIRM CUTOFF",
+   scope_kind:"remote-service",scope_ref:"service-1",scope_display:"My Service",
+   currently_active:false,desired_active:true,active_sessions_terminated:false,
+   no_change:false,impact:{requires_confirmation:true,access_broadened:false,
+     access_narrowed:true,warning:"This will block new sessions",
+     private_context:{secret:"LEAKED_CONTEXT"}}};
+ const expected={...preview,impact:{requires_confirmation:true,
+   access_broadened:false,access_narrowed:true,
+   warning:"This will block new sessions"}};
+ assert.deepEqual(menu.observedEmergencyCutoffPreviewForIntent(
+   preview,"remote","remote-service","My Service","apply",now),expected);
+ assert.deepEqual(menu.observedEmergencyCutoffPreviewForIntent(
+   preview,"remote","remote-service","service-1","apply",now),expected);
+ assert.doesNotMatch(JSON.stringify(expected),/LEAKED_CONTEXT/);
+ for(const bad of [null,{},[],{...preview,operation:"emergency-cutoff.clear"},
+   {...preview,operation_class:"CHANGE"},{...preview,resource_ref:"remote-service:other"},
+   {...preview,scope_ref:"other"},{...preview,scope_kind:"plane"},
+   {...preview,scope_display:"other"},{...preview,desired_active:false},
+   {...preview,active_sessions_terminated:true},{...preview,no_change:true},
+   {...preview,valid_until:"invalid"},{...preview,expected_revision:"12"},
+   {...preview,impact:{...preview.impact,requires_confirmation:"true"}},
+   {...preview,impact:{...preview.impact,access_narrowed:"true"}},
+   {...preview,change_plan_id:"invalid"},{...preview,confirmation_class:"APPLY"}
+ ])assert.equal(menu.observedEmergencyCutoffPreviewForIntent(
+   bad,"remote","remote-service","My Service","apply",now),null,JSON.stringify(bad));
+ assert.equal(menu.observedEmergencyCutoffPreviewForIntent(
+   preview,"remote","remote-service","My Service","apply",
+   Date.parse(preview.valid_until)),null);
+ assert.equal(menu.observedEmergencyCutoffPreviewForIntent(
+   preview,"ai","ai-identity","My Service","apply",now),null);
+ const rootPath=readFileSync(join(root,"src","main.tsx"),"utf8");
+ assert.match(rootPath,/const verified=observedEmergencyCutoffPreviewForIntent\(result,plane,scopeKind,scopeRef,cutoffOperation\)/);
+ assert.match(rootPath,/setCutoffPreview\(\{key:requestKey,value:verified\}\)/);
+ assert.match(rootPath,/const currentCutoffActionable=observedEmergencyCutoffPreviewForIntent\(/);
+ assert.match(rootPath,/Cutoff Preview expired or unverified/);
+});
+
+test("UX-8 Active Emergency Cutoffs require exact Core plane, counts and bounded observations",()=>{
+ const item={id:"cut_"+ "a".repeat(20),plane:"remote",
+   scope_kind:"remote-service",scope_ref:"service-a",
+   reason:"emergency control",row_version:2,updated_at:"2030-06-01T12:00:00Z",
+   nested_secret:{value:"DO_NOT_EXPOSE"}};
+ const response={items:[item],count:1,returned:1,plane:"remote",active:true,
+   limit:200,truncated:false};
+ const got=menu.requireObservedCutoffInventory(response,"remote");
+ assert.deepEqual(got,{...response,items:[{
+   id:item.id,plane:item.plane,scope_kind:item.scope_kind,
+   scope_ref:item.scope_ref,reason:item.reason,row_version:2,updated_at:item.updated_at}]});
+ assert.doesNotMatch(JSON.stringify(got),/DO_NOT_EXPOSE/);
+ const empty={items:[],count:0,returned:0,plane:"ai",active:false,
+   limit:200,truncated:false};
+ assert.deepEqual(menu.requireObservedCutoffInventory(empty,"ai"),empty);
+ const partial={...response,items:[item],count:201,truncated:true};
+ assert.equal(menu.requireObservedCutoffInventory(partial,"remote").truncated,true);
+ for(const invalid of [null,{},[],{...response,plane:"ai"},
+   {...response,count:0},{...response,returned:0},{...response,returned:"1"},
+   {...response,limit:201},{...response,truncated:true},
+   {...response,active:false},{...response,count:-1},
+   {...response,items:[item,item]},
+   {...response,items:[{...item,plane:"internet"}]},
+   {...response,items:[{...item,scope_kind:"managed-host"}]},
+   {...response,items:[{...item,scope_ref:"other\u202ehost"}]},
+   {...response,items:[{...item,reason:"bad\u202esequence"}]},
+   {...response,items:[{...item,updated_at:"invalid"}]},
+   {...response,items:[{...item,row_version:"2"}]},
+   {...response,items:[{...item,id:{secret:"DO_NOT_EXPOSE"}}]}
+ ])assert.throws(()=>menu.requireObservedCutoffInventory(invalid,"remote"),
+    /UNKNOWN|Core/,JSON.stringify(invalid));
+ const src=readFileSync(join(root,"src","main.tsx"),"utf8");
+ assert.match(src,/const verified=requireObservedCutoffInventory\(result,plane\)/);
+ assert.match(src,/setCutoffEvidence\(\{key:plane,value:verified\}\)/);
+});
+
+test("UX-8 Policy expiry does not display impossible calendar timestamps as observed",()=>{
+ const valid=["2030-01-01T00:00:00Z","2028-02-29T23:59:59+09:00",
+   "2019-01-01T12:30:00-05:00"];
+ for(const date of valid)assert.equal(menu.policyExpiryLabel({expires_at:date}),date);
+ const invalid=["2030-02-30T00:00:00Z","2030-13-01T00:00:00Z",
+   "2030-01-01T25:00:00Z","2030-01-01T00:00:00+14:01",
+   "2030-01-01T00:00:00+15:00","2030-01-01",
+   "2030-01-01T00:00:00Z\u202e","not-a-time","12345"];
+ for(const date of invalid)assert.equal(menu.policyExpiryLabel({expires_at:date}),
+   "UNKNOWN",date);
+ assert.equal(menu.policyExpiryLabel({expires_at:null}),"Never");
+ assert.equal(menu.policyExpiryLabel({}),"UNKNOWN");
+ const src=readFileSync(join(root,"src","uxb-menu-evidence.ts"),"utf8");
+ assert.match(src,/if\(!isObservedAbsoluteTime\(row\.expires_at\)\)return "UNKNOWN"/);
+});
+
+test("UX-2 generic Guided Change applies only a current exact Core Change Plan and matching receipt",()=>{
+ const req={change_type:"service-object",payload:{operation:"set",name:"https",type:"tcp",port:443}};
+ const preview={change_plan_id:"cp_"+"a".repeat(24),operation_class:"CHANGE",
+   operation:"guided.service-object.set",resource_type:"service-object",
+   resource_ref:"https",change_type:"service-object",expected_revision:15,
+   confirmation_class:"APPLY",valid_until:"2035-01-01T00:00:00Z",no_change:false};
+ const now=Date.parse("2034-01-01T00:00:00Z");
+ assert.equal(menu.guidedChangePreviewMatchesIntent(preview,req,now),true);
+ const receipt={status:"APPLIED",change_type:"service-object",
+   resource_type:"service-object",resource_ref:"https",revision:16};
+ assert.deepEqual(menu.requireObservedGuidedChangeApplyReceipt(receipt,preview,req),
+   {revision:16});
+ for(const wrong of [null,{},[],{...preview,no_change:true},
+   {...preview,change_plan_id:"wrong"},{...preview,resource_ref:"ssh"},
+   {...preview,change_type:"network-object"},{...preview,operation:"guided.service-object.delete"},
+   {...preview,operation_class:"INCIDENT_CHANGE"},
+   {...preview,confirmation_class:"CONFIRM CUTOFF"},
+   {...preview,expected_revision:"15"},{...preview,valid_until:"bogus"},
+   {...preview,policy_regression:{ok:true,required_failed:1}},
+   {...preview,blast_radius:{limits:{truncated:true}}}
+ ])assert.equal(menu.guidedChangePreviewMatchesIntent(wrong,req,now),false,
+   JSON.stringify(wrong));
+ assert.equal(menu.guidedChangePreviewMatchesIntent(preview,req,
+   Date.parse(preview.valid_until)),false);
+ assert.equal(menu.guidedChangePreviewMatchesIntent(preview,
+   {...req,payload:{...req.payload,name:"other"}},now),false);
+ for(const bad of [null,{},[],{...receipt,status:"NO_CHANGE"},
+   {...receipt,revision:15},{...receipt,revision:"16"},
+   {...receipt,change_type:"network-object"},{...receipt,resource_ref:"ssh"},
+   {...receipt,resource_type:"network-object"}])
+  assert.throws(()=>menu.requireObservedGuidedChangeApplyReceipt(bad,preview,req),
+    /UNKNOWN|Core|unverified/,JSON.stringify(bad));
+});
+test("UX-2 generic Guided Change supports the existing Host and policy scopes, never a false Apply",()=>{
+ const at=Date.parse("2034-01-01T00:00:00Z");
+ const base={change_plan_id:"cp_"+"a".repeat(24),operation_class:"CHANGE",
+   expected_revision:13,confirmation_class:"APPLY",
+   valid_until:"2035-01-01T00:00:00Z",no_change:false};
+ const hostReq={change_type:"managed-host-metadata",
+   payload:{operation:"set",host:"host-a",description:"office"}};
+ assert.equal(menu.guidedChangePreviewMatchesIntent({...base,change_type:"managed-host-metadata",
+   resource_type:"managed-host-metadata",resource_ref:"host-a",
+   operation:"guided.managed-host-metadata.set"},hostReq,at),true);
+ const policyReq={change_type:"remote-access-policy",
+   payload:{operation:"set-enforcement",enabled:false}};
+ for(const ref of ["", "remote"])assert.equal(menu.guidedChangePreviewMatchesIntent(
+   {...base,change_type:"remote-access-policy",resource_type:"remote-access-policy",
+     resource_ref:ref,operation:"guided.remote-access-policy.set-enforcement"},
+   policyReq,at),true);
+ const src=readFileSync(join(root,"src","main.tsx"),"utf8");
+ const panel=src.split("function GuidedApplyPanel(")[1]?.split("function ManagedHostMetadataPanel(",1)[0]||"";
+ assert.match(panel,/guidedChangePreviewMatchesIntent\(result,req\)/);
+ assert.match(panel,/requireObservedGuidedChangeApplyReceipt\(result,reviewedPlan,reviewedRequest\)/);
+ assert.match(panel,/Apply outcome UNKNOWN/);
+ assert.match(panel,/setPreview\(null\);setConfirmation\(""\)/);
+ assert.match(panel,/disabled=\{busy\|\|confirmation!=="APPLY"/);
+});
+
+test("UI-06 adjacent Temporary Access Preview is scoped to exact rule, action and canonical expiry",()=>{
+ const now=Date.parse("2033-01-01T00:00:00Z");
+ const req={plane:"remote",rule:" ssh-prod ",operation:"set",
+   expires_at:"2034-01-01T09:00:00+09:00"};
+ const plan={change_plan_id:"cp_"+"a".repeat(24),operation_class:"CHANGE",
+   operation:"temporary-access.set",resource_type:"remote-access-rule",
+   resource_ref:"ssh-prod",expected_revision:18,confirmation_class:"APPLY",
+   valid_until:"2035-01-01T00:00:00Z",desired_expires_at:"2034-01-01T00:00:00Z",
+   current_expires_at:null,no_change:false,
+   policy_regression:{ok:true,required_failed:0},
+   blast_radius:{limits:{truncated:false},unknowns:[]}};
+ assert.equal(menu.temporaryAccessPreviewMatchesIntent(plan,req,now),true);
+ assert.equal(menu.temporaryAccessPreviewMatchesIntent({...plan,operation:"temporary-access.clear"},
+   {...req,operation:"clear",expires_at:""},now),false);
+ const cleared={...plan,operation:"temporary-access.clear",desired_expires_at:null};
+ assert.equal(menu.temporaryAccessPreviewMatchesIntent(cleared,
+   {...req,operation:"clear",expires_at:""},now),true);
+ for(const invalid of [null,{},[],{...plan,resource_ref:"other"},
+   {...plan,resource_type:"ai-access-rule"},
+   {...plan,operation:"temporary-access.clear"},
+   {...plan,desired_expires_at:"2034-01-02T00:00:00Z"},
+   {...plan,desired_expires_at:null},{...plan,no_change:true},
+   {...plan,change_plan_id:"invalid"},
+   {...plan,confirmation_class:"APPROVE"},
+   {...plan,expected_revision:"18"},
+   {...plan,valid_until:"expired"},
+   {...plan,policy_regression:{ok:false,required_failed:1}},
+   {...plan,blast_radius:{limits:{truncated:true}}}
+ ])assert.equal(menu.temporaryAccessPreviewMatchesIntent(invalid,req,now),false,JSON.stringify(invalid));
+ assert.equal(menu.temporaryAccessPreviewMatchesIntent(plan,req,
+   Date.parse(plan.valid_until)),false);
+ assert.equal(menu.temporaryAccessPreviewMatchesIntent(plan,{...req,rule:"other"},now),false);
+ const src=readFileSync(join(root,"src","main.tsx"),"utf8");
+ const panel=src.split("function TemporaryAccessPanel(){")[1]?.split("function PolicySafetyPanel(",1)[0]||"";
+ assert.match(panel,/const token=\+\+previewGeneration\.current/);
+ assert.match(panel,/temporaryAccessPreviewMatchesIntent\(result,request\)/);
+ assert.match(panel,/if\(token!==previewGeneration\.current\)return;/);
+ assert.match(panel,/resetChangePlan\(\);setExpiresAt\(e\.target\.value\)/);
+ assert.match(panel,/const actionable=temporaryAccessPreviewMatchesIntent\(preview,currentRequest\.current\)/);
+ assert.match(panel,/Apply outcome UNKNOWN/);
+});
+
+test("UI-03 Managed Host admission must verify exact Core Host, action, impact and Apply receipt",()=>{
+ const current=Date.parse("2034-01-01T00:00:00Z");
+ const base={change_plan_id:"cp_"+"a".repeat(24),operation_class:"CHANGE",
+   operation:"managed-host-admission.quarantine",admission_operation:"quarantine",
+   resource_type:"managed-host",resource_ref:"host-a",expected_revision:17,
+   confirmation_class:"QUARANTINE",no_change:false,
+   valid_until:"2035-01-01T00:00:00Z",
+   preview:{id:"host-a",before:"APPROVED",after:"QUARANTINED"},
+   impact:{kind:"managed-host-admission",before:"APPROVED",after:"QUARANTINED",
+     destructive:false,requires_confirmation:true,access_broadened:false,
+     access_narrowed:true,warning:"Quarantine prevents new access.",
+     kept:["Host identity"],internal:{secret:"DO_NOT_EXPOSE"}}};
+ const plan=menu.observedHostAdmissionPlanForAction(base,"host-a","quarantine",current);
+ assert.equal(plan?.change_plan_id,base.change_plan_id);
+ assert.equal(plan?.preview.id,"host-a");
+ assert.doesNotMatch(JSON.stringify(plan),/DO_NOT_EXPOSE/);
+ const receipt={status:"APPLIED",admission_operation:"quarantine",revision:18};
+ assert.deepEqual(menu.requireObservedHostAdmissionReceipt(receipt,plan,"quarantine"),{revision:18});
+ const approve={...base,operation:"managed-host-admission.approve",
+   admission_operation:"approve",confirmation_class:"APPROVE",
+   preview:{...base.preview,after:"APPROVED",before:"QUARANTINED"},
+   impact:{...base.impact,before:"QUARANTINED",after:"APPROVED",
+     access_broadened:true,access_narrowed:false}};
+ assert.equal(menu.observedHostAdmissionPlanForAction(approve,"host-a","approve",current)?.confirmation_class,"APPROVE");
+ for(const bad of [null,{},[],{...base,resource_ref:"host-b"},
+   {...base,operation:"managed-host-admission.approve"},
+   {...base,confirmation_class:"APPROVE"},
+   {...base,preview:{...base.preview,id:"host-b"}},
+   {...base,impact:{...base.impact,destructive:true}},
+   {...base,impact:{...base.impact,access_narrowed:false}},
+   {...base,impact:{...base.impact,warning:"bad\u202e"}},
+   {...base,no_change:true},{...base,valid_until:"invalid"},
+   {...base,expected_revision:"17"}])
+  assert.equal(menu.observedHostAdmissionPlanForAction(bad,"host-a","quarantine",current),null,JSON.stringify(bad));
+ assert.equal(menu.observedHostAdmissionPlanForAction(base,"host-b","quarantine",current),null);
+ for(const wrong of [null,{},[],{...receipt,status:"NO_CHANGE"},
+   {...receipt,admission_operation:"approve"},{...receipt,revision:17},
+   {...receipt,revision:"18"}])
+  assert.throws(()=>menu.requireObservedHostAdmissionReceipt(wrong,plan,"quarantine"),/UNKNOWN|Core/);
+ const main=readFileSync(join(root,"src","main.tsx"),"utf8");
+ const panel=main.split("function ManagedHostAdmissionPanel(")[1]?.split("function ManagedHostLifecyclePanel(",1)[0]||"";
+ assert.match(panel,/observedHostAdmissionPlanForAction\(result,requestHost,requestOperation\)/);
+ assert.match(panel,/requireObservedHostAdmissionReceipt\(result,reviewedPlan,operation\)/);
+ assert.match(panel,/Core Admission Apply outcome UNKNOWN/);
+ assert.match(panel,/previewGeneration\.current/);
+});
+
+test('R2.2 M2: initial Host/Service inventory observes Core family, 100-row bound and terminal cursor',()=>{
+  for(const [route,resource_type] of [['hosts','managed-host'],['services','remote-service']]){
+    const valid={resource_type,limit:100,items:[{id:'host-01'}],next_cursor:null};
+    assert.equal(menu.requireObservedBoundedCorePage(route,valid,'',100),valid);
+    const next={...valid,next_cursor:'next-Core-page'};
+    assert.equal(menu.requireObservedBoundedCorePage(route,next,'',100),next);
+    for(const broken of [
+      {items:[]}, {...valid,resource_type:'audit-event'},
+      {...valid,limit:50}, {...valid,limit:'100'},
+      {...valid,next_cursor:undefined},{...valid,next_cursor:''},
+      {...valid,next_cursor:'bad cursor'}, {...valid,next_cursor:42},
+      {...valid,items:Array.from({length:101},(_,i)=>({id:'h-'+i}))},
+      {...valid,items:[{id:'host-01'},{id:'host-01'}]},
+      {...valid,items:[{id:'bad\nidentifier'}]},
+      {...valid,items:[],next_cursor:'phantom'},
+    ])assert.throws(()=>menu.requireObservedBoundedCorePage(route,broken,'',100),/Core|UNKNOWN/);
+    assert.throws(()=>menu.requireObservedBoundedCorePage(route,next,'next-Core-page',100),/Core|UNKNOWN/);
+  }
+  const source=readFileSync(join(root,'src','main.tsx'),'utf8');
+  assert.match(source,/active==="hosts"\|\|active==="services".*requireObservedBoundedCorePage/s);
+  assert.match(source,/requireObservedInventoryContinuation\(route,await api\(path\),requestedCursor,100\)/);
+});
+
+test('R2.2 M2: Audit first-50 and keyset pages refuse mismatched/overlong/duplicated Core evidence',()=>{
+  const item={row_id:101,event_id:null,occurred_at:'2026-10-12T00:00:00Z'};
+  const valid={resource_type:'audit-event',limit:50,items:[item],next_cursor:null};
+  assert.equal(menu.requireObservedBoundedCorePage('audit',valid,'',50),valid);
+  const next={...valid,next_cursor:'opaque-Audit-2026'};
+  assert.equal(menu.requireObservedBoundedCorePage('audit',next,'',50),next);
+  for(const broken of [
+    {items:[]},{...valid,resource_type:'managed-host'},
+    {...valid,limit:100},{...valid,limit:'50'},
+    {...valid,next_cursor:undefined},{...valid,next_cursor:''},
+    {...valid,items:Array.from({length:51},(_,i)=>({...item,row_id:i+1}))},
+    {...valid,items:[item,item]},
+    {...valid,items:[{...item,row_id:'101'}]},
+    {...valid,items:[{...item,row_id:0}]},
+    {...valid,items:[{...item,event_id:123}]},
+    {...valid,items:[],next_cursor:'phantom'},
+    {...valid,next_cursor:'unsafe%20cursor'},
+  ])assert.throws(()=>menu.requireObservedBoundedCorePage('audit',broken,'',50),/Core|UNKNOWN/);
+  assert.throws(()=>menu.requireObservedBoundedCorePage('audit',next,'opaque-Audit-2026',50),/Core|UNKNOWN/);
+  const source=readFileSync(join(root,'src','main.tsx'),'utf8');
+  assert.ok(source.includes('requireObservedBoundedCorePage("audit",await api("/api/v1/audit?"'))
+});
+
+test('R2.2/M2 R6: Core Jobs first-50/keyset response is a verified, redacted management-job page',()=>{
+  const id='mjob_'+'a'.repeat(24);
+  const full={id,job_type:'doctor',status:'QUEUED',target_count:2,
+    resource_type:'managed-host',resource_ref:'host-a',
+    created_at:'2026-10-12T02:00:00Z',finished_at:null,
+    requested_by:'hidden.actor',last_error:'secret_NOT_FOR_WEB',
+    payload_json:{credential:'PRIVATE_JOB_KEY'},cancel_requested:0};
+  const payload={resource_type:'management-job',limit:50,items:[full],
+    next_cursor:null,unknown_secret:{bearer:'NO_EXPORT'}};
+  const observed=menu.requireObservedJobsPage(payload,'',50);
+  assert.deepEqual(observed,{
+    resource_type:'management-job',limit:50,next_cursor:null,items:[{
+      id,job_type:'doctor',status:'QUEUED',target_count:2,
+      resource_type:'managed-host',resource_ref:'host-a',
+      created_at:'2026-10-12T02:00:00Z',finished_at:null
+    }]
+  });
+  assert.doesNotMatch(JSON.stringify(observed),/hidden.actor|secret_NOT_FOR_WEB|PRIVATE_JOB_KEY|NO_EXPORT|payload_json/);
+  const unsafeRef=menu.requireObservedJobsPage({...payload,
+    items:[{...full,resource_ref:"https://bad.example/lookup?token=SECRET"}]},'',50);
+  assert.equal(unsafeRef.items[0].resource_ref,"UNKNOWN");
+  assert.doesNotMatch(JSON.stringify(unsafeRef),/SECRET|bad\.example/);
+
+  const cursor='eyJ2IjoxLCJyZXNvdXJjZSI6Im1hbmFnZW1lbnQtam9iIn0';
+  assert.equal(menu.requireObservedJobsPage({...payload,next_cursor:cursor},'',50).next_cursor,cursor);
+  assert.deepEqual(menu.requireObservedJobsPage({...payload,items:[]},'',50).items,[]);
+});
+test('R2.2/M2 R6: wrong Core Job family, limit, ID, status, count, continuation or duplication remains UNKNOWN',()=>{
+  const valid={resource_type:'management-job',limit:50,next_cursor:null,
+    items:[{id:'mjob_'+'b'.repeat(24),job_type:'doctor',status:'QUEUED',
+      target_count:1,resource_type:'managed-host',resource_ref:'host-a',
+      created_at:'2026-10-12T02:00:00Z',finished_at:null}]};
+  const item=valid.items[0];
+  const cursor='opaque-Core-job-cursor';
+  for(const invalid of [null,[],{}, {items:[]},
+    {...valid,resource_type:'audit-event'},{...valid,resource_type:undefined},
+    {...valid,limit:100},{...valid,limit:'50'},
+    {...valid,next_cursor:undefined},{...valid,next_cursor:''},
+    {...valid,next_cursor:123},{...valid,next_cursor:'wrong cursor'},
+    {...valid,items:[],next_cursor:'phantom'},
+    {...valid,items:Array.from({length:51},(_,i)=>({...item,id:'mjob_'+i.toString(16).padStart(24,'0')}))},
+    {...valid,items:[item,item]},
+    {...valid,items:[{...item,id:'another'}]},
+    {...valid,items:[{...item,job_type:'arbitrary'}]},
+    {...valid,items:[{...item,status:'COMPLETED'}]},
+    {...valid,items:[{...item,status:{leak:'private'}}]},
+    {...valid,items:[{...item,target_count:101}]},
+    {...valid,items:[{...item,target_count:-1}]},
+    {...valid,items:[{...item,created_at:'yesterday'}]},
+    {...valid,items:[{...item,created_at:'2026-02-30T00:00:00Z'}]},
+  ]){
+    assert.throws(()=>menu.requireObservedJobsPage(invalid,'',50),/Core|UNKNOWN/,JSON.stringify(invalid)?.slice(0,120));
+  }
+  assert.throws(()=>menu.requireObservedJobsPage({...valid,next_cursor:cursor},cursor,50),/Core|UNKNOWN/);
+  assert.throws(()=>menu.requireObservedJobsPage({...valid,items:[]},'invalid cursor',50),/Core|UNKNOWN/);
+  const main=readFileSync(join(root,'src','main.tsx'),'utf8');
+  assert.match(main,/requireObservedJobsPage\(await api\("\/api\/v1\/jobs\?limit=50"/);
+  assert.match(main,/jobsCursor,50\)/);
+});
+
+test('M2/R6 diagnostic Job start must match submitted type/selection and Core-generated immutable job receipt',()=>{
+  const request={job_type:'doctor',resource_type:'managed-host',resource:'host-a'};
+  const job={id:'mjob_'+'a'.repeat(24),job_type:'doctor',status:'QUEUED',
+    target_count:1,resource_type:'managed-host',resource_ref:'host-a',
+    cancel_requested:0,created_at:'2026-10-12T02:00:00Z',
+    targets:[{target_id:'host-a',status:'QUEUED'}]};
+  const core={job,selection:{resource_type:'managed-host',
+    resource_ref:'host-a',resource_display:'Host A',target_count:1}};
+  assert.equal(menu.requireObservedJobStartForRequest(core,request),core);
+  const all={...core,job:{...job,resource_ref:'all'},selection:{...core.selection,resource_ref:'all'}};
+  assert.equal(menu.requireObservedJobStartForRequest(all,{...request,resource:''}),all);
+  const group={...core,job:{...job,resource_type:'managed-host-group',resource_ref:'group-a'},
+    selection:{...core.selection,resource_type:'managed-host-group',resource_ref:'group-a'}};
+  assert.equal(menu.requireObservedJobStartForRequest(group,
+    {...request,resource_type:'managed-host-group',resource:'Operations'}),group);
+  for(const altered of [
+    {...core,job:{...job,id:'mjob_wrong'}},
+    {...core,job:{...job,resource_ref:'wrong'}},
+    {...core,job:{...job,resource_type:'remote-service'}},
+    {...core,job:{...job,cancel_requested:1}},
+    {...core,job:{...job,created_at:'not-core-time'}},
+    {...core,job:{...job,targets:[]}},
+    {...core,job:{...job,targets:[{target_id:'other-host',status:'QUEUED'}]}},
+    {...core,selection:{...core.selection,resource_type:'managed-host-group'}},
+    {...core,selection:{...core.selection,resource_ref:'different'}},
+    {...core,selection:{...core.selection,target_count:2}},
+  ])assert.throws(()=>menu.requireObservedJobStartForRequest(altered,request),/UNKNOWN|Core/);
+  for(const bad of [null,{},[],{job_type:'refresh',resource_type:'managed-host',resource:'host-a'},
+    {job_type:'doctor',resource_type:'remote-service',resource:'host-a'},
+    {job_type:'doctor',resource_type:'managed-host-group',resource:''}]){
+    assert.throws(()=>menu.requireObservedJobStartForRequest(core,bad),/UNKNOWN|Core/);
+  }
+});
+test('M2/R6 Job start has an immediate ref lock and exact Core intent verification before Web success',()=>{
+ const src=readFileSync(join(root,'src','main.tsx'),'utf8');
+ const panel=src.split('function JobOperations(',2)[1]?.split('function ObjectsWorkspace(',1)[0]||'';
+ assert.match(panel,/const jobStartInFlight=useRef\(false\)/);
+ assert.match(panel,/if\(jobStartInFlight\.current\)return;/);
+ assert.match(panel,/jobStartInFlight\.current=true;/);
+ assert.match(panel,/requireObservedJobStartForRequest\(await api\("\/api\/v1\/jobs\/diagnostic"/);
+ assert.match(panel,/\),body\);/);
+ assert.match(panel,/finally\{jobStartInFlight\.current=false;setJobStartBusy\(false\)\}/);
+ assert.match(panel,/Core Job start response could not be confirmed/);
+ assert.doesNotMatch(panel,/const result=requireObservedJobStart\(await api/);
 });

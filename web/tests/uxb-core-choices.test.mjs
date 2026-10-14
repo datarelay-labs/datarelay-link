@@ -81,8 +81,8 @@ test("Partial, invalid and failing Core search never invents an available resour
    choices.searchCoreSelectorCatalog(async path=>path.includes("service-object")
      ?{items:[{name:"ssh"}]}:Promise.reject(new Error("Core unavailable")),"remote","selector","ssh"),/Core unavailable/
  );
- const limited=await choices.searchCoreSelectorCatalog(async()=>({
-   items:[{name:"ssh-tcp22"}],next_cursor:"more"
+ const limited=await choices.searchCoreSelectorCatalog(async path=>({
+   items:[{name:path.includes("service-object")?"ssh-tcp22":"ssh-group"}],next_cursor:"more"
  }),"remote","selector","ssh");
  assert.equal(choices.coreSelectorOptions(limited,"remote","selector").truncated,true);
 });
@@ -118,4 +118,64 @@ test("Operator chooses a Core selector deliberately, never an implicit allow",()
   catalog:fixture,plane:"remote",field:"selector",value:"ssh-tcp22",disabled:true,onChoose:()=>{}
  }));
  assert.match(locked,/<select[^>]*disabled=""/);
+});
+
+test("Untrusted Core names never become a selectable spoofed policy suggestion",()=>{
+ for(const invalid of ["ssh\u202eallow","ssh\nallow","ssh\u2066allow","x".repeat(161)]){
+  const malformed={resources:{...fixture.resources,
+   "service-object":{items:[{name:invalid}]}}};
+  const options=choices.coreSelectorOptions(malformed,"remote","selector");
+  assert.deepEqual(options,{status:"unknown",names:[],truncated:false});
+  const html=renderToStaticMarkup(React.createElement(choices.CoreChoiceField,{
+   catalog:malformed,plane:"remote",field:"selector",value:"",onChoose:()=>{}
+  }));
+  assert.match(html,/Core inventory UNKNOWN/);
+  assert.doesNotMatch(html,/No configured options/);
+  assert.ok(!html.includes(invalid),"untrusted name exposed in select");
+ }
+});
+test("Invalid bounded Core name page is UNKNOWN, not confirmed empty; search refuses contradictory page",async()=>{
+ const malformed={resources:{...fixture.resources,
+   "ai-identity":{items:[{id:"bad",name:""}]}}};
+ assert.equal(choices.coreSelectorOptions(malformed,"ai","source").status,"unknown");
+ const tooMany=Array.from({length:51},(_,i)=>({name:"identity-"+i}));
+ assert.equal(choices.coreSelectorOptions({resources:{"ai-identity":{items:tooMany}}},"ai","source").status,"unknown");
+ for(const page of [
+  {items:tooMany,next_cursor:null},
+  {items:[{name:"safe"}],next_cursor:{opaque:"PRIVATE"}},
+  {items:[{name:"safe"}],resource_type:"network-object"}
+ ]){
+  await assert.rejects(
+   choices.searchCoreSelectorCatalog(async()=>page,"ai","source","safe"),/Core.*(invalid|malformed|bounded|resource)/i
+  );
+ }
+});
+
+test("UX-8 ambiguous same-name Core choices across resource types cannot be misrepresented as unique",()=>{
+ const sameAcrossTypes={resources:{...fixture.resources,
+  "network-object":{items:[{id:"net-a",name:"office"}]},
+  "network-group":{items:[{id:"group-b",name:"office"}]}}};
+ assert.deepEqual(choices.coreSelectorOptions(sameAcrossTypes,"remote","source"),
+   {status:"unknown",names:[],truncated:false});
+ const differentCase={resources:{...fixture.resources,
+  "network-object":{items:[{id:"net-a",name:"office"}]},
+  "network-group":{items:[{id:"group-b",name:"OFFICE"}]}}};
+ assert.equal(choices.coreSelectorOptions(differentCase,"internet","destination").status,"unknown");
+ const sameType={resources:{...fixture.resources,
+  "service-object":{items:[{id:"svc-a",name:"ssh"},{id:"svc-b",name:"ssh"}]}}};
+ assert.equal(choices.coreSelectorOptions(sameType,"remote","selector").status,"unknown");
+ const html=renderToStaticMarkup(React.createElement(choices.CoreChoiceField,{
+  catalog:sameAcrossTypes,plane:"remote",field:"source",value:"office",onChoose:()=>{}
+ }));
+ assert.match(html,/Core inventory UNKNOWN/);
+ assert.doesNotMatch(html,/<option value="office"/);
+});
+test("UX-8 Core name search rejects bidi/invisible controls and invalid plane before Core call",async()=>{
+ const calls=[];
+ const api=async path=>{calls.push(path);return {items:[]}};
+ for(const query of ["test\u202e", "ab\u2066cd", "ssh\nport", "rule\u0085filter", 123, null]){
+  await assert.rejects(choices.searchCoreSelectorCatalog(api,"remote","source",query),/query|name|invalid|text|character/i);
+ }
+ await assert.rejects(choices.searchCoreSelectorCatalog(api,"unknown-plane","source","office"),/resource|plane|invalid/i);
+ assert.equal(calls.length,0);
 });

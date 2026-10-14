@@ -5,6 +5,8 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 export PYTHONDONTWRITEBYTECODE=1
+# Public-safe exclusive UI roadmap integrity; no private packages required.
+python3 tests/test-ui-redesign-plan.py -q
 # Leaked interactive/debug roots divert role-specific txn markers via frp_txn_marker_path
 # precedence and produce false rollback-marker failures across the suite.
 unset FRP_UPDATE_ROOT FRP_DEPLOY_TEST_ROOT FRP_SERVER_TEST_ROOT \
@@ -32,9 +34,23 @@ python3 -m py_compile server/frp-port-allocator.py server/frp-access-plugin.py s
 python3 -m py_compile tools/frp-create-client tools/frp-enrollments tools/frp-enrollment-revoke tools/frp-enrollment-purge tools/frp-enroll-bulk tools/frp-clients tools/frp-client-info tools/frp-client-set tools/frp-release-client tools/frp-release-service tools/frp-revoke-client tools/frp-set-client-installer-url tools/frp-server-set tools/frp-backup tools/frp-restore
 python3 -m py_compile tests/test-allocator.py tests/test-chatgpt-owner-acceptance.py tests/test-enrollment-security.py tests/test-mgmt-identity.py tests/test-pki-https.py tests/test-bootstrap-ticket.py tests/test-frontend-proxy.py tests/test-single443-mgmt-origin.py tests/test-client-registry.py tests/test-access-control.py tests/test-egress-control.py tests/test-service-profiles.py tests/test-destructive-selector-toctou.py tests/test-egress-create-safe-default.py tests/test-policy-fingerprint.py tests/test-strict-cli-parsing.py tests/test-cli-backend-reverse-parity.py tests/test-enabled-egress-mutation-confirm.py tests/test-lifecycle-contract-matrix.py tests/test-allocator-tls-slow-handshake.py tests/test-http-relay-half-close-idle.py tests/test-http-connection-critical-headers.py tests/test-nonce-capacity-replay.py tests/test-restore-corrupt-current.py tests/test-egress-confirm-toctou.py tests/test-state-paths-backup-restore.py tests/test-enrollment-ttl-help.py tests/test-enrollment-pair-atomicity.py tests/test-enrollment-retention-policy.py tests/test-frpctl-completion-inventory.py tests/test-cli-flag-metadata.py tests/test-operator-workflow-regressions.py tests/test-ai-access-mcp-e2e.py tests/test-mcp-public-endpoint-e2e.py tests/test-mcp-public-tls-lifecycle.py tests/test-mcp-remote-connector-interop.py tests/test-oauth-manual-consent-browser.py tests/test-oauth-redirect-uri-validation.py tests/test-oauth-cimd-ssrf.py tests/test-oauth-pending-bounds.py tests/test-oauth-revoke-form.py tests/test-bounded-zero-touch.py tests/test-configuration-bundle.py tests/test-read-only-db-contention.py tests/mcp_sdk_interop_client.py tests/mcp_sdk_env.py tests/test-qualified-artifacts.py tests/test-v24-ai-policy-cli-parity.py tests/test-egress-concurrency-isolation.py tests/test-egress-parent-traverse.py
 
-python3 -m py_compile lib/drlink_management_catalog.py lib/drlink_management_service.py lib/drlink_management_change.py lib/drlink_management_drafts.py lib/drlink_management_guided.py lib/drlink_management_enrollment.py lib/drlink_management_remote_service.py lib/drlink_management_host_lifecycle.py lib/drlink_policy_safety.py lib/drlink_management_system.py lib/drlink_management_core.py lib/drlink_management_mcp_adapter.py lib/drlink_management_web_adapter.py lib/drlink_service_accounts.py lib/drlink_automation_api.py lib/drlink_automation_server.py lib/drlink_webhooks.py lib/drlink_webhook_delivery.py lib/drlink_web_auth.py lib/drlink_web_service.py server/drlink-web.py scripts/build-web-bundle.py tests/test-v30-web-auth.py tests/test-v30-web-mfa-policy.py tests/test-v30-web-saas-ux.py tests/test-v30-web-service.py tests/test-v30-web-bundle.py lib/drlink_v30_temporal.py lib/drlink_v30_cutoff.py lib/drlink_v30_audit.py lib/drlink_v30_live.py lib/drlink_v30_jobs.py lib/drlink_v30_capability.py lib/drlink_v30_readmodels.py tests/test-v30-management-foundation.py tests/test-v30-management-query-service.py tests/test-v30-management-change-plan.py tests/test-v30-emergency-cutoff.py tests/test-v30-management-jobs.py tests/test-v30-management-scalability.py tests/test-v30-management-adapters.py tests/test-v30-management-system.py tests/test-v30-managed-host-lifecycle.py tests/test-v30-policy-safety.py tests/test-v30-guided-changes.py tests/test-v30-management-mixed-load.py tests/test-v30-additive-management-schema.py tests/test-v30-audit-foundation.py tests/test-v30-audit-runtime-failclosed.py tests/test-v30-audit-worker.py tests/test-v30-audit-convergence.py tests/test-v30-ai-audit-convergence.py tests/test-v30-live-access.py tests/test-v30-audit-query.py tests/test-v30-temporary-access.py
+python3 -m py_compile lib/drlink_management_catalog.py lib/drlink_management_temporary_access_requests.py lib/drlink_management_service.py lib/drlink_management_change.py lib/drlink_management_drafts.py lib/drlink_management_guided.py lib/drlink_management_enrollment.py lib/drlink_management_remote_service.py lib/drlink_management_host_lifecycle.py lib/drlink_policy_safety.py lib/drlink_management_system.py lib/drlink_management_core.py lib/drlink_management_mcp_adapter.py lib/drlink_management_web_adapter.py lib/drlink_service_accounts.py lib/drlink_automation_api.py lib/drlink_automation_server.py lib/drlink_webhooks.py lib/drlink_webhook_delivery.py lib/drlink_web_auth.py lib/drlink_web_service.py server/drlink-web.py scripts/build-web-bundle.py tests/test-v30-web-auth.py tests/test-v30-web-mfa-policy.py tests/test-v30-web-saas-ux.py tests/test-v30-web-service.py tests/test-v30-web-bundle.py lib/drlink_v30_temporal.py lib/drlink_v30_cutoff.py lib/drlink_v30_audit.py lib/drlink_v30_live.py lib/drlink_v30_jobs.py lib/drlink_v30_capability.py lib/drlink_v30_readmodels.py tests/test-v30-management-foundation.py tests/test-v30-management-query-service.py tests/test-v30-management-change-plan.py tests/test-v30-emergency-cutoff.py tests/test-v30-management-jobs.py tests/test-v30-management-scalability.py tests/test-v30-management-adapters.py tests/test-v30-management-system.py tests/test-v30-managed-host-lifecycle.py tests/test-v30-policy-safety.py tests/test-v30-guided-changes.py tests/test-v30-management-mixed-load.py tests/test-v30-additive-management-schema.py tests/test-v30-audit-foundation.py tests/test-v30-audit-runtime-failclosed.py tests/test-v30-audit-worker.py tests/test-v30-audit-convergence.py tests/test-v30-ai-audit-convergence.py tests/test-v30-live-access.py tests/test-v30-audit-query.py tests/test-v30-temporary-access.py tests/test-v30-temporary-access-requests.py
+
+python3 -m py_compile tools/verify-link-foundation-rc41.py tests/test-link-foundation-rc41-verifier.py tools/stage-link-foundation-rc41.py tests/test-link-foundation-rc41-staging.py tools/build-private-link-foundation-rc41-web.py tests/test-link-foundation-rc41-private-web-bundle.py tools/activate-private-link-foundation-rc41.py tests/test-link-foundation-rc41-activation.py tests/test-link-foundation-rc41-private-registry.py
 
 echo "=== tests ==="
+# The private RC41 preflight uses only synthetic fixtures: no bundle, network,
+# publication credentials or privileged product setup is required in CI.
+python3 tests/test-link-foundation-rc41-verifier.py -q
+# Only synthetic staging fixtures; never require or publish private RC41 bytes.
+python3 tests/test-link-foundation-rc41-staging.py -q
+# Public CI tests only synthetic private-package packaging contracts.
+python3 tests/test-link-foundation-rc41-private-web-bundle.py -q
+# Exact SHA/provenance and atomic development selection: synthetic fixtures only.
+python3 tests/test-link-foundation-rc41-activation.py -q
+# Public workflow contract; never loads the actual secret or private package in native CI.
+python3 tests/test-link-foundation-rc41-private-registry.py -q
+python3 tests/test-link-foundation-rc41-default.py -q
 ./tests/test-server-migration.sh
 ./tests/test-registry-init.sh
 python3 tests/test-allocator.py
@@ -257,6 +273,7 @@ python3 tests/test-v24-managed-host-retirement.py
 python3 tests/test-v24-user-lifecycle-ux.py
 python3 tests/test-v24-ai-auth-convergence.py
 python3 tests/test-v24-ai-job-safety.py
+python3 tests/test-v24-ai-agent-http-status.py
 python3 tests/test-v24-managed-host-liveness.py
 python3 tests/test-v24-ai-jobs-json1-independence.py
 python3 tests/test-v24-authoritative-connectivity-convergence.py
@@ -279,6 +296,9 @@ python3 tests/test-v30-remote-service-management.py
 python3 tests/test-v30-emergency-cutoff.py
 python3 tests/test-v30-management-jobs.py
 python3 tests/test-v30-management-job-transport.py
+# Freeze the management surface contract on every native full-run invocation.
+# This suite is independent of the protected Client/Core fixture.
+python3 tests/test-v30-contract-freeze.py
 python3 tests/test-v30-rollout-waves.py
 python3 tests/test-v30-host-admission-runtime.py
 python3 tests/test-v30-internet-admission-runtime.py
@@ -315,10 +335,12 @@ bash tests/test-v30-web-package.sh
 python3 tests/test-v30-live-access.py
 python3 tests/test-v30-audit-query.py
 python3 tests/test-v30-temporary-access.py
+python3 tests/test-v30-temporary-access-requests.py
 python3 tests/test-v24-upgrade-policy-preservation.py
 python3 tests/test-v24-whitelist-last-rule-outage-safety.py
 python3 tests/test-v24-empty-state-cli.py
 python3 tests/test-human-ux-framework-unit.py
+python3 tests/test-v30-agent-payload-integrity.py
 ./tests/test-agent-runtime-payload.sh
 ./tests/test-orphan-suite-coverage.sh
 

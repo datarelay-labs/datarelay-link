@@ -82,6 +82,48 @@ class StagedRolloutSchedulingTests(unittest.TestCase):
         self.assertEqual(final["payload"]["rollout_state"], "WAVE")
         self.assertEqual({x["status"] for x in final["targets"]}, {SUCCEEDED})
 
+    def test_corrupt_persisted_rollout_bounds_never_admit_canary_claim(self):
+        import json
+
+        job = self._start()
+        original = dict(job["payload"])
+        unsafe = (
+            {"canary_targets": []},
+            {"canary_targets": False},
+            {"canary_targets": None},
+            {"canary_targets": ["z-canary", "z-canary"]},
+            {"wave_size": True},
+            {"wave_size": 1.5},
+            {"wave_size": "1"},
+            {"failure_threshold_percent": False},
+            {"failure_threshold_percent": "20"},
+            {"rollout_state": None},
+            {"rollout_state": "UNKNOWN"},
+        )
+        at = self.now.isoformat(timespec="seconds").replace("+00:00", "Z")
+        for patch in unsafe:
+            with self.subTest(patch=patch):
+                payload = {**original, **patch}
+                row = {
+                    "job_id": job["id"],
+                    "target_id": "z-canary",
+                    "payload_json": json.dumps(payload),
+                }
+                self.engine.conn.execute("SAVEPOINT invalid_rollout")
+                try:
+                    self.assertFalse(
+                        self.engine._rollout_claim_allowed_unlocked(
+                            row, now_text=at,
+                        )
+                    )
+                finally:
+                    self.engine.conn.execute("ROLLBACK TO invalid_rollout")
+                    self.engine.conn.execute("RELEASE invalid_rollout")
+        current = self.engine.get(job["id"])
+        self.assertTrue(all(
+            target["status"] == QUEUED for target in current["targets"]
+        ))
+
     def test_generic_rpc_worker_cannot_falsely_complete_unqualified_rollout(self):
         job = self._start()
         executed = []
@@ -264,6 +306,40 @@ class StagedRolloutSchedulingTests(unittest.TestCase):
             self.assertEqual(check.current_revision(), revision)
         finally:
             check.close()
+
+    def test_rollout_rejects_coerced_wave_inputs_before_preview_or_queue(self):
+        # Preview and eventual Job admission must use the same strict typed
+        # wave contract. A mapping is not an explicit canary selection.
+        args = {
+            "targets": ("a-first", "b-second", "z-canary"),
+            "requested_by": "ops-admin",
+            "artifact": self.artifact,
+        }
+        invalid = (
+            {"wave_size": True}, {"wave_size": 1.5},
+            {"wave_size": "1"}, {"failure_threshold_percent": False},
+            {"failure_threshold_percent": 20.5},
+            {"failure_threshold_percent": "20"},
+            {"canary_targets": {"z-canary": True}},
+        )
+        before = self.engine.conn.execute(
+            "SELECT COUNT(*) FROM management_jobs"
+        ).fetchone()[0]
+        for values in invalid:
+            with self.subTest(values=values):
+                parameters = {
+                    **args, "wave_size": 1,
+                    "failure_threshold_percent": 20, **values,
+                }
+                with self.assertRaises(ControlPlaneError):
+                    self.engine.preview_rollout(**parameters)
+                with self.assertRaises(ControlPlaneError):
+                    self.engine.enqueue_rollout(**parameters, now=self.now)
+                self.assertEqual(
+                    self.engine.conn.execute(
+                        "SELECT COUNT(*) FROM management_jobs"
+                    ).fetchone()[0], before,
+                )
 
     def test_generator_canaries_are_materialized_once(self):
         job = self.engine.enqueue_rollout(

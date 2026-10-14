@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Optional
 from urllib.parse import quote
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 APPLICATION_ID = 0x44524C4B  # 'DRLK'
 DEFAULT_DB_REL = "var/lib/drlink/drlink.db"
 BUSY_TIMEOUT_MS = 5000
@@ -1127,6 +1127,53 @@ CREATE INDEX IF NOT EXISTS idx_management_drafts_actor_status
 """
 
 
+TEMPORARY_ACCESS_REQUESTS_SQL = """
+CREATE TABLE IF NOT EXISTS temporary_access_requests (
+  id TEXT PRIMARY KEY,
+  server_id TEXT NOT NULL,
+  requester_actor_id TEXT NOT NULL,
+  requester_role TEXT NOT NULL,
+  plane TEXT NOT NULL CHECK(plane IN ('remote','internet','ai')),
+  resource_type TEXT NOT NULL,
+  resource_ref TEXT NOT NULL,
+  purpose TEXT NOT NULL,
+  requested_duration_seconds INTEGER NOT NULL
+    CHECK(requested_duration_seconds BETWEEN 300 AND 86400),
+  approved_duration_seconds INTEGER
+    CHECK(approved_duration_seconds IS NULL OR approved_duration_seconds BETWEEN 300 AND 86400),
+  requested_revision INTEGER NOT NULL CHECK(requested_revision >= 0),
+  status TEXT NOT NULL
+    CHECK(status IN ('PENDING','APPROVED','REJECTED','EXPIRED','REVOKED')),
+  created_at TEXT NOT NULL,
+  reviewed_at TEXT,
+  reviewer_actor_id TEXT,
+  decision_reason TEXT NOT NULL DEFAULT '',
+  approved_expires_at TEXT,
+  applied_revision INTEGER,
+  revoked_at TEXT,
+  revoked_by_actor_id TEXT,
+  revoked_revision INTEGER,
+  row_version INTEGER NOT NULL DEFAULT 1 CHECK(row_version >= 1)
+);
+
+CREATE INDEX IF NOT EXISTS idx_temp_access_requests_requester_time
+  ON temporary_access_requests(requester_actor_id, created_at DESC, id DESC);
+CREATE INDEX IF NOT EXISTS idx_temp_access_requests_status_time
+  ON temporary_access_requests(status, created_at DESC, id DESC);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_temp_access_requests_one_pending
+  ON temporary_access_requests(requester_actor_id, plane, resource_type, resource_ref)
+  WHERE status='PENDING';
+"""
+
+
+def ensure_temporary_access_request_schema(conn: sqlite3.Connection) -> None:
+    """Install UI06 state without implicitly committing an outer migration."""
+    for statement in TEMPORARY_ACCESS_REQUESTS_SQL.split(";"):
+        sql = statement.strip()
+        if sql:
+            conn.execute(sql)
+
+
 def ensure_v30_schema(conn: sqlite3.Connection) -> None:
     """Install additive 3.0 management primitives on the authoritative DB."""
     client_cols = {str(row[1]) for row in conn.execute("PRAGMA table_info(clients)")}
@@ -1498,6 +1545,7 @@ def initialize(conn: sqlite3.Connection) -> None:
         ensure_v2_schema(conn)
         ensure_v30_schema(conn)
         ensure_agent_lifecycle_schema(conn)
+        ensure_temporary_access_request_schema(conn)
         integrity_check(conn)
         return
 
@@ -1506,6 +1554,7 @@ def initialize(conn: sqlite3.Connection) -> None:
         ensure_v2_schema(conn)
         ensure_v30_schema(conn)
         ensure_agent_lifecycle_schema(conn)
+        ensure_temporary_access_request_schema(conn)
         now = utc_now_iso()
         conn.execute("BEGIN IMMEDIATE")
         try:
@@ -1513,6 +1562,7 @@ def initialize(conn: sqlite3.Connection) -> None:
                 (1, "initial_control_plane"),
                 (2, "v24_canonical_objects_policy"),
                 (3, "v30_management_foundation"),
+                (4, "ui06_two_person_temporary_access"),
             ):
                 conn.execute(
                     "INSERT INTO schema_migrations(version, name, applied_at) VALUES (?, ?, ?)",
@@ -1552,12 +1602,14 @@ def initialize(conn: sqlite3.Connection) -> None:
         ensure_v2_schema(conn)
         ensure_v30_schema(conn)
         ensure_agent_lifecycle_schema(conn)
+        ensure_temporary_access_request_schema(conn)
         now = utc_now_iso()
         conn.execute("BEGIN IMMEDIATE")
         try:
             for version, name in (
                 (2, "v24_canonical_objects_policy"),
                 (3, "v30_management_foundation"),
+                (4, "ui06_two_person_temporary_access"),
             ):
                 conn.execute(
                     "INSERT INTO schema_migrations(version, name, applied_at) VALUES (?, ?, ?)",
@@ -1583,12 +1635,47 @@ def initialize(conn: sqlite3.Connection) -> None:
         ensure_v30_schema(conn)
         ensure_agent_lifecycle_schema(conn)
         ensure_ai_auth_schema(conn)
+        ensure_temporary_access_request_schema(conn)
         now = utc_now_iso()
         conn.execute("BEGIN IMMEDIATE")
         try:
             conn.execute(
                 "INSERT INTO schema_migrations(version, name, applied_at) VALUES (?, ?, ?)",
                 (3, "v30_management_foundation", now),
+            )
+            conn.execute(
+                "INSERT INTO schema_migrations(version, name, applied_at) VALUES (?, ?, ?)",
+                (4, "ui06_two_person_temporary_access", now),
+            )
+            conn.execute(
+                "INSERT OR REPLACE INTO system_meta(key, value) VALUES (?, ?)",
+                ("schema_version", str(SCHEMA_VERSION)),
+            )
+            integrity_check(conn)
+            conn.execute("COMMIT")
+        except Exception:
+            try:
+                conn.execute("ROLLBACK")
+            except sqlite3.Error:
+                pass
+            raise
+        return
+
+    if found == 3:
+        # UI06 is an additive, owner-approved authorization workflow. Keep
+        # the migration transaction bounded so a failed table/index change
+        # cannot leave schema version 4 partially applied.
+        ensure_v2_schema(conn)
+        ensure_v30_schema(conn)
+        ensure_agent_lifecycle_schema(conn)
+        ensure_ai_auth_schema(conn)
+        now = utc_now_iso()
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            ensure_temporary_access_request_schema(conn)
+            conn.execute(
+                "INSERT INTO schema_migrations(version, name, applied_at) VALUES (?, ?, ?)",
+                (4, "ui06_two_person_temporary_access", now),
             )
             conn.execute(
                 "INSERT OR REPLACE INTO system_meta(key, value) VALUES (?, ?)",

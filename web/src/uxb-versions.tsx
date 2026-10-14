@@ -1,10 +1,21 @@
 import React,{useState} from "react";
+import {isObservedAbsoluteTime} from "./uxb-integrations-state";
 
 /** A version mismatch is not proof of stale binaries, an active Agent or a
  * successful update. Unknown Server version makes *all* comparisons unknown. */
 export type VersionState="SAME"|"DIFFERENT"|"UNKNOWN";
+const UNSAFE_TEXT=/[\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/;
+const validCoreText=(value:unknown):value is string=>
+  typeof value==="string"&&value.length<=160&&!UNSAFE_TEXT.test(value);
+/** Core inventory metadata is untrusted UI input: only known, bounded strings
+ * may become React children or searchable display fields. */
+function observedDisplay(value:unknown,missing="UNKNOWN"):string{
+  if(value===null||value===undefined||value==="")return missing;
+  if(!validCoreText(value)||!value.trim())return "UNKNOWN";
+  return value.trim();
+}
 export function observedVersionState(server:unknown,agent:unknown):VersionState{
-  const good=(x:unknown)=>typeof x==="string"&&!!x.trim()&&x.trim().toLowerCase()!=="unknown";
+  const good=(x:unknown)=>validCoreText(x)&&!!x.trim()&&x.trim().toLowerCase()!=="unknown";
   if(!good(server)||!good(agent))return "UNKNOWN";
   return (server as string).trim()===(agent as string).trim()?"SAME":"DIFFERENT";
 }
@@ -12,20 +23,43 @@ export function validatedVersionInventory(payload:unknown){
   if(!payload||typeof payload!=="object"||Array.isArray(payload))
     throw new Error("Core Agent version inventory is unavailable. State is UNKNOWN.");
   const data=payload as Record<string,unknown>;
-  if(typeof data.server_version!=="string"||!Array.isArray(data.hosts)
-    ||!Number.isSafeInteger(data.limit)||Number(data.limit)<1
+  if(!validCoreText(data.server_version)||!Array.isArray(data.hosts)
+    // Canonical Core version_drift() LIMIT 200; larger reported bounds hide truncation.
+    ||!Number.isSafeInteger(data.limit)||Number(data.limit)<1||Number(data.limit)>200
     ||data.hosts.length>Number(data.limit)
     ||!Number.isSafeInteger(data.drift_count)||Number(data.drift_count)<0
     ||!Number.isSafeInteger(data.unknown_count)||Number(data.unknown_count)<0
     ||data.hosts.some((x:any)=>!x||typeof x!=="object"||Array.isArray(x)
-      ||typeof x.id!=="string"||!x.id||typeof x.version!=="string"))
+      ||!validCoreText(x.id)||!x.id.trim()||!validCoreText(x.version)))
     throw new Error("Core Agent version inventory has missing or malformed evidence. State is UNKNOWN.");
+  // The Core read model derives both counts from these same bounded rows.
+  // Contradictory counts, duplicated identities or a drift count without a
+  // known Server cannot support a healthy/empty version comparison.
+  const ids=(data.hosts as any[]).map(host=>host.id as string);
+  if(new Set(ids).size!==ids.length
+    ||Number(data.drift_count)+Number(data.unknown_count)>ids.length
+    ||(observedVersionState(data.server_version,data.server_version)==="UNKNOWN" &&
+      Number(data.drift_count)!==0))
+    throw new Error("Core Agent version summary contradicts observed rows. State is UNKNOWN.");
   const hosts=(data.hosts as any[]).map(host=>({
-    ...host,comparison:observedVersionState(data.server_version,host.version),
+    id:host.id,version:host.version,
+    name:observedDisplay(host.name,host.id),
+    platform:observedDisplay(host.platform),
+    lifecycle:observedDisplay(host.lifecycle),
+    heartbeat:host.heartbeat===null||host.heartbeat===undefined||host.heartbeat===""
+      ?"Not observed":isObservedAbsoluteTime(host.heartbeat)?host.heartbeat:"UNKNOWN",
+    comparison:observedVersionState(data.server_version,host.version),
   }));
+  const hasKnownServer=observedVersionState(data.server_version,data.server_version)!=="UNKNOWN";
+  // Core derives both aggregates from this same limited Host snapshot.
+  // With an observed Server version, a missing/underreported drift or unknown
+  // count is as misleading as one exceeding the page bound.
+  if(hasKnownServer&&(hosts.filter(host=>host.comparison==="DIFFERENT").length!==data.drift_count
+    ||hosts.filter(host=>host.comparison==="UNKNOWN").length!==data.unknown_count))
+    throw new Error("Core Agent version summary contradicts observed rows. State is UNKNOWN.");
   return {
     serverVersion:data.server_version as string,hosts,limit:data.limit as number,
-    hasKnownServer:observedVersionState(data.server_version,data.server_version)!=="UNKNOWN",
+    hasKnownServer,
     maybeTruncated:hosts.length>=Number(data.limit),
   };
 }
@@ -33,9 +67,22 @@ export function validatedVersionInventory(payload:unknown){
 export function AgentVersionDrift({data,onNavigate}:{
   data:unknown,onNavigate?:(id:string,group?:string)=>void
 }){
-  const inventory=validatedVersionInventory(data);
   const [filter,setFilter]=useState("all");
   const [query,setQuery]=useState("");
+  // A syntactically successful Core HTTP response can still contradict its
+  // bounded Host inventory. Render UNKNOWN rather than crash the Web shell.
+  // Hooks stay unconditional when a later refresh changes validity.
+  let inventory:ReturnType<typeof validatedVersionInventory>|null=null;
+  try{inventory=validatedVersionInventory(data)}catch{ /* no untrusted Core error to UI */ }
+  if(!inventory)return <section className="dr-resource-workspace"
+      aria-label="Agent version drift">
+    <header className="dr-page-intro"><div>
+      <p className="dr-eyebrow">Activity &amp; Health · Advanced</p>
+      <h2>Agent version drift</h2></div></header>
+    <p className="warning-box" role="alert">UNKNOWN · Core Agent version inventory could not be validated. No Agent count, version comparison, fleet health or successful upgrade was observed.</p>
+    <button className="secondary" type="button"
+      onClick={()=>onNavigate?.("hosts","connections")}>View Servers &amp; Agents →</button>
+  </section>;
   const same=inventory.hosts.filter(row=>row.comparison==="SAME").length;
   const different=inventory.hosts.filter(row=>row.comparison==="DIFFERENT").length;
   const unknown=inventory.hosts.filter(row=>row.comparison==="UNKNOWN").length;

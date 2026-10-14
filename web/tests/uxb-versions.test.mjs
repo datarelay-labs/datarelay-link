@@ -65,6 +65,119 @@ test("Malformed version inventory cannot masquerade as healthy empty",()=>{
  for(const bad of [null,[],{}, {hosts:[],server_version:"3.0.0",limit:200},
    {...page("3.0.0",[]),hosts:[null]},page("3.0.0",[a("one","3.0.0")],0),
    {...page("3.0.0",[a("one","3.0.0")]),drift_count:-1},
+   page("3.0.0",[],201),
+   page("3.0.0",[],Number.MAX_SAFE_INTEGER),
    {...page("3.0.0",[a("one","3.0.0")]),hosts:[a("", "3.0.0")]}
  ])assert.throws(()=>validatedVersionInventory(bad),/Core|UNKNOWN/);
+});
+
+test("Malformed optional Core Agent labels cannot crash or leak into version-drift UI",()=>{
+ const data=page("3.0.0",[a("host-1","3.0.0",{
+   name:{secret:"SENSITIVE-NAME"},platform:{secret:"SENSITIVE-PLATFORM"},
+   lifecycle:["SENSITIVE-STATUS"],heartbeat:{private_key:"SENSITIVE-HEARTBEAT"}
+ })]);
+ const html=render(data);
+ assert.match(html,/host-1/);
+ assert.match(html,/UNKNOWN/);
+ assert.doesNotMatch(html,/SENSITIVE/);
+});
+test("Unsafe Unicode and unbounded optional version-inventory labels are UNKNOWN",()=>{
+ const data=page("3.0.0",[a("host-2","3.0.0",{
+   name:"label\u202eoverride",platform:"A".repeat(500),
+   lifecycle:"bad\nstatus",heartbeat:null
+ })]);
+ const html=render(data);
+ assert.doesNotMatch(html,/\u202e|bad\nstatus/);
+ assert.doesNotMatch(html,/A{100}/);
+ assert.match(html,/UNKNOWN/);
+});
+
+test("Core version summary cannot contradict the bounded observed Host rows",()=>{
+ const valid=page("3.0.0",[
+  a("host-a","3.0.0"),a("host-b","2.4.0",{drift:true}),
+  a("host-c","unknown",{unknown:true})
+ ]);
+ assert.equal(validatedVersionInventory(valid).hosts.length,3);
+ for(const broken of [
+  {...valid,drift_count:4},
+  {...valid,unknown_count:4},
+  {...valid,drift_count:2,unknown_count:2},
+  {...page("3.0.0",[]),drift_count:1},
+  {...page("3.0.0",[]),unknown_count:1},
+  {...page("unknown",[a("host-a","3.0.0")]),drift_count:1},
+  page("3.0.0",[a("same","3.0.0"),a("same","2.4.0")])
+ ])assert.throws(()=>validatedVersionInventory(broken),/Core|UNKNOWN/);
+});
+
+test("Malformed Core version snapshots render a nonfatal UNKNOWN workspace instead of crashing the shell",()=>{
+ const known=page("3.0.0",[a("host-1","3.0.0")]);
+ for(const bad of [
+  null,
+  {server_version:"3.0.0",hosts:[],limit:200},
+  {...known,drift_count:3},
+  page("3.0.0",[a("dup","3.0.0"),a("dup","2.4.0")]),
+  {...known,hosts:[{id:"host-1",version:{credential:"SECRET_KEY"}}]},
+ ]){
+  const html=render(bad);
+  assert.match(html,/Agent version drift/);
+  assert.match(html,/UNKNOWN/);
+  assert.match(html,/Core Agent version inventory could not be validated/);
+  assert.match(html,/View Servers &amp; Agents/);
+  assert.doesNotMatch(html,/No managed Agents|0 observed Agent records|SECRET_KEY/);
+ }
+ // Explicitly malformed data must continue failing as an authoritative
+ // projection: only the read-only component catches it for display.
+ assert.throws(()=>validatedVersionInventory(null),/UNKNOWN/);
+});
+
+test("Direct version comparison never treats bidi/control or unbounded labels as evidence",()=>{
+ for(const invalid of [
+   ["3.0.0\u202e","3.0.0"],
+   ["3.0.0","3.0.0\n"],
+   ["3.0.0","3.0.0\u2066"],
+   ["3.0.0".repeat(34),"3.0.0".repeat(34)],
+ ]){
+   assert.equal(observedVersionState(...invalid),"UNKNOWN",invalid.join(" vs "));
+ }
+ assert.equal(observedVersionState("3.0.0","3.0.0"),"SAME");
+ assert.equal(observedVersionState("3.0.0","2.4.0"),"DIFFERENT");
+});
+
+test("Known Server summary counts must exactly match Core's observed bounded Agent rows",()=>{
+ const valid=page("3.0.0",[
+  a("matching","3.0.0"),a("different","2.4.0",{drift:true}),
+  a("unreported","unknown",{unknown:true})
+ ]);
+ assert.equal(validatedVersionInventory(valid).hosts.length,3);
+ for(const broken of [
+  {...valid,drift_count:0},
+  {...valid,drift_count:2},
+  {...valid,unknown_count:0},
+  {...valid,unknown_count:2},
+  page("3.0.0",[a("unreported","unknown")]),
+  page("3.0.0",[a("outdated","2.4.0")])
+ ]){
+  assert.throws(()=>validatedVersionInventory(broken),/UNKNOWN|Core/);
+  const html=render(broken);
+  assert.match(html,/Core Agent version inventory could not be validated/);
+  assert.doesNotMatch(html,/Different versions<\/strong><p>0|No managed Agents/);
+ }
+});
+
+test("UX-4 Agent version rows never present a malformed heartbeat as an observed instant",()=>{
+ const known=page("3.0.0",[a("agent-a","3.0.0")]);
+ assert.equal(validatedVersionInventory(known).hosts[0].heartbeat,"2026-10-09T07:00:00Z");
+ for(const bad of [
+  "yesterday","2026-02-30T00:00:00Z",
+  "2026-10-11T03:10:11Z\u202e",42,{secret:"PRIVATE_HEARTBEAT"}
+ ]){
+  const payload=page("3.0.0",[a("agent-a","3.0.0",{heartbeat:bad})]);
+  assert.equal(validatedVersionInventory(payload).hosts[0].heartbeat,"UNKNOWN");
+  const html=render(payload);
+  assert.match(html,/UNKNOWN/);
+  assert.doesNotMatch(html,/yesterday|PRIVATE_HEARTBEAT|\u202e|\[object Object\]/);
+ }
+ assert.equal(validatedVersionInventory(page("3.0.0",[
+  a("agent-a","3.0.0",{heartbeat:null})
+ ])).hosts[0].heartbeat,"Not observed");
 });

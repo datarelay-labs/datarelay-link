@@ -1,0 +1,118 @@
+name: Foundation RC41 Authenticated Link Consumer
+
+on:
+  pull_request:
+    types: [opened, reopened, synchronize]
+
+permissions:
+  contents: read
+
+jobs:
+  rc41-consumer:
+    # A private package credential is NEVER exposed to forks or other branches.
+    if: >-
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.head.ref == 'feat/drl3-ux-saved-admission-pfci'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout exact PR source without persisting Git credentials
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - name: Validate public RC41 source pins before private download
+        run: |
+          set -euo pipefail
+          python3 tests/test-link-foundation-rc41-default.py -q
+          python3 tests/test-link-foundation-rc41-private-registry.py -q
+          git diff --check
+      - name: Verify registry archives and reproducible locked npm ci
+        shell: bash
+        env:
+          FOUNDATION_READ_TOKEN: ${{ secrets.FOUNDATION_READ_TOKEN }}
+          NPM_CONFIG_UPDATE_NOTIFIER: 'false'
+        run: |
+          set -euo pipefail
+          if [[ -z "${FOUNDATION_READ_TOKEN:-}" ]]; then
+            echo "FOUNDATION_RC41_CONSUMER=BLOCKED_MISSING_SECRET"
+            exit 2
+          fi
+          umask 077
+          scratch="$(mktemp -d)"
+          trap 'rm -rf "$scratch"' EXIT
+          mkdir "$scratch/packs" "$scratch/npm-cache"
+          printf '%s\n' \
+            '@datarelay-labs:registry=https://npm.pkg.github.com' \
+            '//npm.pkg.github.com/:_authToken=${FOUNDATION_READ_TOKEN}' \
+            > "$scratch/.npmrc"
+          export NPM_CONFIG_USERCONFIG="$scratch/.npmrc"
+          export NPM_CONFIG_CACHE="$scratch/npm-cache"
+          # Pin archive bytes independently; do not trust remote metadata alone.
+          declare -A expected=(
+            [auth-ui]=4f106957a23833469d990eda1e5f8252137365290cd1170a0b8a9093051557d5
+            [foundation]=febb1afabe218e57326cdb668bd1d193c15fec90bf166ad5012a4c7d077368e5
+            [foundation-cli]=a422f71f131ae290c38a47c0a92263c0041b0753239e6fb007263e60c5ef5049
+            [icons]=9be6ed7a7b6a4997a977ea4cfbefaf004552c337330fff5feb907ffddd0aaed1
+            [product-shell]=804588099b48379a36bd80b61e5c90dbfd23a2d53afa02865b99ab1f2308f49e
+            [system-admin-ui]=ac6ab650af6bb60fc17497be8858b298d87feb6a0573833e948a4c75867f4666
+            [system-contracts]=441cbee69f52f5eacb9246525de0ac1211b18cd32299e13e14e1c97a862de8ff
+            [testkit]=9764f6f90f3eb3814ddb7e21512aac11d069f706fd696682c2d381080cb7bcf0
+            [tokens]=8e97a56bfcfcd2107a394d40cf072f514e2457ebef105b34badc55b9bd8e8574
+            [ui]=b4232099d614c73480983416c5ecb5aa2a5f8390ad68cf044289f3edcf141940
+          )
+          if [[ ! -d web/.foundation/packs ||
+                -L web/.foundation || -L web/.foundation/packs ]]; then
+            echo "FOUNDATION_RC41_CONSUMER=BLOCKED_PACK_DESTINATION"
+            exit 2
+          fi
+          for name in "${!expected[@]}"; do
+            filename="datarelay-labs-$name-0.1.0-rc.41.tgz"
+            if ! npm pack "@datarelay-labs/$name@0.1.0-rc.41" \
+                --ignore-scripts --fetch-retries=0 \
+                --pack-destination "$scratch/packs" \
+                > "$scratch/pack-result" 2> "$scratch/pack-errors"; then
+              echo "FOUNDATION_RC41_CONSUMER=BLOCKED_PACKAGE_READ:$name"
+              exit 2
+            fi
+            archive="$scratch/packs/$filename"
+            if [[ ! -f "$archive" || -L "$archive" ||
+                  "$(sha256sum "$archive" | cut -d' ' -f1)" != "${expected[$name]}" ]]; then
+              echo "FOUNDATION_RC41_CONSUMER=BLOCKED_ARCHIVE_SHA:$name"
+              exit 2
+            fi
+            install -m 600 "$archive" "web/.foundation/packs/$filename"
+          done
+          echo "FOUNDATION_RC41_ARCHIVES=PASS_10_OF_10"
+          if ! ( cd web && npm ci --ignore-scripts --no-audit --no-fund \
+                  --fetch-retries=0 > "$scratch/npm-ci-out" 2> "$scratch/npm-ci-errors" ); then
+            echo "FOUNDATION_RC41_CONSUMER=FAIL_LOCKED_NPM_CI"
+            exit 1
+          fi
+          # npm ci must never silently replace the committed package-lock.
+          if ! git diff --exit-code -- web/package-lock.json >/dev/null; then
+            echo "FOUNDATION_RC41_CONSUMER=FAIL_LOCK_MUTATION"
+            exit 1
+          fi
+          echo "FOUNDATION_RC41_NPM_CI=PASS"
+      - name: Run Foundation RC41 actual Web and offline-bundle regressions
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd web
+          npm run build
+          npm run test:administration
+          npm run test:journey
+          npm run test:p0
+          cd ..
+          python3 tests/test-v30-web-bundle.py -q
+          python3 tests/test-link-foundation-rc41-verifier.py -q
+          python3 tests/test-link-foundation-rc41-staging.py -q
+          python3 tests/test-link-foundation-rc41-private-web-bundle.py -q
+          python3 scripts/build-web-bundle.py
+          first="$(sha256sum dist/data-relay-link-web.tar.gz | cut -d' ' -f1)"
+          python3 scripts/build-web-bundle.py
+          second="$(sha256sum dist/data-relay-link-web.tar.gz | cut -d' ' -f1)"
+          test "$first" = "$second"
+          # Never upload or publicly publish Web bundles/private archives.
+          echo "FOUNDATION_RC41_CONSUMER=PASS"

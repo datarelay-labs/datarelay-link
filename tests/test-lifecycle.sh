@@ -4,6 +4,8 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 WORKDIR="$(mktemp -d)"
+# All test enrollment Core and audit state must stay under this disposable root.
+export FRP_AUDIT_LOG="$WORKDIR/audit.jsonl"
 ALLOC_PID=""
 # shellcheck source=lib/frp-test-procs.sh
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/frp-test-procs.sh"
@@ -100,6 +102,7 @@ pki = root / 'pki'
     'tls_server_cert': str(pki / 'server.crt'),
     'tls_server_key': str(pki / 'server.key'),
     'registry_file': str(root / 'registry.json'),
+    'control_plane_root': str(root),
     'enrollments_dir': str(root / 'enrollments'),
     'token_file': str(root / 'server_token'),
 }, indent=2) + '\n')
@@ -128,7 +131,32 @@ export FRP_SERVICES_JSON='[{"id":"ssh","name":"SSH","protocol":"tcp","local_ip":
 export FRP_CLIENT_SOURCED=1
 # shellcheck source=../install-client.sh
 . "$ROOT/install-client.sh"
-frp_client_main >"$WORKDIR/install.out"
+# Preserve the original errexit behavior of the sourced installer. A
+# conditional `if ! frp_client_main` would disable errexit inside its body.
+lifecycle_core_diagnostic() {
+  python3 - "$WORKDIR/alloc.log" <<'PY'
+from pathlib import Path
+import re, sys
+log = Path(sys.argv[1])
+if log.is_file():
+    for line in log.read_text(errors="replace").splitlines():
+        if line.startswith("allocator control-plane open failed:") or line.startswith(
+            "allocator control-plane sync failed:"
+        ):
+            safe = re.sub(r"enroll-secret-[A-Za-z0-9_-]+", "[REDACTED]", line)
+            print("LIFECYCLE_CORE_CAUSE=" + safe[:300], file=sys.stderr)
+PY
+}
+trap lifecycle_core_diagnostic ERR
+frp_client_main >"$WORKDIR/install.out" 2>"$WORKDIR/install.err"
+trap - ERR
+# A successful initial enrollment must have committed to the disposable Core DB.
+python3 - "$ALLOC_ROOT" <<'PY' || fail "Lifecycle fixture Core DB escaped disposable root"
+from pathlib import Path
+import sys
+root = Path(sys.argv[1])
+assert len(list(root.rglob("drlink.db"))) == 1, "fixture-local Core DB missing"
+PY
 
 STATE="$TREE/etc/frp/client-state.json"
 HOOK="$WORKDIR/hook.log"

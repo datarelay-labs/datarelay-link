@@ -9,6 +9,7 @@ import os
 import platform
 import time
 from pathlib import Path
+from datetime import datetime, timezone
 from typing import Optional
 
 VALID_INTENTS = frozenset({"running", "paused"})
@@ -28,13 +29,38 @@ def lifecycle_state_path(root: Optional[str] = None) -> Path:
     return Path("/var/lib/drlink/agent-lifecycle.json")
 
 def load_lifecycle_intent(root: Optional[str] = None) -> str:
+    """A missing first-run state may start; a corrupt existing state may not."""
     path = lifecycle_state_path(root)
+
+    def unique_keys(pairs):
+        data = {}
+        for key, value in pairs:
+            if key in data:
+                raise ValueError("duplicate Agent lifecycle state key")
+            data[key] = value
+        return data
+
+    def reject_nonfinite(_value):
+        raise ValueError("non-finite Agent lifecycle state value")
+
     try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
+        data = json.loads(
+            path.read_text(encoding="utf-8"),
+            object_pairs_hook=unique_keys,
+            parse_constant=reject_nonfinite,
+        )
+    except FileNotFoundError:
+        # A new Agent legitimately has no persistent lifecycle intent yet.
         return "running"
-    intent = str(data.get("intent") or "").strip().lower()
-    return intent if intent in VALID_INTENTS else "running"
+    except (OSError, UnicodeError, ValueError):
+        # Never turn a previously paused Agent into running on corruption.
+        return "paused"
+    if not isinstance(data, dict):
+        return "paused"
+    if "schema" in data and (type(data["schema"]) is not int or data["schema"] != 1):
+        return "paused"
+    intent = data.get("intent")
+    return intent if type(intent) is str and intent in VALID_INTENTS else "paused"
 
 
 def set_lifecycle_intent(intent: str, root: Optional[str] = None) -> Path:
@@ -76,6 +102,51 @@ def disconnect_once(root: Optional[str] = None) -> dict:
     return report_agent_lifecycle_on_server(root=root, state="disconnected")
 
 
+def _public_agent_diagnostic(value: object) -> str:
+    """Expose diagnostic presence, never the free-form Agent-local message.
+
+    Native failures may quote private URLs, credentials, network topology or
+    configuration. Keep detailed text only in the Agent-local doctor/diagnostic
+    surface; Core Job history is a wider trust and audit boundary.
+    """
+    return (
+        "Check Agent-local diagnostics for details."
+        if isinstance(value, str) and value.strip() else ""
+    )
+
+
+def _require_agent_remote_service_receipt(
+    result: object, *, operation: str, name: str,
+) -> dict:
+    """Bind an Agent's local mutation acknowledgement to the exact service."""
+    invalid = (
+        "Agent Remote Service operation receipt UNKNOWN; "
+        "inspect Agent and Core before retrying."
+    )
+    if not isinstance(result, dict) or result.get("operation") != operation:
+        raise ValueError(invalid)
+    entity = result.get("entity")
+    if (
+        not isinstance(entity, dict)
+        or entity.get("type") != "remote-service"
+        or entity.get("id") != name
+        or entity.get("name") != name
+    ):
+        raise ValueError(invalid)
+    # The Core Management Job completion contract admits only these native
+    # Agent states. Fail here instead of reporting a misleading signed
+    # SUCCESS from unverified local runtime evidence.
+    if operation == "set":
+        view = result.get("view")
+        if (
+            not isinstance(view, dict)
+            or type(view.get("status")) is not str
+            or view["status"] not in ("HEALTHY", "DEGRADED", "DISABLED")
+        ):
+            raise ValueError(invalid)
+    return result
+
+
 def _execute_management_job(claim: dict, root: Optional[str] = None) -> dict:
     kind = str(claim.get("job_type") or "").strip().lower()
     payload = claim.get("payload") or {}
@@ -103,7 +174,7 @@ def _execute_management_job(claim: dict, root: Optional[str] = None) -> dict:
                     {
                         "id": str(check.get("id") or "")[:128],
                         "status": status,
-                        "message": str(check.get("message") or "")[:256],
+                        "message": _public_agent_diagnostic(check.get("message")),
                     }
                 )
         return {
@@ -214,7 +285,7 @@ def _execute_management_job(claim: dict, root: Optional[str] = None) -> dict:
                     affected.append(
                         {
                             "name": str(item.get("name") or "")[:128],
-                            "reason": str(item.get("reason") or "")[:256],
+                            "reason": _public_agent_diagnostic(item.get("reason")),
                         }
                     )
             return {
@@ -223,7 +294,9 @@ def _execute_management_job(claim: dict, root: Optional[str] = None) -> dict:
                 "updated": int((result or {}).get("updated") or 0),
                 "projected": int((result or {}).get("projected") or 0),
                 "affected": affected,
-                "runtime_error": str((result or {}).get("runtime_error") or "")[:512],
+                "runtime_error": _public_agent_diagnostic(
+                    (result or {}).get("runtime_error")
+                ),
             }
         if kind == "remote-service-set":
             name = str(payload.get("name") or "").strip()
@@ -242,13 +315,28 @@ def _execute_management_job(claim: dict, root: Optional[str] = None) -> dict:
                 root=root,
                 server_reachable=True,
             )
-            view = result.get("view") if isinstance(result, dict) else None
+            receipt = _require_agent_remote_service_receipt(
+                result, operation="set", name=name,
+            )
+            view = receipt.get("view")
+            if (
+                not isinstance(view, dict)
+                or view.get("name") != name
+                or view.get("service") != service
+                or view.get("enabled") is not enabled
+                or not isinstance(view.get("status"), str)
+                or not view["status"]
+            ):
+                raise ValueError(
+                    "Agent Remote Service operation receipt UNKNOWN; "
+                    "inspect Agent and Core before retrying."
+                )
             return {
                 "operation": "remote-service-set",
                 "name": name,
-                "runtime_status": str((view or {}).get("status") or "UNKNOWN"),
-                "reason": str((view or {}).get("reason") or ""),
-                "endpoint": (view or {}).get("endpoint"),
+                "runtime_status": view["status"],
+                "reason": _public_agent_diagnostic(view.get("reason")),
+                "endpoint": view.get("endpoint"),
             }
         if kind == "remote-service-delete":
             name = str(payload.get("name") or "").strip()
@@ -260,56 +348,175 @@ def _execute_management_job(claim: dict, root: Optional[str] = None) -> dict:
                 root=root,
                 server_reachable=True,
             )
+            _require_agent_remote_service_receipt(
+                result, operation="delete", name=name,
+            )
             return {
                 "operation": "remote-service-delete",
                 "name": name,
-                "status": str((result or {}).get("status") or "DELETED"),
+                "status": "DELETED",
+                # The local configuration removal receipt is not evidence
+                # that a running transport endpoint was actually withdrawn.
+                "runtime_verified": False,
             }
         raise ValueError("Unsupported Agent Management Job type: %s" % kind)
     finally:
         plane.close()
 
 
+def _unexpired_core_claim_time(value: object, now: datetime) -> bool:
+    """Core emits UTC second-precision Z time for job lease/deadline.
+    Never execute Agent work with a stale, malformed or timezone-naive
+    source claim. Core remains the authority for deadline completion.
+    """
+    if not isinstance(value, str) or len(value) != 20 or value[-1] != "Z":
+        return False
+    try:
+        parsed = datetime.strptime(value, "%Y-%m-%dT%H:%M:%SZ").replace(
+            tzinfo=timezone.utc
+        )
+    except ValueError:
+        return False
+    return parsed > now
+
+
+def _require_core_management_completion_receipt(
+    reply: object, claim: dict, reported_status: str,
+) -> None:
+    """Check Core's signed Job target receipt, not merely HTTP 200.
+
+    Core can downgrade a late Agent completion to FAILED after the claim lease
+    or deadline expires. No new Agent mutation, retry, credential/log exposure
+    or second contradictory completion is justified by an ambiguous reply.
+    """
+    error = "Core Management Job completion receipt UNKNOWN; inspect Core before retrying."
+    if not isinstance(reply, dict) or reply.get("ok") is not True:
+        raise ValueError(error)
+    job = reply.get("job")
+    if not isinstance(job, dict):
+        raise ValueError(error)
+    if job.get("id") != claim.get("job_id") or (
+        job.get("job_type") != claim.get("job_type")
+    ):
+        raise ValueError(error)
+    targets = job.get("targets")
+    if not isinstance(targets, list) or not 1 <= len(targets) <= 100:
+        raise ValueError(error)
+    matching = [
+        item for item in targets
+        if isinstance(item, dict) and item.get("target_id") == claim.get("target_id")
+    ]
+    if len(matching) != 1 or matching[0].get("status") != reported_status:
+        raise ValueError(error)
+
+
 def process_management_jobs_once(root: Optional[str] = None, *, limit: int = 4) -> dict:
     from drlink_mgmt_sync import (
+        _agent_identity,
         claim_management_jobs_on_server,
         complete_management_job_on_server,
     )
 
-    response = claim_management_jobs_on_server(root=root, limit=limit)
-    jobs = response.get("jobs") if isinstance(response, dict) else None
-    if jobs is None:
-        jobs = []
-    if not isinstance(jobs, list):
-        raise ValueError("Management Job claim response is malformed")
+    # A claim changes authoritative Core leases. Reject invalid local limits
+    # before sending any signed request, rather than silently coercing 0,
+    # booleans, floats or numeric strings to an executable batch.
+    invalid = "Core Management Job claim response UNKNOWN; inspect Core state before retrying."
+    if type(limit) is not int or limit < 1:
+        raise ValueError(invalid)
+    count = min(limit, 16)
+    # The signed server must provide an explicit bounded claim array. A
+    # missing or malformed response is UNKNOWN, not a confirmed empty queue.
+    # Validate the WHOLE batch before executing even one mutating Agent job:
+    # duplicate entries must not run the same remote-service operation twice.
+    # A signed Server reply is also bound to the exact locally-enrolled
+    # machine. A wrong-host claim must not cause any Agent work, even if a
+    # Server route or replayed response unexpectedly includes that target.
+    identity = _agent_identity(root)
+    machine_id = identity.get("machine_id") if isinstance(identity, dict) else None
+    if (not isinstance(machine_id, str)
+        or not machine_id.strip() or len(machine_id) > 160
+        or machine_id != machine_id.strip()
+        or any(ord(ch) < 33 or ord(ch) > 126 for ch in machine_id)):
+        raise ValueError(invalid)
+    # Invalid local enrollment must never claim or lease Core work.
+    response = claim_management_jobs_on_server(root=root, limit=count)
+    if not isinstance(response, dict) or not isinstance(response.get("jobs"), list):
+        raise ValueError(invalid)
+    jobs = response["jobs"]
+    if len(jobs) > count:
+        raise ValueError(invalid)
+    known = frozenset({
+        "doctor", "refresh", "version-check", "support-bundle",
+        "remote-service-set", "remote-service-delete",
+    })
+    seen: set[tuple[str, str]] = set()
+    tokens: set[str] = set()
+    now = datetime.now(timezone.utc)
+    for claim in jobs:
+        if not isinstance(claim, dict):
+            raise ValueError(invalid)
+        job_id, target_id, claim_token, kind = (
+            claim.get("job_id"), claim.get("target_id"),
+            claim.get("claim_token"), claim.get("job_type"),
+        )
+        if (not isinstance(job_id, str) or not job_id.startswith("mjob_")
+            or len(job_id) != 29 or any(c not in "0123456789abcdef" for c in job_id[5:])
+            or not isinstance(target_id, str) or target_id != machine_id
+            or not isinstance(claim_token, str) or not claim_token
+            or len(claim_token) > 128
+            or any(ch not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-"
+                   for ch in claim_token)
+            or not isinstance(kind, str) or kind not in known
+            or not _unexpired_core_claim_time(claim.get("lease_expires_at"), now)
+            or not _unexpired_core_claim_time(claim.get("deadline_at"), now)
+            or (claim.get("payload") is not None
+                and not isinstance(claim.get("payload"), dict))
+            or (job_id, target_id) in seen or claim_token in tokens):
+            raise ValueError(invalid)
+        seen.add((job_id, target_id))
+        tokens.add(claim_token)
     processed = 0
     failed = 0
     for claim in jobs:
-        if not isinstance(claim, dict):
-            continue
-        job_id = str(claim.get("job_id") or "")
-        claim_token = str(claim.get("claim_token") or "")
-        if not job_id or not claim_token:
-            continue
+        # A prior Agent job in the same bounded batch may consume the next
+        # claim's entire lease. Validate again immediately before each Agent
+        # effect, not just once on receipt of the original signed batch.
+        current = datetime.now(timezone.utc)
+        if (not _unexpired_core_claim_time(claim["lease_expires_at"], current)
+            or not _unexpired_core_claim_time(claim["deadline_at"], current)):
+            raise ValueError(invalid)
+        job_id = claim["job_id"]
+        claim_token = claim["claim_token"]
         try:
             result = _execute_management_job(claim, root=root)
-            complete_management_job_on_server(
+        except Exception:
+            # Only an actual local Agent execution error may be reported as
+            # FAILED. The Core still validates this authenticated claim.
+            # Handler exception text can include credentials or customer data;
+            # never persist it in signed Core Job history or expose it via Web.
+            failed += 1
+            receipt = complete_management_job_on_server(
+                root=root,
+                job_id=job_id,
+                claim_token=claim_token,
+                status="FAILED",
+                result={},
+                error="AGENT_JOB_EXECUTION_FAILED",
+            )
+            _require_core_management_completion_receipt(receipt, claim, "FAILED")
+        else:
+            # An acknowledgement/transport error can occur AFTER the Core
+            # committed SUCCEEDED. Do NOT catch that error as Agent execution
+            # failure or send a conflicting FAILED completion on the same
+            # one-shot claim. Let worker retry/reconcile from Core authority.
+            receipt = complete_management_job_on_server(
                 root=root,
                 job_id=job_id,
                 claim_token=claim_token,
                 status="SUCCEEDED",
                 result=result,
             )
-        except Exception as exc:
-            failed += 1
-            complete_management_job_on_server(
-                root=root,
-                job_id=job_id,
-                claim_token=claim_token,
-                status="FAILED",
-                result={},
-                error=str(exc)[:1024],
-            )
+            _require_core_management_completion_receipt(receipt, claim, "SUCCEEDED")
         processed += 1
     return {"processed": processed, "failed": failed}
 
@@ -318,7 +525,20 @@ def reconcile_once(root: Optional[str] = None) -> dict:
     if load_lifecycle_intent(root) == "paused":
         return {"status": "PAUSED", "updated": 0}
     heartbeat = heartbeat_once(root)
-    force_sync = bool((heartbeat or {}).get("reconcile_required", False))
+    # The signed Server heartbeat must be a confirmed connected ACK before
+    # claiming any one-shot Management Job leases. Never coerce a string or
+    # integer into reconcile authority (bool("false") is True in Python).
+    if (
+        not isinstance(heartbeat, dict)
+        or heartbeat.get("ok") is not True
+        or heartbeat.get("state") != "connected"
+        or ("reconcile_required" in heartbeat
+            and type(heartbeat["reconcile_required"]) is not bool)
+    ):
+        raise ValueError(
+            "Agent heartbeat response UNKNOWN; no Management Jobs claimed."
+        )
+    force_sync = heartbeat.get("reconcile_required", False) is True
     jobs = process_management_jobs_once(root)
     from drlink_control_plane import ControlPlane
     from drlink_v24 import ensure_v2_schema, synchronize_agent_remote_services

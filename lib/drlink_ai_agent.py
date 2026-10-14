@@ -38,6 +38,29 @@ def _deadline_passed(deadline_at: Optional[str]) -> bool:
         deadline = deadline.replace(tzinfo=timezone.utc)
     return now >= deadline
 
+
+def _remaining_core_deadline_seconds(deadline_at: Optional[str]) -> int:
+    """Whole execution seconds still authorized by the Core Job deadline.
+
+    The Agent's command timeout must never exceed the remaining Core
+    authority. Less than one full second cannot safely start a command.
+    """
+    if not isinstance(deadline_at, str) or not deadline_at:
+        return 0
+    try:
+        value = (
+            deadline_at[:-1] + "+00:00"
+            if deadline_at.endswith("Z") else deadline_at
+        )
+        deadline = datetime.fromisoformat(value)
+        if deadline.tzinfo is None:
+            return 0
+        remaining = (deadline - datetime.now(timezone.utc)).total_seconds()
+    except (TypeError, ValueError, OverflowError):
+        return 0
+    return max(0, int(remaining))
+
+
 MAX_STDOUT_BYTES = 64 * 1024
 MAX_STDERR_BYTES = 16 * 1024
 MAX_FILE_BYTES = 1024 * 1024
@@ -229,11 +252,11 @@ def _agent_post(url: str, token: str, body: dict, timeout: float = 10) -> dict:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             return json.loads(resp.read().decode("utf-8") or "{}")
     except urllib.error.HTTPError as exc:
-        payload = exc.read().decode("utf-8", "replace")
-        try:
-            return json.loads(payload)
-        except Exception:
-            raise ControlPlaneError("agent RPC HTTP %s" % exc.code) from exc
+        # HTTP status, not caller-controlled JSON in an error body, decides
+        # whether Core accepted a claim or completion. A non-2xx response
+        # must never be mistaken for a successful Agent operation receipt.
+        # Do not reflect potentially sensitive server error content.
+        raise ControlPlaneError("agent RPC HTTP %s" % exc.code) from exc
 
 
 # Idle claim polls must not run at interactive rate. A busy poll stays short
@@ -270,9 +293,79 @@ class AgentLoop:
             import drlink_mgmt_sync as mgmt
 
             payload = mgmt.claim_ai_jobs_on_server(root=self.agent_root, limit=4)
-            return list(payload.get("jobs") or [])
-        payload = _agent_post(self.base_url + "/agent/v1/claim", self.token, {"limit": 4})
-        return list(payload.get("jobs") or [])
+        else:
+            payload = _agent_post(
+                self.base_url + "/agent/v1/claim", self.token, {"limit": 4}
+            )
+        # A signed reply can still be malformed or replayed. Validate the
+        # WHOLE bounded batch before run_once can execute any local operation.
+        invalid = "AI job claim response UNKNOWN; inspect Core before retrying."
+        if not isinstance(payload, dict) or not isinstance(payload.get("jobs"), list):
+            raise ValueError(invalid)
+        jobs = payload["jobs"]
+        if len(jobs) > 4:
+            raise ValueError(invalid)
+        ids: set[str] = set()
+        tokens: set[str] = set()
+        attempts: set[str] = set()
+        known_capabilities = frozenset({
+            "get_system_info", "list_processes", "read_file",
+            "write_file", "upload_file", "download_file", "exec",
+        })
+        safe_id_characters = frozenset(
+            "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-"
+        )
+        for job in jobs:
+            if not isinstance(job, dict):
+                raise ValueError(invalid)
+            job_id = job.get("id")
+            claim_token = job.get("claim_token")
+            attempt_id = job.get("attempt_id")
+            # Unknown, missing and timezone-naive deadlines must not be
+            # interpreted as unexpired permission to execute locally.
+            deadline_text = job.get("deadline_at")
+            if (
+                not isinstance(deadline_text, str)
+                or not deadline_text
+                or len(deadline_text) > 64
+                or deadline_text != deadline_text.strip()
+            ):
+                raise ValueError(invalid)
+            try:
+                canonical = (
+                    deadline_text[:-1] + "+00:00"
+                    if deadline_text.endswith("Z") else deadline_text
+                )
+                parsed_deadline = datetime.fromisoformat(canonical)
+            except (ValueError, OverflowError):
+                raise ValueError(invalid) from None
+            if parsed_deadline.tzinfo is None:
+                raise ValueError(invalid)
+            patterns = job.get("patterns")
+            timeout = job.get("timeout")
+            if (
+                not isinstance(job_id, str) or not 1 <= len(job_id) <= 160
+                or any(ch not in safe_id_characters for ch in job_id)
+                or not isinstance(claim_token, str) or not 1 <= len(claim_token) <= 128
+                or any(ch not in safe_id_characters for ch in claim_token)
+                or not isinstance(attempt_id, str) or not 1 <= len(attempt_id) <= 128
+                or any(ch not in safe_id_characters for ch in attempt_id)
+                or job_id in ids or claim_token in tokens or attempt_id in attempts
+                or job.get("capability") not in known_capabilities
+                or not isinstance(job.get("arguments"), dict)
+                or not isinstance(patterns, list) or len(patterns) > 128
+                or any(
+                    not isinstance(pattern, str) or not pattern
+                    or len(pattern) > 4096 or "\x00" in pattern
+                    for pattern in patterns
+                )
+                or type(timeout) is not int or not 1 <= timeout <= 3600
+            ):
+                raise ValueError(invalid)
+            ids.add(job_id)
+            tokens.add(claim_token)
+            attempts.add(attempt_id)
+        return jobs
 
     def _complete(
         self,
@@ -285,24 +378,32 @@ class AgentLoop:
         if self.agent_root:
             import drlink_mgmt_sync as mgmt
 
-            mgmt.complete_ai_job_on_server(
+            receipt = mgmt.complete_ai_job_on_server(
                 root=self.agent_root,
                 job_id=job_id,
                 result=result,
                 claim_token=claim_token,
                 attempt_id=attempt_id,
             )
+            if not isinstance(receipt, dict) or receipt.get("ok") is not True:
+                raise ValueError(
+                    "AI job completion receipt UNKNOWN; inspect Core before retrying."
+                )
             return
         body = {"id": job_id, "result": result}
         if claim_token is not None:
             body["claim_token"] = claim_token
         if attempt_id is not None:
             body["attempt_id"] = attempt_id
-        _agent_post(
+        receipt = _agent_post(
             self.base_url + "/agent/v1/complete",
             self.token,
             body,
         )
+        if not isinstance(receipt, dict) or receipt.get("ok") is not True:
+            raise ValueError(
+                "AI job completion receipt UNKNOWN; inspect Core before retrying."
+            )
 
     def run_once(self) -> int:
         jobs = self._claim()
@@ -310,7 +411,10 @@ class AgentLoop:
             job_id = job.get("id")
             claim_token = job.get("claim_token")
             attempt_id = job.get("attempt_id")
-            if _deadline_passed(job.get("deadline_at")):
+            remaining_seconds = _remaining_core_deadline_seconds(
+                job.get("deadline_at")
+            )
+            if remaining_seconds < 1:
                 result = {
                     "result": "DENY",
                     "error": "job deadline expired before execution",
@@ -330,12 +434,21 @@ class AgentLoop:
                     job.get("capability") or "",
                     job.get("arguments") or {},
                     patterns=job.get("patterns") or [],
-                    timeout=job.get("timeout"),
+                    timeout=min(job["timeout"], remaining_seconds),
                 )
-            except ControlPlaneError as exc:
-                result = {"result": "DENY", "error": str(exc)}
-            except Exception as exc:
-                result = {"result": "ERROR", "error": str(exc)}
+            except ControlPlaneError:
+                # A denied local operation may quote protected paths, tokens
+                # or raw input. Only a fixed result code crosses into Core.
+                result = {
+                    "result": "DENY",
+                    "error": "AI Agent operation denied; inspect Agent-local diagnostics.",
+                }
+            except Exception:
+                # Unexpected OS/tool exceptions are equally untrusted text.
+                result = {
+                    "result": "ERROR",
+                    "error": "AI Agent execution failed; inspect Agent-local diagnostics.",
+                }
             try:
                 self._complete(
                     job_id,

@@ -1,19 +1,62 @@
-import React, {useEffect, useRef, useState} from "react";
+import React, {useCallback, useEffect, useRef, useState} from "react";
 import {createRoot} from "react-dom/client";
 import {QRCodeSVG} from "qrcode.react";
 import {AdministrationHub,type AdministrationHubTask} from "@datarelay-labs/foundation";
 import {createLinkFoundationAdministrationTasks} from "./foundation-administration";
-import {AccessEvidenceExplorer,GuidedPolicyJourney,coreFlowKey,coreCutoffKey,visibleCoreEvidence,type AccessPlane} from "./p0-access-policy";
+import {backupToolReadiness} from "./foundation-administration";
+import {observedCoreFlag,observedCoreCount,observedCoreNames} from "./uxb-impact-evidence";
+import {AccessEvidenceExplorer,GuidedPolicyJourney,accessPlanePurpose,coreFlowKey,coreCutoffKey,visibleCoreEvidence,resolveCompletePolicyMatch,observedHostInspectContext,type AccessPlane} from "./p0-access-policy";
+import {ServerRoute,observedServerLifecyclePlan,requireServerLifecycleReceipt,type ServerManagementAction} from "./workflow-servers";
 import {EnrollmentOnboarding} from "./p0-enrollment";
 import {navGroups,groupFor,labelFor,pageDescriptions,visibleRoute,navMatches,setupContextForObjectFamily} from "./uxb-navigation";
-import {FirstUseHome,isFreshInstallation,observedRecentFeed,observedNumber,accessPlaneCount,coreHealthState,type RecentFeed} from "./uxb-home";
-import {requireObservedMenuPayload,requireObservedInventoryContinuation,requireObservedObjectContinuation,requireObservedAuditRetention,auditRetentionRunPermitted,requireObservedAccessHygiene,hygieneInspectTarget,requireObservedJobStart,requireObservedFleetApply,requireObservedFleetPreview,requireObservedFleetApplyForPreview,requireObservedAuditExport,requireObservedRolloutPreview,requireObservedInventoryExport,requireObservedJobDetail,requireObservedJobCancellation,isPartialCorePage,selectMenuPage,combineObservedPolicyPlanes,type MenuPagePosition} from "./uxb-menu-evidence";
+import {START_PAGE_OPTIONS,startPageKeyForOperator,readPreferredStartPage,writePreferredStartPage} from "./uxb-start-page";
+import {FirstUseHome,observedCoreOverviewEvidence,observedBoundedCountPair,observedHomeAttention,isFreshInstallation,observedCoreRecentFeed,observedNumber,accessPlaneCount,coreHealthState,type RecentFeed} from "./uxb-home";
+import {requireObservedMenuPayload,requireObservedBoundedCorePage,guidedChangePreviewMatchesIntent,requireObservedGuidedChangeApplyReceipt,temporaryAccessPreviewMatchesIntent,observedHostAdmissionPlanForAction,requireObservedHostAdmissionReceipt,requireObservedTemporaryAccessApplyForPlan,requireObservedEmergencyCutoffApplyForPlan,observedEmergencyCutoffPreviewForIntent,requireObservedCutoffInventory,requireObservedLiveAccessView,requireObservedDiagnosisView,requireObservedObjectContinuation,requireObservedAuditRetention,auditRetentionRunPermitted,requireObservedAccessHygiene,hygieneInspectTarget,requireObservedJobsPage,requireObservedJobStartForRequest,requireObservedFleetApply,requireObservedFleetPreview,requireObservedFleetApplyForPreview,requireObservedAuditExport,requireObservedRolloutPreview,requireObservedInventoryExport,requireObservedJobDetail,requireObservedJobCancellation,isPartialCorePage,selectMenuPage,combineObservedPolicyPlanes,policyStateLabel,policyExpiryLabel,type MenuPagePosition} from "./uxb-menu-evidence";
 import {RemoteServiceEditor} from "./uxb-remote-service";
 import {RevisionHistory} from "./uxb-revisions";
 import {AgentVersionDrift} from "./uxb-versions";
 import {CoreDoctorWorkspace} from "./uxb-doctor";
-import {SavedViewsWorkspace,saveDraftForResource} from "./uxb-saved-views";
-import {FirstConnectionSetup,type SetupDraft} from "./uxb-setup";
+import {SavedViewsWorkspace,saveDraftForResource,isSavedAdmission,type HostAdmission} from "./uxb-saved-views";
+import {hostDetailSections,hostConnectionState} from "./uxb-host-detail";
+import {hostInventoryFacts,hostVisibleIdentity} from "./uxb-host-detail";
+import {serviceStateLabel,serviceDetailSections,serviceUseAction} from "./uxb-service-detail";
+import {serviceVisibleIdentity} from "./uxb-service-detail";
+import {resourceCardSummary} from "./uxb-resource-cards";
+import {filterObservedServices} from "./uxb-service-search";
+import {observedBoundedCoreSearchResponse} from "./uxb-global-search-target";
+import {observedAuthenticatedWebSession,observedWebMfaChallenge,observedWebMfaCompletion} from "./uxb-web-session";
+import {observedCoreHealthSnapshot,observedHealthPlaneCount} from "./uxb-health-state";
+import {observedCoreSystemStatus} from "./uxb-system-status";
+import {observedCoreCertificatePreflight} from "./uxb-certificate-preflight";
+import {observedCoreCertificateActionReceipt,observedCoreCertificateRenewalReceipt} from "./uxb-certificate-actions";
+import {observedCoreSupportBundleReceipt} from "./uxb-support-bundle";
+import {observedCoreJobDisplay,observedJobCancelAvailable} from "./uxb-jobs-display";
+import {observedRolloutPreviewDisplay} from "./uxb-rollout-display";
+import {filterLoadedServiceFacets,type ServiceTypeFacet,type ServiceConfigFacet} from "./uxb-service-facets";
+import {operatorAccountState,operatorMfaState,operatorMfaAction,operatorLastLogin} from "./uxb-users-state";
+import {observedOperatorInventory,observedOperatorMfaReceipt,observedOperatorCreateReceipt} from "./uxb-users-state";
+import {operatorUserLabel} from "./uxb-users-state";
+import {auditInvestigation,matchObservedAuditReturn,matchObservedPolicyReturn,recentAuditInvestigation,observedAuditEventDetails,observedAuditAppliedFilters,type ObservedAuditEventDetail} from "./uxb-audit-context";
+import {observedAuditPageRefreshAvailable} from "./uxb-audit-refresh";
+import {auditUtcPresetRange} from "./uxb-audit-presets";
+import {filterObservedPoliciesByStatus} from "./uxb-policy-status-filter";
+import {sortLoadedPolicies,isPolicySortMode,type PolicySortMode} from "./uxb-policy-sort";
+import {activePolicyFilterChips,type PolicyFilterChipId} from "./uxb-policy-filter-chips";
+import {observedPolicyExpiryState,filterObservedPoliciesByExpiry,observedPolicyExpiryCounts,filterObservedPolicySearch,observedPolicyDetailFields,type PolicyExpiryChoice} from "./uxb-policy-expiry";
+import {observedPolicyCardSummary} from "./uxb-policy-cards";
+import {AiPolicyMappingCell} from "./uxb-policy-table-ai-mapping";
+import {observedPolicyTableDisplayCells} from "./uxb-policy-table-display";
+import {policyAuditInvestigationTarget} from "./uxb-policy-audit-action";
+import {serviceAccountOperationalStatus,serviceAccountExpiry,serviceAccountPermissions,webhookStatus,webhookDeliverySummary,observedWebhookDeliveryPulse} from "./uxb-integrations-state";
+import {observedIntegrationWriteReceipt,integrationLocalExpiryToUtc} from "./uxb-integration-write-receipts";
+import {observedIntegrationInventory} from "./uxb-integrations-state";
+import {filterObservedHosts} from "./uxb-host-search";
+import {sortLoadedHosts,isHostSortMode,type HostSortMode} from "./uxb-host-sort";
+import {filterLoadedHostConnections,type HostConnectionFilter} from "./uxb-host-connection-filter";
+import {hostDisplayFilterResetAvailable} from "./uxb-host-filter-reset";
+import {activeHostFilterChips,type HostFilterChipId} from "./uxb-host-filter-chips";
+import {FirstConnectionSetup,connectionReviewContext,type SetupDraft} from "./uxb-setup";
+import {TemporaryAccessRequestsPanel} from "./uxb-temporary-access-requests-panel";
 
 type Json = Record<string, any>;
 
@@ -31,20 +74,45 @@ async function api(path:string, init:RequestInit={}):Promise<Json>{
   return body;
 }
 
-function useEscapeClose(enabled:boolean,onClose:()=>void){
+function useDialogFocusTrap(enabled:boolean,onClose:()=>void,containerRef:React.RefObject<HTMLElement|null>){
   useEffect(()=>{
     if(!enabled)return;
-    function handle(e:KeyboardEvent){if(e.key==="Escape")onClose()}
-    window.addEventListener("keydown",handle);
-    return()=>window.removeEventListener("keydown",handle);
-  },[enabled,onClose]);
+    const previous=document.activeElement instanceof HTMLElement?document.activeElement:null;
+    const dialog=containerRef.current;dialog?.focus();
+    function handle(e:KeyboardEvent){
+      if(e.key==="Escape"){e.preventDefault();onClose();return}
+      if(e.key!=="Tab"||!dialog)return;
+      const focusable=Array.from(dialog.querySelectorAll<HTMLElement>(
+        'a[href],button:not([disabled]),input:not([disabled]),select:not([disabled]),textarea:not([disabled]),summary,[tabindex]:not([tabindex="-1"])'
+      )).filter(element=>element.getClientRects().length>0&&!element.closest("[inert],[hidden]"));
+      if(!focusable.length){e.preventDefault();dialog.focus();return}
+      const first=focusable[0],last=focusable[focusable.length-1],active=document.activeElement;
+      if(e.shiftKey&&(active===first||active===dialog||!dialog.contains(active))){e.preventDefault();last.focus()}
+      else if(!e.shiftKey&&(active===last||active===dialog||!dialog.contains(active))){e.preventDefault();first.focus()}
+    }
+    document.addEventListener("keydown",handle);
+    return()=>{
+      document.removeEventListener("keydown",handle);
+      if(previous?.isConnected)previous.focus({preventScroll:true});
+    };
+  },[enabled]);
 }
 
-function Table({items}:{items:any[]}){
+function Table({items,onInspect,canInspect}:{
+  items:any[],onInspect?:(item:any,index:number)=>void,
+  canInspect?:(item:any,index:number)=>boolean
+}){
   if(!items?.length)return <div className="empty">No results</div>;
   const keys=Object.keys(items[0]).filter(k=>typeof items[0][k]!=="object").slice(0,9);
-  return <table><thead><tr>{keys.map(k=><th key={k}>{k}</th>)}</tr></thead><tbody>
-    {items.map((item,i)=><tr key={item.id||i}>{keys.map(k=><td key={k}>{item[k]===null?"":String(item[k]??"")}</td>)}</tr>)}
+  return <table><thead><tr>{keys.map(k=><th key={k}>{k}</th>)}
+    {onInspect&&<th scope="col">Evidence</th>}</tr></thead><tbody>
+    {items.map((item,i)=><tr key={item.id||i}>
+      {keys.map(k=><td key={k}>{item[k]===null?"":String(item[k]??"")}</td>)}
+      {onInspect&&<td><button type="button" className="secondary"
+        disabled={!!canInspect&&!canInspect(item,i)}
+        aria-label={"Inspect event "+String(item.event_id||i)}
+        onClick={()=>onInspect(item,i)}>Inspect event →</button></td>}
+    </tr>)}
   </tbody></table>;
 }
 function Metric({label,value}:{label:string,value:any}){return <div className="card"><div className="muted">{label}</div><div className="metric">{String(value??"UNKNOWN")}</div></div>}
@@ -111,15 +179,23 @@ function Login({onLogin}:{onLogin:(op:any)=>void}){
     e.preventDefault();setError("");setBusy(true);
     try{
       const d=await api("/api/v1/auth/login",{method:"POST",body:JSON.stringify({username,password,totp,recovery_code:recovery})});
-      if(d.mfa_setup_required){setSetup(d);setSetupCode("");return}
-      csrf=d.csrf_token;onLogin(d.operator);
+      if(d.mfa_setup_required===true){
+        const challenge=observedWebMfaChallenge(d);
+        if(!challenge)throw new Error("Core MFA setup challenge is UNKNOWN. Sign in again rather than using an unverified QR or enrollment token.");
+        setSetup(challenge);setSetupCode("");return;
+      }
+      const observed=observedAuthenticatedWebSession(d);
+      if(!observed)throw new Error("Core authenticated session is UNKNOWN. No Web role or CSRF token was accepted.");
+      csrf=observed.csrf_token;onLogin(observed.operator);
     }catch(err:any){setError(err.message||String(err))}finally{setBusy(false)}
   }
   async function finishMfa(e:React.FormEvent){
     e.preventDefault();setError("");setBusy(true);
     try{
       const d=await api("/api/v1/auth/mfa/enroll/confirm",{method:"POST",body:JSON.stringify({enrollment_token:setup.enrollment_token,totp:setupCode})});
-      csrf=d.csrf_token;setRecoveryCodes(d.recovery_codes||[]);setPendingOperator(d.operator);
+      const completed=observedWebMfaCompletion(d);
+      if(!completed)throw new Error("Core MFA completion receipt is UNKNOWN. Sign in again and inspect MFA status; do not blindly repeat enrollment.");
+      csrf=completed.session.csrf_token;setRecoveryCodes(completed.recovery_codes);setPendingOperator(completed.session.operator);
     }catch(err:any){setError(err.message||String(err))}finally{setBusy(false)}
   }
   async function cancelMfaSetup(){
@@ -144,6 +220,31 @@ function Login({onLogin}:{onLogin:(op:any)=>void}){
       <p className="dr-login-admin-note">Accounts are created by an administrator. Self-service registration is not available.</p>
     </form>
   </AuthScaffold>;
+}
+
+function DraftWorkflowReference({context,onNavigate}:{
+  context?:any,onNavigate?:(id:string,groupId?:string,context?:any)=>void
+}){
+  const plane=["remote","internet","ai"].includes(String(context?.plane))
+    ?String(context.plane) as AccessPlane:null;
+  if(!plane)return null;
+  const selected=connectionReviewContext(plane,context?.source,context?.destination,context?.selector);
+  const complete="source" in selected;
+  return <section className="card dr-uxb-context" role="note" aria-label="Access context for advanced draft">
+    <strong>{plane.toUpperCase()} Access · selected task reference only</strong>
+    {complete?<p>Source: {selected.source} · Destination: {selected.destination}
+      · {plane==="ai"?"Permission":"Service"}: {selected.selector}</p>:
+      <p>Core object selection is incomplete or unverified. Recheck the matching access plane.</p>}
+    <p>This context is not added to ConfigurationBundle, does not represent a Core policy
+      decision, and does not carry a Change Plan or approval across screens. The draft
+      editor and explicit Core Test → Diff & Preview → typed Apply remain independent.</p>
+    <div className="toolbar">
+      <button className="secondary" onClick={()=>onNavigate?.("access","access",selected)}>
+        Recheck selected access in Core →</button>
+      {complete&&<button className="secondary" onClick={()=>onNavigate?.("policies","access",selected)}>
+        Use Guided Policy for this flow →</button>}
+    </div>
+  </section>;
 }
 
 function DraftWorkspace(){
@@ -265,129 +366,305 @@ function BlastRadiusView({preview}:{preview:any}){
   const regression=preview?.policy_regression;
   if(!blast&&!overlay&&!regression)return null;
   const limits=blast?.limits||{};
-  const changes=(blast?.decision_changes||[]).map((x:any)=>({
-    plane:x.flow?.plane||"",
-    source:x.flow?.source||"",
-    destination:x.flow?.destination||"",
-    selector:x.flow?.service||x.flow?.permission||"",
-    current:x.current,
-    proposed:x.proposed,
+  const changes=(Array.isArray(blast?.decision_changes)?blast.decision_changes:[])
+    .filter((x:any)=>x&&typeof x==="object").slice(0,100).map((x:any)=>({
+    plane:x.flow?.plane||"UNKNOWN",
+    source:x.flow?.source||"UNKNOWN",
+    destination:x.flow?.destination||"UNKNOWN",
+    selector:x.flow?.service||x.flow?.permission||"UNKNOWN",
+    current:x.current??"UNKNOWN",
+    proposed:x.proposed??"UNKNOWN",
   }));
+  const unknowns=Array.isArray(blast?.unknowns)?blast.unknowns:[];
+  const overlayLimits=overlay?.limits||{};
   return <div className="card">
     <h4>Blast Radius / Draft Graph Overlay</h4>
     <div className="muted">Core-computed policy/inventory facts only. Unknowns are explicit; this is not network-topology discovery.</div>
     {blast&&<div className="grid">
-      <Metric label="Broadens access" value={blast.access_broadened?"YES":"NO"}/>
-      <Metric label="Narrows access" value={blast.access_narrowed?"YES":"NO"}/>
-      <Metric label="Newly reachable" value={limits.newly_reachable_total??(blast.newly_reachable||[]).length}/>
-      <Metric label="Newly blocked" value={limits.newly_blocked_total??(blast.newly_blocked||[]).length}/>
-      <Metric label="Truncated" value={limits.truncated?"YES":"NO"}/>
+      <Metric label="Broadens access" value={observedCoreFlag(blast.access_broadened)}/>
+      <Metric label="Narrows access" value={observedCoreFlag(blast.access_narrowed)}/>
+      <Metric label="Newly reachable" value={observedCoreCount(limits.newly_reachable_total)}/>
+      <Metric label="Newly blocked" value={observedCoreCount(limits.newly_blocked_total)}/>
+      <Metric label="Truncated" value={observedCoreFlag(limits.truncated)}/>
     </div>}
-    {limits.truncated&&<div className="warning-box">Blast Radius is bounded/truncated: {(limits.truncated_by||[]).join(", ")||"limit reached"}. Review the limit metadata before Apply.</div>}
-    {regression&&<div className={regression.ok?"notice":"warning-box"}>Required Policy Tests: {regression.passed}/{regression.count} pass · failures {regression.required_failed}</div>}
-    {blast&&<div className="muted">Affected rules: {(blast.affected_rules||[]).join(", ")||"none"} · Managed Hosts: {(blast.affected_managed_hosts||[]).join(", ")||"none"} · Remote Services: {(blast.affected_remote_services||[]).join(", ")||"none"}</div>}
-    {changes.length>0&&<Table items={changes}/>}
-    {overlay&&<div className="muted">Graph edges · added {limits.references_added_total??(overlay.added_edge_ids||[]).length} · removed {limits.references_removed_total??(overlay.removed_edge_ids||[]).length} · unchanged {(overlay.unchanged_edge_ids||[]).length}</div>}
-    {(blast?.unknowns||[]).length>0&&<div className="warning-box">Unknown / not deterministically modeled: {(blast.unknowns||[]).slice(0,10).join(" · ")}</div>}
+    {blast&&(typeof blast.access_broadened!=="boolean"||typeof blast.access_narrowed!=="boolean"
+      ||typeof limits.truncated!=="boolean")&&<div className="warning-box" role="status">
+      Missing impact fields are UNKNOWN, never proof of no access change. Review exact Core evidence before Apply.
+    </div>}
+    {limits.truncated===true&&<div className="warning-box">Blast Radius is bounded/truncated: {observedCoreNames(limits.truncated_by)}. Review the limit metadata before Apply.</div>}
+    {regression&&<div className={regression.ok===true?"notice":"warning-box"}>Required Policy Tests: {observedCoreCount(regression.passed)}/{observedCoreCount(regression.count)} pass · failures {observedCoreCount(regression.required_failed)}</div>}
+    {blast&&<div className="muted">Affected rules: {observedCoreNames(blast.affected_rules)} · Managed Hosts: {observedCoreNames(blast.affected_managed_hosts)} · Remote Services: {observedCoreNames(blast.affected_remote_services)}</div>}
+    {changes.length>0&&<><p className="muted">Current → proposed Core policy decisions; these are modeled changes, not observed network sessions.</p><Table items={changes}/></>}
+    {overlay&&<div className="muted">Graph references · added {observedCoreCount(overlayLimits.references_added_total)}
+      · removed {observedCoreCount(overlayLimits.references_removed_total)}
+      · unchanged returned {Array.isArray(overlay.unchanged_edge_ids)?overlay.unchanged_edge_ids.length:"UNKNOWN"} (bounded view)</div>}
+    {unknowns.length>0&&<div className="warning-box">Unknown / not deterministically modeled: {observedCoreNames(unknowns)}</div>}
   </div>;
 }
 
 function GuidedApplyPanel({title,build}:{title:string,build:()=>any}){
-  const [preview,setPreview]=useState<any>(null),[confirmation,setConfirmation]=useState(""),[message,setMessage]=useState(""),[error,setError]=useState("");
-  async function doPreview(){setError("");setMessage("");try{const req=build();const result=await api("/api/v1/guided/preview",{method:"POST",body:JSON.stringify(req)});setPreview(result);setConfirmation("")}catch(e:any){setError(e.message||String(e))}}
-  async function doApply(){setError("");try{const result=await api("/api/v1/guided/apply",{method:"POST",body:JSON.stringify({change_plan_id:preview?.change_plan_id||"",confirmation})});setMessage("Applied at revision "+result.revision);setPreview(null);setConfirmation("")}catch(e:any){setError(e.message||String(e))}}
-  return <div className="card"><h3>{title}</h3>{error&&<div className="error">{error}</div>}{message&&<div className="notice">{message}</div>}<button className="primary" onClick={doPreview}>Preview</button>{preview&&<div className="card"><pre className="plan">{JSON.stringify({change_type:preview.change_type,preview:preview.preview,impact:preview.impact,valid_until:preview.valid_until},null,2)}</pre><BlastRadiusView preview={preview}/><label className="apply-label">Type APPLY to commit<input value={confirmation} onChange={e=>setConfirmation(e.target.value)} placeholder="APPLY"/></label><button className="danger" onClick={doApply} disabled={confirmation!=="APPLY"}>Apply</button></div>}</div>;
-}
-
-function ManagedHostMetadataPanel(){
-  const [host,setHost]=useState(""),[label,setLabel]=useState(""),[description,setDescription]=useState("");
-  const [tags,setTags]=useState("");
-  function request(){
-    const payload:any={host,description};
-    if(label)payload.label=label;
-    const tagMap:any={};tags.split(",").map(x=>x.trim()).filter(Boolean).forEach(item=>{const i=item.indexOf("=");if(i>0)tagMap[item.slice(0,i).trim()]=item.slice(i+1).trim()});
-    if(Object.keys(tagMap).length)payload.tags=tagMap;
-    return {change_type:"managed-host-metadata",payload};
-  }
-  return <div><div className="card"><h3>Guided Managed Host Metadata</h3><div className="toolbar"><input value={host} onChange={e=>setHost(e.target.value)} placeholder="Managed Host ID/name"/><input value={label} onChange={e=>setLabel(e.target.value)} placeholder="Optional label"/><input value={description} onChange={e=>setDescription(e.target.value)} placeholder="Description (blank clears)"/><input value={tags} onChange={e=>setTags(e.target.value)} placeholder="tags: env=prod,owner=netops"/></div></div><GuidedApplyPanel key={JSON.stringify([host,label,description,tags])} title="Managed Host Change Plan" build={request}/></div>;
-}
-
-function ManagedHostAdmissionPanel(){
-  const [host,setHost]=useState(""),[operation,setOperation]=useState("quarantine");
   const [preview,setPreview]=useState<any>(null),[confirmation,setConfirmation]=useState("");
-  const [message,setMessage]=useState(""),[error,setError]=useState("");
+  const [message,setMessage]=useState(""),[error,setError]=useState(""),[busy,setBusy]=useState(false);
+  const activeRequest=useRef<any>(null),generation=useRef(0);
+  useEffect(()=>()=>{generation.current+=1},[]);
+  useEffect(()=>{
+    if(!preview||busy)return;
+    const delay=Date.parse(preview.valid_until)-Date.now();
+    if(!Number.isFinite(delay)||delay>2147483647)return;
+    const timeout=setTimeout(()=>{
+      if(Date.now()>=Date.parse(preview.valid_until)){
+        generation.current+=1;activeRequest.current=null;
+        setPreview(null);setConfirmation("");
+        setError("Core Change Plan expired; request a fresh Preview before any Apply.");
+      }
+    },Math.max(0,delay));
+    return()=>clearTimeout(timeout);
+  },[preview?.change_plan_id,preview?.valid_until,busy]);
   async function doPreview(){
-    setError("");setMessage("");
+    if(busy)return;
+    const token=++generation.current,req=build();
+    activeRequest.current=null;setPreview(null);setConfirmation("");
+    setError("");setMessage("");setBusy(true);
     try{
-      const result=await api("/api/v1/managed-hosts/admission/preview",{
-        method:"POST",body:JSON.stringify({host,operation}),
-      });
-      setPreview(result);setConfirmation("");
-    }catch(e:any){setPreview(null);setError(e.message||String(e))}
+      const result=await api("/api/v1/guided/preview",{method:"POST",body:JSON.stringify(req)});
+      if(token!==generation.current)return;
+      if(result?.no_change===true){
+        setMessage("Core reports NO_CHANGE; no Apply is required.");
+        return;
+      }
+      if(!guidedChangePreviewMatchesIntent(result,req))
+        throw new Error("Core Change Plan does not match the requested type, target, action or expiry.");
+      activeRequest.current=req;setPreview(result);setConfirmation("");
+    }catch(e:any){if(token===generation.current)setError("Preview unverified: "+String(e.message||e))}
+    finally{if(token===generation.current)setBusy(false)}
   }
   async function doApply(){
-    setError("");setMessage("");
+    if(busy||confirmation!=="APPLY"||!preview)return;
+    const reviewedPlan=preview,reviewedRequest=activeRequest.current;
+    if(!guidedChangePreviewMatchesIntent(reviewedPlan,reviewedRequest)
+      ||JSON.stringify(reviewedRequest)!==JSON.stringify(build())){
+      activeRequest.current=null;setPreview(null);setConfirmation("");
+      setError("Core Change Plan expired or changed; obtain a fresh Preview.");
+      return;
+    }
+    const token=++generation.current;
+    setError("");setMessage("");setBusy(true);
     try{
-      const result=await api("/api/v1/managed-hosts/admission/apply",{
-        method:"POST",body:JSON.stringify({change_plan_id:preview?.change_plan_id||"",confirmation}),
-      });
-      setMessage("Host admission "+(operation==="approve"?"approved":"quarantined")+" at revision "+result.revision+". Reload Managed Hosts to view the new state.");
-      setPreview(null);setConfirmation("");
-    }catch(e:any){setError(e.message||String(e))}
+      const result=await api("/api/v1/guided/apply",{method:"POST",
+        body:JSON.stringify({change_plan_id:reviewedPlan.change_plan_id,confirmation})});
+      if(token!==generation.current)return;
+      const confirmed=requireObservedGuidedChangeApplyReceipt(result,reviewedPlan,reviewedRequest);
+      setMessage("Core change applied at revision "+confirmed.revision+". Review Change History for actual state.");
+      activeRequest.current=null;setPreview(null);setConfirmation("");
+    }catch(e:any){
+      if(token===generation.current){
+        // An ambiguous response can follow a committed Core mutation. Never
+        // allow blind reapplication of this one-shot actor-bound Change Plan.
+        activeRequest.current=null;setPreview(null);setConfirmation("");
+        setError("Apply outcome UNKNOWN. Inspect Core Change History before retrying. "+String(e.message||e));
+      }
+    }finally{if(token===generation.current)setBusy(false)}
   }
-  const required=preview?.confirmation_class||"";
-  return <div className="card">
-    <h3>Managed Host Approval / Quarantine</h3>
-    <p className="muted">Admission is separate from connection and management trust. Quarantine denies new Host access; active connections are not terminated. Identity, policy references, services and public ports are preserved. Approval restores normal policy evaluation, not unconditional access.</p>
-    {error&&<div className="error">{error}</div>}{message&&<div className="notice">{message}</div>}
-    <div className="toolbar">
-      <input value={host} onChange={e=>{setHost(e.target.value);setPreview(null)}} placeholder="Managed Host ID/name"/>
-      <select aria-label="Admission action" value={operation} onChange={e=>{setOperation(e.target.value);setPreview(null);setConfirmation("")}}>
-        <option value="quarantine">Quarantine new access</option>
-        <option value="approve">Approve / restore access</option>
-      </select>
-      <button className="secondary" disabled={!host.trim()} onClick={doPreview}>Preview Admission Impact</button>
-    </div>
-    {preview&&<div className="warning-box">
-      <pre className="plan">{JSON.stringify({preview:preview.preview,impact:preview.impact,valid_until:preview.valid_until},null,2)}</pre>
-      <label className="apply-label">Type {required} to continue<input value={confirmation} onChange={e=>setConfirmation(e.target.value)} placeholder={required}/></label>
-      <button className={operation==="quarantine"?"danger":"primary"} disabled={confirmation!==required} onClick={doApply}>{operation==="quarantine"?"Quarantine Managed Host":"Approve Managed Host"}</button>
+  const actionable=guidedChangePreviewMatchesIntent(preview,activeRequest.current);
+  return <div className="card"><h3>{title}</h3>
+    {error&&<div className="error" role="alert">{error}</div>}
+    {message&&<div className="notice" role="status">{message}</div>}
+    <button className="primary" type="button" disabled={busy} onClick={doPreview}>
+      {busy?"Checking Core…":"Preview"}</button>
+    {preview&&<div className="card">
+      <pre className="plan">{JSON.stringify({change_type:preview.change_type,preview:preview.preview,
+        impact:preview.impact,valid_until:preview.valid_until},null,2)}</pre>
+      <BlastRadiusView preview={preview}/>
+      <label className="apply-label">Type APPLY to commit
+        <input value={confirmation} onChange={e=>setConfirmation(e.target.value)}
+          placeholder="APPLY" disabled={busy||!actionable}/></label>
+      <button className="danger" type="button" onClick={doApply}
+        disabled={busy||confirmation!=="APPLY"||!actionable}>Apply</button>
+      {!actionable&&<p className="muted">Change Plan UNKNOWN or expired; create a new Core Preview.</p>}
     </div>}
   </div>;
 }
 
-function ManagedHostLifecyclePanel(){
-  const [host,setHost]=useState(""),[operation,setOperation]=useState("revoke-trust");
-  const [preview,setPreview]=useState<any>(null),[confirmation,setConfirmation]=useState(""),[message,setMessage]=useState(""),[error,setError]=useState("");
+function ManagedHostMetadataPanel({selectedHost}:{selectedHost:any}){
+  const host=String(selectedHost?.id||"");
+  const [label,setLabel]=useState(""),[description,setDescription]=useState(""),[descriptionTouched,setDescriptionTouched]=useState(false);
+  const [tags,setTags]=useState("");
+  function request(){
+    const payload:any={host};
+    if(label.trim())payload.label=label.trim();
+    if(descriptionTouched)payload.description=description;
+    const tagMap:any={};tags.split(",").map(x=>x.trim()).filter(Boolean).forEach(item=>{const i=item.indexOf("=");if(i>0)tagMap[item.slice(0,i).trim()]=item.slice(i+1).trim()});
+    if(Object.keys(tagMap).length)payload.tags=tagMap;
+    return {change_type:"managed-host-metadata",payload};
+  }
+  return <div><div className="card"><h3>Edit server details</h3>
+    <p className="muted">Selected server: <strong>{String(selectedHost?.name||host)}</strong> · {host}. The target cannot be changed here.</p>
+    <div className="dr-form-grid">
+      <label className="dr-field"><span>Display name</span><input aria-label="Display name" value={label} onChange={e=>setLabel(e.target.value)} placeholder="Optional display name"/></label>
+      <label className="dr-field"><span>Description</span><input aria-label="Description" value={description} onChange={e=>{setDescriptionTouched(true);setDescription(e.target.value)}} placeholder="Edit to change; blank clears"/></label>
+      <label className="dr-field"><span>Tags</span><input aria-label="Tags" value={tags} onChange={e=>setTags(e.target.value)} placeholder="env=prod, owner=netops"/></label>
+    </div>
+  </div><GuidedApplyPanel key={JSON.stringify([host,label,description,descriptionTouched,tags])} title="Review server detail change" build={request}/></div>;
+}
+
+function ManagedHostAdmissionPanel({selectedHost}:{selectedHost:any}){
+  const host=String(selectedHost?.id||"");
+  const [operation,setOperation]=useState("quarantine");
+  const [preview,setPreview]=useState<any>(null),[confirmation,setConfirmation]=useState("");
+  const [message,setMessage]=useState(""),[error,setError]=useState(""),[busy,setBusy]=useState(false);
+  const previewGeneration=useRef(0);
+  useEffect(()=>()=>{previewGeneration.current+=1},[]);
+  useEffect(()=>{
+    if(!preview||busy)return;
+    const delay=Date.parse(preview.valid_until)-Date.now();
+    if(!Number.isFinite(delay)||delay>2147483647)return;
+    const timer=setTimeout(()=>{
+      if(Date.now()>=Date.parse(preview.valid_until)){
+        previewGeneration.current+=1;setPreview(null);setConfirmation("");
+        setError("Core Host admission Change Plan expired. Request a fresh Preview.");
+      }
+    },Math.max(0,delay));
+    return()=>clearTimeout(timer);
+  },[preview?.change_plan_id,preview?.valid_until,busy]);
+  function resetAdmission(){previewGeneration.current+=1;setPreview(null);setConfirmation("");setMessage("")}
   async function doPreview(){
-    setError("");setMessage("");
+    if(busy||!host)return;
+    const token=++previewGeneration.current,requestHost=host,requestOperation=operation;
+    setError("");setMessage("");setPreview(null);setConfirmation("");setBusy(true);
     try{
-      const result=await api("/api/v1/managed-hosts/lifecycle/preview",{method:"POST",body:JSON.stringify({host,operation})});
-      setPreview(result);setConfirmation("");
-    }catch(e:any){setPreview(null);setError(e.message||String(e))}
+      const result=await api("/api/v1/managed-hosts/admission/preview",{
+        method:"POST",body:JSON.stringify({host:requestHost,operation:requestOperation}),
+      });
+      if(token!==previewGeneration.current)return;
+      if(result?.no_change===true){
+        setMessage("Core reports NO_CHANGE; no admission Apply is required.");
+        return;
+      }
+      const valid=observedHostAdmissionPlanForAction(result,requestHost,requestOperation);
+      if(!valid)throw new Error("Core Host admission plan does not confirm the selected Host ID or requested transition.");
+      setPreview(valid);setConfirmation("");
+    }catch(e:any){if(token===previewGeneration.current)
+      setError("Host admission Preview unverified: "+String(e.message||e))}
+    finally{if(token===previewGeneration.current)setBusy(false)}
   }
   async function doApply(){
-    setError("");setMessage("");
+    if(busy||!preview||confirmation!==operation.toUpperCase())return;
+    const reviewedPlan=preview;
+    if(!observedHostAdmissionPlanForAction(reviewedPlan,host,operation)){
+      resetAdmission();
+      setError("Core Host admission Change Plan expired or changed; obtain a fresh Preview.");
+      return;
+    }
+    const token=++previewGeneration.current;
+    setError("");setMessage("");setBusy(true);
     try{
-      const result=await api("/api/v1/managed-hosts/lifecycle/apply",{method:"POST",body:JSON.stringify({change_plan_id:preview?.change_plan_id||"",confirmation})});
-      setMessage((operation==="retire"?"Managed Host retired":"Managed Host trust revoked")+" at revision "+result.revision);
+      const result=await api("/api/v1/managed-hosts/admission/apply",{
+        method:"POST",body:JSON.stringify({change_plan_id:reviewedPlan.change_plan_id,confirmation}),
+      });
+      if(token!==previewGeneration.current)return;
+      const confirmed=requireObservedHostAdmissionReceipt(result,reviewedPlan,operation);
+      setMessage("Core Host admission "+(operation==="approve"?"approved":"quarantined")+
+        " at revision "+confirmed.revision+". Refresh Servers to verify current state.");
       setPreview(null);setConfirmation("");
-    }catch(e:any){setError(e.message||String(e))}
+    }catch(e:any){if(token===previewGeneration.current){
+      setPreview(null);setConfirmation("");setMessage("");
+      setError("Core Admission Apply outcome UNKNOWN. Inspect Host inventory and Change History before retrying. "+String(e.message||e));
+    }}finally{if(token===previewGeneration.current)setBusy(false)}
   }
-  const required=preview?.confirmation_class||"";
+  const currentActionable=observedHostAdmissionPlanForAction(preview,host,operation);
+  const required=operation.toUpperCase();
   return <div className="card">
-    <h3>Managed Host Lifecycle</h3>
-    <div className="muted">Trust revoke keeps the Managed Host record, Remote Services, and public port reservations but requires re-enrollment. Retire permanently removes reference-safe server-owned Host state and owned Remote Services/port reservations.</div>
-    {error&&<div className="error">{error}</div>}{message&&<div className="notice">{message}</div>}
+    <h3>Review approval or quarantine</h3>
+    <p className="muted">Selected server: <strong>{String(selectedHost?.name||host)}</strong> · {host}. Admission is separate from connection and trust. Quarantine denies new Host access; it does not terminate active connections.</p>
+    {error&&<div className="error" role="alert">{error}</div>}
+    {message&&<div className="notice" role="status">{message}</div>}
     <div className="toolbar">
-      <input value={host} onChange={e=>{setHost(e.target.value);setPreview(null);setConfirmation("")}} placeholder="Managed Host ID/name"/>
-      <select value={operation} onChange={e=>{setOperation(e.target.value);setPreview(null);setConfirmation("")}}><option value="revoke-trust">Revoke trust</option><option value="retire">Retire Managed Host</option></select>
-      <button className="primary" onClick={doPreview} disabled={!host}>Preview Impact</button>
+      <select aria-label="Admission action" disabled={busy} value={operation} onChange={e=>{resetAdmission();setOperation(e.target.value)}}>
+        <option value="quarantine">Quarantine new access</option>
+        <option value="approve">Approve / restore normal policy evaluation</option>
+      </select>
+      <button className="secondary" disabled={busy||!host} onClick={doPreview}>Preview Admission Impact</button>
     </div>
     {preview&&<div className="warning-box">
       <pre className="plan">{JSON.stringify({preview:preview.preview,impact:preview.impact,valid_until:preview.valid_until},null,2)}</pre>
-      <label className="apply-label">Type {required} to continue<input value={confirmation} onChange={e=>setConfirmation(e.target.value)} placeholder={required}/></label>
-      <button className="danger" onClick={doApply} disabled={confirmation!==required}>{operation==="retire"?"Retire Managed Host":"Revoke Managed Host Trust"}</button>
+      <label className="apply-label">Type {required} to continue
+        <input value={confirmation} disabled={busy||!currentActionable}
+          onChange={e=>setConfirmation(e.target.value)} placeholder={required}/></label>
+      <button className={operation==="quarantine"?"danger":"primary"} type="button"
+        disabled={busy||!currentActionable||confirmation!==required}
+        onClick={doApply}>{operation==="quarantine"?"Quarantine Managed Host":"Approve Managed Host"}</button>
+      {!currentActionable&&<p role="status" className="muted">Core admission Preview expired or unverified. Request a new Preview.</p>}
+    </div>}
+  </div>;
+}
+
+function ManagedHostLifecyclePanel({selectedHost}:{selectedHost:any}){
+  const host=String(selectedHost?.id||"");
+  const [operation,setOperation]=useState("revoke-trust");
+  const [preview,setPreview]=useState<any>(null),[confirmation,setConfirmation]=useState(""),[message,setMessage]=useState(""),[error,setError]=useState(""),[busy,setBusy]=useState(false);
+  const generation=useRef(0);
+  useEffect(()=>()=>{generation.current+=1},[]);
+  useEffect(()=>{
+    if(!preview||busy)return;
+    const delay=Date.parse(preview.valid_until)-Date.now();
+    if(!Number.isFinite(delay)||delay>2147483647)return;
+    const timer=setTimeout(()=>{
+      if(Date.now()>=Date.parse(preview.valid_until)){
+        generation.current+=1;setPreview(null);setConfirmation("");
+        setError("Core lifecycle Change Plan expired. Request a fresh Preview.");
+      }
+    },Math.max(0,delay));
+    return()=>clearTimeout(timer);
+  },[preview?.change_plan_id,preview?.valid_until,busy]);
+  function resetLifecycle(){generation.current+=1;setPreview(null);setConfirmation("");setMessage("")}
+  async function doPreview(){
+    if(busy||!host)return;
+    const token=++generation.current,requestOperation=operation;
+    setError("");setMessage("");setPreview(null);setConfirmation("");setBusy(true);
+    try{
+      const result=await api("/api/v1/managed-hosts/lifecycle/preview",{method:"POST",body:JSON.stringify({host,operation:requestOperation})});
+      if(token!==generation.current)return;
+      if(result?.no_change===true){setMessage("Core reports NO_CHANGE; no lifecycle Apply is required.");return}
+      const valid=observedServerLifecyclePlan(result,host,requestOperation);
+      if(!valid)throw new Error("Core lifecycle plan does not confirm the selected Host, operation, revision, confirmation, or expiry.");
+      setPreview(valid);
+    }catch(e:any){if(token===generation.current)setError("Lifecycle Preview unverified: "+String(e.message||e))}
+    finally{if(token===generation.current)setBusy(false)}
+  }
+  async function doApply(){
+    const required=operation==="retire"?"RETIRE":"REVOKE";
+    if(busy||!preview||confirmation!==required)return;
+    const reviewed=preview;
+    if(!observedServerLifecyclePlan(reviewed,host,operation)){
+      resetLifecycle();setError("Core lifecycle Change Plan expired or changed; obtain a fresh Preview.");return;
+    }
+    const token=++generation.current;setError("");setMessage("");setBusy(true);
+    try{
+      const result=await api("/api/v1/managed-hosts/lifecycle/apply",{method:"POST",body:JSON.stringify({change_plan_id:reviewed.change_plan_id,confirmation})});
+      if(token!==generation.current)return;
+      const confirmed=requireServerLifecycleReceipt(result,reviewed);
+      setMessage((operation==="retire"?"Managed Host retired":"Managed Host trust revoked")+" at revision "+confirmed.revision+". Refresh Servers before another action.");
+      setPreview(null);setConfirmation("");
+    }catch(e:any){if(token===generation.current){
+      setPreview(null);setConfirmation("");setMessage("");
+      setError("Lifecycle Apply outcome UNKNOWN. Inspect Host inventory and Change History before retrying. "+String(e.message||e));
+    }}finally{if(token===generation.current)setBusy(false)}
+  }
+  const required=operation==="retire"?"RETIRE":"REVOKE";
+  const currentActionable=observedServerLifecyclePlan(preview,host,operation);
+  return <div className="card">
+    <h3>Advanced lifecycle action</h3>
+    <p className="muted">Selected server: <strong>{String(selectedHost?.name||host)}</strong> · {host}. Trust revoke preserves the Host record, services and reservations but requires re-enrollment. Retirement permanently removes reference-safe server-owned state.</p>
+    {error&&<div className="error" role="alert">{error}</div>}{message&&<div className="notice" role="status">{message}</div>}
+    <div className="toolbar">
+      <select aria-label="Lifecycle action" disabled={busy} value={operation} onChange={e=>{resetLifecycle();setOperation(e.target.value)}}><option value="revoke-trust">Revoke trust</option><option value="retire">Retire Managed Host</option></select>
+      <button className="secondary" type="button" onClick={doPreview} disabled={busy||!host}>Preview Impact</button>
+    </div>
+    {preview&&<div className="warning-box">
+      <pre className="plan">{JSON.stringify({preview:preview.preview,impact:preview.impact,valid_until:preview.valid_until},null,2)}</pre>
+      <label className="apply-label">Type {required} to continue<input value={confirmation} disabled={busy||!currentActionable} onChange={e=>setConfirmation(e.target.value)} placeholder={required}/></label>
+      <button className="danger" type="button" onClick={doApply} disabled={busy||!currentActionable||confirmation!==required}>{operation==="retire"?"Retire Managed Host":"Revoke Managed Host Trust"}</button>
+      {!currentActionable&&<p role="status" className="muted">Core lifecycle Preview expired or unverified. Request a new Preview.</p>}
     </div>}
   </div>;
 }
@@ -416,41 +693,95 @@ function GuidedPolicySettingsPanel(){
 function TemporaryAccessPanel(){
   const [plane,setPlane]=useState("remote"),[rule,setRule]=useState(""),[operation,setOperation]=useState("set"),[expiresAt,setExpiresAt]=useState("");
   const [preview,setPreview]=useState<any>(null),[confirmation,setConfirmation]=useState(""),[message,setMessage]=useState(""),[error,setError]=useState("");
-  function resetChangePlan(){setPreview(null);setConfirmation("");setMessage("")}
+  const [busy,setBusy]=useState(false);
+  const currentRequest=useRef<any>(null),previewGeneration=useRef(0);
+  useEffect(()=>()=>{previewGeneration.current+=1},[]);
+  useEffect(()=>{
+    if(!preview||busy)return;
+    const delay=Date.parse(preview.valid_until)-Date.now();
+    if(!Number.isFinite(delay)||delay>2147483647)return;
+    const timer=setTimeout(()=>{
+      if(Date.now()>=Date.parse(preview.valid_until)){
+        previewGeneration.current+=1;currentRequest.current=null;
+        setPreview(null);setConfirmation("");
+        setError("Core Temporary Access plan expired. Request a fresh Preview.");
+      }
+    },Math.max(0,delay));
+    return()=>clearTimeout(timer);
+  },[preview?.change_plan_id,preview?.valid_until,busy]);
+  function resetChangePlan(){
+    previewGeneration.current+=1;currentRequest.current=null;
+    setPreview(null);setConfirmation("");setMessage("");
+  }
   async function doPreview(){
-    setError("");setMessage("");resetChangePlan();
+    if(busy)return;
+    const token=++previewGeneration.current;
+    const request={plane,rule,operation,expires_at:operation==="set"?expiresAt:""};
+    currentRequest.current=null;setPreview(null);setConfirmation("");
+    setError("");setMessage("");setBusy(true);
     try{
-      const body:any={plane,rule,operation};
-      if(operation==="set")body.expires_at=expiresAt;
-      const result=await api("/api/v1/temporary-access/preview",{method:"POST",body:JSON.stringify(body)});
-      setPreview(result);setConfirmation("");
-    }catch(e:any){setError(e.message||String(e))}
+      const result=await api("/api/v1/temporary-access/preview",{
+        method:"POST",body:JSON.stringify(request)});
+      if(token!==previewGeneration.current)return;
+      if(result?.no_change===true){
+        setMessage("Core reports NO_CHANGE; no Temporary Access Apply is required.");
+        return;
+      }
+      if(!temporaryAccessPreviewMatchesIntent(result,request))
+        throw new Error("Core Temporary Access Preview does not match the selected rule, action or expiry.");
+      currentRequest.current=request;setPreview(result);setConfirmation("");
+    }catch(e:any){if(token===previewGeneration.current)
+      setError("Temporary Access Preview unverified: "+String(e.message||e))}
+    finally{if(token===previewGeneration.current)setBusy(false)}
   }
   async function doApply(){
-    setError("");setMessage("");
+    if(busy||confirmation!=="APPLY"||!preview)return;
+    const reviewedPlan=preview,reviewedRequest=currentRequest.current;
+    const intended={plane,rule,operation,expires_at:operation==="set"?expiresAt:""};
+    if(!temporaryAccessPreviewMatchesIntent(reviewedPlan,reviewedRequest)
+      ||JSON.stringify(reviewedRequest)!==JSON.stringify(intended)){
+      resetChangePlan();
+      setError("Core Temporary Access plan is missing, changed or expired. Preview current Core policy before retrying.");
+      return;
+    }
+    const token=++previewGeneration.current;
+    setError("");setMessage("");setBusy(true);
     try{
-      const result=await api("/api/v1/temporary-access/apply",{method:"POST",body:JSON.stringify({change_plan_id:preview?.change_plan_id||"",confirmation})});
-      setMessage("Temporary Access applied at revision "+result.revision);setPreview(null);setConfirmation("");
-    }catch(e:any){setError(e.message||String(e))}
+      const result=await api("/api/v1/temporary-access/apply",{method:"POST",
+        body:JSON.stringify({change_plan_id:reviewedPlan.change_plan_id,confirmation})});
+      if(token!==previewGeneration.current)return;
+      const applied=requireObservedTemporaryAccessApplyForPlan(result,reviewedPlan);
+      setMessage("Core Temporary Access confirmed APPLIED at revision "+applied.revision+
+        ". This does not prove live reachability.");
+      currentRequest.current=null;setPreview(null);setConfirmation("");
+    }catch(e:any){
+      if(token===previewGeneration.current){
+        // The old one-shot plan may already be committed on an unknown reply.
+        currentRequest.current=null;setPreview(null);setConfirmation("");
+        setError("Core Apply outcome UNKNOWN. Inspect policy and Change History before requesting a new plan. "+String(e?.message||e));
+      }
+    }finally{if(token===previewGeneration.current)setBusy(false)}
   }
+  const actionable=temporaryAccessPreviewMatchesIntent(preview,currentRequest.current);
   return <div className="card">
     <h3>Temporary Access</h3>
-    <div className="muted">Set, change, or clear server-authoritative expiry on an existing WHITELIST grant.</div>
+    <div className="muted">Set, change, or clear server-authoritative expiry on an existing WHITELIST grant. This is a direct actor-bound Core Change Plan, not a requester/reviewer approval.</div>
     {error&&<div className="error">{error}</div>}{message&&<div className="notice">{message}</div>}
     <div className="toolbar">
-      <select value={plane} onChange={e=>{resetChangePlan();setPlane(e.target.value)}}><option value="remote">Remote</option><option value="internet">Internet</option><option value="ai">AI</option></select>
-      <input value={rule} onChange={e=>{resetChangePlan();setRule(e.target.value)}} placeholder="Rule name"/>
-      <select value={operation} onChange={e=>{resetChangePlan();setOperation(e.target.value)}}><option value="set">Set / change expiry</option><option value="clear">Clear expiry</option></select>
-      {operation==="set"&&<input value={expiresAt} onChange={e=>{resetChangePlan();setExpiresAt(e.target.value)}} placeholder="2030-01-01T00:00:00Z"/>}
-      <button className="primary" onClick={doPreview} disabled={!rule||operation==="set"&&!expiresAt}>Preview</button>
+      <select value={plane} disabled={busy} onChange={e=>{resetChangePlan();setPlane(e.target.value)}}><option value="remote">Remote</option><option value="internet">Internet</option><option value="ai">AI</option></select>
+      <input aria-label="Temporary Access rule name" value={rule} disabled={busy} onChange={e=>{resetChangePlan();setRule(e.target.value)}} placeholder="Rule name"/>
+      <select value={operation} disabled={busy} onChange={e=>{resetChangePlan();setOperation(e.target.value)}}><option value="set">Set / change expiry</option><option value="clear">Clear expiry</option></select>
+      {operation==="set"&&<input aria-label="Temporary Access expiry" value={expiresAt} disabled={busy} onChange={e=>{resetChangePlan();setExpiresAt(e.target.value)}} placeholder="2030-01-01T00:00:00Z"/>}
+      <button className="primary" onClick={doPreview} disabled={busy||!rule||operation==="set"&&!expiresAt}>Preview</button>
     </div>
     {preview&&<div className="card">
       <div><strong>Current:</strong> {preview.current_expires_at||"none"}</div>
       <div><strong>Desired:</strong> {preview.desired_expires_at||"none"}</div>
       <div><strong>Valid until:</strong> {preview.valid_until}</div>
       <BlastRadiusView preview={preview}/>
-      <label className="apply-label">Type APPLY to commit<input value={confirmation} onChange={e=>setConfirmation(e.target.value)} placeholder="APPLY"/></label>
-      <button className="danger" onClick={doApply} disabled={confirmation!=="APPLY"}>Apply Temporary Access</button>
+      <label className="apply-label">Type APPLY to commit<input value={confirmation} onChange={e=>setConfirmation(e.target.value)} placeholder="APPLY" disabled={busy||!actionable}/></label>
+      <button className="danger" onClick={doApply} disabled={busy||confirmation!=="APPLY"||!actionable}>Apply Temporary Access</button>
+      {!actionable&&<p role="status" className="muted">Reviewed Core Change Plan expired or changed. Request a fresh Preview.</p>}
     </div>}
   </div>;
 }
@@ -530,9 +861,9 @@ function PolicySafetyPanel({operator}:{operator:any}){
       {error&&<div className="error">{error}</div>}{message&&<div className="notice">{message}</div>}
       <div className="toolbar">
         <select value={plane} onChange={e=>{setPlane(e.target.value);setSelector("");setPath("")}}><option value="remote">Remote</option><option value="internet">Internet</option><option value="ai">AI</option></select>
-        <input value={source} onChange={e=>setSource(e.target.value)} placeholder={plane==="ai"?"AI Identity":"Source object/group"}/>
-        <input value={destination} onChange={e=>setDestination(e.target.value)} placeholder="Destination"/>
-        <input value={selector} onChange={e=>setSelector(e.target.value)} placeholder={plane==="ai"?"Permission object/group":"Service object/group"}/>
+        <input aria-label={plane==="ai"?"Policy simulator AI identity":"Policy simulator source"} value={source} onChange={e=>setSource(e.target.value)} placeholder={plane==="ai"?"AI Identity":"Source object/group"}/>
+        <input aria-label="Policy simulator destination" value={destination} onChange={e=>setDestination(e.target.value)} placeholder="Destination"/>
+        <input aria-label={plane==="ai"?"Policy simulator permission":"Policy simulator service"} value={selector} onChange={e=>setSelector(e.target.value)} placeholder={plane==="ai"?"Permission object/group":"Service object/group"}/>
         {plane==="ai"&&<input value={path} onChange={e=>setPath(e.target.value)} placeholder="Optional path"/>}
         <button className="primary" onClick={simulate} disabled={!ready}>Simulate</button>
       </div>
@@ -567,7 +898,7 @@ function PolicySafetyPanel({operator}:{operator:any}){
       <Table items={tests.map((x:any)=>({name:x.name,plane:x.plane,expected:x.expected,required:x.required,enabled:x.enabled}))}/>
       {operator.role!=="Read Only"&&<>
         <div className="toolbar">
-          <input value={testName} onChange={e=>{invalidateTestPreview();setTestName(e.target.value)}} placeholder="Test name"/>
+          <input aria-label="Policy regression test name" value={testName} onChange={e=>{invalidateTestPreview();setTestName(e.target.value)}} placeholder="Test name"/>
           <select value={expected} onChange={e=>{invalidateTestPreview();setExpected(e.target.value)}}><option value="ALLOW">Expect ALLOW</option><option value="DENY">Expect DENY</option></select>
           <label><input type="checkbox" checked={required} onChange={e=>{invalidateTestPreview();setRequired(e.target.checked)}}/> Required</label>
           <label><input type="checkbox" checked={enabled} onChange={e=>{invalidateTestPreview();setEnabled(e.target.checked)}}/> Enabled</label>
@@ -599,14 +930,24 @@ function LinkFoundationAdministration({
       case "link.users":
         if(admin)onNavigate?.("users","administration");
         break;
-      case "link.audit":onNavigate?.("audit","observability");break;
-      case "link.health":onNavigate?.("health","observability");break;
+      case "link.audit":onNavigate?.("audit","activity");break;
+      case "link.retention":onNavigate?.("audit","activity");break;
+      case "link.health":onNavigate?.("health","activity");break;
+      case "link.backup":
+        // Navigate only to the existing native Core validator. Create and
+        // restore remain separately restricted and confirmed by Link Core.
+        const backupAdvanced=document.getElementById("drlink-core-advanced") as HTMLDetailsElement|null;
+        if(backupAdvanced)backupAdvanced.open=true;
+        document.getElementById("drlink-backup-status")?.scrollIntoView({block:"start"});
+        document.getElementById("drlink-backup-status")?.focus();
+        break;
       case "link.certificate":
         // The shared read-only certificate shortcut reveals the distinct
         // product-owned Core panel; it is NOT Web HTTPS listener management.
         const advanced=document.getElementById("drlink-core-advanced") as HTMLDetailsElement|null;
         if(advanced)advanced.open=true;
         document.getElementById("drlink-certificate-status")?.scrollIntoView({block:"start"});
+        document.getElementById("drlink-certificate-status")?.focus();
         break;
     }
   }
@@ -624,11 +965,76 @@ function SystemPanel({data,operator}:{data:any,operator:any}){
   const [certPem,setCertPem]=useState(""),[keyPem,setKeyPem]=useState(""),[chainPem,setChainPem]=useState("");
   const [productUpdateConfirmation,setProductUpdateConfirmation]=useState(""),[engineUpdateConfirmation,setEngineUpdateConfirmation]=useState("");
   const [preflight,setPreflight]=useState<any>(null),[renewal,setRenewal]=useState<any>(null),[certAction,setCertAction]=useState<any>(null),[updateResult,setUpdateResult]=useState<any>(null),[validation,setValidation]=useState<any>(null),[backupArtifact,setBackupArtifact]=useState<any>(null),[supportArtifact,setSupportArtifact]=useState<any>(null),[error,setError]=useState("");
-  async function runPreflight(){setError("");try{setPreflight(await api("/api/v1/system/certificate/preflight",{method:"POST",body:"{}"}))}catch(e:any){setError(e.message||String(e))}}
-  async function configureCertificate(){setError("");setCertAction(null);try{setCertAction(await api("/api/v1/system/certificate/configure",{method:"POST",body:JSON.stringify({mode:certMode,hostname:certHostname,contact_email:certEmail,acme_environment:acmeEnv,confirmation:certConfigConfirmation})}));setCertConfigConfirmation("")}catch(e:any){setError(e.message||String(e))}}
-  async function issueCertificate(){setError("");setCertAction(null);try{setCertAction(await api("/api/v1/system/certificate/issue",{method:"POST",body:JSON.stringify({confirmation:issueConfirmation})}));setIssueConfirmation("")}catch(e:any){setError(e.message||String(e))}}
-  async function importCertificate(){setError("");setCertAction(null);try{setCertAction(await api("/api/v1/system/certificate/import",{method:"POST",body:JSON.stringify({cert_pem:certPem,key_pem:keyPem,chain_pem:chainPem,confirmation:importConfirmation})}));setImportConfirmation("");setCertPem("");setKeyPem("");setChainPem("")}catch(e:any){setError(e.message||String(e))}}
-  async function renewCertificate(){setError("");setRenewal(null);try{setRenewal(await api("/api/v1/system/certificate/renew",{method:"POST",body:JSON.stringify({confirmation:renewConfirmation})}));setRenewConfirmation("")}catch(e:any){setError(e.message||String(e))}}
+  // All certificate writes are Core-authoritative and non-idempotent. Lock
+  // across the four operations immediately, before React's next render.
+  const certMutationInFlight=useRef(false);
+  const [certMutationBusy,setCertMutationBusy]=useState(false);
+  const supportBundleInFlight=useRef(false);
+  const [supportBundleBusy,setSupportBundleBusy]=useState(false);
+  async function runPreflight(){
+    setError("");setPreflight(null);
+    try{
+      const result=await api("/api/v1/system/certificate/preflight",{method:"POST",body:"{}"});
+      const projected=observedCoreCertificatePreflight(result,data.certificate);
+      if(!projected)throw new Error("Core certificate preflight did not match the configured Host, mode or read-only result. State is UNKNOWN.");
+      setPreflight(projected);
+    }catch(e:any){setPreflight(null);setError(e.message||String(e))}
+  }
+  async function performCertificateAction(
+    operation:"configure"|"issue"|"import",path:string,
+    body:Record<string,unknown>,expected:{hostname:string,mode:string}
+  ){
+    if(certMutationInFlight.current)return;
+    certMutationInFlight.current=true;setCertMutationBusy(true);
+    setError("");setCertAction(null);setRenewal(null);
+    try{
+      const raw=await api(path,{method:"POST",body:JSON.stringify(body)});
+      const confirmed=observedCoreCertificateActionReceipt(raw,operation,expected);
+      if(!confirmed)throw new Error("Core certificate action returned no verified matching mutation receipt.");
+      setCertAction(confirmed);
+    }catch{
+      setCertAction(null);
+      setError("Core mutation outcome UNKNOWN. Re-read Certificate Status and Audit before submitting another certificate change.");
+    }finally{certMutationInFlight.current=false;setCertMutationBusy(false)}
+  }
+  async function configureCertificate(){
+    try{
+      await performCertificateAction("configure","/api/v1/system/certificate/configure",{
+        mode:certMode,hostname:certHostname,contact_email:certEmail,
+        acme_environment:acmeEnv,confirmation:certConfigConfirmation
+      },{hostname:certHostname.trim().toLowerCase(),mode:certMode.toUpperCase().replaceAll("-","_")});
+    }finally{setCertConfigConfirmation("")}
+  }
+  async function issueCertificate(){
+    try{
+      await performCertificateAction("issue","/api/v1/system/certificate/issue",{
+        confirmation:issueConfirmation
+      },data.certificate);
+    }finally{setIssueConfirmation("")}
+  }
+  async function importCertificate(){
+    try{
+      await performCertificateAction("import","/api/v1/system/certificate/import",{
+        cert_pem:certPem,key_pem:keyPem,chain_pem:chainPem,confirmation:importConfirmation
+      },{hostname:data.certificate?.hostname,mode:"USER_CERTIFICATE"});
+    }finally{setCertPem("");setKeyPem("");setChainPem("");setImportConfirmation("")}
+  }
+  async function renewCertificate(){
+    if(certMutationInFlight.current)return;
+    certMutationInFlight.current=true;setCertMutationBusy(true);
+    setError("");setRenewal(null);setCertAction(null);
+    try{
+      const raw=await api("/api/v1/system/certificate/renew",{
+        method:"POST",body:JSON.stringify({confirmation:renewConfirmation})
+      });
+      const confirmed=observedCoreCertificateRenewalReceipt(raw,data.certificate);
+      if(!confirmed)throw new Error("Core renewal receipt was unverified.");
+      setRenewal(confirmed);
+    }catch{
+      setRenewal(null);
+      setError("Core mutation outcome UNKNOWN. Re-read Certificate Status and Audit before retrying renewal.");
+    }finally{certMutationInFlight.current=false;setCertMutationBusy(false);setRenewConfirmation("")}
+  }
   async function checkUpdate(target:string){setError("");setUpdateResult(null);try{setUpdateResult(await api("/api/v1/system/update/check",{method:"POST",body:JSON.stringify({target})}))}catch(e:any){setError(e.message||String(e))}}
   async function updateProduct(){setError("");setUpdateResult(null);try{setUpdateResult(await api("/api/v1/system/update/product",{method:"POST",body:JSON.stringify({confirmation:productUpdateConfirmation})}));setProductUpdateConfirmation("")}catch(e:any){setError(e.message||String(e))}}
   async function refreshProductUpdate(){if(!updateResult?.job_id)return;setError("");try{setUpdateResult(await api("/api/v1/system/update/product/status?job_id="+encodeURIComponent(updateResult.job_id)))}catch(e:any){setError(e.message||String(e))}}
@@ -636,7 +1042,23 @@ function SystemPanel({data,operator}:{data:any,operator:any}){
   async function validateBackup(){setError("");setRestoreConfirmation("");try{setValidation(await api("/api/v1/system/backup/validate",{method:"POST",body:JSON.stringify({path:backupPath})}))}catch(e:any){setValidation(null);setError(e.message||String(e))}}
   async function restoreBackup(){setError("");try{await api("/api/v1/system/restore",{method:"POST",body:JSON.stringify({path:backupPath,confirmation:restoreConfirmation})});window.location.reload()}catch(e:any){setError(e.message||String(e))}}
   async function createBackup(){setError("");setBackupArtifact(null);try{setBackupArtifact(await api("/api/v1/system/backup/create",{method:"POST",body:"{}"}))}catch(e:any){setError(e.message||String(e))}}
-  async function createSupportBundle(){setError("");setSupportArtifact(null);try{setSupportArtifact(await api("/api/v1/system/support-bundle",{method:"POST",body:"{}"}))}catch(e:any){setError(e.message||String(e))}}
+  async function createSupportBundle(){
+    if(supportBundleInFlight.current||supportBundleBusy
+      ||operator.role==="Read Only"||support.create_available!==true)return;
+    supportBundleInFlight.current=true;setSupportBundleBusy(true);
+    setError("");setSupportArtifact(null);
+    try{
+      const raw=await api("/api/v1/system/support-bundle",{method:"POST",body:"{}"});
+      const observed=observedCoreSupportBundleReceipt(raw);
+      if(!observed)throw new Error("Core generated no verified bounded Support Bundle receipt.");
+      setSupportArtifact(observed);
+    }catch{
+      setSupportArtifact(null);
+      setError("Core Support Bundle outcome UNKNOWN. The artifact may already exist on the Server. Inspect authorized Core records before trying again.");
+    }finally{
+      supportBundleInFlight.current=false;setSupportBundleBusy(false);
+    }
+  }
   const identity=data.identity||{},certificate=data.certificate||{},backup=data.backup||{},support=data.support_bundle||{},update=data.update||{};
   return <>
     {error&&<div className="error">{error}</div>}
@@ -644,8 +1066,12 @@ function SystemPanel({data,operator}:{data:any,operator:any}){
       <Metric label="Data Relay Link" value={identity.display_identity||identity.project_version}/>
       <Metric label="Relay Engine" value={identity.relay_engine_version}/>
       <Metric label="Channel" value={identity.channel}/>
-      <Metric label="Backup Ready" value={backup.create_available&&backup.validate_available?"YES":"NO"}/>
+      <Metric label="Backup tools" value={backupToolReadiness(backup)}/>
     </div>
+    <p className="muted" role="note">Backup tools reflect Core command availability only.
+      This status does not verify an actual protected archive or a successful restore.
+      Missing tool evidence remains UNKNOWN; any restore still needs a separately approved
+      Core-authoritative check.</p>
     <div className="card">
       <h3>Release Provenance</h3>
       <Table items={[{source_ref:identity.source_ref,source_head:identity.source_head,bundle_sha256:identity.bundle_sha256||"not recorded"}]}/>
@@ -659,14 +1085,14 @@ function SystemPanel({data,operator}:{data:any,operator:any}){
       </div>
       {operator.role==="Admin"&&update.product_apply_via_web&&<div className="toolbar"><input value={productUpdateConfirmation} onChange={e=>setProductUpdateConfirmation(e.target.value)} placeholder="Type UPDATE PRODUCT"/><button className="danger" onClick={updateProduct} disabled={productUpdateConfirmation!=="UPDATE PRODUCT"}>Update Data Relay Link</button></div>}
       {operator.role==="Admin"&&update.engine_apply_via_web&&<div className="toolbar"><input value={engineUpdateConfirmation} onChange={e=>setEngineUpdateConfirmation(e.target.value)} placeholder="Type UPDATE ENGINE"/><button className="danger" onClick={updateEngine} disabled={engineUpdateConfirmation!=="UPDATE ENGINE"}>Update Relay Engine</button></div>}
-      <div className="muted">Product update apply via Web: {update.product_apply_via_web?"enabled — exact-build queued mode":"unavailable; use local CLI recovery/update"}</div>
+      <div className="muted">Product update apply via Web: {update.product_apply_via_web===true?"enabled — exact-build queued mode":update.product_apply_via_web===false?"unavailable; use local CLI recovery/update":"UNKNOWN · Core did not verify Web update availability"}</div>
       {updateResult?.job_id&&<button className="secondary" onClick={refreshProductUpdate}>Refresh Product Update Status</button>}
       {updateResult&&<pre className="plan">{JSON.stringify(updateResult,null,2)}</pre>}
     </div>
-    <div className="card" id="drlink-certificate-status">
+    <div className="card" id="drlink-certificate-status" tabIndex={-1}>
       <h3>Certificate Status</h3>
       <Table items={[{mode:certificate.mode,hostname:certificate.hostname,certificate:certificate.certificate,issuer:certificate.issuer,expires:certificate.expires,days_remaining:certificate.days_remaining,auto_renewal:certificate.auto_renewal}]}/>
-      <button className="secondary" onClick={runPreflight}>Run Certificate Preflight</button>
+      <button className="secondary" onClick={runPreflight} disabled={certMutationBusy}>Run Certificate Preflight</button>
       {operator.role==="Admin"&&<>
         <h4>Certificate Intent</h4>
         <div className="toolbar">
@@ -675,22 +1101,25 @@ function SystemPanel({data,operator}:{data:any,operator:any}){
           <input value={certEmail} onChange={e=>setCertEmail(e.target.value)} placeholder="ACME contact email"/>
           <select value={acmeEnv} onChange={e=>setAcmeEnv(e.target.value)}><option value="production">Production</option><option value="staging">Staging</option></select>
         </div>
-        <div className="toolbar"><input value={certConfigConfirmation} onChange={e=>setCertConfigConfirmation(e.target.value)} placeholder="Type APPLY"/><button className="danger" onClick={configureCertificate} disabled={certConfigConfirmation!=="APPLY"}>Apply Certificate Settings</button></div>
-        {certMode!=="user-certificate"&&<div className="toolbar"><input value={issueConfirmation} onChange={e=>setIssueConfirmation(e.target.value)} placeholder="Type ISSUE"/><button className="danger" onClick={issueCertificate} disabled={issueConfirmation!=="ISSUE"}>Issue & Activate Certificate</button></div>}
+        <div className="toolbar"><input value={certConfigConfirmation} onChange={e=>setCertConfigConfirmation(e.target.value)} placeholder="Type APPLY"/><button className="danger" onClick={configureCertificate} disabled={certMutationBusy||certConfigConfirmation!=="APPLY"||!["auto-acme","user-certificate","private-ca"].includes(certMode)}>Apply Certificate Settings</button></div>
+        {certMode!=="user-certificate"&&<div className="toolbar"><input value={issueConfirmation} onChange={e=>setIssueConfirmation(e.target.value)} placeholder="Type ISSUE"/><button className="danger" onClick={issueCertificate} disabled={certMutationBusy||issueConfirmation!=="ISSUE"}>Issue & Activate Certificate</button></div>}
         {certMode==="user-certificate"&&<div className="card">
           <div className="muted">PEM material is sent only in this request, staged under a private Core-owned directory, imported by the canonical TLS engine, then deleted.</div>
           <textarea className="draft-editor" value={certPem} onChange={e=>setCertPem(e.target.value)} placeholder="Certificate PEM"/>
           <textarea className="draft-editor" value={keyPem} onChange={e=>setKeyPem(e.target.value)} placeholder="Private key PEM"/>
           <textarea className="draft-editor" value={chainPem} onChange={e=>setChainPem(e.target.value)} placeholder="Optional chain PEM"/>
-          <div className="toolbar"><input value={importConfirmation} onChange={e=>setImportConfirmation(e.target.value)} placeholder="Type IMPORT"/><button className="danger" onClick={importCertificate} disabled={importConfirmation!=="IMPORT"||!certPem||!keyPem}>Import & Activate Certificate</button></div>
+          <div className="toolbar"><input value={importConfirmation} onChange={e=>setImportConfirmation(e.target.value)} placeholder="Type IMPORT"/><button className="danger" onClick={importCertificate} disabled={certMutationBusy||importConfirmation!=="IMPORT"||!certPem||!keyPem}>Import & Activate Certificate</button></div>
         </div>}
-        <div className="toolbar"><input value={renewConfirmation} onChange={e=>setRenewConfirmation(e.target.value)} placeholder="Type RENEW"/><button className="danger" onClick={renewCertificate} disabled={renewConfirmation!=="RENEW"}>Renew Certificate If Due</button></div>
+        <div className="toolbar"><input value={renewConfirmation} onChange={e=>setRenewConfirmation(e.target.value)} placeholder="Type RENEW"/><button className="danger" onClick={renewCertificate} disabled={certMutationBusy||renewConfirmation!=="RENEW"}>Renew Certificate If Due</button></div>
       </>}
-      {preflight&&<pre className="plan">{JSON.stringify(preflight,null,2)}</pre>}
+      {preflight&&<section role="status" className="dr-preview-panel">
+        <p className="muted">Preflight is advisory: local Core DNS and HTTP/80 probes are not proof of external ACME validation, issuance, browser connectivity or live TLS health.</p>
+        <pre className="plan">{JSON.stringify(preflight,null,2)}</pre>
+      </section>}
       {certAction&&<pre className="plan">{JSON.stringify(certAction,null,2)}</pre>}
       {renewal&&<pre className="plan">{JSON.stringify(renewal,null,2)}</pre>}
     </div>
-    <div className="card">
+    <div className="card" id="drlink-backup-status" tabIndex={-1}>
       <h3>Backup</h3>
       <div className="muted">Backup archives are protected server-side artifacts containing secrets. Web never downloads or displays their contents.</div>
       {operator.role==="Admin"&&<button className="primary" onClick={createBackup} disabled={!backup.create_available}>Create Protected Backup</button>}
@@ -704,7 +1133,7 @@ function SystemPanel({data,operator}:{data:any,operator:any}){
     <div className="card">
       <h3>Support Bundle</h3>
       <div className="muted">Creates a sanitized diagnostic archive in {support.directory||"/var/lib/drlink/support-bundles"}. Archive contents are not exposed through Web.</div>
-      {operator.role!=="Read Only"&&<button className="secondary" onClick={createSupportBundle} disabled={!support.create_available}>Create Sanitized Support Bundle</button>}
+      {operator.role!=="Read Only"&&<button className="secondary" onClick={createSupportBundle} disabled={supportBundleBusy||!support.create_available}>Create Sanitized Support Bundle</button>}
       {supportArtifact&&<pre className="plan">{JSON.stringify(supportArtifact,null,2)}</pre>}
     </div>
   </>;
@@ -716,6 +1145,7 @@ function AccessOperations({operator,onNavigate,context}:{operator:any,onNavigate
   const [diagnosisEvidence,setDiagnosisEvidence]=useState<{key:string,value:any}|null>(null);
   const [liveEvidence,setLiveEvidence]=useState<{key:string,value:any}|null>(null);
   const [diagnosisBusy,setDiagnosisBusy]=useState(false),[liveBusy,setLiveBusy]=useState(false),[error,setError]=useState("");
+  const [diagnosisObservedAt,setDiagnosisObservedAt]=useState("");
   const [liveResource,setLiveResource]=useState("");
   const [cutoffEvidence,setCutoffEvidence]=useState<{key:string,value:any}|null>(null);
   const cutoffGeneration=useRef(0);
@@ -733,14 +1163,30 @@ function AccessOperations({operator,onNavigate,context}:{operator:any,onNavigate
   const cutoffPlanGeneration=useRef(0);
   const currentCutoffKey=coreCutoffKey(plane,scopeKind,scopeRef,cutoffOperation,reason);
   const currentCutoffPreview=visibleCoreEvidence(cutoffPreview,currentCutoffKey);
+  const currentCutoffActionable=observedEmergencyCutoffPreviewForIntent(
+    currentCutoffPreview,plane,scopeKind,scopeRef,cutoffOperation);
   useEffect(()=>()=>{cutoffPlanGeneration.current+=1},[]);
+  useEffect(()=>{
+    if(!currentCutoffPreview)return;
+    const expires=Date.parse(currentCutoffPreview.valid_until);
+    const delay=expires-Date.now();
+    if(!Number.isFinite(delay)||delay>2147483647)return;
+    const timer=setTimeout(()=>{
+      if(Date.now()>=expires){
+        cutoffPlanGeneration.current+=1;
+        setCutoffPreview(null);setCutoffConfirm("");
+        setError("Cutoff Preview expired or unverified. Read fresh Core state and request a new Preview.");
+      }
+    },Math.max(0,delay));
+    return()=>clearTimeout(timer);
+  },[currentCutoffPreview?.change_plan_id,currentCutoffPreview?.valid_until,currentCutoffKey]);
   const scopeOptions:Record<string,string[]>={remote:["plane","remote-service"],internet:["plane","managed-host"],ai:["plane","ai-identity"]};
   function invalidateCutoff(){cutoffPlanGeneration.current+=1;setCutoffPreview(null);setCutoffConfirm("");setCutoffMessage("")}
   function changeDiagnosisFlow(field:"source"|"destination"|"selector",value:string){
     if(field==="source")setSource(value);
     else if(field==="destination")setDestination(value);
     else setSelector(value);
-    diagnosisGeneration.current+=1;setDiagnosisEvidence(null);setDiagnosisBusy(false);setError("");
+    diagnosisGeneration.current+=1;setDiagnosisEvidence(null);setDiagnosisObservedAt("");setDiagnosisBusy(false);setError("");
   }
 
   async function loadCutoffs(){
@@ -749,15 +1195,15 @@ function AccessOperations({operator,onNavigate,context}:{operator:any,onNavigate
     try{
       const result=await api("/api/v1/emergency-cutoffs?plane="+encodeURIComponent(plane));
       if(cutoffGeneration.current!==token)return;
-      if(!Array.isArray(result?.items))throw new Error("Core cutoff inventory response incomplete");
-      setCutoffEvidence({key:plane,value:result});
+      const verified=requireObservedCutoffInventory(result,plane);
+      setCutoffEvidence({key:plane,value:verified});
     }catch(e:any){if(cutoffGeneration.current===token)setError("Core cutoff state unavailable: "+String(e.message||e))}
   }
   useEffect(()=>{void loadCutoffs();return()=>{cutoffGeneration.current+=1}},[plane]);
   function changePlane(value:string){
     if(plane===value||cutoffBusy)return;
     diagnosisGeneration.current+=1;liveGeneration.current+=1;
-    setPlane(value);setSelector("");setDiagnosisEvidence(null);setLiveEvidence(null);
+    setPlane(value);setSelector("");setDiagnosisEvidence(null);setDiagnosisObservedAt("");setLiveEvidence(null);
     setDiagnosisBusy(false);setLiveBusy(false);setLiveResource("");
     setScopeKind("plane");setScopeRef("");invalidateCutoff();
   }
@@ -771,7 +1217,8 @@ function AccessOperations({operator,onNavigate,context}:{operator:any,onNavigate
       if(plane==="ai")body.permission=selector.trim();else body.service=selector.trim();
       const result=await api("/api/v1/diagnose",{method:"POST",body:JSON.stringify(body)});
       if(diagnosisGeneration.current!==token)return;
-      setDiagnosisEvidence({key:requestKey,value:result});
+      const valid=requireObservedDiagnosisView(result,plane,source.trim(),destination.trim(),selector.trim());
+      setDiagnosisEvidence({key:requestKey,value:valid});setDiagnosisObservedAt(new Date().toISOString());
     }catch(e:any){if(diagnosisGeneration.current===token)setError(e.message||String(e))}
     finally{if(diagnosisGeneration.current===token)setDiagnosisBusy(false)}
   }
@@ -785,7 +1232,8 @@ function AccessOperations({operator,onNavigate,context}:{operator:any,onNavigate
       if(liveResource.trim())q.set("resource",liveResource.trim());
       const result=await api("/api/v1/live-access?"+q.toString());
       if(liveGeneration.current!==token)return;
-      setLiveEvidence({key:requestKey,value:result});
+      const valid=requireObservedLiveAccessView(result,plane,liveResource.trim());
+      setLiveEvidence({key:requestKey,value:valid});
     }catch(e:any){if(liveGeneration.current===token)setError(e.message||String(e))}
     finally{if(liveGeneration.current===token)setLiveBusy(false)}
   }
@@ -799,13 +1247,23 @@ function AccessOperations({operator,onNavigate,context}:{operator:any,onNavigate
       if(scopeKind!=="plane")body.scope_ref=scopeRef.trim();
       const result=await api("/api/v1/emergency-cutoff/preview",{method:"POST",body:JSON.stringify(body)});
       if(cutoffPlanGeneration.current!==token)return;
-      if(!result?.change_plan_id)throw new Error("Core cutoff preview returned no Change Plan ID");
-      setCutoffPreview({key:requestKey,value:result});
+      const verified=observedEmergencyCutoffPreviewForIntent(result,plane,scopeKind,scopeRef,cutoffOperation);
+      if(!verified)throw new Error("Cutoff Preview expired or unverified. No approval is available.");
+      setCutoffPreview({key:requestKey,value:verified});
     }catch(e:any){if(cutoffPlanGeneration.current===token){setCutoffPreview(null);setError(e.message||String(e))}}
     finally{if(cutoffPlanGeneration.current===token)setCutoffBusy(false)}
   }
   async function applyCutoff(){
     if(cutoffBusy||cutoffConfirm!=="CONFIRM CUTOFF"||!currentCutoffPreview?.change_plan_id)return;
+    // Revalidate the exact Core Preview at click time; idle tabs can expire.
+    const latest=observedEmergencyCutoffPreviewForIntent(
+      currentCutoffPreview,plane,scopeKind,scopeRef,cutoffOperation);
+    if(!latest){
+      cutoffPlanGeneration.current+=1;
+      setCutoffPreview(null);setCutoffConfirm("");
+      setError("Cutoff Preview expired or unverified. Read fresh Core state and request a new Preview.");
+      return;
+    }
     const token=++cutoffPlanGeneration.current;
     setError("");setCutoffBusy(true);
     try{
@@ -815,46 +1273,68 @@ function AccessOperations({operator,onNavigate,context}:{operator:any,onNavigate
         confirmation:cutoffConfirm,
       })});
       if(cutoffPlanGeneration.current!==token)return;
-      setCutoffMessage((cutoffOperation==="clear"?"Cutoff cleared":"Cutoff applied")+" at revision "+String(result.revision??"UNKNOWN")+"; existing sessions terminated: "+String(result.active_sessions_terminated??"UNKNOWN"));
+      const confirmed=requireObservedEmergencyCutoffApplyForPlan(result,currentCutoffPreview,plane,cutoffOperation);
+      setCutoffMessage((cutoffOperation==="clear"?"Cutoff cleared":"Cutoff applied")+" at revision "+confirmed.revision+
+        "; existing sessions terminated: "+confirmed.active_sessions_terminated);
       setCutoffPreview(null);setCutoffConfirm("");
       await loadLive();
       await loadCutoffs();
-    }catch(e:any){if(cutoffPlanGeneration.current===token)setError(e.message||String(e))}
+    }catch(e:any){if(cutoffPlanGeneration.current===token){
+      // An indeterminate HTTP outcome may have committed a one-shot Core
+      // incident plan. Require fresh inventory/preview rather than repeat.
+      setCutoffPreview(null);setCutoffConfirm("");setCutoffMessage("");
+      setError("Cutoff outcome UNKNOWN. Inspect Core cutoff inventory and Change History before any retry. "+String(e.message||e));
+    }}
     finally{if(cutoffPlanGeneration.current===token)setCutoffBusy(false)}
   }
   const layers=(matchingDiagnosis?.layers||[]).map((x:any)=>({layer:x.layer,status:x.status,summary:x.summary}));
-  const planeLabel=plane==="remote"?"Remote Access":plane==="internet"?"Internet Access":"AI Access";
+  const purpose=accessPlanePurpose(plane as AccessPlane);
+  const planeLabel=purpose.label;
+  const flowContext=connectionReviewContext(plane as AccessPlane,source,destination,selector);
   return <div className="dr-access-workspace">
     {error&&<div className="error">{error}</div>}
-    {context?.originId&&<section className="dr-uxb-context card" role="note"><strong>Investigating {context.originType||"resource"}: {context.originId}</strong><p>Core resource names are not automatically Network/Service Objects. Select the exact source, destination and selector before interpreting any Core access decision.</p><button className="secondary" onClick={()=>onNavigate?.("audit","activity",context)}>Review matching Activity log →</button></section>}
-    <section className="dr-page-intro"><div><p className="dr-eyebrow">Access</p><h2>Access Workspace</h2><p className="muted">Understand who can reach what, why the decision is made, and what is active now.</p></div><div className="dr-page-actions"><button className="secondary" onClick={()=>onNavigate?.("policies","access")}>Policies</button>{operator.role!=="Read Only"&&<button className="primary" onClick={()=>onNavigate?.("drafts","access")}>Draft change</button>}</div></section>
-    <div className="dr-access-tabs" role="tablist" aria-label="Access plane">{[["remote","Remote Access"],["internet","Internet Access"],["ai","AI Access"]].map(([value,label])=><button key={value} role="tab" aria-selected={plane===value} className={plane===value?"active":""} disabled={cutoffBusy} onClick={()=>changePlane(value)}>{label}</button>)}</div>
+    {context?.originId&&<section className="dr-uxb-context card" role="note"><strong>Investigating {context.originType||"resource"}: {context.originId}</strong><p>Core resource names are not automatically Network/Service Objects. Select the exact source, destination and selector before interpreting any Core access decision.</p><div className="dr-form-actions"><button className="secondary" onClick={()=>onNavigate?.("audit","activity",context)}>Review matching Activity log →</button>{typeof context.originId==="string"&&/^[A-Za-z0-9][A-Za-z0-9_.:@-]{0,159}$/.test(context.originId)&&(context.originType==="remote-service"||context.originType==="managed-host")&&<button className="secondary" onClick={()=>onNavigate?.(context.originType==="remote-service"?"services":"hosts","connections",{savedFilter:"id:"+context.originId,inspectResourceId:context.originId})}>Back to selected {context.originType==="remote-service"?"service":"server"} →</button>}</div></section>}
+    <section className="dr-page-intro"><div><p className="dr-eyebrow">Access</p><h2>Access Workspace</h2><p className="muted">Understand who can reach what, why the decision is made, and what is active now.</p></div><div className="dr-page-actions"><button className="secondary" onClick={()=>onNavigate?.("policies","access",flowContext)}>Policies</button>{operator.role!=="Read Only"&&<button className="primary" onClick={()=>onNavigate?.("drafts","access",flowContext)}>Draft change</button>}</div></section>
+    <div className="dr-access-purpose-grid" role="tablist" aria-label="Access plane">{(["remote","internet","ai"] as AccessPlane[]).map(value=>{const item=accessPlanePurpose(value);return <button key={value} role="tab" aria-selected={plane===value} className={plane===value?"active":""} disabled={cutoffBusy} onClick={()=>changePlane(value)}>
+      <strong>{item.label}</strong><small>{item.summary}</small><span>{item.agentRequired?"Managed Agent path":"No Managed Agent prerequisite"}</span>
+    </button>})}</div>
+    <section className="card dr-access-purpose-note" aria-label={planeLabel+" purpose"}>
+      <strong>{purpose.summary}</strong><div><span>Source: {purpose.source}</span><span>Target: {purpose.destination}</span><span>{plane==="ai"?"Permission":"Service"}: {purpose.selector}</span></div>
+      {plane==="internet"&&<p className="muted">Internet Access does not substitute the signed-in Web user for network source identity; Core source objects remain authoritative.</p>}
+    </section>
     <section className="card dr-access-map-card">
       <div className="dr-section-head"><div><p className="dr-eyebrow">Relationship</p><h3>{planeLabel}</h3></div><button className="dr-text-action" onClick={()=>onNavigate?.("policies","access")}>View policies →</button></div>
       <div className="dr-access-map" aria-label={planeLabel+" relationship preview"}>
         <div className="dr-access-node"><span>Source</span><strong>{source||((plane==="ai")?"AI identity":"Source object / group")}</strong><small>{source?"Selected input":"Enter a source below"}</small></div>
         <div className="dr-access-edge"><span>→</span><small>{selector||(plane==="ai"?"permission":"service")}</small></div>
-        <div className="dr-access-node policy"><span>Decision</span><strong>{matchingDiagnosis?.overall||"Policy evaluation"}</strong><small>{matchingDiagnosis?.next_action||"Test against Core policy"}</small></div>
+        <div className="dr-access-node policy"><span>Policy decision</span><strong>{matchingDiagnosis?.overall||"UNKNOWN"}</strong><small>{matchingDiagnosis?.next_action||"Run Core diagnosis"}</small></div>
         <div className="dr-access-edge"><span>→</span><small>{planeLabel}</small></div>
-        <div className="dr-access-node"><span>Destination</span><strong>{destination||"Destination object / group"}</strong><small>{matchingLive?.fidelity?"Live fidelity: "+matchingLive.fidelity:"Live evidence: UNKNOWN until refreshed"}</small></div>
+        <div className="dr-access-node"><span>Destination</span><strong>{destination||"Destination object / group"}</strong><small>{matchingLive?.fidelity?"Live evidence: "+matchingLive.fidelity:"Live evidence: UNKNOWN until refreshed"}</small></div>
+      </div>
+      <div className="dr-access-verdict-split" aria-label="Policy and transport evidence">
+        <div><span>Policy</span><strong>{matchingDiagnosis?.overall||"UNKNOWN"}</strong><small>Core authorization evaluation only</small></div>
+        <div><span>Transport test</span><strong>{matchingDiagnosis?.network_probe_performed?"Performed":"Not tested"}</strong><small>Policy ALLOW never becomes connection success</small></div>
+        <div><span>Observed live use</span><strong>{matchingLive?.fidelity||"UNKNOWN"}</strong><small>Separate bounded Core evidence</small></div>
       </div>
     </section>
     <AccessEvidenceExplorer api={api} plane={plane as AccessPlane} source={source} destination={destination} selector={selector}
-      onSelect={flow=>{diagnosisGeneration.current+=1;setSource(flow.source);setDestination(flow.destination);setSelector(flow.selector);setDiagnosisEvidence(null);setDiagnosisBusy(false)}}
-      onNavigate={(id,group)=>onNavigate?.(id,group,context)}/>
+      onSelect={flow=>{diagnosisGeneration.current+=1;setSource(flow.source);setDestination(flow.destination);setSelector(flow.selector);setDiagnosisEvidence(null);setDiagnosisObservedAt("");setDiagnosisBusy(false)}}
+      onInspectHost={hostId=>{const target=observedHostInspectContext(hostId);if(target)onNavigate?.("hosts","infrastructure",target)}}
+      actor={operator} onNavigate={(id,group,detail)=>onNavigate?.(id,group,detail??context)}/>
     <div className="card">
       <div className="dr-section-head"><div><p className="dr-eyebrow">Policy Simulator</p><h3>Connection Diagnosis</h3></div></div>
       <div className="muted">Side-effect-free Core correlation. No browser-triggered DNS or target probe is launched; missing evidence stays UNKNOWN.</div>
       <div className="toolbar">
-        <input value={source} onChange={e=>changeDiagnosisFlow("source",e.target.value)} placeholder={plane==="ai"?"AI Identity / source":"Source Object / Group"}/>
-        <input value={destination} onChange={e=>changeDiagnosisFlow("destination",e.target.value)} placeholder="Destination Object / Group"/>
-        <input value={selector} onChange={e=>changeDiagnosisFlow("selector",e.target.value)} placeholder={plane==="ai"?"Permission Object / Group":"Service Object / Group"}/>
+        <input aria-label={plane==="ai"?"Diagnosis AI identity":"Diagnosis source"} value={source} onChange={e=>changeDiagnosisFlow("source",e.target.value)} placeholder={plane==="ai"?"AI Identity / source":"Source Object / Group"}/>
+        <input aria-label="Diagnosis destination" value={destination} onChange={e=>changeDiagnosisFlow("destination",e.target.value)} placeholder="Destination Object / Group"/>
+        <input aria-label={plane==="ai"?"Diagnosis permission":"Diagnosis service"} value={selector} onChange={e=>changeDiagnosisFlow("selector",e.target.value)} placeholder={plane==="ai"?"Permission Object / Group":"Service Object / Group"}/>
         <button className="primary" disabled={!diagnosisReady||diagnosisBusy} onClick={runDiagnosis}>{diagnosisBusy?"Checking Core…":"Diagnose"}</button>
       </div>
       {matchingDiagnosis&&<>
         <div className="grid"><Metric label="Overall" value={matchingDiagnosis.overall}/><Metric label="Network probe" value={matchingDiagnosis.network_probe_performed?"YES":"NO"}/></div>
         <Table items={layers}/>
         <div className="muted">Next action: {matchingDiagnosis.next_action}</div>
+        <div className="muted">Browser received this verified Core response at {diagnosisObservedAt||"UNKNOWN"}. The current diagnosis contract does not provide a separate Core observation timestamp.</div>
       </>}
       {!matchingDiagnosis&&!diagnosisBusy&&<p className="muted" role="status">Diagnosis: UNKNOWN until the current source, destination and selector have a fresh Core result.</p>}
     </div>
@@ -862,12 +1342,15 @@ function AccessOperations({operator,onNavigate,context}:{operator:any,onNavigate
       <h3>Live Access Visibility</h3>
       <div className="muted">Bounded current-use evidence only. Remote Access remains UNKNOWN unless official FRP can prove exact lifecycle state.</div>
       <div className="toolbar">
-        <input value={liveResource} onChange={e=>{liveGeneration.current+=1;setLiveResource(e.target.value);setLiveEvidence(null);setLiveBusy(false)}} placeholder="Optional resource/session/identity filter"/>
+        <input aria-label="Live access resource filter" value={liveResource} onChange={e=>{liveGeneration.current+=1;setLiveResource(e.target.value);setLiveEvidence(null);setLiveBusy(false)}} placeholder="Optional resource/session/identity filter"/>
         <button className="secondary" disabled={liveBusy} onClick={loadLive}>{liveBusy?"Refreshing Core…":"Refresh "+plane+" live access"}</button>
       </div>
       {matchingLive&&<>
         <div className="grid"><Metric label="Fidelity" value={matchingLive.fidelity}/><Metric label="Active count" value={matchingLive.active_count??"UNKNOWN"}/><Metric label="Returned" value={(matchingLive.observations||[]).length}/></div>
         {matchingLive.reason&&<div className="warning-box">{matchingLive.reason}</div>}
+        {matchingLive.partial&&<p className="dr-uxb-catalog-page-notice" role="status">
+          Partial Core live-access page · other observed sessions may exist beyond this snapshot.
+          A local no-match does not prove zero active access.</p>}
         <Table items={matchingLive.observations||[]}/>
       </>}
       {!matchingLive&&!liveBusy&&<p className="muted" role="status">Live access: UNKNOWN until Core returns current evidence for this plane and optional filter.</p>}
@@ -886,20 +1369,37 @@ function AccessOperations({operator,onNavigate,context}:{operator:any,onNavigate
       <div className="toolbar">
         <select value={cutoffOperation} disabled={cutoffBusy} onChange={e=>{invalidateCutoff();setCutoffOperation(e.target.value)}}><option value="apply">Apply cutoff</option><option value="clear">Clear cutoff</option></select>
         <select value={scopeKind} disabled={cutoffBusy} onChange={e=>{invalidateCutoff();setScopeKind(e.target.value);setScopeRef("")}}>{scopeOptions[plane].map(x=><option key={x} value={x}>{x}</option>)}</select>
-        {scopeKind!=="plane"&&<input value={scopeRef} disabled={cutoffBusy} onChange={e=>{invalidateCutoff();setScopeRef(e.target.value)}} placeholder={scopeKind+" selector"}/>}
-        {cutoffOperation==="apply"&&<input value={reason} disabled={cutoffBusy} onChange={e=>{invalidateCutoff();setReason(e.target.value)}} placeholder="Incident reason (optional)"/>}
+        {scopeKind!=="plane"&&<input aria-label="Emergency cutoff scope selector" value={scopeRef} disabled={cutoffBusy} onChange={e=>{invalidateCutoff();setScopeRef(e.target.value)}} placeholder={scopeKind+" selector"}/>}
+        {cutoffOperation==="apply"&&<input aria-label="Emergency cutoff incident reason" value={reason} disabled={cutoffBusy} onChange={e=>{invalidateCutoff();setReason(e.target.value)}} placeholder="Incident reason (optional)"/>}
         <button className="danger" disabled={cutoffBusy} onClick={previewCutoff}>{cutoffBusy?"Checking Core…":"Preview cutoff"}</button>
       </div>
       {currentCutoffPreview&&<>
         <pre className="plan">{JSON.stringify({scope_kind:currentCutoffPreview.scope_kind,scope_ref:currentCutoffPreview.scope_ref,scope_display:currentCutoffPreview.scope_display,currently_active:currentCutoffPreview.currently_active,desired_active:currentCutoffPreview.desired_active,impact:currentCutoffPreview.impact,active_sessions_terminated:currentCutoffPreview.active_sessions_terminated},null,2)}</pre>
         <label className="apply-label">Type CONFIRM CUTOFF<input value={cutoffConfirm} disabled={cutoffBusy} onChange={e=>setCutoffConfirm(e.target.value)} placeholder="CONFIRM CUTOFF"/></label>
-        <button className="danger" onClick={applyCutoff} disabled={cutoffBusy||cutoffConfirm!=="CONFIRM CUTOFF"||!currentCutoffPreview?.change_plan_id}>{cutoffOperation==="clear"?"Clear Cutoff":"Apply Cutoff"}</button>
+        <button className="danger" onClick={applyCutoff} disabled={cutoffBusy||cutoffConfirm!=="CONFIRM CUTOFF"||!currentCutoffActionable}>{cutoffOperation==="clear"?"Clear Cutoff":"Apply Cutoff"}</button>
       </>}
     </div>}
   </div>;
 }
 
-function AuditExplorer({operator,context}:{operator:any,context?:any}){
+function AuditEventList({items,onInspect,canInspect}:{
+  items:any[],onInspect:(item:any,index:number)=>void,canInspect:(item:any,index:number)=>boolean
+}){
+  if(!items.length)return <div className="dr-audit-empty"><strong>No events in this loaded Core page</strong><p>Nothing matched the applied query in this page. Retention and other pages remain outside this evidence.</p></div>;
+  return <div className="dr-audit-readable-scroll"><table className="dr-audit-readable-table">
+    <thead><tr><th scope="col">When</th><th scope="col">What</th><th scope="col">Who</th><th scope="col">Resource</th><th scope="col">Result</th><th scope="col">Action</th></tr></thead>
+    <tbody>{items.map((item,index)=><tr key={item.event_id||index}>
+      <td data-label="When"><span>{item.occurred_at||"UNKNOWN"}</span></td>
+      <td data-label="What"><strong>{item.event_type||"UNKNOWN"}</strong><small>{item.category||"UNKNOWN"}</small></td>
+      <td data-label="Who">{item.actor||"UNKNOWN"}</td>
+      <td data-label="Resource">{item.resource||"UNKNOWN"}</td>
+      <td data-label="Result"><span className={String(item.result).toLowerCase()==="success"?"dr-state active":"dr-state"}><i/>{item.result||"UNKNOWN"}</span></td>
+      <td data-label="Action"><button type="button" className="secondary" disabled={!canInspect(item,index)} aria-label={"Inspect event "+String(item.event_id||index)} onClick={()=>onInspect(item,index)}>View details →</button></td>
+    </tr>)}</tbody>
+  </table></div>;
+}
+
+function AuditExplorer({operator,context,onNavigate}:{operator:any,context?:any,onNavigate?:(id:string,groupId?:string,context?:any)=>void}){
   const [data,setData]=useState<any>(null),[retention,setRetention]=useState<any>(null),[error,setError]=useState(""),[message,setMessage]=useState(""),[exportResult,setExportResult]=useState<any>(null);
   const [auditState,setAuditState]=useState<"loading"|"ready"|"unknown"|"idle">("loading");
   const auditReadEpoch=useRef(0);
@@ -911,13 +1411,26 @@ function AuditExplorer({operator,context}:{operator:any,context?:any}){
   const [retentionConfirmation,setRetentionConfirmation]=useState("");
   const [auditPage,setAuditPage]=useState<MenuPagePosition>({cursor:"",history:[]});
   const [auditFilterKey,setAuditFilterKey]=useState<string|null>(null);
-  const [start,setStart]=useState(""),[end,setEnd]=useState(""),[category,setCategory]=useState(""),[eventType,setEventType]=useState(""),[actor,setActor]=useState(""),[resource,setResource]=useState(String(context?.originId||"")),[result,setResult]=useState(""),[correlation,setCorrelation]=useState("");
+  const [auditPresetError,setAuditPresetError]=useState("");
+  const [selectedAuditEvent,setSelectedAuditEvent]=useState<{scope:string,event:ObservedAuditEventDetail}|null>(null);
+  const investigation=auditInvestigation(context);
+  const [start,setStart]=useState(investigation.start),[end,setEnd]=useState(investigation.end),
+    [category,setCategory]=useState(investigation.category),[eventType,setEventType]=useState(""),
+    [actor,setActor]=useState(investigation.actor),[resource,setResource]=useState(investigation.resource),
+    [result,setResult]=useState(investigation.result),[correlation,setCorrelation]=useState("");
   const [controlDays,setControlDays]=useState("365"),[accessDays,setAccessDays]=useState("90"),[maxEvents,setMaxEvents]=useState("500000");
 
   function filterParams(){
     const q=new URLSearchParams({limit:"50"});
     for(const [key,value] of [["start",start],["end",end],["category",category],["event_type",eventType],["actor",actor],["resource",resource],["result",result],["correlation_id",correlation]] as string[][]){if(value.trim())q.set(key,value.trim())}
     return q;
+  }
+  function chooseAuditUtcPreset(hours:number){
+    const range=auditUtcPresetRange(hours,Date.now());
+    if(!range){setAuditPresetError("UTC time shortcut unavailable. Enter a valid Start UTC and End UTC instead.");return;}
+    setAuditPresetError("");
+    setStart(range.start);setEnd(range.end);
+    // Inputs only: the existing Search audit action alone sends the Core query.
   }
   function exportFilters(){
     const out:any={};
@@ -926,12 +1439,12 @@ function AuditExplorer({operator,context}:{operator:any,context?:any}){
   }
   async function load(position:MenuPagePosition={cursor:"",history:[]}){
     const epoch=++auditReadEpoch.current;
-    setError("");setData(null);setAuditState("loading");
+    setSelectedAuditEvent(null);setError("");setData(null);setAuditState("loading");
     const q=filterParams();
     const filterKey=q.toString();
     try{
       if(position.cursor)q.set("cursor",position.cursor);
-      const page=requireObservedMenuPayload("audit",await api("/api/v1/audit?"+q.toString()));
+      const page=requireObservedBoundedCorePage("audit",await api("/api/v1/audit?"+q.toString()),position.cursor,50);
       if(epoch!==auditReadEpoch.current)return;
       setData(page);setAuditPage(position);setAuditFilterKey(filterKey);setAuditState("ready");
     }catch(e:any){
@@ -1006,6 +1519,12 @@ function AuditExplorer({operator,context}:{operator:any,context?:any}){
   );
   const retentionRunAllowed=auditRetentionRunPermitted(retention,retentionDraft,retentionState,retentionWriteBusy,retentionConfirmation);
   const auditFiltersEdited=auditState==="ready"&&auditFilterKey!==filterParams().toString();
+  const auditRefreshAllowed=observedAuditPageRefreshAvailable(auditState,auditFilterKey,filterParams().toString(),auditPage);
+  const appliedFilters=observedAuditAppliedFilters(auditFilterKey);
+  const selectedAuditScope=JSON.stringify([auditFilterKey,auditPage.cursor]);
+  const scopedDetail=auditFiltersEdited?null:
+    auditState==="ready"&&selectedAuditEvent?.scope===selectedAuditScope
+      ?selectedAuditEvent.event:null;
   const rows=(data?.items||[]).map((x:any)=>({
     event_id:x.event_id||("legacy:"+x.row_id),
     occurred_at:x.occurred_at,
@@ -1019,9 +1538,46 @@ function AuditExplorer({operator,context}:{operator:any,context?:any}){
   }));
   return <>
     {error&&<div className="error" role="alert">{error}</div>}{message&&<div className="notice">{message}</div>}
+    {investigation.returnTarget&&<section className="card dr-uxb-context" role="note"
+      aria-label="Selected resource audit investigation">
+      <strong>Investigating {investigation.originType}: {investigation.resource}</strong>
+      {(investigation.start||investigation.end)&&<p className="muted">
+        Selected Audit time window · start {investigation.start||"unbounded"} ·
+        end {investigation.end||"unbounded"} (timezone-qualified Core timestamps).
+      </p>}
+      <p>Core audit resource ID filter = <code>{investigation.resource}</code>. This selects the
+        entity ID in the authorized Core Audit read, not a proven type-unique resource,
+        current policy decision or live connection. Verify event type, actor and result
+        in each returned row; no result does not prove absence beyond the retained scope.</p>
+      <div className="toolbar">
+        <button type="button" className="secondary"
+          onClick={()=>{setResource(investigation.resource);setStart(investigation.start);setEnd(investigation.end);
+            setActor(investigation.actor);setCategory(investigation.category);setResult(investigation.result)}}>
+          Restore original Audit filters →</button>
+        <button type="button" className="secondary"
+          onClick={()=>onNavigate?.(investigation.returnTarget.id,investigation.returnTarget.group,investigation.returnTarget.context)}>
+          Back to {investigation.originType==="managed-host"?"Managed Hosts":investigation.originType==="remote-service"?"Published services":"Access rules"} →
+        </button>
+      </div>
+      <p className="muted">Return can reopen a detail only when exactly one matching
+        resource is already present in the authorized loaded Core inventory. Otherwise
+        the original ID stays as a loaded-page filter; use permitted pagination.
+        No privileged resource-by-ID fetch is performed.</p>
+    </section>}
     <section className="card dr-audit-card">
-      <div className="dr-section-head"><div><p className="dr-eyebrow">Activity & Health</p><h3>Audit Explorer</h3><p className="muted">Unified control, access-decision and security-lifecycle history with bounded keyset pagination.</p></div><button className="secondary" onClick={exportAudit} disabled={exportBusy}>{exportBusy?"Exporting with Core…":"Export NDJSON"}</button></div>
+      <div className="dr-section-head"><div><p className="dr-eyebrow">Activity · Audit Explorer</p><h3>Activity log</h3><p className="muted">Who did what, when, to which resource, and with what result. Open one event for bounded Core evidence.</p></div><button className="secondary" onClick={exportAudit} disabled={exportBusy}>{exportBusy?"Exporting with Core…":"Export NDJSON"}</button></div>
       {exportError&&<p role="alert" className="warning-box">{exportError} The result may have been committed; inspect Activity log before trying again.</p>}
+      <p className="muted">Audit filters are applied to observed Core events; an empty page is not proof
+        of no historical activity outside the selected filters or retained Core window.
+        Resource filters match the entity ID only; verify the event resource type before attribution.</p>
+      <div className="dr-form-actions dr-audit-preset-actions" role="group" aria-label="Audit UTC time range shortcuts">
+        <span className="muted">Set a UTC window · Search audit to apply</span>
+        <button type="button" className="secondary" onClick={()=>chooseAuditUtcPreset(1)}>Last 1h</button>
+        <button type="button" className="secondary" onClick={()=>chooseAuditUtcPreset(3)}>Last 3h</button>
+        <button type="button" className="secondary" onClick={()=>chooseAuditUtcPreset(24)}>Last 24h</button>
+        <button type="button" className="secondary" onClick={()=>chooseAuditUtcPreset(168)}>Last 7d</button>
+      </div>
+      {auditPresetError&&<p role="alert" className="warning-box">{auditPresetError}</p>}
       <div className="dr-audit-filter-grid">
         <label className="dr-field"><span>Start UTC</span><input value={start} onChange={e=>setStart(e.target.value)} placeholder="YYYY-MM-DDTHH:MM:SSZ"/></label>
         <label className="dr-field"><span>End UTC</span><input value={end} onChange={e=>setEnd(e.target.value)} placeholder="YYYY-MM-DDTHH:MM:SSZ"/></label>
@@ -1032,11 +1588,52 @@ function AuditExplorer({operator,context}:{operator:any,context?:any}){
         <label className="dr-field"><span>Result</span><input value={result} onChange={e=>setResult(e.target.value)} placeholder="success / deny"/></label>
         <label className="dr-field"><span>Correlation ID</span><input value={correlation} onChange={e=>setCorrelation(e.target.value)} placeholder="Correlation ID"/></label>
       </div>
-      <div className="dr-form-actions"><button className="primary" onClick={()=>load()}>Search audit</button><button className="secondary" onClick={()=>{auditReadEpoch.current+=1;setData(null);setAuditState("idle");setAuditPage({cursor:"",history:[]});setAuditFilterKey(null);setError("");setStart("");setEnd("");setCategory("");setEventType("");setActor("");setResource("");setResult("");setCorrelation("")}}>Clear filters</button></div>
+      <div className="dr-form-actions"><button className="primary" onClick={()=>load()}>Search audit</button>
+        <button type="button" className="secondary" disabled={!auditRefreshAllowed}
+          onClick={()=>{if(auditRefreshAllowed)load(auditPage)}}>
+          Refresh loaded Audit page →
+        </button><button className="secondary" onClick={()=>{auditReadEpoch.current+=1;setData(null);setAuditState("idle");setAuditPage({cursor:"",history:[]});setAuditFilterKey(null);setError("");setStart("");setEnd("");setCategory("");setEventType("");setActor("");setResource("");setResult("");setCorrelation("")}}>Clear filters</button></div>
+      <p className="muted">Refresh loaded Audit page re-reads only the already applied Core query at this keyset page. If input filters change, select Search audit before refreshing. This does not prove that the retained Core history is complete.</p>
       {auditFiltersEdited&&<p className="dr-uxb-catalog-page-notice" role="status">Filters changed since the loaded Audit page. Select Search audit to apply them; results below still belong to the previous search.</p>}
-      <div className="dr-audit-table">{auditState==="ready"?<Table items={rows}/>:
+      {auditState==="ready"&&<section className="dr-uxb-context" aria-label="Loaded Core Audit query scope" role="status">
+        <strong>Applied Core Audit filters · loaded page {auditPage.history.length+1}</strong>
+        <p className="muted">These filters describe the already loaded Core page, not edited but unsubmitted search fields. Retention and other pages remain outside this evidence.</p>
+        {appliedFilters===null?<p className="warning-box">Applied Core filter scope UNKNOWN; event inspection unavailable.</p>:
+          appliedFilters.length===0?<p className="muted">All categories in the permitted retained Core window · no additional query filters.</p>:
+          <div className="dr-p0-facts">{appliedFilters.map(item=>
+            <span key={item.label}>{item.label}: {item.value}</span>)}</div>}
+      </section>}
+      <div className="dr-audit-table">{auditState==="ready"?<AuditEventList items={rows}
+        onInspect={(_,index)=>{
+          if(auditFiltersEdited||appliedFilters===null)return;
+          const proof=observedAuditEventDetails(data?.items?.[index]);
+          if(proof)setSelectedAuditEvent({scope:selectedAuditScope,event:proof});
+        }}
+        canInspect={(_,index)=>!auditFiltersEdited&&appliedFilters!==null
+          &&!!observedAuditEventDetails(data?.items?.[index])}/>:
         <p role="status" className="warning-box">{auditState==="loading"?"Loading Activity log from Core…":auditState==="idle"?"Filters cleared. Select Search audit to load current Core records.":"UNKNOWN · Core Audit inventory unavailable. No empty history was confirmed. Retry with Search audit."}</p>}
       </div>
+      {scopedDetail&&appliedFilters!==null&&<section className="card dr-audit-evidence"
+        role="region" aria-label="Observed Core Audit event detail">
+        <div className="dr-section-head"><div>
+          <h4>Event details · {scopedDetail.eventId}</h4>
+          <p className="muted">Audit event detail belongs to the loaded Core page and applied filters only.
+            This read-only evidence is not a session recording, live authorization or complete history.</p>
+        </div><button type="button" className="secondary" onClick={()=>setSelectedAuditEvent(null)}>
+          Close details</button></div>
+        <div className="dr-p0-facts">
+          <span>Occurred: {scopedDetail.occurredAt}</span>
+          <span>Category: {scopedDetail.category}</span>
+          <span>Event: {scopedDetail.eventType}</span>
+          <span>Actor: {scopedDetail.actor}</span>
+          <span>Resource: {scopedDetail.resourceType}:{scopedDetail.resourceId}</span>
+          <span>Result: {scopedDetail.result}</span>
+          <span>Reason: {scopedDetail.reason}</span>
+          <span>Correlation: {scopedDetail.correlation}</span>
+          <span>Revision: {scopedDetail.revisionBefore} → {scopedDetail.revisionAfter}</span>
+        </div>
+        <p className="muted">Nested Core event metadata, policy payloads, session identifiers and secrets are not included.</p>
+      </section>}
       {auditState==="ready"&&!auditFiltersEdited&&(auditPage.history.length>0||isPartialCorePage(data))&&
       <div className="dr-form-actions" role="group" aria-label="Audit pagination">
         <span className="muted">Page {auditPage.history.length+1} · current Core query</span>
@@ -1105,11 +1702,13 @@ function AgentRolloutPreviewPanel(){
       const body={targets:hosts.split(",").map(x=>x.trim()).filter(Boolean),canary_targets:canaries.split(",").map(x=>x.trim()).filter(Boolean),
         artifact:{version:version.trim(),source_ref:sourceRef.trim(),sha256:digest.trim()},
         wave_size:Number(wave),failure_threshold_percent:Number(threshold)};
-      const result=requireObservedRolloutPreview(await api("/api/v1/jobs/agent-update-rollout/preview",{
+      const verified=requireObservedRolloutPreview(await api("/api/v1/jobs/agent-update-rollout/preview",{
         method:"POST",body:JSON.stringify(body)
       }),body);
       if(epoch!==previewGeneration.current)return;
-      setPreview(result);
+      const projected=observedRolloutPreviewDisplay(verified,body);
+      if(!projected)throw new Error("Core Agent observations contain unverified identities or display fields.");
+      setPreview(projected);
     }catch(e:any){
       if(epoch===previewGeneration.current)setError("UNKNOWN · Core Agent Update Preview did not complete for the current inputs: "+(e.message||String(e)));
     }finally{
@@ -1164,6 +1763,7 @@ function JobOperations({operator}:{operator:any}){
     fleetResourceType,fleetResource,fleetDescription,fleetTags,fleetRemoveTags,fleetAddGroups,fleetRemoveGroups
   ]);
   const [jobStartBusy,setJobStartBusy]=useState(false);
+  const jobStartInFlight=useRef(false);
   const detailReadEpoch=useRef(0);
   const [detailBusy,setDetailBusy]=useState(false);
   const cancelInFlight=useRef(false);
@@ -1174,7 +1774,7 @@ function JobOperations({operator}:{operator:any}){
     const epoch=++jobsReadEpoch.current;
     setError("");setJobsState("loading");
     try{
-      const result=requireObservedMenuPayload("jobs",await api("/api/v1/jobs?limit=50"+(jobsCursor?"&cursor="+encodeURIComponent(jobsCursor):"")));
+      const result=requireObservedJobsPage(await api("/api/v1/jobs?limit=50"+(jobsCursor?"&cursor="+encodeURIComponent(jobsCursor):"")),jobsCursor,50);
       if(epoch!==jobsReadEpoch.current)return;
       setJobs(result);setJobsState("ready");
     }catch(e:any){
@@ -1195,12 +1795,15 @@ function JobOperations({operator}:{operator:any}){
     setJobsHistory(jobsHistory.slice(0,-1));
   }
   async function start(){
-    if(jobStartBusy)return;
+    // Ref lock is synchronous; React's busy render can be deferred, and
+    // duplicate non-idempotent POSTs would enqueue two distinct Core Jobs.
+    if(jobStartInFlight.current)return;
+    jobStartInFlight.current=true;
     setError("");setMessage("");setJobStartBusy(true);
     try{
       const body:any={job_type:jobType,resource_type:resourceType};
       if(resource)body.resource=resource;
-      const result=requireObservedJobStart(await api("/api/v1/jobs/diagnostic",{method:"POST",body:JSON.stringify(body)}),jobType);
+      const result=requireObservedJobStartForRequest(await api("/api/v1/jobs/diagnostic",{method:"POST",body:JSON.stringify(body)}),body);
       detailReadEpoch.current+=1;setDetailBusy(false);
       setDetail(result.job);
       setDetailId(result.job.id);
@@ -1208,7 +1811,7 @@ function JobOperations({operator}:{operator:any}){
       if(jobsCursor){setJobsCursor("");setJobsHistory([])}
       else await refresh();
     }catch(e:any){setError("UNKNOWN · Core Job start response could not be confirmed. Inspect Jobs before retrying: "+(e.message||String(e)))}
-    finally{setJobStartBusy(false)}
+    finally{jobStartInFlight.current=false;setJobStartBusy(false)}
   }
   async function loadDetail(id?:string){
     const target=(id||detailId).trim();
@@ -1305,7 +1908,7 @@ function JobOperations({operator}:{operator:any}){
     }
   }
   async function cancelJob(){
-    if(cancelInFlight.current||!detail?.id||detailBusy)return;
+    if(cancelInFlight.current||!detail?.id||detailBusy||!observedJobCancelAvailable(observedCoreJobDisplay(detail),operator.role))return;
     cancelInFlight.current=true;setCancelBusy(true);
     const jobId=String(detail.id);
     detailReadEpoch.current+=1;setError("");setMessage("");
@@ -1328,6 +1931,7 @@ function JobOperations({operator}:{operator:any}){
     }
   }
   const rows=(jobs?.items||[]).map((x:any)=>({id:x.id,job_type:x.job_type,status:x.status,resource_type:x.resource_type,resource_ref:x.resource_ref,target_count:x.target_count,created_at:x.created_at,finished_at:x.finished_at||""}));
+  const safeDetail=detail?observedCoreJobDisplay(detail):null;
   return <>
     {error&&<div className="error" role="alert">{error}</div>}{message&&<div className="notice">{message}</div>}
     {operator.role==="Admin"&&<AgentRolloutPreviewPanel/>}
@@ -1382,12 +1986,14 @@ function JobOperations({operator}:{operator:any}){
         <button className="danger" onClick={applyFleetMetadata} disabled={!fleetPreviewGuard||fleetConfirm!=="APPLY"}>{fleetApplyBusy?"Confirming Core Apply…":"Apply Fleet Metadata"}</button>
       </div>}
     </section>}
-    {detail&&<div className="card">
+    {detail&&!safeDetail&&<p role="alert" className="warning-box">UNKNOWN · Core Job Detail contains unverified identifiers or unbounded fields. No target outcomes or cancellation permissions are inferred. Reload the exact Core Job.</p>}
+    {safeDetail&&<div className="card">
       <h3>Job Detail</h3>
-      <div className="grid"><Metric label="Status" value={detail.status}/><Metric label="Targets" value={detail.target_count}/><Metric label="Type" value={detail.job_type}/></div>
-      {operator.role!=="Read Only"&&["QUEUED","RUNNING"].includes(String(detail.status||""))&&<button className="danger" onClick={cancelJob} disabled={cancelBusy||detailBusy}>{cancelBusy?"Requesting Core cancellation…":"Cancel Job"}</button>}
-      <Table items={(detail.targets||[]).map((x:any)=>({target_id:x.target_id,status:x.status,attempt:x.attempt,error:x.error||"",updated_at:x.updated_at}))}/>
-      <pre className="plan">{JSON.stringify({id:detail.id,resource_type:detail.resource_type,resource_ref:detail.resource_ref,deadline_at:detail.deadline_at,last_error:detail.last_error,targets:(detail.targets||[]).map((x:any)=>({target_id:x.target_id,status:x.status,result:x.result,error:x.error}))},null,2)}</pre>
+      <div className="grid"><Metric label="Status" value={safeDetail.status}/><Metric label="Targets" value={safeDetail.target_count}/><Metric label="Type" value={safeDetail.job_type}/></div>
+      {observedJobCancelAvailable(safeDetail,operator.role)&&<button className="danger" onClick={cancelJob} disabled={cancelBusy||detailBusy}>{cancelBusy?"Requesting Core cancellation…":"Cancel Job"}</button>}
+      <Table items={safeDetail.targets.map(x=>({target_id:x.target_id,status:x.status,attempt:x.attempt,error:x.error,updated_at:x.updated_at}))}/>
+      <p className="muted">Core and Agent raw results, worker identity, nested payloads and arbitrary error text are not displayed here. Only bounded job progress and known error codes are shown.</p>
+      <pre className="plan">{JSON.stringify(safeDetail,null,2)}</pre>
     </div>}
   </>;
 }
@@ -1396,8 +2002,9 @@ function ObjectsWorkspace({data,onNavigate,context,api}:{data:any,onNavigate?:(i
   const initialFamily=["all","network","service","permission","ai"].includes(String(context?.family||""))
     ?String(context.family):"all";
   const [family,setFamily]=useState(initialFamily),[filter,setFilter]=useState(""),[selected,setSelected]=useState<any>(null);
+  const detailRef=useRef<HTMLElement>(null);
   useEffect(()=>{setFamily(initialFamily);setFilter("");setSelected(null)},[initialFamily]);
-  useEscapeClose(!!selected,()=>setSelected(null));
+  useDialogFocusTrap(!!selected,()=>setSelected(null),detailRef);
   const resources=data?.resources&&typeof data.resources==="object"?data.resources:null;
   const requiredTypes=["network-object","network-group","service-object","service-group",
     "permission-object","permission-group","ai-identity"];
@@ -1470,23 +2077,46 @@ function ObjectsWorkspace({data,onNavigate,context,api}:{data:any,onNavigate?:(i
           "Create or adjust a reusable object below, or change the current filter."}</p>
       </div>:<div className="dr-table-scroll"><table className="dr-resource-table"><thead><tr><th>Name</th><th>Kind</th><th>Type</th><th>Status</th><th>Description</th></tr></thead><tbody>{rows.map((item:any)=><tr key={item.resource_type+":"+item.id} tabIndex={0} onClick={()=>setSelected(item)} onKeyDown={e=>{if(e.key==="Enter"||e.key===" "){e.preventDefault();setSelected(item)}}}><td><strong>{item.name||item.id}</strong><small>{item.id}</small></td><td>{item.resource_type}</td><td>{item.type||"—"}</td><td>{item.status||item.credential_status||(item.enabled===undefined?"—":item.enabled?"Enabled":"Disabled")}</td><td>{item.description||"—"}</td></tr>)}</tbody></table></div>}
     </section>
-    {selected&&<div className="dr-drawer-backdrop" onMouseDown={e=>{if(e.currentTarget===e.target)setSelected(null)}}><aside className="dr-detail-drawer" role="dialog" aria-modal="true" aria-label="Object detail" tabIndex={-1} autoFocus><header><div><p className="dr-eyebrow">{selected.resource_type}</p><h2>{selected.name||selected.id}</h2><p>{selected.id}</p></div><button className="dr-icon-button" onClick={()=>setSelected(null)} aria-label="Close detail">×</button></header><div className="dr-detail-fields">{Object.entries(selected).filter(([,value])=>typeof value!=="object"&&value!==null&&value!=="").map(([key,value])=><div key={key}><span>{key.replaceAll("_"," ")}</span><strong>{String(value)}</strong></div>)}</div><footer><button className="primary" onClick={()=>{setSelected(null);onNavigate?.("policies","access")}}>Use in policy</button></footer></aside></div>}
+    {selected&&<div className="dr-drawer-backdrop" onMouseDown={e=>{if(e.currentTarget===e.target)setSelected(null)}}><aside ref={detailRef} className="dr-detail-drawer" role="dialog" aria-modal="true" aria-label="Object detail" tabIndex={-1}><header><div><p className="dr-eyebrow">{selected.resource_type}</p><h2>{selected.name||selected.id}</h2><p>{selected.id}</p></div><button className="dr-icon-button" onClick={()=>setSelected(null)} aria-label="Close detail">×</button></header><div className="dr-detail-fields">{Object.entries(selected).filter(([,value])=>typeof value!=="object"&&value!==null&&value!=="").map(([key,value])=><div key={key}><span>{key.replaceAll("_"," ")}</span><strong>{String(value)}</strong></div>)}</div><footer><button className="primary" onClick={()=>{setSelected(null);onNavigate?.("policies","access")}}>Use in policy</button></footer></aside></div>}
   </div>;
 }
 
-function PolicyWorkspace({data,operator,onNavigate,api}:{data:any,operator:any,onNavigate?:(id:string,groupId?:string,context?:any)=>void,api:(path:string)=>Promise<any>}){
-  const [plane,setPlane]=useState("all"),[filter,setFilter]=useState(""),[selected,setSelected]=useState<any>(null);
+function PolicyWorkspace({data,operator,onNavigate,api,context}:{data:any,operator:any,onNavigate?:(id:string,groupId?:string,context?:any)=>void,api:(path:string)=>Promise<any>,context?:any}){
+  const focusPlane=["remote","internet","ai"].includes(context?.focusPolicy?.plane)
+    ?String(context.focusPolicy.plane) as AccessPlane:null;
+  const carriedPlane=["remote","internet","ai"].includes(String(context?.plane))
+    ?String(context.plane) as AccessPlane:focusPlane;
+  const carriedFlow=carriedPlane?connectionReviewContext(
+    carriedPlane,context?.source,context?.destination,context?.selector):null;
+  const focusName=typeof context?.focusPolicy?.name==="string"&&context.focusPolicy.name.length<=160
+    ?context.focusPolicy.name:"";
+  const inspectPolicyId=typeof context?.inspectPolicyId==="string"&&context.inspectPolicyId.length<=160
+    ?context.inspectPolicyId:"";
+  const savedPolicyDraft=saveDraftForResource("policy",context?.savedFilter,context?.savedPolicyPlane||"all");
+  const [plane,setPlane]=useState<string>(focusPlane||carriedPlane||savedPolicyDraft?.plane||"all"),[filter,setFilter]=useState(focusName||inspectPolicyId||savedPolicyDraft?.filter||""),[selected,setSelected]=useState<any>(null);
+  const [statusFilter,setStatusFilter]=useState<"all"|"enabled"|"disabled"|"unknown">("all");
+  const [expiryFilter,setExpiryFilter]=useState<PolicyExpiryChoice>("all");
+  const [expiryObservedAt,setExpiryObservedAt]=useState(()=>Date.now());
+  const [policyView,setPolicyView]=useState<"table"|"cards">("table");
+  const [policySort,setPolicySort]=useState<PolicySortMode>("core");
   const [additional,setAdditional]=useState<any[]>([]);
   const [nextByPlane,setNextByPlane]=useState<Record<string,string|null>>(data.next_cursor_by_plane||{});
   const [exhausted,setExhausted]=useState<string[]>([]);
   const [loadingPlane,setLoadingPlane]=useState(""),[pageError,setPageError]=useState("");
-  const pageEpoch=useRef(0);
-  useEscapeClose(!!selected,()=>setSelected(null));
+  const pageEpoch=useRef(0),detailRef=useRef<HTMLElement>(null);
+  useDialogFocusTrap(!!selected,()=>setSelected(null),detailRef);
   useEffect(()=>{
     setAdditional([]);setNextByPlane(data.next_cursor_by_plane||{});
     setExhausted([]);setPageError("");setLoadingPlane("");
     return()=>{pageEpoch.current+=1};
   },[data]);
+  useEffect(()=>{
+    if(inspectPolicyId){
+      // Never treat an Audit ID alone as an authorization/rule identity:
+      // only a unique, currently loaded same-plane Core inventory row may open.
+      setSelected(matchObservedPolicyReturn([...(data.items||[]),...additional],inspectPolicyId,carriedPlane));
+    }
+  },[data,additional,inspectPolicyId,carriedPlane]);
   async function loadMore(planeName:string){
     const cursor=nextByPlane[planeName];
     if(loadingPlane||!cursor)return;
@@ -1510,46 +2140,263 @@ function PolicyWorkspace({data,operator,onNavigate,api}:{data:any,operator:any,o
       if(generation===pageEpoch.current)setLoadingPlane("");
     }
   }
-  const q=filter.trim().toLowerCase();
   const partial=isPartialCorePage(data);
   const limitedPlanes=(Array.isArray(data.possibly_truncated_planes)?data.possibly_truncated_planes:[])
     .filter((kind:string)=>!exhausted.includes(kind));
   const selectedMayBeLimited=limitedPlanes.some((kind:string)=>plane==="all"||plane===kind);
-  const rows=[...(data.items||[]),...additional].filter((item:any)=>
-    (plane==="all"||item.plane===plane)&&(!q||Object.values(item).some(v=>String(v??"").toLowerCase().includes(q))));
+  const focusComplete=!!focusPlane&&!limitedPlanes.includes(focusPlane)&&!nextByPlane[focusPlane];
+  const focusedPolicy=focusPlane&&focusName?resolveCompletePolicyMatch(
+    [...(data.items||[]),...additional],focusPlane,focusName,focusComplete):null;
+  const loadedPlanePolicies=[...(data.items||[]),...additional].filter((item:any)=>
+    plane==="all"||item.plane===plane);
+  const safePolicySearch=filterObservedPolicySearch(loadedPlanePolicies,filter);
+  const policyStatusRows=filterObservedPoliciesByStatus<any>(safePolicySearch.items,statusFilter);
+  const expiryCounts=observedPolicyExpiryCounts(policyStatusRows,expiryObservedAt);
+  const rows=sortLoadedPolicies<any>(filterObservedPoliciesByExpiry<any>(policyStatusRows,expiryFilter,expiryObservedAt),policySort);
+  const currentSaveDraft=saveDraftForResource("policy",filter,plane);
+  const policyFilterChips=activePolicyFilterChips(plane,filter,statusFilter,expiryFilter,policySort);
+  function removePolicyFilterChip(id:PolicyFilterChipId){
+    if(id==="plane")setPlane("all");
+    else if(id==="search")setFilter("");
+    else if(id==="status")setStatusFilter("all");
+    else if(id==="expiry")setExpiryFilter("all");
+    else if(id==="sort")setPolicySort("core");
+  }
+  function clearPolicyDisplayFilters(){
+    setPlane("all");
+    setFilter("");
+    setStatusFilter("all");
+    setExpiryFilter("all");
+    setPolicySort("core");
+  }
+  function reviewPolicyAudit(row:unknown){
+    const target=policyAuditInvestigationTarget(row);
+    if(!target)return;
+    setSelected(null);
+    onNavigate?.("audit","activity",target);
+  }
   const tabs=[["all","All"],["remote","Remote"],["internet","Internet"],["ai","AI"]];
   return <div className="dr-resource-workspace">
-    <section className="dr-page-intro"><div><p className="dr-eyebrow">Access</p><h2>Policies</h2><p className="muted">One policy workspace with separate Remote, Internet and AI security semantics.</p></div><div className="dr-page-actions"><button className="secondary" onClick={()=>onNavigate?.("access","access")}>Test & explain access</button>{operator.role!=="Read Only"&&<button className="primary" onClick={()=>onNavigate?.("drafts","access")}>Draft change</button>}</div></section>
+    <section className="dr-page-intro"><div><p className="dr-eyebrow">Access</p><h2>Policies</h2><p className="muted">One policy workspace with separate Remote, Internet and AI security semantics.</p></div><div className="dr-page-actions"><button className="secondary" onClick={()=>onNavigate?.("access","access",carriedFlow||undefined)}>Test & explain access</button>{operator.role!=="Read Only"&&<button className="primary" onClick={()=>onNavigate?.("drafts","access",carriedFlow||undefined)}>Draft change</button>}</div></section>
     <div className="dr-access-tabs" role="tablist" aria-label="Policy plane">{tabs.map(([id,label])=><button key={id} role="tab" aria-selected={plane===id} className={plane===id?"active":""} onClick={()=>setPlane(id)}>{label}</button>)}</div>
-    <section className="card dr-list-card"><div className="dr-list-toolbar"><div><strong>{rows.length}</strong><span>policy rules</span></div><label className="dr-filter-field"><WorkspaceIcon kind="search"/><input value={filter} onChange={e=>setFilter(e.target.value)} placeholder="Filter policies…"/>{filter&&<button onClick={()=>setFilter("")} aria-label="Clear filter">×</button>}</label></div>
+    {carriedFlow&&"source" in carriedFlow&&<section className="card dr-uxb-context" role="note" aria-label="Selected Core policy task">
+      <strong>Selected {carriedFlow.plane.toUpperCase()} Access flow · reference only</strong>
+      <p>Source: {carriedFlow.source} · Destination: {carriedFlow.destination}
+        · {carriedFlow.plane==="ai"?"Permission":"Service"}: {carriedFlow.selector}</p>
+      <p>The selected names are not an approved rule, current Core decision, or draft.
+        Review the explicit Core Preview and required tests below before any change.</p>
+    </section>}
+    {inspectPolicyId&&<section className="card dr-uxb-context" role="status">
+      <strong>Selected Core policy ID from Search or Activity: {inspectPolicyId}</strong>
+      <p>Only an exact same-plane item already in the authorized loaded Core policy inventory
+        can reopen its detail. If this rule is not loaded, the ID remains a filter;
+        use the existing Load more controls for that plane. This is not a new Core lookup
+        and does not prove a governing policy decision.</p>
+    </section>}
+    {focusPlane&&focusName&&plane===focusPlane&&<section className="card dr-uxb-context" role="status">
+      <strong>Rule requested from a fresh Core access trace: {focusName}</strong>
+      <p>Trace rule names are not policy IDs. A detail link is available only when the entire
+        {focusPlane.toUpperCase()} Core policy list proves exactly one matching name and identifier.</p>
+      {focusedPolicy?<button type="button" className="primary" onClick={()=>setSelected(focusedPolicy)}>
+        Open verified policy detail →</button>:
+        <p className="muted">{focusComplete?"Exact rule identity is missing or ambiguous in Core policy inventory.":
+          "Policy inventory is incomplete. Load remaining Core pages before resolving this rule."}</p>}
+    </section>}
+    <section className="card dr-list-card"><div className="dr-list-toolbar"><div><strong>{rows.length}</strong><span>policy rules</span></div><label className="dr-filter-field"><WorkspaceIcon kind="search"/><input value={filter} maxLength={120} aria-label="Search visible policy fields"
+        onChange={e=>setFilter(e.target.value)} placeholder="Filter policies (name, ID, AI refs)…"/>{filter&&<button onClick={()=>setFilter("")} aria-label="Clear filter">×</button>}</label></div>
+      <div className="dr-form-actions" role="group" aria-label="Policy inventory view">
+        <span className="muted">Read-only presentation of the currently loaded Core policies</span>
+        <button type="button" className={policyView==="table"?"primary":"secondary"}
+          aria-pressed={policyView==="table"} onClick={()=>setPolicyView("table")}>Table</button>
+        <button type="button" className={policyView==="cards"?"primary":"secondary"}
+          aria-pressed={policyView==="cards"} onClick={()=>setPolicyView("cards")}>Cards</button>
+        {currentSaveDraft&&<button type="button" className="secondary"
+          onClick={()=>onNavigate?.("views","activity",{savedViewDraft:currentSaveDraft})}>
+          Save this Policy filter →</button>}
+      </div>
+      {currentSaveDraft&&<p className="muted">Saved filter includes only local text and plane.
+        It never stores policy approval, Core precedence, expiry, state, sort or unloaded rules.</p>}
+      <div className="dr-form-actions" role="group" aria-label="Policy display ordering">
+        <label>Sort loaded policies
+          <select aria-label="Sort loaded Policies" value={policySort}
+            onChange={e=>setPolicySort(isPolicySortMode(e.target.value)?e.target.value:"core")}>
+            <option value="core">Core order (default)</option>
+            <option value="name_asc">Policy name A–Z</option>
+            <option value="name_desc">Policy name Z–A</option>
+          </select>
+        </label>
+        <span className="muted">Policy ordering is display-only for loaded Core rows.
+          Core rule evaluation/precedence and Saved Views remain unchanged.
+          This is not a global sort across unloaded Core pages.</span>
+      </div>
+      {policyFilterChips.length>0&&<div className="dr-form-actions" role="group" aria-label="Active Policy display filters">
+        {policyFilterChips.map(entry=><button
+          key={entry.id} type="button" className="secondary"
+          aria-label={"Remove "+entry.label+" filter"}
+          onClick={()=>removePolicyFilterChip(entry.id)}>
+          {entry.label}: {entry.value} ×
+        </button>)}
+        <button type="button" className="secondary"
+          onClick={clearPolicyDisplayFilters}>Clear Policy display filters</button>
+        <span className="muted">Search text is never displayed in these chips.
+          Clears only browser-local choices; Core policies and Saved Views are unchanged.</span>
+      </div>}
+      <div className="dr-form-actions" role="group" aria-label="Filter loaded policy state">
+        <span className="muted">State of loaded Core rules · UNKNOWN is not Disabled</span>
+        {(["all","enabled","disabled","unknown"] as const).map(status=><button
+          key={status} type="button" className={statusFilter===status?"primary":"secondary"}
+          aria-pressed={statusFilter===status} onClick={()=>setStatusFilter(status)}>
+          {status==="all"?"All states":status==="enabled"?"Enabled":status==="disabled"?"Disabled":"UNKNOWN"}
+        </button>)}
+      </div>
+      <div className="dr-form-actions" role="group" aria-label="Filter loaded policy expiry">
+        <span className="muted">Configured policy expiry · loaded Core rules only</span>
+        {(["all","expired","due24h","later","never","unknown"] as const).map(choice=><button
+          key={choice} type="button" className={expiryFilter===choice?"primary":"secondary"}
+          aria-pressed={expiryFilter===choice} onClick={()=>setExpiryFilter(choice)}>
+          {choice==="all"?"All expiry":choice==="expired"?"Expired":
+           choice==="due24h"?"Due within 24h":choice==="later"?"Later":
+           choice==="never"?"Never":"UNKNOWN"}
+        </button>)}
+      </div>
+      {safePolicySearch.error&&<p className="warning-box" role="alert">
+        Policy search not applied: {safePolicySearch.error} Only supported visible Core policy fields are searchable.
+      </p>}
+      <div className="dr-form-actions" role="group" aria-label="Policy expiry snapshot">
+        <span className="muted" role="status">
+          Loaded policy expiry only · {expiryCounts.loadedCount} already-loaded policies after plane, text and state filters
+          · Expired {expiryCounts.expired} · Due within 24h {expiryCounts.due24h}
+          · Later {expiryCounts.later} · Never {expiryCounts.never} · UNKNOWN {expiryCounts.unknown}
+          · as-of this browser {new Date(expiryObservedAt).toISOString()}
+          · not proof of live access, approval or policy enforcement
+        </span>
+        <button type="button" className="secondary"
+          onClick={()=>setExpiryObservedAt(Date.now())}>Re-evaluate local time</button>
+      </div>
       {(partial||selectedMayBeLimited)&&<p className="dr-uxb-catalog-page-notice" role="status">Core policy list may be incomplete · {limitedPlanes.length?limitedPlanes.map((kind:string)=>kind.toUpperCase()).join(", ")+" reached the per-plane 100-rule API limit.": "Additional rules exist beyond the loaded page."} Filters inspect only loaded rules. Use Search to find a specific policy.</p>}
       {pageError&&<p className="warning-box" role="alert">Core policy page unavailable: {pageError}. Existing rows remain visible; retry Load more.</p>}
       {Object.entries(nextByPlane).filter(([kind,cursor])=>!!cursor&&(plane==="all"||plane===kind)).map(([kind])=>
         <button key={kind} type="button" className="secondary" disabled={!!loadingPlane}
           onClick={()=>loadMore(kind)}>{loadingPlane===kind?"Loading "+kind+" rules…":"Load more "+kind+" rules →"}</button>)}
-      {!rows.length?<div className="dr-empty-state"><span className="dr-empty-icon"><WorkspaceIcon kind="access"/></span><strong>{partial||selectedMayBeLimited?"No match in loaded policy rules":"No matching policy rules"}</strong><p>{partial||selectedMayBeLimited?"Other rules may exist beyond the fetched Core policy pages. Use Search for a specific policy.":"Change the filter or use the guided policy controls below."}</p></div>:<div className="dr-table-scroll"><table className="dr-resource-table"><thead><tr><th>Policy</th><th>Plane</th><th>Action</th><th>State</th><th>Expires</th><th>Description</th></tr></thead><tbody>{rows.map((item:any)=><tr key={(item.plane||"policy")+":"+item.id} tabIndex={0} onClick={()=>setSelected(item)} onKeyDown={e=>{if(e.key==="Enter"||e.key===" "){e.preventDefault();setSelected(item)}}}><td><strong>{item.name||item.id}</strong><small>{item.id}</small></td><td>{item.plane||"—"}</td><td>{item.action||"—"}</td><td><span className={item.enabled?"dr-state active":"dr-state"}><i/>{item.enabled?"Enabled":"Disabled"}</span></td><td>{item.expires_at||"Never"}</td><td>{item.description||"—"}</td></tr>)}</tbody></table></div>}
+      {!rows.length?<div className="dr-empty-state"><span className="dr-empty-icon"><WorkspaceIcon kind="access"/></span><strong>{partial||selectedMayBeLimited?"No match in loaded policy rules":"No matching policy rules"}</strong><p>{partial||selectedMayBeLimited?"Other rules may exist beyond the fetched Core policy pages. Use Search for a specific policy.":"Change the filter or use the guided policy controls below."}</p></div>:policyView==="cards"?<div className="dr-resource-cards" role="list" aria-label="Loaded Core policy cards">
+        {rows.map((item:any,index:number)=>{
+          const info=observedPolicyCardSummary(item,expiryObservedAt);
+          return info?<div role="listitem" key={info.plane+":"+info.id} className="dr-resource-card-item">
+            <button type="button" className="dr-resource-card"
+              aria-label={"Inspect policy "+info.title} onClick={()=>setSelected(item)}>
+              <span className="dr-resource-card-head"><strong>{info.title}</strong>
+                <small>{info.id} · {info.plane} policy</small></span>
+              <span className={info.status==="Enabled"?"dr-state active":"dr-state"}><i/>{info.status}</span>
+              <span className={info.expiryStatus==="Expired"?"badge warning":"badge"}>{info.expiryStatus}</span>
+              <span className="dr-resource-card-facts">{info.facts.map(field=>
+                <span key={field.label} className="dr-resource-card-fact">
+                  <span>{field.label}</span><strong>{field.value}</strong>
+                </span>)}</span>
+              <span className="dr-resource-card-action">Inspect Core policy detail →</span>
+            </button>
+            <button type="button" className="secondary dr-policy-audit-shortcut"
+              disabled={!policyAuditInvestigationTarget(item)}
+              aria-label={"Review related Audit for "+info.title}
+              onClick={event=>{event.stopPropagation();reviewPolicyAudit(item)}}>Review related Audit →</button>
+          </div>:<div role="listitem" key={"unverified:"+index} className="dr-resource-card-item">
+            <p className="warning-box" role="status">UNKNOWN · Core policy card facts could not be verified. Switch to Table to inspect loaded data without guessing.</p>
+          </div>;
+        })}
+      </div>:<div className="dr-table-scroll"><table className="dr-resource-table"><thead><tr><th>Policy</th><th>Plane</th><th>Action</th><th>State</th><th>Expires</th><th>Description</th><th>AI mapping</th><th>Investigation</th></tr></thead><tbody>{rows.map((item:any)=><tr key={(item.plane||"policy")+":"+item.id} tabIndex={0} onClick={()=>setSelected(item)} onKeyDown={e=>{if(e.key==="Enter"||e.key===" "){e.preventDefault();setSelected(item)}}}><td><strong>{observedPolicyTableDisplayCells(item).name}</strong><small>{observedPolicyTableDisplayCells(item).id}</small></td><td>{item.plane||"—"}</td><td>{observedPolicyTableDisplayCells(item).action}</td><td><span className={policyStateLabel(item.enabled)==="Enabled"?"dr-state active":"dr-state"}><i/>{policyStateLabel(item.enabled)}</span></td><td><span className={observedPolicyExpiryState(item,expiryObservedAt)==="expired"?"badge warning":"badge"}>{observedPolicyExpiryState(item,expiryObservedAt)==="due24h"?"Due within 24h":observedPolicyExpiryState(item,expiryObservedAt)==="unknown"?"UNKNOWN":observedPolicyExpiryState(item,expiryObservedAt)==="never"?"Never":observedPolicyExpiryState(item,expiryObservedAt)==="later"?"Later":"Expired"}</span><small>{policyExpiryLabel(item)}</small></td><td>{observedPolicyTableDisplayCells(item).description}</td>
+          <td><AiPolicyMappingCell row={item} asOf={expiryObservedAt}/></td>
+          <td><button type="button" className="secondary dr-policy-audit-shortcut"
+            disabled={!policyAuditInvestigationTarget(item)}
+            aria-label={"Review related Audit for "+(policyAuditInvestigationTarget(item)?.originId||"unverified policy")}
+            onKeyDown={event=>event.stopPropagation()}
+            onClick={event=>{event.stopPropagation();reviewPolicyAudit(item)}}>
+            Review related Audit →
+          </button></td></tr>)}</tbody></table></div>}
     </section>
-    {selected&&<div className="dr-drawer-backdrop" onMouseDown={e=>{if(e.currentTarget===e.target)setSelected(null)}}><aside className="dr-detail-drawer" role="dialog" aria-modal="true" aria-label="Policy detail" tabIndex={-1} autoFocus><header><div><p className="dr-eyebrow">{selected.plane||"Policy"} access</p><h2>{selected.name||selected.id}</h2><p>{selected.id}</p></div><button className="dr-icon-button" onClick={()=>setSelected(null)} aria-label="Close detail">×</button></header><div className="dr-drawer-status"><span className={selected.enabled?"dr-state active":"dr-state"}><i/>{selected.enabled?"Enabled":"Disabled"}</span></div><div className="dr-detail-fields">{Object.entries(selected).filter(([,value])=>typeof value!=="object"&&value!==null&&value!=="").map(([key,value])=><div key={key}><span>{key.replaceAll("_"," ")}</span><strong>{String(value)}</strong></div>)}</div><footer><button className="secondary" onClick={()=>{const target={originId:String(selected.id||selected.name||""),originType:"access-rule"};setSelected(null);onNavigate?.("audit","activity",target)}}>Recent activity</button><button className="primary" onClick={()=>{const target={originId:String(selected.id||selected.name||""),originType:"access-rule",plane:selected.plane||"remote",source:String(selected.source||""),destination:String(selected.destination||""),selector:String(selected.plane==="ai"?selected.permission||"":selected.service||"")};setSelected(null);onNavigate?.("access","access",target)}}>Why allowed / denied?</button></footer></aside></div>}
+    <TemporaryAccessRequestsPanel api={api} operator={operator}/>
+    {selected&&<div className="dr-drawer-backdrop" onMouseDown={e=>{if(e.currentTarget===e.target)setSelected(null)}}><aside ref={detailRef} className="dr-detail-drawer" role="dialog" aria-modal="true" aria-label="Policy detail" tabIndex={-1}><header><div><p className="dr-eyebrow">{selected.plane||"Policy"} access</p><h2>{selected.name||selected.id}</h2><p>{selected.id}</p></div><button className="dr-icon-button" onClick={()=>setSelected(null)} aria-label="Close detail">×</button></header><div className="dr-drawer-status"><span className={policyStateLabel(selected.enabled)==="Enabled"?"dr-state active":"dr-state"}><i/>{policyStateLabel(selected.enabled)}</span></div><div className="dr-detail-fields">{observedPolicyDetailFields(selected).map(field=><div key={field.label}><span>{field.label}</span><strong>{field.value}</strong></div>)}</div><footer><button className="secondary" onClick={()=>{const target={originId:String(selected.id||selected.name||""),originType:"access-rule",plane:selected.plane};setSelected(null);onNavigate?.("audit","activity",target)}}>Recent activity</button><button className="primary" onClick={()=>{const target={originId:String(selected.id||selected.name||""),originType:"access-rule",plane:selected.plane||"remote",source:String(selected.source||""),destination:String(selected.destination||""),selector:String(selected.plane==="ai"?selected.permission||"":selected.service||"")};setSelected(null);onNavigate?.("access","access",target)}}>Why allowed / denied?</button></footer></aside></div>}
   </div>;
 }
 
-function ResourceWorkspace({kind,data,operator,onNavigate,api,initialFilter=""}:{kind:"host"|"service",data:any,operator:any,onNavigate?:(id:string,groupId?:string,context?:any)=>void,api:(path:string)=>Promise<any>,initialFilter?:string}){
+function ServiceTypeGlyph({type}:{type:unknown}){
+  const kind=typeof type==="string"&&["ssh","http","https","tcp"].includes(type)?type:"unknown";
+  const common={viewBox:"0 0 24 24",fill:"none",stroke:"currentColor",strokeWidth:1.7,strokeLinecap:"round" as const,strokeLinejoin:"round" as const,"aria-hidden":true as const};
+  if(kind==="ssh")return <svg {...common}><rect x="3" y="4" width="18" height="16" rx="2"/><path d="m7 10 3 2-3 2m6 1h4"/></svg>;
+  if(kind==="http"||kind==="https")return <svg {...common}><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a15 15 0 0 1 0 18M12 3a15 15 0 0 0 0 18"/>{kind==="https"&&<path d="M16 16h4v4h-4z"/>}</svg>;
+  if(kind==="tcp")return <svg {...common}><path d="M4 7h6l2 3 2-3h6M4 17h6l2-3 2 3h6"/><circle cx="4" cy="7" r="1"/><circle cx="20" cy="17" r="1"/></svg>;
+  return <svg {...common}><circle cx="12" cy="12" r="9"/><path d="M9.5 9a2.7 2.7 0 0 1 5 1.4c0 2-2.5 2.3-2.5 4M12 18h.01"/></svg>;
+}
+
+function ServiceEvidenceStatus({service}:{service:any}){
+  return <section className="dr-service-evidence-status" aria-label="Service evidence status">
+    <div><span>Configuration</span><strong>{serviceStateLabel(service)}</strong></div>
+    <div><span>Access policy</span><strong>Not checked</strong></div>
+    <div><span>Transport</span><strong>Not tested</strong></div>
+  </section>;
+}
+
+function ServiceUseActions({service}:{service:unknown}){
+  const action=serviceUseAction(service);
+  const [copyResult,setCopyResult]=useState("");
+  if(!action)return <section className="dr-host-detail-section" role="region" aria-label="Service use actions">
+    <h3>Use this service</h3><p className="muted">No safe connection template is available from the observed Core fields. Verify the service type, enabled state and public endpoint.</p>
+  </section>;
+  async function copyTemplate(){
+    setCopyResult("");
+    try{
+      if(typeof navigator==="undefined"||typeof navigator.clipboard?.writeText!=="function")throw new Error("Clipboard unavailable");
+      await navigator.clipboard.writeText(action!.copyText);
+      setCopyResult("Connection template copied. Verify placeholders and access before use.");
+    }catch{setCopyResult("Clipboard unavailable. Select the template text and copy it manually.")}
+  }
+  return <section className="dr-host-detail-section" role="region" aria-label="Service use actions">
+    <h3>{action.kind.toUpperCase()} connection · not verified</h3>
+    <p className="muted">{action.note} Configuration does not prove policy permission, Agent health, target reachability or a successful application connection.</p>
+    <pre className="plan" style={{overflowWrap:"anywhere",whiteSpace:"pre-wrap"}}>{action.copyText}</pre>
+    <div className="dr-form-actions"><button type="button" className="secondary" onClick={copyTemplate}>Copy {action.kind.toUpperCase()} {action.kind==="tcp"?"endpoint":"template"}</button>
+      {(action.kind==="http"||action.kind==="https")&&<button type="button" className="secondary" disabled={!action.openUrl}
+        onClick={()=>{if(action.openUrl)window.open(action.openUrl,"_blank","noopener,noreferrer")}}>Open verified URL</button>}
+    </div>
+    {copyResult&&<p className="muted" role="status">{copyResult}</p>}
+  </section>;
+}
+
+function ResourceWorkspace({kind,data,operator,onNavigate,api,initialFilter="",initialAdmission="all",initialInspectId}:{
+  kind:"host"|"service",data:any,operator:any,onNavigate?:(id:string,groupId?:string,context?:any)=>void,
+  api:(path:string)=>Promise<any>,initialFilter?:string,initialAdmission?:unknown,initialInspectId?:unknown
+}){
+  const isHost=kind==="host";
   const [filter,setFilter]=useState(initialFilter),[selected,setSelected]=useState<any>(null);
   useEffect(()=>{setFilter(initialFilter)},[kind,initialFilter]);
-  const [admissionFilter,setAdmissionFilter]=useState("all");
+  const [admissionFilter,setAdmissionFilter]=useState<HostAdmission>(isHost&&isSavedAdmission(initialAdmission)?initialAdmission:"all");
+  useEffect(()=>{setAdmissionFilter(isHost&&isSavedAdmission(initialAdmission)?initialAdmission:"all")},[isHost,initialAdmission]);
+  const [connectionFilter,setConnectionFilter]=useState<HostConnectionFilter>("all");
+  useEffect(()=>{setConnectionFilter("all")},[kind]);
+  const [hostSort,setHostSort]=useState<HostSortMode>("review");
+  useEffect(()=>{setHostSort("review")},[kind]);
+  const [inventoryView,setInventoryView]=useState<"table"|"cards">("table");
+  useEffect(()=>{setInventoryView("table")},[kind]);
+  const [serviceTypeFilter,setServiceTypeFilter]=useState<ServiceTypeFacet>("all");
+  const [serviceConfigFilter,setServiceConfigFilter]=useState<ServiceConfigFacet>("all");
+  useEffect(()=>{setServiceTypeFilter("all");setServiceConfigFilter("all")},[kind]);
   const [loaded,setLoaded]=useState<any[]>(data.items||[]);
   const [cursor,setCursor]=useState<string|null>(isPartialCorePage(data)?data.next_cursor:null);
   const [moreBusy,setMoreBusy]=useState(false),[moreError,setMoreError]=useState("");
   const [pagesLoaded,setPagesLoaded]=useState(1);
-  const loadEpoch=useRef(0);
-  useEscapeClose(!!selected,()=>setSelected(null));
+  const loadEpoch=useRef(0),detailRef=useRef<HTMLElement>(null);
+  useDialogFocusTrap(!!selected,()=>setSelected(null),detailRef);
   useEffect(()=>{
     loadEpoch.current+=1;setLoaded(data.items||[]);
     setCursor(isPartialCorePage(data)?data.next_cursor:null);
     setMoreBusy(false);setMoreError("");setPagesLoaded(1);setSelected(null);
     return()=>{loadEpoch.current+=1};
   },[kind,data]);
-  const isHost=kind==="host";
+  useEffect(()=>{
+    if(initialInspectId!==undefined){
+      // Reopen a known detail only when exactly one authorized Core inventory
+      // row is already loaded; unresolved IDs stay in the visible filter.
+      setSelected(matchObservedAuditReturn(loaded,initialInspectId));
+    }
+  },[loaded,initialInspectId]);
   const partial=!!cursor;
   async function loadMore(){
     const requestedCursor=cursor;
@@ -1575,30 +2422,127 @@ function ResourceWorkspace({kind,data,operator,onNavigate,api,initialFilter=""}:
       if(epoch===loadEpoch.current)setMoreBusy(false);
     }
   }
-  const q=filter.trim().toLowerCase();
-  const rows=loaded
-    .filter((item:any)=>(!q||Object.values(item).some(value=>String(value??"").toLowerCase().includes(q)))
-      &&(!isHost||admissionFilter==="all"||item.admission_state===admissionFilter))
-    .sort((a:any,b:any)=>isHost?
-      (a.admission_state==="PENDING_APPROVAL"?-1:a.admission_state==="QUARANTINED"?0:1)
-      -(b.admission_state==="PENDING_APPROVAL"?-1:b.admission_state==="QUARANTINED"?0:1):0);
+  // Typed Host search is expressly limited to already authorized/loaded Core
+  // inventory pages. Core currently supports name-only server-side query.
+  const hostSearch=isHost?filterObservedHosts(loaded,filter,admissionFilter):null;
+  const hostConnection=isHost?filterLoadedHostConnections(hostSearch?.items||[],connectionFilter):null;
+  const serviceSearch=isHost?null:filterObservedServices(loaded,filter);
+  const serviceFacets=isHost?null:filterLoadedServiceFacets(serviceSearch?.items||[],serviceTypeFilter,serviceConfigFilter);
+  const serviceQuickFiltersActive=serviceTypeFilter!=="all"||serviceConfigFilter!=="all";
+  const rows=isHost?sortLoadedHosts(hostConnection?.items||[],hostSort):(serviceFacets?.items||[]);
   const heading=isHost?"Managed Hosts":"Remote Services";
   const description=isHost?"Agent inventory, trust, connectivity, platform and version in one resource workspace.":"Published services, owning hosts, ports and release state with contextual access actions.";
-  const savedDraft=saveDraftForResource(kind,filter);
+  const savedDraft=(!hostSearch?.error&&!serviceSearch?.error)
+    ?saveDraftForResource(kind,filter,isHost?admissionFilter:"all"):null;
+  const hostFiltersActive=isHost&&hostDisplayFilterResetAvailable(filter,admissionFilter,connectionFilter);
+  const hostFilterChips=isHost?activeHostFilterChips(filter,admissionFilter,connectionFilter,hostSort):[];
+  function clearHostDisplayFilters(){
+    setFilter("");
+    setAdmissionFilter("all");
+    setConnectionFilter("all");
+  }
+  function removeHostFilterChip(id:HostFilterChipId){
+    if(id==="search"){setFilter("");return}
+    if(id==="admission"){setAdmissionFilter("all");return}
+    if(id==="connection"){setConnectionFilter("all");return}
+    if(id==="sort"){setHostSort("review");return}
+  }
   return <div className="dr-resource-workspace">
-    <section className="dr-page-intro"><div><p className="dr-eyebrow">Connections</p><h2>{heading}</h2><p className="muted">{description}</p></div><div className="dr-page-actions">{isHost&&operator.role==="Admin"&&<button className="primary" onClick={()=>onNavigate?.("enrollments","infrastructure")}>Connect Agent</button>}<button className="secondary" onClick={()=>onNavigate?.("access","access")}>Access workspace</button></div></section>
+    <section className="dr-page-intro"><div><p className="dr-eyebrow">Connections</p><h2>{heading}</h2><p className="muted">{description}</p></div><div className="dr-page-actions">{isHost&&operator.role==="Admin"&&<button className="primary" onClick={()=>onNavigate?.("enrollments","connections")}>Connect Agent</button>}{!isHost&&operator.role!=="Read Only"&&<button className="primary" onClick={()=>onNavigate?.("setup","connections",{plane:"remote"})}>Publish service</button>}<button className="secondary" onClick={()=>onNavigate?.("access","access")}>Access workspace</button></div></section>
     <section className="card dr-list-card">
       <div className="dr-list-toolbar"><div><strong>{rows.length}</strong><span>{heading.toLowerCase()}</span></div>
-        {isHost&&<select aria-label="Filter Managed Host admission" value={admissionFilter} onChange={e=>setAdmissionFilter(e.target.value)}>
+        {isHost&&<select aria-label="Filter Managed Host admission" value={admissionFilter} onChange={e=>setAdmissionFilter(isSavedAdmission(e.target.value)?e.target.value:"all")}>
           <option value="all">All admission states</option>
           <option value="PENDING_APPROVAL">Pending approval</option>
           <option value="APPROVED">Approved</option>
           <option value="QUARANTINED">Quarantined</option>
         </select>}
-        <label className="dr-filter-field"><WorkspaceIcon kind="search"/><input value={filter} maxLength={120} onChange={e=>setFilter(e.target.value)} placeholder={isHost?"Filter hosts…":"Filter services…"}/>{filter&&<button onClick={()=>setFilter("")} aria-label="Clear filter">×</button>}</label></div>
+        <label className="dr-filter-field"><WorkspaceIcon kind="search"/><input value={filter} maxLength={120} aria-label={isHost?"Filter Managed Hosts":"Filter Remote Services"}
+          onChange={e=>setFilter(e.target.value)}
+          placeholder={isHost?"Filter hosts (name:, host:, os:, admission:)…":"Filter services (name:, host:, port:, state:)…"}/>{filter&&<button onClick={()=>setFilter("")} aria-label="Clear filter">×</button>}</label></div>
+      <div className="dr-form-actions" role="group" aria-label="Inventory view">
+        <span className="muted">Presentation of currently loaded Core rows only · no new Core request</span>
+        <button type="button" className={inventoryView==="table"?"primary":"secondary"}
+          aria-pressed={inventoryView==="table"} onClick={()=>setInventoryView("table")}>Table</button>
+        <button type="button" className={inventoryView==="cards"?"primary":"secondary"}
+          aria-pressed={inventoryView==="cards"} onClick={()=>setInventoryView("cards")}>Cards</button>
+      </div>
+      {isHost&&<div className="dr-form-actions" role="group" aria-label="Host display order">
+        <label className="dr-field"><span>Sort loaded Hosts</span>
+          <select aria-label="Sort loaded Hosts" value={hostSort}
+            style={{maxWidth:"100%",minWidth:0}}
+            onChange={e=>setHostSort(isHostSortMode(e.target.value)?e.target.value:"review")}>
+            <option value="review">Review priority (default)</option>
+            <option value="name_asc">Host name A–Z</option>
+            <option value="name_desc">Host name Z–A</option>
+          </select>
+        </label>
+        <p className="muted">Host sorting changes only loaded rows; no Core or Saved View update.
+          Review priority preserves pending approval before quarantined and other Hosts.</p>
+      </div>}
+      {isHost&&hostFiltersActive&&<button type="button" className="secondary"
+        onClick={clearHostDisplayFilters}>Clear Host filters</button>}
+      {isHost&&<p className="muted">Clear Host filters restores only the three local display choices. Existing loaded Core inventory and Saved Views remain unchanged.</p>}
+      {isHost&&<div className="dr-form-actions" role="group" aria-label="Filter loaded Host connection state">
+        <span className="muted">Connection state of loaded Core Hosts · not proof of live reachability</span>
+        {(["all","connected","disconnected","unknown"] as const).map(status=><button
+          key={status} type="button" className={connectionFilter===status?"primary":"secondary"}
+          aria-pressed={connectionFilter===status} onClick={()=>setConnectionFilter(status)}>
+          {status==="all"?"All connections":status==="connected"?"Connected":status==="disconnected"?"Disconnected":"UNKNOWN"}
+        </button>)}
+      </div>}
+      {isHost&&hostFilterChips.length>0&&<div className="dr-form-actions" role="group"
+        aria-label="Active Host display filters">
+        <span className="muted">Applied display conditions · chip values do not disclose search text</span>
+        {hostFilterChips.map(entry=><button key={entry.id} type="button"
+          className="secondary" aria-label={"Remove "+entry.label+" filter"}
+          onClick={()=>removeHostFilterChip(entry.id)}>
+          {entry.label}: {entry.value} <span aria-hidden="true">×</span>
+        </button>)}
+      </div>}
+      {isHost&&connectionFilter!=="all"&&!!hostConnection?.unknownCount&&<p className="dr-uxb-catalog-page-notice" role="status">{hostConnection.unknownCount} loaded Host record(s) have UNKNOWN connectivity or invalid identity; UNKNOWN connectivity means absence cannot be confirmed. The current quick filter checks loaded authorized rows only.</p>}
+      {isHost&&hostSearch?.error&&<p className="warning-box" role="alert">Typed Host search not applied: {hostSearch.error} Displaying only previously loaded Core records, still scoped by admission and connection state.</p>}
+      {isHost&&hostSearch?.warning&&<p className="dr-uxb-catalog-page-notice" role="status">{hostSearch.warning}</p>}
+      {(kind==="host"||kind==="service")&&initialInspectId&&<p className="dr-uxb-catalog-page-notice" role="status">
+        Exact resource details open only if one currently loaded Core inventory item matches the selected ID.
+        If the selected result is not on this page, use the existing Load more controls to inspect additional authorized Core pages.
+        The search hit alone is not permission to fetch a resource by ID or proof of its current availability.
+      </p>}
+      {!isHost&&<p className="muted" role="note">Service search only checks loaded authorized Core pages.
+        Use name:, host:, port:, state: or type: to filter observed Service fields; a plain word checks
+        safe visible Service fields. Use Load more Remote Services to inspect additional Core pages.
+        No credentials or remote Host discovery are searched.</p>}
+      {!isHost&&<>
+        <div className="dr-form-actions" role="group" aria-label="Filter loaded Service types">
+          <span className="muted">Service types · current Core-loaded rows only</span>
+          {(["all","ssh","http","https","tcp","unknown"] as const).map(kind=><button
+            key={kind} type="button" className={serviceTypeFilter===kind?"primary":"secondary"}
+            aria-pressed={serviceTypeFilter===kind} onClick={()=>setServiceTypeFilter(kind)}>
+            {kind==="all"?"All types":kind.toUpperCase()}
+          </button>)}
+        </div>
+        <div className="dr-form-actions" role="group" aria-label="Filter loaded Service configuration states">
+          <span className="muted">Core Service configuration · not transport reachability</span>
+          {(["all","enabled","disabled","released","unknown"] as const).map(state=><button
+            key={state} type="button" className={serviceConfigFilter===state?"primary":"secondary"}
+            aria-pressed={serviceConfigFilter===state} onClick={()=>setServiceConfigFilter(state)}>
+            {state==="all"?"All configurations":state==="unknown"?"UNKNOWN":state[0].toUpperCase()+state.slice(1)}
+          </button>)}
+        </div>
+        <p className="muted">Loaded Core Service facts do not prove live reachability, Agent success
+          or policy permission. UNKNOWN covers absent or unrecognized type/state values.</p>
+        {serviceQuickFiltersActive&&((serviceFacets?.unknownTypeCount||0)>0||(serviceFacets?.unknownStateCount||0)>0)&&
+          <p className="dr-uxb-catalog-page-notice" role="status">
+            UNKNOWN Core Service facts · type {serviceFacets?.unknownTypeCount||0},
+            configuration {serviceFacets?.unknownStateCount||0}. Filters inspect loaded rows only;
+            no match cannot establish fleet-wide absence or live reachability.
+          </p>}
+      </>}
+      {!isHost&&serviceSearch?.error&&<p className="warning-box" role="alert">Service search not applied: {serviceSearch.error} Showing only previously observed Core rows; Service quick facets may still narrow the display.</p>}
+      {!isHost&&serviceSearch?.warning&&<p className="dr-uxb-catalog-page-notice" role="status">UNKNOWN coverage · {serviceSearch.warning}</p>}
       {savedDraft&&<div className="toolbar"><button type="button" className="secondary"
-        onClick={()=>onNavigate?.("views","activity",{savedViewDraft:savedDraft})}>Save this filter →</button>
-        <span className="muted">Saves only the current text filter as a private view after you name it. Host admission selection is not included.</span></div>}
+        onClick={()=>onNavigate?.("views","activity",{savedViewDraft:savedDraft})}>Save this view →</button>
+        <span className="muted">Saves the visible text filter and optional Host admission selection as a private display preference after you name it. {isHost?"Connection quick filter is not saved. Host sort is not saved.":"Service quick facets are not saved."} Unloaded Core inventory pages are not included.</span></div>}
       {partial&&<p className="dr-uxb-catalog-page-notice" role="status">Partial Core inventory · more {isHost?"Managed Hosts":"Remote Services"} exist beyond the loaded pages. Filters check loaded rows only. Load more to inspect additional Core records.</p>}
       {moreError&&<p className="warning-box" role="alert">UNKNOWN · Next Core inventory page unavailable: {moreError} Existing observed resources remain visible.</p>}
       <div className="toolbar" role="status">
@@ -1606,36 +2550,92 @@ function ResourceWorkspace({kind,data,operator,onNavigate,api,initialFilter=""}:
         {partial&&<button type="button" className="secondary" disabled={moreBusy}
           onClick={loadMore}>{moreBusy?"Loading next Core page…":isHost?"Load more Managed Hosts →":"Load more Remote Services →"}</button>}
       </div>
-      {!rows.length?<div className="dr-empty-state"><span className="dr-empty-icon"><WorkspaceIcon kind="infrastructure"/></span><strong>{partial?"No match in loaded resources":filter?"No matching resources":"No resources yet"}</strong><p>{partial?"Other resources may exist beyond this Core page. Use Search to find them.":filter?"Try a different filter.":isHost?"Connect an Agent to populate managed inventory.":"Publish a Remote Service from a managed host."}</p>{!filter&&isHost&&operator.role==="Admin"&&<button className="primary" onClick={()=>onNavigate?.("enrollments","infrastructure")}>Connect Agent</button>}</div>:
-      <div className="dr-table-scroll"><table className="dr-resource-table"><thead><tr>{isHost?<><th>Host</th><th>Admission</th><th>Connection</th><th>Trust</th><th>Platform</th><th>Version</th><th>Last activity</th></>:<><th>Service</th><th>Managed host</th><th>Type</th><th>Public port</th><th>Target</th><th>State</th></>}</tr></thead><tbody>{rows.map((item:any)=><tr key={item.id} tabIndex={0} onClick={()=>setSelected(item)} onKeyDown={e=>{if(e.key==="Enter"||e.key===" "){e.preventDefault();setSelected(item)}}}>{isHost?<><td><strong>{item.name||item.id}</strong><small>{item.hostname||item.id}</small></td><td><span className={item.admission_state==="APPROVED"?"dr-state active":"dr-state"}><i/>{item.admission_state==="APPROVED"?"Approved":item.admission_state==="PENDING_APPROVAL"?"Pending approval":item.admission_state==="QUARANTINED"?"Quarantined":"Unknown"}</span></td><td><span className={item.connected?"dr-state active":"dr-state"}><i/>{item.connected?"Connected":item.agent_lifecycle_state||item.status||"Unknown"}</span></td><td>{item.trust_status||"—"}</td><td>{item.agent_platform||"—"}</td><td>{item.agent_version||"—"}</td><td>{item.agent_heartbeat_at||item.last_seen||"—"}</td></>:<><td><strong>{item.name||item.id}</strong><small>{item.id}</small></td><td>{item.managed_host||item.managed_host_id||"—"}</td><td>{item.service_type||"—"}</td><td>{item.public_port??"—"}</td><td>{[item.target_host,item.target_port].filter(Boolean).join(":")||item.target_mode||"—"}</td><td><span className={item.enabled&&!item.released?"dr-state active":"dr-state"}><i/>{item.released?"Released":item.enabled?"Enabled":"Disabled"}</span></td></>}</tr>)}</tbody></table></div>}
+      {!isHost&&<p className="muted">Enabled means configuration is selected, not that an Agent job completed
+        or the service is reachable. Check Core access evidence and actual Agent/client activity separately.</p>}
+      {isHost&&<p className="muted">Agent heartbeat and Core Last activity are separate observations.
+        Last heartbeat is an observed Agent timestamp, not a verified active tunnel or policy decision;
+        Last activity is Core last_seen, not Agent heartbeat. Missing or malformed telemetry stays UNKNOWN.
+        Use the Host details for admission, trust, connection and lifecycle evidence.</p>}
+      {!rows.length?<div className="dr-empty-state"><span className="dr-empty-icon"><WorkspaceIcon kind="infrastructure"/></span><strong>{hostSearch?.error||serviceSearch?.error?"Search not applied":isHost&&!!hostSearch?.unknownCount&&!!filter?"No confirmed match in observed Hosts":!isHost&&!!serviceSearch?.unknownCount&&!!filter?"No confirmed match in observed Services":!isHost&&serviceQuickFiltersActive?"No matching Service type/configuration in loaded Core rows":isHost&&connectionFilter!=="all"?"No match in loaded Host connection states":partial?"No match in loaded resources":filter?"No matching resources":"No resources yet"}</strong><p>{hostSearch?.error||serviceSearch?.error?"Correct the unsupported filter; only observed Core resources are shown.":isHost&&!!hostSearch?.unknownCount&&!!filter?"Some loaded Hosts have UNKNOWN values; no-match does not prove absence.":!isHost&&!!serviceSearch?.unknownCount&&!!filter?"Some loaded Services have UNKNOWN requested fields; no-match does not prove their absence.":!isHost&&serviceQuickFiltersActive?"Only loaded Core Service configuration and type were filtered; UNKNOWN or unloaded Service rows can still exist. This does not prove no authorized or live connection.":isHost&&connectionFilter!=="all"?"Only loaded Core Host connectivity is filtered; UNKNOWN values or unloaded Hosts may remain. This is not a fleet-wide absence or live access verdict.":partial?"Other resources may exist beyond this Core page. Use Search to find them.":filter?"Try a different filter.":isHost?"Connect an Agent to populate managed inventory.":"Publish a Remote Service from a managed host."}</p>{!filter&&isHost&&operator.role==="Admin"&&<button className="primary" onClick={()=>onNavigate?.("enrollments","infrastructure")}>Connect Agent</button>}</div>:
+      inventoryView==="cards"?<div className="dr-resource-cards" role="list" aria-label={heading+" cards"}>
+        {rows.map((item:any)=>{
+          const info=resourceCardSummary(kind,item);
+          return info?<div role="listitem" key={String(item.id)} className="dr-resource-card-item">
+            <button type="button" className="dr-resource-card"
+              aria-label={"Inspect "+heading+" "+info.title} onClick={()=>setSelected(item)}>
+              <span className="dr-resource-card-head"><strong>{info.title}</strong><small>{info.subtitle}</small></span>
+              <span className={info.status==="Connected"||info.status==="Enabled"?"dr-state active":"dr-state"}><i/>{info.status}</span>
+              <span className="dr-resource-card-facts">{info.facts.map(entry=>
+                <span key={entry.label} className="dr-resource-card-fact">
+                  <span>{entry.label}</span><strong>{entry.value}</strong>
+                </span>)}</span>
+              <span className="dr-resource-card-action">Inspect loaded Core detail →</span>
+            </button>
+          </div>:null;
+        })}
+      </div>:
+      <div className="dr-table-scroll"><table className="dr-resource-table"><thead><tr>{isHost?<><th>Host</th><th>Admission</th><th>Connection</th><th>Trust</th><th>Platform</th><th>Version</th><th>Agent heartbeat</th><th>Last activity</th></>:<><th>Service</th><th>Managed host</th><th>Type</th><th>Public port</th><th>Target</th><th>State</th></>}</tr></thead><tbody>{rows.map((item:any)=><tr key={item.id} tabIndex={0} onClick={()=>setSelected(item)} onKeyDown={e=>{if(e.key==="Enter"||e.key===" "){e.preventDefault();setSelected(item)}}}>{isHost?<><td><strong>{hostVisibleIdentity(item).primary}</strong><small>{hostVisibleIdentity(item).secondary}</small>
+  <button type="button" className="dr-text-action"
+    aria-label={"Inspect Managed Host "+hostVisibleIdentity(item).primary}
+    onClick={event=>{event.stopPropagation();setSelected(item)}}>Inspect Managed Host →</button></td><td><span className={item.admission_state==="APPROVED"?"dr-state active":"dr-state"}><i/>{item.admission_state==="APPROVED"?"Approved":item.admission_state==="PENDING_APPROVAL"?"Pending approval":item.admission_state==="QUARANTINED"?"Quarantined":"Unknown"}</span></td><td><span className={hostConnectionState(item)==="Connected"?"dr-state active":"dr-state"}><i/>{hostConnectionState(item)}</span></td><td>{hostInventoryFacts(item).trust}</td><td>{hostInventoryFacts(item).platform}</td><td>{hostInventoryFacts(item).version}</td><td title="Core-observed Agent heartbeat; not proof of live access">{hostInventoryFacts(item).lastHeartbeat}</td><td title="Last Core activity; Agent heartbeat is separate">{hostInventoryFacts(item).lastActivity}</td></>:<><td><span className="dr-service-name-line"><span className="dr-service-type-icon"><ServiceTypeGlyph type={item.service_type}/></span><span><strong>{serviceVisibleIdentity(item).primary}</strong><small>{serviceVisibleIdentity(item).secondary}</small></span></span>
+  <button type="button" className="dr-text-action"
+    aria-label={"Inspect Remote Service "+serviceVisibleIdentity(item).primary}
+    onClick={event=>{event.stopPropagation();setSelected(item)}}>Inspect Remote Service →</button></td><td>{item.managed_host||item.managed_host_id||"—"}</td><td>{item.service_type||"—"}</td><td>{item.public_port??"—"}</td><td>{[item.target_host,item.target_port].filter(Boolean).join(":")||item.target_mode||"—"}</td><td><span className={serviceStateLabel(item)==="Enabled"?"dr-state active":"dr-state"}><i/>{serviceStateLabel(item)}</span></td></>}</tr>)}</tbody></table></div>}
     </section>
-    {selected&&<div className="dr-drawer-backdrop" onMouseDown={e=>{if(e.currentTarget===e.target)setSelected(null)}}><aside className="dr-detail-drawer" role="dialog" aria-modal="true" aria-label={heading+" detail"} tabIndex={-1} autoFocus><header><div><p className="dr-eyebrow">{isHost?"Managed Host":"Remote Service"}</p><h2>{selected.name||selected.id}</h2><p>{selected.hostname||selected.id}</p></div><button className="dr-icon-button" onClick={()=>setSelected(null)} aria-label="Close detail">×</button></header><div className="dr-drawer-status"><span className={(isHost?selected.connected:selected.enabled&&!selected.released)?"dr-state active":"dr-state"}><i/>{isHost?(selected.connected?"Connected":selected.status||"Unknown"):(selected.released?"Released":selected.enabled?"Enabled":"Disabled")}</span>{isHost&&<span className={selected.admission_state==="APPROVED"?"dr-state active":"dr-state"}>{selected.admission_state==="PENDING_APPROVAL"?"Pending approval":selected.admission_state==="QUARANTINED"?"Quarantined":selected.admission_state==="APPROVED"?"Approved":"Unknown admission"}</span>}</div><div className="dr-detail-fields">{Object.entries(selected).filter(([,value])=>typeof value!=="object"&&value!==null&&value!=="").map(([key,value])=><div key={key}><span>{key.replaceAll("_"," ")}</span><strong>{String(value)}</strong></div>)}</div><footer><button className="secondary" onClick={()=>{const target={originType:isHost?"managed-host":"remote-service",originId:String(selected.id||"")};setSelected(null);onNavigate?.("audit","activity",target)}}>Recent activity</button><button className="primary" onClick={()=>{const target={originType:isHost?"managed-host":"remote-service",originId:String(selected.id||""),plane:"remote"};setSelected(null);onNavigate?.("access","access",target)}}>Why can / cannot connect?</button></footer></aside></div>}
+    {selected&&<div className="dr-drawer-backdrop" onMouseDown={e=>{if(e.currentTarget===e.target)setSelected(null)}}><aside ref={detailRef} className="dr-detail-drawer" role="dialog" aria-modal="true" aria-label={heading+" detail"} tabIndex={-1}><header><div><p className="dr-eyebrow">{isHost?"Managed Host":"Remote Service"}</p><h2>{isHost?hostVisibleIdentity(selected).primary:serviceVisibleIdentity(selected).primary}</h2><p>{isHost?hostVisibleIdentity(selected).secondary:serviceVisibleIdentity(selected).secondary}</p></div><button className="dr-icon-button" onClick={()=>setSelected(null)} aria-label="Close detail">×</button></header><div className="dr-drawer-status"><span className={(isHost?hostConnectionState(selected)==="Connected":serviceStateLabel(selected)==="Enabled")?"dr-state active":"dr-state"}><i/>{isHost?hostConnectionState(selected):serviceStateLabel(selected)}</span>{isHost&&<span className={selected.admission_state==="APPROVED"?"dr-state active":"dr-state"}>{selected.admission_state==="PENDING_APPROVAL"?"Pending approval":selected.admission_state==="QUARANTINED"?"Quarantined":selected.admission_state==="APPROVED"?"Approved":"Unknown admission"}</span>}</div>{!isHost&&<ServiceEvidenceStatus service={selected}/>}<div className="dr-detail-fields">{isHost?hostDetailSections(selected).map(section=><section key={section.title} className="dr-host-detail-section"><h3>{section.title}</h3>{section.fields.map(field=><div key={field.label}><span>{field.label}</span><strong>{field.value}</strong></div>)}</section>):serviceDetailSections(selected).map(section=><section key={section.title} className="dr-host-detail-section">
+  <h3>{section.title}</h3>{section.fields.map(field=><div key={field.label}>
+    <span>{field.label}</span><strong>{field.value}</strong></div>)}</section>)}</div>{!isHost&&<ServiceUseActions key={String(selected.id||"")} service={selected}/>}<footer><button className="secondary" onClick={()=>{const target={originType:isHost?"managed-host":"remote-service",originId:String(selected.id||"")};setSelected(null);onNavigate?.("audit","activity",target)}}>Recent activity</button><button className="primary" onClick={()=>{const target={originType:isHost?"managed-host":"remote-service",originId:String(selected.id||""),plane:"remote"};setSelected(null);onNavigate?.("access","access",target)}}>Why can / cannot connect?</button></footer></aside></div>}
   </div>;
 }
 
 function UsersPanel({operator}:{operator:any}){
   const [data,setData]=useState<any>(null),[error,setError]=useState(""),[busy,setBusy]=useState("");
+  const mfaMutationInFlight=useRef(false);
+  const createUserInFlight=useRef(false);
   const [loading,setLoading]=useState(true);
   const [newUsername,setNewUsername]=useState(""),[newPassword,setNewPassword]=useState(""),[newRole,setNewRole]=useState("Read Only");
   async function refresh(){
     setLoading(true);setError("");
-    try{setData(requireObservedMenuPayload("users",await api("/api/v1/operators")))}
+    try{
+      const page=requireObservedMenuPayload("users",await api("/api/v1/operators"));
+      const observed=observedOperatorInventory(page.items);
+      if(!observed)throw new Error("Core operator list returned unverified identities. User inventory is UNKNOWN.");
+      setData({items:observed});
+    }
     catch(e:any){setData(null);setError(e.message||String(e))}
     finally{setLoading(false)}
   }
   useEffect(()=>{refresh()},[]);
   async function setMfa(id:string,required:boolean){
+    if(mfaMutationInFlight.current||createUserInFlight.current)return;
+    mfaMutationInFlight.current=true;
     setBusy(id);setError("");
     try{
-      await api("/api/v1/operators/"+encodeURIComponent(id)+"/mfa",{method:"POST",body:JSON.stringify({required})});
+      const result=await api("/api/v1/operators/"+encodeURIComponent(id)+"/mfa",
+        {method:"POST",body:JSON.stringify({required})});
+      const receipt=observedOperatorMfaReceipt(result,id,required);
+      if(!receipt)throw new Error("Unverified Core MFA write receipt.");
       if(id===operator.id){window.location.reload();return}
       await refresh();
-    }catch(e:any){setError(e.message||String(e))}finally{setBusy("")}
+    }catch(e:any){
+      setError("Core MFA change outcome UNKNOWN. Inspect Users and Audit before retrying; the previous request may already have changed the session policy.");
+    }finally{mfaMutationInFlight.current=false;setBusy("")}
   }
   async function createUser(e:any){
-    e.preventDefault();setBusy("create");setError("");
-    try{await api("/api/v1/operators",{method:"POST",body:JSON.stringify({username:newUsername,password:newPassword,role:newRole})});setNewUsername("");setNewPassword("");setNewRole("Read Only");await refresh()}
-    catch(e:any){setError(e.message||String(e))}finally{setBusy("")}
+    e.preventDefault();
+    if(createUserInFlight.current||mfaMutationInFlight.current||!!busy
+      ||!newUsername.trim()||!newPassword)return;
+    createUserInFlight.current=true;setBusy("create");setError("");
+    try{
+      const result=await api("/api/v1/operators",{method:"POST",
+        body:JSON.stringify({username:newUsername,password:newPassword,role:newRole})});
+      const receipt=observedOperatorCreateReceipt(result,{username:newUsername,role:newRole});
+      if(!receipt)throw new Error("Core operator create receipt did not match the requested actor.");
+      setNewUsername("");setNewRole("Read Only");
+      await refresh();
+    }catch(e:any){
+      setError("Core operator creation outcome UNKNOWN. Inspect Users and Audit before retrying; the account may already have been created.");
+    }finally{setNewPassword("");createUserInFlight.current=false;setBusy("")}
   }
   if(!data)return <section className="card" role={loading?"status":"alert"}>
     <h3>Web Users · {loading?"Loading":"UNKNOWN"}</h3>
@@ -1644,10 +2644,20 @@ function UsersPanel({operator}:{operator:any}){
   </section>;
   return <>{error&&<div className="error" role="alert">{error}</div>}<div className="card">
     <h3>Web Users</h3>
-    <form className="toolbar" onSubmit={createUser}><input value={newUsername} onChange={e=>setNewUsername(e.target.value)} placeholder="Username" autoComplete="off"/><input type="password" value={newPassword} onChange={e=>setNewPassword(e.target.value)} placeholder="Initial password" autoComplete="new-password"/><select value={newRole} onChange={e=>setNewRole(e.target.value)}><option>Read Only</option><option>Operator</option><option>Admin</option></select><button className="primary" type="submit" disabled={busy==="create"||!newUsername||!newPassword}>{busy==="create"?"Creating…":"Create user"}</button></form>
-    <div className="muted">MFA is disabled by default. Enable it per user. Enabling MFA revokes that user's active sessions; on the next password sign-in the user completes TOTP setup and receives recovery codes directly.</div>
+    <form className="toolbar" onSubmit={createUser}><input value={newUsername} onChange={e=>setNewUsername(e.target.value)} placeholder="Username" autoComplete="off"/><input type="password" value={newPassword} onChange={e=>setNewPassword(e.target.value)} placeholder="Initial password" autoComplete="new-password"/><select value={newRole} onChange={e=>setNewRole(e.target.value)}><option>Read Only</option><option>Operator</option><option>Admin</option></select><button className="primary" type="submit" disabled={!!busy||!newUsername||!newPassword}>{busy==="create"?"Creating…":"Create user"}</button></form>
+    <div className="muted">MFA is disabled by default. Enable it per user. Enabling MFA revokes that user's active sessions; on the next password sign-in the user completes TOTP setup and receives recovery codes directly. Missing or inconsistent Core MFA flags remain UNKNOWN and cannot trigger an unverified state toggle.</div>
     <table><thead><tr><th>User</th><th>Role</th><th>Status</th><th>MFA</th><th>Last login</th><th>Action</th></tr></thead><tbody>
-      {(data.items||[]).map((x:any)=>{const mfa=x.mfa_required?(x.mfa_enrolled?"Enabled":"Setup pending"):"Disabled";return <tr key={x.id}><td>{x.username}{x.recovery_admin?" · recovery admin":""}</td><td>{x.role}</td><td>{x.enabled?"Enabled":"Disabled"}</td><td>{mfa}</td><td>{x.last_login_at||"-"}</td><td><button className={x.mfa_required?"secondary":"primary"} disabled={busy===x.id} onClick={()=>setMfa(x.id,!x.mfa_required)}>{x.mfa_required?"Disable MFA":"Enable MFA"}</button></td></tr>})}
+      {(data.items||[]).map((x:any)=>{
+        const mfaChange=operatorMfaAction(x);
+        return <tr key={x.id}><td>{operatorUserLabel(x)}{x.recovery_admin===true?" · recovery admin":""}</td>
+          <td>{["Admin","Operator","Read Only"].includes(x.role)?x.role:"UNKNOWN"}</td>
+          <td>{operatorAccountState(x)}</td><td>{operatorMfaState(x)}</td><td>{operatorLastLogin(x)}</td>
+          <td><button type="button" className={mfaChange.required===false?"secondary":"primary"}
+            disabled={!!busy||mfaChange.required===null}
+            aria-label={mfaChange.label+" for "+operatorUserLabel(x)}
+            onClick={()=>{if(mfaChange.required!==null)void setMfa(x.id,mfaChange.required)}}>
+            {mfaChange.label}</button></td></tr>;
+      })}
     </tbody></table>
   </div></>;
 }
@@ -1656,6 +2666,7 @@ function IntegrationsPanel(){
   const [accounts,setAccounts]=useState<any[]>([]),[hooks,setHooks]=useState<any[]>([]);
   const [inventoryState,setInventoryState]=useState<"loading"|"ready"|"unknown">("loading");
   const [error,setError]=useState(""),[busy,setBusy]=useState(false),[once,setOnce]=useState<any>(null);
+  const integrationMutationInFlight=useRef(false);
   const [accountName,setAccountName]=useState(""),[accountExpiry,setAccountExpiry]=useState("");
   const [permissions,setPermissions]=useState<string[]>(["management-read"]);
   const [hookName,setHookName]=useState(""),[hookUrl,setHookUrl]=useState("");
@@ -1667,7 +2678,11 @@ function IntegrationsPanel(){
       const [a,w]=await Promise.all([api("/api/v1/service-accounts"),api("/api/v1/webhooks")]);
       const accountsPage=requireObservedMenuPayload("service-accounts",a);
       const hooksPage=requireObservedMenuPayload("webhooks",w);
-      setAccounts(accountsPage.items);setHooks(hooksPage.items);
+      const accountsObserved=observedIntegrationInventory("service-accounts",accountsPage.items);
+      const webhooksObserved=observedIntegrationInventory("webhooks",hooksPage.items);
+      if(!accountsObserved||!webhooksObserved)throw new Error(
+        "Core integration inventory returned unverified entries. No empty inventory is confirmed.");
+      setAccounts(accountsObserved);setHooks(webhooksObserved);
       setInventoryState("ready");
     }catch(e:any){
       setAccounts([]);setHooks([]);setInventoryState("unknown");
@@ -1675,22 +2690,46 @@ function IntegrationsPanel(){
     }
   }
   useEffect(()=>{refresh()},[]);
-  async function mutate(path:string,body:any,secretKind?:string){
-    setBusy(true);setError("");setOnce(null);
+  async function mutate(path:string,body:any):Promise<boolean>{
+    // A second write before the operator has secured a newly issued secret
+    // can irrecoverably hide that secret; block it before any Core POST.
+    if(integrationMutationInFlight.current||once){
+      setError("Store or dismiss the visible one-time secret before any further integration operation.");
+      return false;
+    }
+    integrationMutationInFlight.current=true;
+    setBusy(true);setError("");
     try{
       const result=await api(path,{method:"POST",body:JSON.stringify(body)});
-      if(secretKind)setOnce({kind:secretKind,secret:result.credential||result.secret,id:result.id||result.credential_id});
+      const receipt=observedIntegrationWriteReceipt(path,body,result);
+      if(!receipt)throw new Error("Unverified Core integration write receipt.");
+      if(receipt.status==="secret")setOnce({kind:receipt.kind,secret:receipt.secret,id:receipt.id});
       await refresh();
-    }catch(e:any){setError(e.message||String(e))}finally{setBusy(false)}
+      return true;
+    }catch(e:any){
+      // POST failures, transport loss and malformed success receipts can all
+      // follow a committed Core change; never recommend a blind retry.
+      setError("Core integration outcome UNKNOWN. Inspect the current Core inventory and Audit before retrying. Do not repeat a create or rotation without verifying the previous result.");
+      return false;
+    }finally{integrationMutationInFlight.current=false;setBusy(false)}
   }
   async function createAccount(e:React.FormEvent){
     e.preventDefault();if(!accountName||!permissions.length)return;
-    await mutate("/api/v1/service-accounts",{name:accountName,permissions,expires_at:accountExpiry?new Date(accountExpiry).toISOString():undefined},"Service Account token");
+    const expiry=integrationLocalExpiryToUtc(accountExpiry);
+    if(expiry===null){
+      setError("Invalid local expiry date or time. No Service Account request was sent.");
+      return;
+    }
+    const ok=await mutate("/api/v1/service-accounts",
+      {name:accountName,permissions,expires_at:expiry});
+    if(!ok)return;
     setAccountName("");setAccountExpiry("");
   }
   async function createWebhook(e:React.FormEvent){
     e.preventDefault();if(!hookName||!hookUrl)return;
-    await mutate("/api/v1/webhooks",{name:hookName,url:hookUrl,event_classes:[hookEvent]},"Webhook signing secret");
+    const ok=await mutate("/api/v1/webhooks",
+      {name:hookName,url:hookUrl,event_classes:[hookEvent]});
+    if(!ok)return;
     setHookName("");setHookUrl("");
   }
   return <div>
@@ -1703,16 +2742,38 @@ function IntegrationsPanel(){
       <p>{inventoryState==="loading"?"Reading authorized integration inventory…":error||"Core API inventory is unavailable. No empty list has been confirmed."}</p>
       {inventoryState==="unknown"&&<button type="button" className="secondary" onClick={refresh}>Retry integrations read →</button>}
     </section>:<>
-    <section className="card"><h3>Service Accounts</h3><p className="muted">The public Automation API uses Bearer tokens, per-account rate limits and explicit read-only Core operations in this phase.</p>
+    {(accounts.length===200||hooks.length===200)&&<p role="status" className="dr-uxb-catalog-page-notice">
+      Integration inventory contains only the first 200 Core items per type.
+      Additional authorized private Service Accounts or Webhooks may exist beyond the loaded list.
+      No global total or absence of unobserved integrations is confirmed.
+    </p>}
+    <section className="card"><h3>Service Accounts</h3><p className="muted">The public Automation API uses Bearer tokens, per-account rate limits and explicit read-only Core operations in this phase.
+      Missing or invalid permission, status and expiry evidence stays UNKNOWN; no account action appears from an unverified status.</p>
       <form onSubmit={createAccount}><div className="toolbar"><input value={accountName} onChange={e=>setAccountName(e.target.value)} placeholder="Account name" required/><input type="datetime-local" value={accountExpiry} onChange={e=>setAccountExpiry(e.target.value)} title="Optional token expiry"/></div>
         <div className="toolbar">{allowedPermissions.map(p=><label key={p}><input type="checkbox" checked={permissions.includes(p)} onChange={e=>setPermissions(a=>e.target.checked?[...a,p]:a.filter(x=>x!==p))}/>{p}</label>)}</div>
-        <button className="primary" disabled={busy||!accountName||!permissions.length} type="submit">Create Service Account</button>
+        <button className="primary" disabled={busy||!!once||!accountName||!permissions.length} type="submit">Create Service Account</button>
       </form>
-      <table><thead><tr><th>Account</th><th>Permissions</th><th>Expires</th><th>Status</th><th>Actions</th></tr></thead><tbody>{accounts.map(a=><tr key={a.id}><td>{a.name}</td><td>{(a.permissions||[]).join(", ")}</td><td>{a.expires_at||"No expiry"}</td><td>{a.enabled?"Active":"Revoked"}</td><td>{a.enabled&&<><button className="secondary" disabled={busy} onClick={()=>mutate("/api/v1/service-accounts/rotate",{account_id:a.id},"Rotated Service Account token")}>Rotate</button><button className="danger" disabled={busy} onClick={()=>{if(window.confirm("Revoke this Service Account now?"))mutate("/api/v1/service-accounts/revoke",{account_id:a.id})}}>Revoke</button></>}</td></tr>)}</tbody></table>
+      <table><thead><tr><th>Account</th><th>Permissions</th><th>Expires</th><th>Status</th><th>Actions</th></tr></thead><tbody>{accounts.map(a=>{
+        const accountState=serviceAccountOperationalStatus(a);
+        return <tr key={a.id}><td>{a.name}</td><td>{serviceAccountPermissions(a)}</td><td>{serviceAccountExpiry(a)}</td>
+          <td>{accountState}</td><td>
+            {accountState==="Active"&&<button type="button" className="secondary" disabled={busy||!!once} onClick={()=>{
+              if(serviceAccountOperationalStatus(a)!=="Active"){
+                setError("Service Account expiry has changed; refresh inventory before rotating.");return;
+              }
+              void mutate("/api/v1/service-accounts/rotate",{account_id:a.id});
+            }}>Rotate</button>}
+            {(accountState==="Active"||accountState==="Expired")&&
+              <button type="button" className="danger" disabled={busy||!!once} onClick={()=>{if(window.confirm("Revoke this Service Account now?"))void mutate("/api/v1/service-accounts/revoke",{account_id:a.id})}}>Revoke</button>}
+          </td></tr>;
+      })}</tbody></table>
     </section>
     <section className="card"><h3>Signed Event Webhooks</h3><p className="muted">HTTPS only, certificate-verified and DNS-pinned. Failed deliveries use bounded retries; event delivery never controls access enforcement.</p>
-      <form className="toolbar" onSubmit={createWebhook}><input value={hookName} onChange={e=>setHookName(e.target.value)} placeholder="Endpoint name" required/><input value={hookUrl} onChange={e=>setHookUrl(e.target.value)} placeholder="https://hooks.example.com/events" required type="url"/><select value={hookEvent} onChange={e=>setHookEvent(e.target.value)}><option value="attention">Attention</option><option value="security.lifecycle">Security lifecycle</option><option value="policy.change">Policy change</option><option value="managed_host.lifecycle">Managed Host lifecycle</option></select><button className="primary" disabled={busy||!hookName||!hookUrl} type="submit">Add webhook</button></form>
-      <table><thead><tr><th>Endpoint</th><th>URL</th><th>Events</th><th>Status</th><th>Delivery</th><th>Actions</th></tr></thead><tbody>{hooks.map(h=><tr key={h.id}><td>{h.name}</td><td>{h.url}</td><td>{(h.event_classes||[]).join(", ")}</td><td>{h.enabled?"Enabled":"Disabled"}</td><td>{Object.entries(h.delivery_counts||{}).map(([k,v])=>k+":"+v).join(" · ")||"—"}</td><td>{h.enabled&&<><button className="secondary" disabled={busy} onClick={()=>mutate("/api/v1/webhooks/rotate",{webhook_id:h.id},"Rotated Webhook secret")}>Rotate</button><button className="danger" disabled={busy} onClick={()=>{if(window.confirm("Disable this webhook and fail queued deliveries?"))mutate("/api/v1/webhooks/disable",{webhook_id:h.id})}}>Disable</button></>}</td></tr>)}</tbody></table>
+      <p className="muted" role="note">Core HTTP-acknowledged does not prove the receiver processed the event. Core outbox observations can be incomplete or expire under retention; missing history is UNKNOWN, not proof of successful delivery.</p>
+      <form className="toolbar" onSubmit={createWebhook}><input value={hookName} onChange={e=>setHookName(e.target.value)} placeholder="Endpoint name" required/><input value={hookUrl} onChange={e=>setHookUrl(e.target.value)} placeholder="https://hooks.example.com/events" required type="url"/><select value={hookEvent} onChange={e=>setHookEvent(e.target.value)}><option value="attention">Attention</option><option value="security.lifecycle">Security lifecycle</option><option value="policy.change">Policy change</option><option value="managed_host.lifecycle">Managed Host lifecycle</option></select><button className="primary" disabled={busy||!!once||!hookName||!hookUrl} type="submit">Add webhook</button></form>
+      <table><thead><tr><th>Endpoint</th><th>URL</th><th>Events</th><th>Status</th><th>Delivery</th><th>Transport evidence</th><th>Actions</th></tr></thead><tbody>{hooks.map(h=><tr key={h.id}><td>{h.name}</td><td>{h.url}</td><td>{(h.event_classes||[]).join(", ")}</td><td>{webhookStatus(h)}</td><td>{webhookDeliverySummary(h)}</td>
+    <td>{observedWebhookDeliveryPulse(h).state}</td>
+    <td>{webhookStatus(h)==="Enabled"&&<><button type="button" className="secondary" disabled={busy||!!once} onClick={()=>void mutate("/api/v1/webhooks/rotate",{webhook_id:h.id})}>Rotate</button><button type="button" className="danger" disabled={busy||!!once} onClick={()=>{if(window.confirm("Disable this webhook and fail queued deliveries?"))void mutate("/api/v1/webhooks/disable",{webhook_id:h.id})}}>Disable</button></>}</td></tr>)}</tbody></table>
     </section>
     </>}
   </div>;
@@ -1721,23 +2782,36 @@ function IntegrationsPanel(){
 function CommandCenter({data,operator,onNavigate}:{data:any,operator:any,onNavigate?:(id:string,groupId?:string,context?:any)=>void}){
   const [activity,setActivity]=useState<RecentFeed>({status:"loading",items:[]});
   const [changes,setChanges]=useState<RecentFeed>({status:"loading",items:[]});
+  const [usefulServices,setUsefulServices]=useState<{status:"loading"|"ready"|"unknown",items:any[]}>({status:"loading",items:[]});
   useEffect(()=>{
     let cancelled=false;
-    Promise.allSettled([api("/api/v1/audit?limit=6"),api("/api/v1/revisions?limit=6")]).then(results=>{
+    Promise.allSettled([
+      api("/api/v1/audit?limit=6"),api("/api/v1/revisions?limit=6"),
+      api("/api/v1/inventory?resource_type=remote-service&limit=100")
+    ]).then(results=>{
       if(cancelled)return;
-      const [auditResult,revisionResult]=results;
-      setActivity(observedRecentFeed(auditResult));
-      setChanges(observedRecentFeed(revisionResult));
+      const [auditResult,revisionResult,serviceResult]=results;
+      setActivity(observedCoreRecentFeed(auditResult,"audit-event"));
+      setChanges(observedCoreRecentFeed(revisionResult,"revision"));
+      if(serviceResult.status!=="fulfilled"){setUsefulServices({status:"unknown",items:[]});return}
+      try{
+        const page=requireObservedBoundedCorePage("services",serviceResult.value,"",100);
+        setUsefulServices({status:"ready",items:page.items.filter((row:any)=>serviceStateLabel(row)==="Enabled").slice(0,4)});
+      }catch{setUsefulServices({status:"unknown",items:[]})}
     });
     return()=>{cancelled=true};
   },[]);
   const h=data.overview?.managed_hosts||{},svc=data.overview?.remote_services||{},j=data.overview?.management_jobs||{},pol=data.overview?.policies||{};
-  const attention=Array.isArray(data.attention?.items)?data.attention.items:null;
+  const hostCounts=observedBoundedCountPair(h,"connected");
+  const serviceCounts=observedBoundedCountPair(svc,"enabled");
+  const attentionState=observedHomeAttention(data,operator.role);
+  const overviewEvidence=observedCoreOverviewEvidence(data);
+  const attention=attentionState?.items??null;
   const observed=observedNumber;
   const policyRows=[
-    {label:"Remote Access",key:"remote",value:pol.remote||{}},
-    {label:"Internet Access",key:"internet",value:pol.internet||{}},
-    {label:"AI Access",key:"ai",value:pol.ai||{}},
+    {label:"Remote Access",key:"remote",value:observedBoundedCountPair(pol.remote,"enabled")},
+    {label:"Internet Access",key:"internet",value:observedBoundedCountPair(pol.internet,"enabled")},
+    {label:"AI Access",key:"ai",value:observedBoundedCountPair(pol.ai,"enabled")},
   ];
   if(isFreshInstallation(data))return <div className="dr-command-center dr-uxb-first-install" data-testid="uxb-fresh-home">
     <section className="dr-hero-row"><div><p className="dr-eyebrow">Welcome · First connection</p>
@@ -1754,37 +2828,83 @@ function CommandCenter({data,operator,onNavigate}:{data:any,operator:any,onNavig
   return <div className="dr-command-center">
     <section className="dr-hero-row"><div><p className="dr-eyebrow">Welcome · Data Relay Link</p><h2>Connect one service. Control who can use it.</h2><p className="muted">Start with the steps below, or inspect the existing Core status and activity.</p></div><div className="dr-hero-actions">{operator.role==="Admin"&&<button className="primary" onClick={()=>onNavigate?.("setup","connections")}>Set up a connection →</button>}<button className="secondary" onClick={()=>onNavigate?.("access","access")}>Test access</button></div></section>
     <FirstUseHome data={data} operator={operator} api={api} onNavigate={onNavigate}/>
-    <section className="dr-kpi-strip"><div><span>Managed Hosts</span><strong>{observed(h.total)}</strong><small>{observed(h.connected)} connected</small></div><div><span>Remote Services</span><strong>{observed(svc.total)}</strong><small>{observed(svc.enabled)} enabled</small></div><div><span>Active Jobs</span><strong>{observed(j.active_jobs)}</strong><small>{observed(j.failed_jobs)} failed</small></div><div><span>Needs Attention</span><strong>{attention?attention.length:"UNKNOWN"}</strong><small>{!attention?"Core attention evidence unavailable":attention.some((x:any)=>x.severity==="critical")?"Critical item present":"Current findings"}</small></div></section>
+    <details className="card dr-home-evidence-details">
+      <summary>Core inventory evidence</summary>
+      <p className="muted dr-home-evidence-scope" role="status">
+        {overviewEvidence.status==="observed"
+          ?<>Fleet-wide derived Core counts · Core observation: {overviewEvidence.observedAt}</>
+          :<>Fleet overview evidence UNKNOWN · Core observation: UNKNOWN</>}.
+        These are configuration/observation summaries, not proof of current live access.
+      </p>
+      <div className="dr-home-evidence-grid">
+        <div><span>Managed Hosts</span><strong>{hostCounts.total}</strong><small>{hostCounts.subset} connected</small>
+          <button type="button" className="dr-text-action" onClick={()=>onNavigate?.("hosts","connections")}>Inspect Hosts →</button></div>
+        <div><span>Remote Services</span><strong>{serviceCounts.total}</strong><small>{serviceCounts.subset} enabled</small>
+          <button type="button" className="dr-text-action" onClick={()=>onNavigate?.("services","connections")}>Inspect Services →</button></div>
+        <div><span>Active Jobs</span><strong>{observed(j.active_jobs)}</strong><small>{observed(j.failed_jobs)} failed</small>
+          <button type="button" className="dr-text-action" onClick={()=>onNavigate?.("jobs","activity")}>Inspect Jobs →</button></div>
+        <div><span>Needs Attention</span><strong>{attention?attention.length:"UNKNOWN"}</strong>
+          <small>{!attention?"Core attention evidence unavailable":attention.some((x:any)=>x.severity==="critical")?"Critical item present":"Current findings"}</small>
+          <button type="button" className="dr-text-action" onClick={()=>onNavigate?.("doctor","activity")}>Review evidence →</button></div>
+      </div>
+    </details>
     <div className="dr-overview-columns">
-      <section className="card dr-attention-card"><div className="dr-section-head"><div><p className="dr-eyebrow">Posture</p><h3>Needs Attention</h3></div><button className="dr-text-action" onClick={()=>onNavigate?.("doctor","observability")}>Troubleshoot →</button></div>{!attention?<div className="dr-compact-empty">UNKNOWN · Core attention evidence unavailable. Check System Health.</div>:attention.length?<div className="dr-attention-list">{attention.slice(0,8).map((x:any)=><div className="dr-attention-row" key={x.kind}><span className={"dr-severity-dot "+x.severity}/><span><strong>{x.label}</strong><small>{x.count} affected</small></span><span className={"badge "+x.severity}>{x.severity}</span></div>)}</div>:<div className="dr-good-state"><span className="dr-good-mark">✓</span><div><strong>No current attention items</strong><p>Core-derived checks are not reporting operator action.</p></div></div>}</section>
-      <section className="card dr-access-card"><div className="dr-section-head"><div><p className="dr-eyebrow">Access</p><h3>Policy Coverage</h3></div><button className="dr-text-action" onClick={()=>onNavigate?.("access","access")}>Open workspace →</button></div><div className="dr-access-posture">{policyRows.map(row=><button key={row.key} onClick={()=>onNavigate?.("policies","access")}><span className="dr-access-icon"><WorkspaceIcon kind="access"/></span><span><strong>{row.label}</strong><small>{observed(row.value.enabled)} enabled of {observed(row.value.total)}</small></span><b>{observed(row.value.enabled)}</b></button>)}</div></section>
+      <section className="card dr-attention-card"><div className="dr-section-head"><div><p className="dr-eyebrow">Posture</p><h3>Needs Attention</h3></div><button className="dr-text-action" onClick={()=>onNavigate?.("doctor","observability")}>Troubleshoot →</button></div>{!attention?<div className="dr-compact-empty">UNKNOWN · Core attention evidence unavailable. Check System Health.</div>:attention.length?<div className="dr-attention-list">{attention.slice(0,8).map((x:any)=><button key={x.kind} type="button"
+        className="dr-attention-row dr-attention-link"
+        aria-label={x.action+" · "+x.label}
+        onClick={()=>onNavigate?.(x.route,x.group)}>
+        <span className={"dr-severity-dot "+x.severity}/>
+        <span><strong>{x.label}</strong><small>{x.count} affected · {x.action} →</small></span>
+        <span className={"badge "+x.severity}>{x.severity}</span>
+      </button>)}
+        <p className="muted" role="status">Core evidence at {attentionState?.observedAt||"UNKNOWN"} · these are bounded fleet findings.
+          Inspect opens the relevant authorized workspace; it does not identify a specific affected resource or prove live access.</p>
+      </div>:<div className="dr-good-state"><span className="dr-good-mark">✓</span><div><strong>No current attention items</strong><p>
+    Core observed no Attention items at {attentionState?.observedAt||"UNKNOWN"}.
+    This is derived evidence, not a live health or access guarantee.
+  </p></div></div>}</section>
+      <section className="card dr-access-card"><div className="dr-section-head"><div><p className="dr-eyebrow">Access</p><h3>Policy Coverage</h3></div><button className="dr-text-action" onClick={()=>onNavigate?.("access","access")}>Open workspace →</button></div><div className="dr-access-posture">{policyRows.map(row=><button key={row.key} type="button" aria-label={"Inspect "+row.label+" policies"} onClick={()=>onNavigate?.("policies","access",{plane:row.key})}><span className="dr-access-icon"><WorkspaceIcon kind="access"/></span><span><strong>{row.label}</strong><small>{row.value.subset} enabled of {row.value.total}</small></span><b>{row.value.subset}</b></button>)}</div></section>
     </div>
+    <section className="card dr-home-useful-services"><div className="dr-section-head"><div><p className="dr-eyebrow">Use a connection</p><h3>Available published services</h3><p className="muted">Enabled configuration only; access policy and transport success remain unverified until checked.</p></div><button className="dr-text-action" onClick={()=>onNavigate?.("services","connections")}>All services →</button></div>
+      {usefulServices.status!=="ready"?<div className="dr-compact-empty" role="status">{usefulServices.status==="loading"?"Loading published services…":"UNKNOWN · Published Service inventory unavailable."}</div>:
+       usefulServices.items.length?<div className="dr-home-service-list">{usefulServices.items.map((item:any)=><button key={item.id} type="button" onClick={()=>onNavigate?.("services","connections",{savedFilter:"id:"+item.id,inspectResourceId:item.id})}>
+        <span className="dr-service-type-icon"><ServiceTypeGlyph type={item.service_type}/></span><span><strong>{serviceVisibleIdentity(item).primary}</strong><small>{item.service_type||"UNKNOWN"} · port {item.public_port??"UNKNOWN"}</small></span><span className="dr-state active"><i/>Configured</span><span aria-hidden="true">→</span>
+       </button>)}</div>:<div className="dr-compact-empty">No enabled Remote Service was confirmed in the loaded Core page.</div>}
+    </section>
     <div className="dr-overview-columns">
-      <section className="card"><div className="dr-section-head"><div><p className="dr-eyebrow">Activity</p><h3>Recent Activity</h3></div><button className="dr-text-action" onClick={()=>onNavigate?.("audit","observability")}>Open audit →</button></div>{activity.status!=="ready"?<div className="dr-compact-empty" role="status">{activity.status==="loading"?"Loading recent activity…":"UNKNOWN · Recent Activity unavailable. Open Audit to retry."}</div>:activity.items.length?<div className="dr-activity-list">{activity.items.map((item:any,i:number)=><button key={item.event_id||item.id||i} onClick={()=>onNavigate?.("audit","observability")}><span className={item.result==="deny"||item.result==="failed"?"dr-activity-mark warning":"dr-activity-mark"}/><span><strong>{item.event_type||item.action||item.operation||"Activity"}</strong><small>{item.actor_id||item.actor||"system"} · {item.occurred_at||item.timestamp||""}</small></span><span>{item.result||item.category||""}</span></button>)}</div>:<div className="dr-compact-empty">No retained recent activity.</div>}</section>
+      <section className="card"><div className="dr-section-head"><div><p className="dr-eyebrow">Activity</p><h3>Recent Activity</h3></div><button className="dr-text-action" onClick={()=>onNavigate?.("audit","observability")}>Open audit →</button></div>{activity.status!=="ready"?<div className="dr-compact-empty" role="status">{activity.status==="loading"?"Loading recent activity…":"UNKNOWN · Recent Activity unavailable. Open Audit to retry."}</div>:activity.items.length?<div className="dr-activity-list">{activity.items.map((item:any,i:number)=><button key={item.event_id||item.id||i}
+        onClick={()=>onNavigate?.("audit","activity",recentAuditInvestigation(item)||undefined)}><span className={item.result==="deny"||item.result==="failed"?"dr-activity-mark warning":"dr-activity-mark"}/><span><strong>{item.event_type||item.action||item.operation||"Activity"}</strong><small>{item.actor_id||item.actor||"system"} · {item.occurred_at||item.timestamp||""}</small></span><span>{item.result||item.category||""}</span></button>)}</div>:<div className="dr-compact-empty">No retained recent activity.</div>}</section>
       <section className="card"><div className="dr-section-head"><div><p className="dr-eyebrow">Configuration</p><h3>Recent Changes</h3></div><button className="dr-text-action" onClick={()=>onNavigate?.("revisions","operations")}>Change history →</button></div>{changes.status!=="ready"?<div className="dr-compact-empty" role="status">{changes.status==="loading"?"Loading recent changes…":"UNKNOWN · Change History unavailable. Open Change history to retry."}</div>:changes.items.length?<div className="dr-activity-list">{changes.items.map((item:any,i:number)=><button key={item.revision||item.id||i} onClick={()=>onNavigate?.("revisions","operations")}><span className="dr-change-index">{item.revision??"#"}</span><span><strong>{item.summary||item.message||item.operation||"Configuration revision"}</strong><small>{item.actor||item.actor_id||"system"} · {item.timestamp||item.created_at||""}</small></span><span>→</span></button>)}</div>:<div className="dr-compact-empty">No retained configuration changes.</div>}</section>
     </div>
     <section className="card dr-quick-actions"><div className="dr-section-head"><div><p className="dr-eyebrow">Workspace</p><h3>Common Tasks</h3></div></div><div className="dr-action-grid"><button onClick={()=>onNavigate?.("hosts","infrastructure")}><WorkspaceIcon kind="infrastructure"/><span><strong>Inspect a host</strong><small>Connectivity, services, version, lifecycle</small></span></button><button onClick={()=>onNavigate?.("access","access")}><WorkspaceIcon kind="access"/><span><strong>Explain access</strong><small>Current use, policy test, cutoff state</small></span></button><button onClick={()=>onNavigate?.("audit","observability")}><WorkspaceIcon kind="observability"/><span><strong>Review activity</strong><small>Audit events and access decisions</small></span></button><button onClick={()=>onNavigate?.("system","administration")}><WorkspaceIcon kind="administration"/><span><strong>System readiness</strong><small>Backup, certificate, update, support</small></span></button></div></section>
   </div>;
 }
 
-function HealthWorkspace({data,onNavigate}:{data:any,onNavigate?:(id:string,groupId?:string)=>void}){
+function HealthWorkspace({data:raw,onNavigate}:{data:any,onNavigate?:(id:string,groupId?:string)=>void}){
+  const observed=observedCoreHealthSnapshot(raw);
+  if(!observed)return <section className="card" role="alert">
+    <h2>Core Health · UNKNOWN</h2>
+    <p>The authenticated Core health response was incomplete or not read-only. No healthy system, active policy generation or empty workload was confirmed.</p>
+    <button className="secondary" onClick={()=>onNavigate?.("doctor","activity")}>Review Core Doctor →</button>
+  </section>;
+  const data=observed;
   const generations=data.generations||{};
   const jobs=data.management_jobs||{};
   const planes=["remote","internet","ai"].map(name=>({name,value:generations[name]||{}}));
   const coreStatus=coreHealthState(data);
   const coreHealthy=coreStatus==="Healthy";
-  const configuredPlanes=accessPlaneCount(data);
+  const configuredPlanes=observedHealthPlaneCount(data);
   return <div className="dr-resource-workspace">
     <section className="dr-page-intro"><div><p className="dr-eyebrow">Activity & Health</p><h2>Health</h2><p className="muted">Core readiness, runtime generations and bounded management capacity without raw-debug-first presentation.</p></div><div className="dr-page-actions"><button className="secondary" onClick={()=>onNavigate?.("doctor","observability")}>Troubleshoot</button><button className="secondary" onClick={()=>onNavigate?.("system","administration")}>System readiness</button></div></section>
     <section className="dr-health-summary">
       <article className="card dr-health-card"><span>Core</span><strong className={coreHealthy?"healthy":"attention"}>{coreStatus}</strong><small>{coreStatus==="UNKNOWN"?"Core health evidence incomplete":data.mismatch?"Runtime generation mismatch":data.db_healthy?"Control database healthy":"Control database issue"}</small></article>
-      <article className="card dr-health-card"><span>Control DB</span><strong className={data.db_healthy===true?"healthy":"critical-text"}>{typeof data.db_healthy!=="boolean"?"UNKNOWN":data.db_healthy?"Healthy":"Critical"}</strong><small>Schema {data.schema??"—"} · Revision {data.revision??"—"}</small></article>
+      <article className="card dr-health-card"><span>Control DB</span><strong className={data.db_healthy===true?"healthy":"critical-text"}>{typeof data.db_healthy!=="boolean"?"UNKNOWN":data.db_healthy?"Healthy":"Critical"}</strong><small>Schema {data.schema??"UNKNOWN"} · Revision {data.revision??"UNKNOWN"}</small></article>
       <article className="card dr-health-card"><span>Access planes</span><strong>{configuredPlanes===null?"UNKNOWN":configuredPlanes+" / 3"}</strong><small>{configuredPlanes===null?"Core generation evidence unavailable":"Active Core runtime generations; not proof of application reachability"}</small></article>
       <article className="card dr-health-card"><span>Management jobs</span><strong className={jobs.saturated===false?"healthy":"attention"}>{typeof jobs.saturated!=="boolean"?"UNKNOWN":jobs.saturated?"Saturated":"Healthy"}</strong><small>{jobs.active_jobs??"UNKNOWN"} active · {jobs.queued_jobs??"UNKNOWN"} queued</small></article>
     </section>
     <section className="card dr-health-section"><div className="dr-section-head"><div><p className="dr-eyebrow">Runtime</p><h3>Policy planes</h3><p className="muted">Compiled generation state stays separate from configured policy state.</p></div></div><div className="dr-health-plane-list">{planes.map(row=>{const state=String(row.value.status||"unknown");const good=state==="active"||state==="not_configured";return <div className="dr-health-plane" key={row.name}><span className={good?"dr-severity-dot":"dr-severity-dot warning"}/><div><strong>{row.name[0].toUpperCase()+row.name.slice(1)}</strong><small>DB rev {row.value.db_revision??"—"} · generation {row.value.generation??"—"}</small></div><span className={state==="active"?"dr-state active":"dr-state"}><i/>{state.replaceAll("_"," ")}</span>{row.value.error&&<small className="dr-health-error">{row.value.error}</small>}</div>})}</div></section>
     <section className="card dr-health-section"><div className="dr-section-head"><div><p className="dr-eyebrow">Capacity</p><h3>Management workload</h3><p className="muted">Bounded job engine status for asynchronous fleet operations.</p></div><button className="dr-text-action" onClick={()=>onNavigate?.("jobs","operations")}>Open jobs →</button></div><div className="dr-kpi-strip"><div><span>Active</span><strong>{observedNumber(jobs.active_jobs)}</strong><small>Currently active jobs</small></div><div><span>Queued</span><strong>{observedNumber(jobs.queued_jobs)}</strong><small>{observedNumber(jobs.queued_targets)} queued targets</small></div><div><span>Running</span><strong>{observedNumber(jobs.running_jobs)}</strong><small>{observedNumber(jobs.running_targets)} running targets</small></div><div><span>Failed</span><strong>{observedNumber(jobs.failed_jobs)}</strong><small>Completed with failure</small></div></div></section>
-    <details className="card dr-advanced-details"><summary>Advanced · raw health payload</summary><p className="muted">For diagnostics and support. Normal operation should use the structured health views above.</p><pre className="plan">{JSON.stringify(data,null,2)}</pre></details>
+    <details className="card dr-advanced-details dr-technical-details"><summary>Technical details · bounded Core health facts</summary><p className="muted">Only validated public fields from the current Core read are included. Private fields and raw nested payloads are never displayed.</p><pre className="plan">{JSON.stringify(observed,null,2)}</pre></details>
   </div>;
 }
 
@@ -1849,6 +2969,19 @@ function AccessHygienePanel({data,onRefresh,onNavigate,operator}:{data:any,onRef
 }
 
 function SystemAdministrationWorkspace({data,operator,onNavigate}:{data:any,operator:any,onNavigate?:(id:string,groupId?:string)=>void}){
+  const [advancedOpen,setAdvancedOpen]=useState(false);
+  // Do not leave keyboard focus on a distant guide button after disclosure.
+  // Both this guide and the existing Foundation read-only shortcuts reveal
+  // the same Core-owned panel without enabling any privileged operation.
+  function revealAdvancedControls(){
+    const advanced=document.getElementById("drlink-core-advanced") as HTMLDetailsElement|null;
+    if(advanced){
+      advanced.open=true;
+      setAdvancedOpen(true);
+      advanced.scrollIntoView({block:"start"});
+      advanced?.querySelector<HTMLElement>("summary")?.focus();
+    }
+  }
   return <div className="dr-uxb-system">
     <LinkFoundationAdministration operator={operator} onNavigate={onNavigate}/>
     <section className="card dr-uxb-admin-guide" aria-label="System administration guidance">
@@ -1859,10 +2992,14 @@ function SystemAdministrationWorkspace({data,operator,onNavigate}:{data:any,oper
         <div><strong>Admin-only changes</strong><p>Users & MFA, integration credentials and approved configuration changes require role checks. Read Only users cannot perform mutations.</p>
           {operator.role==="Admin"?<button className="secondary" onClick={()=>onNavigate?.("users","administration")}>Users & MFA →</button>:<span className="dr-uxb-role-hint">Admin role required</span>}</div>
         <div><strong>Advanced · confirm before applying</strong><p>Core-owned MCP TLS certificates, product updates, backup and restore are sensitive operations. Web HTTPS listener settings are not implemented here.</p>
-          <button className="secondary" onClick={()=>{const advanced=document.getElementById("drlink-core-advanced") as HTMLDetailsElement|null;if(advanced){advanced.open=true;advanced.scrollIntoView({block:"start"})}}}>Review advanced controls →</button></div>
+          <button type="button" className="secondary" aria-controls="drlink-core-advanced"
+            aria-expanded={advancedOpen} onClick={revealAdvancedControls}>
+            Review advanced controls →
+          </button></div>
       </div>
     </section>
-    <details id="drlink-core-advanced" className="dr-uxb-advanced-panel">
+    <details id="drlink-core-advanced" className="dr-uxb-advanced-panel"
+      onToggle={e=>setAdvancedOpen(e.currentTarget.open)}>
       <summary>Advanced Core operations · certificates, update, backup and recovery</summary>
       <p className="muted">Sensitive changes remain Core-authoritative and role/confirmation guarded. This is not the shared Web HTTPS listener management screen.</p>
       <SystemPanel data={data} operator={operator}/>
@@ -1870,7 +3007,22 @@ function SystemAdministrationWorkspace({data,operator,onNavigate}:{data:any,oper
   </div>;
 }
 
-function View({active,operator,onNavigate,context,setupDraft,onSetupDraftChange}:{active:string,operator:any,onNavigate?:(id:string,groupId?:string,context?:any)=>void,context?:any,setupDraft?:SetupDraft|null,onSetupDraftChange?:(draft:SetupDraft)=>void}){
+function SelectedServerManagement({server,action}:{server:any,action:ServerManagementAction}){
+  const selectedHostId=server.id;
+  if(action==="metadata")return <ManagedHostMetadataPanel key={selectedHostId} selectedHost={server}/>;
+  if(action==="admission")return <ManagedHostAdmissionPanel key={selectedHostId} selectedHost={server}/>;
+  return <ManagedHostLifecyclePanel key={selectedHostId} selectedHost={server}/>;
+}
+
+function View(props:any){
+  const {active,operator,onNavigate,context}=props;
+  if(active==="hosts")return <ServerRoute key={String(operator?.id||"")+":"+String(operator?.role||"")} operator={operator}
+    api={api} onNavigate={onNavigate} context={context} returnState={props.serverReturnState} onReturnStateChange={props.onServerReturnStateChange}
+    renderManagement={(server,action)=><SelectedServerManagement server={server} action={action}/>}/>;
+  return <LegacyView {...props}/>;
+}
+
+function LegacyView({active,operator,onNavigate,context,setupDraft,onSetupDraftChange}:{active:string,operator:any,onNavigate?:(id:string,groupId?:string,context?:any)=>void,context?:any,setupDraft?:SetupDraft|null,onSetupDraftChange?:(draft:SetupDraft)=>void}){
   const [data,setData]=useState<any>(null),[error,setError]=useState(""),[query,setQuery]=useState("");
   const [retryNonce,setRetryNonce]=useState(0);
   useEffect(()=>{
@@ -1895,7 +3047,14 @@ function View({active,operator,onNavigate,context,setupDraft,onSetupDraftChange}
       }).catch((e:any)=>{if(current)setError(e.message||String(e))});
     }else if(paths[active])api(paths[active]).then(payload=>{
       if(!current)return;
-      try{setData(active==="hygiene"?requireObservedAccessHygiene(payload):requireObservedMenuPayload(active,payload))}
+      try{
+        const projected=active==="system"?observedCoreSystemStatus(payload):
+          active==="hygiene"?requireObservedAccessHygiene(payload):
+          active==="hosts"||active==="services"?requireObservedBoundedCorePage(active,payload,"",100):
+          requireObservedMenuPayload(active,payload);
+        if(!projected)throw new Error("Core System status is incomplete or not certified read-only. State is UNKNOWN.");
+        setData(projected);
+      }
       catch(e:any){setError(e.message||String(e))}
     }).catch((e:any)=>{if(current)setError(e.message||String(e))});
     return()=>{current=false};
@@ -1905,11 +3064,11 @@ function View({active,operator,onNavigate,context,setupDraft,onSetupDraftChange}
   </section>;
   if(active==="users")return <UsersPanel operator={operator}/>;
   if(active==="integrations")return operator.role==="Admin"?<IntegrationsPanel/>:<div className="error">Admin role required</div>;
-  if(active==="drafts")return <DraftWorkspace/>;
+  if(active==="drafts")return <><DraftWorkflowReference context={context} onNavigate={onNavigate}/><DraftWorkspace/></>;
   if(active==="access")return <AccessOperations operator={operator} onNavigate={onNavigate} context={context}/>;
   if(active==="jobs")return <JobOperations operator={operator}/>;
   if(active==="hygiene"&&data)return <AccessHygienePanel data={data} operator={operator} onRefresh={()=>api("/api/v1/access-hygiene").then(payload=>setData(requireObservedAccessHygiene(payload))).catch((e:any)=>setError(e.message||String(e)))} onNavigate={onNavigate}/>;
-  if(active==="audit")return <AuditExplorer operator={operator} context={context}/>;
+  if(active==="audit")return <AuditExplorer operator={operator} context={context} onNavigate={onNavigate}/>;
   if(active==="enrollments"&&data)return <EnrollmentOnboarding api={api} data={data} operator={operator} onNavigate={onNavigate} refresh={()=>api("/api/v1/enrollments?limit=50").then(payload=>setData(requireObservedMenuPayload("enrollments",payload))).catch((e:any)=>setError(e.message||String(e)))}/>;
   if(active==="setup"){
     const requestedPlane=["remote","internet","ai"].includes(String(context?.plane||""))?context.plane:null;
@@ -1921,9 +3080,15 @@ function View({active,operator,onNavigate,context,setupDraft,onSetupDraftChange}
   if(active==="versions"&&data)return <AgentVersionDrift data={data} onNavigate={onNavigate}/>;
   if(active==="system"&&data)return <SystemAdministrationWorkspace data={data} operator={operator} onNavigate={onNavigate}/>;
   if(active==="objects"&&data)return <><ObjectsWorkspace data={data} onNavigate={onNavigate} context={context} api={api}/>{operator.role!=="Read Only"&&<GuidedObjectPanel/>}</>;
-  if(active==="hosts"&&data)return <><ResourceWorkspace kind="host" data={data} operator={operator} onNavigate={onNavigate} api={api} initialFilter={String(context?.savedFilter||"").slice(0,120)}/>{operator.role!=="Read Only"&&<ManagedHostMetadataPanel/>}{operator.role==="Admin"&&<ManagedHostAdmissionPanel/>}{operator.role==="Admin"&&<ManagedHostLifecyclePanel/>}</>;
-  if(active==="services"&&data)return <><ResourceWorkspace kind="service" data={data} operator={operator} onNavigate={onNavigate} api={api} initialFilter={String(context?.savedFilter||"").slice(0,120)}/>{operator.role!=="Read Only"&&<RemoteServiceEditor api={api}/>}</>;
-  if(active==="policies"&&data)return <><PolicyWorkspace data={data} operator={operator} onNavigate={onNavigate} api={api}/>{operator.role!=="Read Only"&&<GuidedPolicyJourney api={api} onNavigate={onNavigate}/>}<PolicySafetyPanel operator={operator}/>{operator.role!=="Read Only"&&<><GuidedPolicySettingsPanel/><TemporaryAccessPanel/></>}</>;
+  if(active==="services"&&data)return <ResourceWorkspace kind="service" data={data} operator={operator} onNavigate={onNavigate} api={api} initialFilter={String(context?.savedFilter||"").slice(0,120)} initialInspectId={context?.inspectResourceId}/>;
+  if(active==="policies"&&data){
+    const selectedPlane=["remote","internet","ai"].includes(String(context?.plane||context?.focusPolicy?.plane))
+      ?String(context?.plane||context?.focusPolicy?.plane) as AccessPlane:"remote";
+    const initialFlow=connectionReviewContext(selectedPlane,context?.source,context?.destination,context?.selector);
+    return <><PolicyWorkspace data={data} operator={operator} onNavigate={onNavigate} api={api} context={context}/>
+      {operator.role!=="Read Only"&&<GuidedPolicyJourney api={api} onNavigate={onNavigate}
+        initialPlane={selectedPlane} initialFlow={"source" in initialFlow?initialFlow:undefined}/>}<PolicySafetyPanel operator={operator}/>{operator.role!=="Read Only"&&<><GuidedPolicySettingsPanel/><details className="dr-technical-details"><summary>Advanced · direct Temporary Access</summary><TemporaryAccessPanel/></details></>}</>;
+  }
   if(active==="doctor"&&data)return <CoreDoctorWorkspace data={data} onNavigate={onNavigate}/>;
   if(active==="health"&&data)return <HealthWorkspace data={data} onNavigate={onNavigate}/>;
   if(active==="revisions"&&data)return <RevisionHistory initial={data} api={api}/>;
@@ -1951,10 +3116,16 @@ function WorkspaceIcon({kind}:{kind:string}){
 }
 
 function GlobalSearch({open,onClose,onNavigate,operator,returnFocusRef}:{
-  open:boolean,onClose:()=>void,onNavigate:(id:string,groupId?:string)=>void,
+  open:boolean,onClose:()=>void,onNavigate:(id:string,groupId?:string,context?:any)=>void,
   operator:any,returnFocusRef:React.RefObject<HTMLElement|null>
 }){
-  const [query,setQuery]=useState(""),[results,setResults]=useState<any[]>([]),[busy,setBusy]=useState(false),[error,setError]=useState("");
+  const [query,setQuery]=useState("");
+  const [results,setResults]=useState<NonNullable<ReturnType<typeof observedBoundedCoreSearchResponse>>["items"]>([]);
+  const [searchStatus,setSearchStatus]=useState<"idle"|"loading"|"ready"|"unknown">("idle");
+  const [rejectedCount,setRejectedCount]=useState(0);
+  const [returnedCount,setReturnedCount]=useState(0);
+  const [busy,setBusy]=useState(false),[error,setError]=useState("");
+  const [navigationTourOpen,setNavigationTourOpen]=useState(false);
   const requestGeneration=useRef(0);
   const dialogRef=useRef<HTMLElement|null>(null);
   const navigatingRef=useRef(false);
@@ -1964,10 +3135,12 @@ function GlobalSearch({open,onClose,onNavigate,operator,returnFocusRef}:{
     // Old Core resource results must never follow a newer query.
     requestGeneration.current+=1;
     setQuery(value);setResults([]);setError("");setBusy(false);
+    setSearchStatus("idle");setRejectedCount(0);setReturnedCount(0);
   }
   useEffect(()=>{if(!open){
     requestGeneration.current+=1;
-    setQuery("");setResults([]);setError("");setBusy(false);
+    setQuery("");setResults([]);setError("");setBusy(false);setNavigationTourOpen(false);
+    setSearchStatus("idle");setRejectedCount(0);setReturnedCount(0);
   }},[open]);
   useEffect(()=>{
     if(!open)return;
@@ -2008,36 +3181,32 @@ function GlobalSearch({open,onClose,onNavigate,operator,returnFocusRef}:{
   },[open,returnFocusRef]);
   const localMatches=navMatches(query,operator.role);
   if(!open)return null;
-  function targetFor(type:string):[string,string]{
-    const value=String(type||"").toLowerCase();
-    if(value.includes("managed-host"))return ["hosts","infrastructure"];
-    if(value.includes("remote-service"))return ["services","infrastructure"];
-    if(value.includes("policy")||value.includes("access"))return ["policies","access"];
-    if(value.includes("job"))return ["jobs","operations"];
-    if(value.includes("audit"))return ["audit","observability"];
-    return ["objects","infrastructure"];
-  }
   async function search(e?:React.FormEvent){
     e?.preventDefault();
     const q=query.trim();
     const generation=++requestGeneration.current;
-    if(!q){setResults([]);return}
-    setBusy(true);setError("");setResults([]);
+    if(!q){setResults([]);setSearchStatus("idle");setRejectedCount(0);setReturnedCount(0);return}
+    setBusy(true);setError("");setResults([]);setSearchStatus("loading");
+    setRejectedCount(0);setReturnedCount(0);
     try{
       const data=await api("/api/v1/search?q="+encodeURIComponent(q)+"&limit=20");
       if(requestGeneration.current!==generation)return;
-      if(!Array.isArray(data?.items))throw new Error("Core search response missing resource items");
-      setResults(data.items);
-    }catch(err:any){if(requestGeneration.current===generation)setError(err.message||String(err))}
+      const projection=observedBoundedCoreSearchResponse(data,q);
+      if(!projection)throw new Error("Core Search query, first-20 limit or resources are inconsistent. State is UNKNOWN.");
+      setResults(projection.items);setRejectedCount(projection.invalidCount);
+      setReturnedCount(projection.totalCount);setSearchStatus("ready");
+    }catch(err:any){if(requestGeneration.current===generation){
+      setError(err.message||String(err));setSearchStatus("unknown");
+    }}
     finally{if(requestGeneration.current===generation)setBusy(false)}
   }
-  function go(id:string,group?:string){
+  function go(id:string,group?:string,context?:any){
     if(!visibleRoute(id,operator.role)){
       setError("Your role cannot open this page.");
       return;
     }
     navigatingRef.current=true;
-    onNavigate(id,group);
+    onNavigate(id,group,context);
     onClose();
   }
   return <div className="dr-command-overlay" role="presentation" onMouseDown={e=>{if(e.currentTarget===e.target)onClose()}}>
@@ -2050,19 +3219,47 @@ function GlobalSearch({open,onClose,onNavigate,operator,returnFocusRef}:{
           <button onClick={()=>go("access","access")}><WorkspaceIcon kind="access"/><span><strong>Access workspace</strong><small>Diagnose and inspect current access</small></span></button>
           <button onClick={()=>go("views","observability")}><WorkspaceIcon kind="observability"/><span><strong>Saved Views</strong><small>Open operator-saved filters</small></span></button>
           <button onClick={()=>go("doctor","observability")}><WorkspaceIcon kind="observability"/><span><strong>Troubleshoot</strong><small>Open bounded Doctor checks</small></span></button>
-        </div></>}
+          <button type="button" onClick={()=>setNavigationTourOpen(value=>!value)} aria-expanded={navigationTourOpen}><WorkspaceIcon kind="overview"/><span><strong>What changed in navigation?</strong><small>See old names and their current task locations</small></span></button>
+        </div>
+        {navigationTourOpen&&<section className="dr-command-navigation-tour" role="note" aria-label="Navigation changes">
+          <strong>Old names still work in Search</strong>
+          <p>Infrastructure → Servers & Agents / Published services · Policies → Access rules · Observability → Activity & Health · Operations → Jobs / Change history.</p>
+          <p className="muted">This is navigation help only. Routes, Core permissions and saved state are unchanged.</p>
+        </section>}</>}
         {query.trim()&&<><div className="dr-command-results-head"><p className="dr-command-label">Pages and tasks · old names also work</p><button className="dr-text-action" onClick={()=>search()} disabled={busy}>{busy?"Searching…":"Search resources"}</button></div>
-        <p className="dr-command-label" role="status" aria-live="polite">{busy?"Searching Core resources…":results.length?results.length+" Core matches returned":""}</p>
+        <p className="dr-command-label" role="status" aria-live="polite">{busy?"Searching Core resources…":searchStatus==="ready"?results.length+" safe results from "+returnedCount+" bounded Core search hits":""}</p>
+        {searchStatus==="ready"&&results.length===0&&rejectedCount===0&&<p role="status" className="dr-command-empty">No matching Core resources in the returned search page. Other Core pages and retained resources remain UNKNOWN.</p>}
+        {searchStatus==="ready"&&rejectedCount>0&&<p role="status" className="warning-box">{rejectedCount} malformed/unsafe Core search hits omitted. Do not interpret missing results as absent resources.</p>}
+        {searchStatus==="unknown"&&<p role="status" className="warning-box">Core resource search UNKNOWN. No valid result page confirmed; retry explicitly.</p>}
         {localMatches.length>0&&<div className="dr-command-results" aria-label="Page and task matches">{localMatches.map(item=><button key={"nav:"+item.id} onClick={()=>go(item.id,item.group)}><span className="dr-search-kind">Page</span><span><strong>{item.label}</strong><small>{item.description}</small></span><span aria-hidden="true">→</span></button>)}</div>}
-        {!busy&&!results.length&&!localMatches.length&&<div className="dr-command-empty">No local page matches. Press Enter to search Core resources.</div>}<div className="dr-command-results" role="group" aria-label="Core resource matches" aria-busy={busy}>{results.map((item:any,i:number)=>{const [id,group]=targetFor(item.resource_type);return <button key={item.id||i} onClick={()=>go(id,group)}><span className="dr-search-kind">{item.resource_type||"resource"}</span><span><strong>{item.name||item.id}</strong><small>{item.id||""}</small></span><span aria-hidden="true">→</span></button>})}</div></>}
+        {searchStatus==="idle"&&!busy&&!localMatches.length&&<div className="dr-command-empty">No local page matches. Press Enter to search Core resources.</div>}
+        <p className="muted">Search hits are bounded Core inventory evidence, not authorization. An exact detail opens only when the destination's freshly authorized loaded Core page verifies one matching ID.</p>
+        <div className="dr-command-results" role="group" aria-label="Core resource matches" aria-busy={busy}>{results.map(item=>
+          <button key={item.resourceType+":"+item.id} type="button"
+            disabled={!item.destination}
+            aria-label={"Open Core search result "+item.name}
+            onClick={()=>{if(item.destination)go(item.destination.id,item.destination.group,item.destination.context||undefined)}}>
+            <span className="dr-search-kind">{item.resourceType}</span>
+            <span><strong>{item.name}</strong><small>{item.id}</small></span>
+            <span>{item.destination?.exact?"Inspect loaded Core detail →":
+              item.destination?"Browse Core catalog · exact detail not verified →":
+              "No supported detail view"}</span>
+          </button>
+        )}</div></>}
       </div>
       <footer className="dr-command-footer"><span><kbd>Enter</kbd> search</span><span><kbd>Esc</kbd> close</span><span>Security state is never stored in browser preferences.</span></footer>
     </section>
   </div>;
 }
 
+function readBrowserStartingPage(operator:any){
+  try{return readPreferredStartPage(operator,window.localStorage)}
+  catch{return "overview"}
+}
 function Shell({operator,onLogout}:{operator:any,onLogout:()=>void}){
-  const [active,setActive]=useState("overview");
+  const [active,setActive]=useState(()=>readBrowserStartingPage(operator));
+  const [preferredStartPage,setPreferredStartPage]=useState(()=>readBrowserStartingPage(operator));
+  const [startingPageNotice,setStartingPageNotice]=useState("");
   const [collapsed,setCollapsed]=useState(()=>{try{return localStorage.getItem("drlink_web_sidebar_collapsed")==="1"}catch{return false}});
   const [dark,setDark]=useState(()=>{try{return localStorage.getItem("drlink_web_theme")==="dark"}catch{return false}});
   const [refreshNonce,setRefreshNonce]=useState(0);
@@ -2070,11 +3267,33 @@ function Shell({operator,onLogout}:{operator:any,onLogout:()=>void}){
   const [searchOpen,setSearchOpen]=useState(false);
   const searchReturnFocusRef=useRef<HTMLElement|null>(null);
   const [navigationContext,setNavigationContext]=useState<any>(null);
+  // Non-secret Servers navigation choices; this shell is keyed by authenticated actor.
+  const serverReturnRef=useRef<any>(null);
+  const [serverReturnState,setServerReturnState]=useState<any>(null);
+  const rememberServerReturn=useCallback((state:any)=>{serverReturnRef.current=state},[]);
   // Current authenticated React session only, never URL or localStorage.
   // Store only non-secret wizard choices; Core plans and tokens always expire.
   const [setupDraft,setSetupDraft]=useState<SetupDraft|null>(null);
   const activeGroup=groupFor(active);
   const [expanded,setExpanded]=useState<Record<string,boolean>>(()=>Object.fromEntries(navGroups.map(group=>[group.id,group.id===activeGroup||group.id==="connections"])));
+  useEffect(()=>{
+    const route=readBrowserStartingPage(operator);
+    setActive(route);setPreferredStartPage(route);setStartingPageNotice("");
+    setNavigationContext(null);
+    const group=groupFor(route);
+    if(group)setExpanded(prev=>({...prev,[group]:true}));
+  },[operator.id,operator.role]);
+
+  function chooseStartingPage(route:string){
+    let saved=false;
+    try{saved=writePreferredStartPage(operator,route,window.localStorage)}catch{}
+    if(saved){
+      setPreferredStartPage(route);
+      setStartingPageNotice("Starting page saved for this browser and current role. Applies on next sign-in or reload.");
+    }else{
+      setStartingPageNotice("Starting page preference not saved. The last valid browser setting, if any, is unchanged; Home is the safe fallback.");
+    }
+  }
 
   useEffect(()=>{
     document.documentElement.setAttribute("data-dr-theme",dark?"dark":"light");
@@ -2113,6 +3332,7 @@ function Shell({operator,onLogout}:{operator:any,onLogout:()=>void}){
   function visible(id:string){return visibleRoute(id,operator.role)}
   function activate(id:string,groupId?:string,context?:any){
     if(!visible(id))return;
+    if(id==="hosts")setServerReturnState(serverReturnRef.current);
     // Navigation context is ephemeral, never written to browser storage or URL.
     setNavigationContext(context||null);
     setActive(id);
@@ -2128,7 +3348,7 @@ function Shell({operator,onLogout}:{operator:any,onLogout:()=>void}){
   const title=labelFor(active);
   const crumb=navGroups.find(group=>group.id===activeGroup)?.label||"Connections";
   const healthText={loading:"Checking",healthy:"Healthy",attention:"Attention",unknown:"UNKNOWN"}[coreHealthy];
-  return <div className={collapsed?"shell dr-shell is-collapsed":"shell dr-shell"}>
+  return <div data-route={active} className={collapsed?"shell dr-shell is-collapsed":"shell dr-shell"}>
     <a className="dr-skip-link" href="#drlink-main-content">Skip to content</a>
     <aside className={collapsed?"sidebar dr-sidebar is-collapsed":"sidebar dr-sidebar"}>
       <div className="dr-sidebar-brand">
@@ -2173,12 +3393,31 @@ function Shell({operator,onLogout}:{operator:any,onLogout:()=>void}){
           <div className="dr-uxb-title"><h1>{title}</h1><span className={coreHealthy==="attention"||coreHealthy==="unknown"?"dr-health-pill attention":"dr-health-pill"}><i/>{healthText}</span></div>
           <p>{pageDescriptions[active]||"Core-backed management workspace"}</p></div></div>
         <div className="dr-topbar-actions">
+          <details className="dr-start-page-settings" role="group" aria-label="Starting page preference">
+            <summary title="Starting page"><WorkspaceIcon kind="overview"/><span>Starting page</span></summary>
+            <div className="dr-start-page-settings-panel">
+              <strong>Starting page</strong>
+              <label className="dr-field"><span>Open this page on next sign-in</span>
+                <select aria-label="Preferred starting page" value={preferredStartPage}
+                  disabled={!startPageKeyForOperator(operator)}
+                  onChange={e=>chooseStartingPage(e.target.value)}>
+                  {START_PAGE_OPTIONS.filter(item=>visibleRoute(item.id,operator.role)).map(item=>
+                    <option key={item.id} value={item.id}>{item.label}</option>)}
+                </select>
+              </label>
+              <p className="muted">Applies on next sign-in or reload. Core permissions do not change.
+                Browser-only setting for this operator and role.</p>
+              {!startPageKeyForOperator(operator)&&<p role="alert">No verified operator ID;
+                preference unavailable.</p>}
+              {startingPageNotice&&<p role="status" aria-live="polite">{startingPageNotice}</p>}
+            </div>
+          </details>
           <button className="dr-search-trigger" onClick={e=>openSearch(e.currentTarget)}><WorkspaceIcon kind="search"/><span>Search</span><kbd>⌘K</kbd></button>
           <button className="dr-icon-button" onClick={()=>setRefreshNonce(x=>x+1)} title="Refresh"><WorkspaceIcon kind="refresh"/></button>
           <button className="dr-icon-button" onClick={()=>setDark(!dark)} title="Toggle theme"><WorkspaceIcon kind={dark?"sun":"moon"}/></button>
         </div>
       </header>
-      <main id="drlink-main-content" className="content dr-workspace" tabIndex={-1}><div className="dr-content-frame"><View key={active+":"+refreshNonce+":"+(navigationContext?.originId||"")} active={active} operator={operator} onNavigate={activate} context={navigationContext} setupDraft={setupDraft} onSetupDraftChange={setSetupDraft}/></div></main>
+      <main id="drlink-main-content" className="content dr-workspace" tabIndex={-1}><div className="dr-content-frame"><View key={active+":"+refreshNonce+":"+(navigationContext?.originId||navigationContext?.searchResultKey||"")} active={active} operator={operator} onNavigate={activate} context={navigationContext} serverReturnState={serverReturnState} onServerReturnStateChange={rememberServerReturn} setupDraft={setupDraft} onSetupDraftChange={setSetupDraft}/></div></main>
     </div>
     <GlobalSearch open={searchOpen} onClose={()=>setSearchOpen(false)} onNavigate={activate} operator={operator} returnFocusRef={searchReturnFocusRef}/>
   </div>;
@@ -2193,17 +3432,20 @@ function App(){
     let active=true;
     api("/api/v1/session").then(d=>{
       if(!active)return;
-      if(!d?.operator||typeof d.csrf_token!=="string"||!d.csrf_token){
+      const observed=observedAuthenticatedWebSession(d);
+      if(!observed){
         throw new Error("Incomplete authenticated Web session");
       }
-      csrf=d.csrf_token;
-      setOperator(d.operator);
+      csrf=observed.csrf_token;
+      setOperator(observed.operator);
     }).catch(()=>{if(active){csrf="";setOperator(null)}});
     return()=>{active=false};
   },[]);
   if(operator===undefined)return <div className="login-wrap"><div className="muted">Loading…</div></div>;
   if(!operator)return <Login onLogin={setOperator}/>;
-  return <Shell operator={operator} onLogout={()=>setOperator(null)}/>;
+  return <Shell key={String(operator.id||"")+":"+String(operator.role||"")} operator={operator} onLogout={()=>setOperator(null)}/>;
 }
 
-createRoot(document.getElementById("app")!).render(<App/>);
+export {App, View};
+const appElement=document.getElementById("app");
+if(appElement)createRoot(appElement).render(<App/>);

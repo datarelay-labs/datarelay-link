@@ -1,5 +1,19 @@
 import React,{useState} from "react";
+import {isObservedAbsoluteTime} from "./uxb-integrations-state";
 
+/** A successful Core HTTP read does not make nested UI values renderable.
+ * Keep only bounded scalar evidence. An invalid reason cannot establish PASS.
+ */
+const DOCTOR_ID=/^[A-Za-z0-9][A-Za-z0-9_.:@-]{0,159}$/;
+const DOCTOR_BAD=/[\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/;
+function doctorText(value:unknown,fallback="UNKNOWN"):string{
+  if(typeof value!=="string"||value.length>240||DOCTOR_BAD.test(value))
+    return fallback;
+  return value.trim()||fallback;
+}
+function doctorCount(value:unknown):number|string{
+  return typeof value==="number"&&Number.isSafeInteger(value)&&value>=0?value:"UNKNOWN";
+}
 /** The Core Doctor is a read-only snapshot. Missing checks do not prove health. */
 export function validatedDoctorEvidence(payload:unknown){
   if(!payload||typeof payload!=="object"||Array.isArray(payload))
@@ -9,14 +23,37 @@ export function validatedDoctorEvidence(payload:unknown){
     ||!Array.isArray(report.checks)
     ||!report.health||typeof report.health!=="object"||Array.isArray(report.health)
     ||!report.attention||typeof report.attention!=="object"||Array.isArray(report.attention)
+    ||report.checks.length>32
     ||report.checks.some((row:any)=>!row||typeof row!=="object"||Array.isArray(row)
-      ||typeof row.id!=="string"||!row.id))
+      ||typeof row.id!=="string"||!DOCTOR_ID.test(row.id))
+    ||new Set((report.checks as any[]).map(row=>row.id)).size!==report.checks.length)
     throw new Error("Core Doctor evidence is incomplete or not certified read-only. State is UNKNOWN.");
-  const checks=(report.checks as any[]).map(row=>({
-    ...row,
-    observedState:row.status==="PASS"?"PASS":
-      row.status==="ATTENTION"?"ATTENTION":"UNKNOWN",
-  }));
+  const checks=(report.checks as any[]).map(row=>{
+    const message=doctorText(row.message,"UNKNOWN · Core reason unavailable");
+    // Canonical Core Doctor derives PASS only from active/not_configured.
+    // A contradictory status+reason pair must not manufacture healthy checks.
+    const runtime=/^Runtime generation status: ([a-z][a-z0-9_]*)$/.exec(message);
+    const expected=runtime?["active","not_configured"].includes(runtime[1])?"PASS":"ATTENTION":null;
+    // Core doctor_summary() emits runtime.{plane} for remote/internet/ai.
+    // A conflicting or missing id↔plane pair cannot certify a healthy plane.
+    const canonicalPlane=typeof row.plane==="string"
+      &&["remote","internet","ai"].includes(row.plane)
+      &&row.id==="runtime."+row.plane;
+    const observedState=canonicalPlane&&expected!==null&&row.status===expected
+      ?expected:"UNKNOWN";
+    return {
+      id:row.id,
+      plane:doctorText(row.plane,row.id),
+      message,
+      error:row.error===null||row.error===undefined||row.error===""
+        ?"":doctorText(row.error,"UNKNOWN · Core error unavailable"),
+      db_revision:doctorCount(row.db_revision),
+      generation:doctorCount(row.generation),
+      activated_at:row.activated_at===null||row.activated_at===undefined||row.activated_at===""
+        ?"Not observed":isObservedAbsoluteTime(row.activated_at)?row.activated_at:"UNKNOWN",
+      observedState,
+    };
+  });
   const attention=report.attention as Record<string,unknown>;
   return {
     checks,
@@ -32,8 +69,23 @@ export function validatedDoctorEvidence(payload:unknown){
 export function CoreDoctorWorkspace({data,onNavigate}:{
  data:unknown,onNavigate?:(id:string,group?:string)=>void
 }){
-  const evidence=validatedDoctorEvidence(data);
   const [filter,setFilter]=useState("all"),[query,setQuery]=useState("");
+  // Fail closed on inconsistent Core data without taking down other UI tasks.
+  // Unconditional hooks preserve React's ordering across Core refreshes.
+  let evidence:ReturnType<typeof validatedDoctorEvidence>|null=null;
+  try{evidence=validatedDoctorEvidence(data)}catch{ /* no untrusted Core exception to UI */ }
+  if(!evidence)return <section className="dr-resource-workspace" aria-label="Core Doctor">
+    <header className="dr-page-intro"><div>
+      <p className="dr-eyebrow">Activity &amp; Health · Troubleshooting</p>
+      <h2>Core Doctor</h2></div></header>
+    <p className="warning-box" role="alert">UNKNOWN · Core Doctor evidence could not be validated. No runtime checks, policy health or absence of errors was confirmed.</p>
+    <div className="dr-page-actions">
+      <button className="secondary" type="button"
+        onClick={()=>onNavigate?.("health","activity")}>System Health →</button>
+      <button className="secondary" type="button"
+        onClick={()=>onNavigate?.("jobs","activity")}>Management Jobs →</button>
+    </div>
+  </section>;
   const visible=evidence.checks.filter(row=>(filter==="all"||row.observedState===filter)
     &&(!query.trim()||[row.id,row.plane,row.message,row.error].some(v=>
       String(v??"").toLowerCase().includes(query.trim().toLowerCase()))));

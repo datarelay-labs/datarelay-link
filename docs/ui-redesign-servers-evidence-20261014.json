@@ -1,0 +1,304 @@
+{
+  "created_at": "2026-10-14T03:28:22.964460+00:00",
+  "dev_preview_readonly": {
+    "anonymous_session_http": 401,
+    "assets": {
+      "app.js": {
+        "disk_sha256": "934e17568f8cfddb88b0a57ac7ea7496cebf840b73ad03f7dcb110bdc32cd5c2",
+        "http": 200,
+        "matches_existing_disk": true,
+        "served_sha256": "934e17568f8cfddb88b0a57ac7ea7496cebf840b73ad03f7dcb110bdc32cd5c2"
+      },
+      "foundation.css": {
+        "disk_sha256": "3049f76b67d9341920254bcbe1b26b48d52b05e9faa9bc992f0d51f6887928d7",
+        "http": 200,
+        "matches_existing_disk": true,
+        "served_sha256": "3049f76b67d9341920254bcbe1b26b48d52b05e9faa9bc992f0d51f6887928d7"
+      },
+      "styles.css": {
+        "disk_sha256": "ed9163d376e84b5ea776695be5a95e1e7b26c52fd83cee1b58fdaef08ca2c322",
+        "http": 200,
+        "matches_existing_disk": true,
+        "served_sha256": "ed9163d376e84b5ea776695be5a95e1e7b26c52fd83cee1b58fdaef08ca2c322"
+      }
+    },
+    "origin": "https://dev-preview.example.invalid:19044",
+    "scope": "read-only approved development preview; no credentials or product state changed"
+  },
+  "followups": [
+    {
+      "accepted_wbs": 0,
+      "blocker": {
+        "affected_wbs": [
+          "UXR-1.6",
+          "UXR-1.7",
+          "UXR-1.10"
+        ],
+        "classification": "PLATFORM_BLOCK",
+        "device": "dev-drlink",
+        "not_a_remedy": "No additional ordinary implementation permission or server change established",
+        "retry_this_continuation": "rejected before execution; no bypass",
+        "tool": "Remote_Desktop_Commander.start_process"
+      },
+      "created_at": "2026-10-14T03:40:54.822344+00:00",
+      "deployed": false,
+      "exclusive": true,
+      "logs": {
+        "browser-final.log": {
+          "bytes": 8013,
+          "sha256": "ab6f65064276fe446f7c0ca332321d055a5dbe34d8e71efe6c653a936dabf180"
+        },
+        "browser-red.log": {
+          "bytes": 5965,
+          "sha256": "1d47447efc2291375484567a690c3ad4343a34bb794f7afb45f12ed8cbd36a44"
+        },
+        "data-state-extra.log": {
+          "bytes": 1704,
+          "sha256": "4168cd21f2e09fb671e20bac6dd93fdeaa5e96118f9af448aabf79024024dd85"
+        },
+        "journey-final.log": {
+          "bytes": 106838,
+          "sha256": "8251d526dd051f89aeeccce0c76538f583595504cebb41ce6e19a792d9b78da9"
+        },
+        "readonly-green.log": {
+          "bytes": 573,
+          "sha256": "269599311c4c59a7dd5a4ba197770524324d445bf924b1dbfe566a61aea23e6d"
+        },
+        "readonly-red.log": {
+          "bytes": 2025,
+          "sha256": "269a61289dbb531dfb27688ec9f50ee8222d72ba61532018a90cc2b79261f780"
+        },
+        "shell-final.log": {
+          "bytes": 508,
+          "sha256": "785421ffffd62c9627428669db75a4c928ef9799f4f164954b5f483af49d0080"
+        },
+        "visual-expanded.log": {
+          "bytes": 98,
+          "sha256": "f796bad3586566119bcbe13e9b779c1988004816d3da71ff7f64ea0ad9f21940"
+        }
+      },
+      "private_root": "/home/aella/drlink-validation/ui-uxr1-resume-20261014",
+      "product_source_files": {
+        "web/dist/styles.css": {
+          "bytes": 91916,
+          "sha256": "b992d288ae678ad7e0d1f0c522e55084a614cf23e1ca17ff755d58fa9684cf03"
+        },
+        "web/src/main.tsx": {
+          "bytes": 271587,
+          "sha256": "1588f052a36eb83af03efc2905b1f9fffb7cea4cb4b73860a34cf66a5a915e6c"
+        },
+        "web/src/workflow-servers.tsx": {
+          "bytes": 36951,
+          "sha256": "bb1cb0dafe10d8e51a2fb07eeff5c5b6992f93b241504adb4ede543c38efd824"
+        }
+      },
+      "remaining_failures": [
+        "selected metadata consumer ignores selectedHost",
+        "lifecycle preview/receipt validator is unimplemented"
+      ],
+      "results": {
+        "browser": {
+          "fail": 1,
+          "pass": 32,
+          "total": 33
+        },
+        "journey": {
+          "fail": 1,
+          "pass": 425,
+          "total": 426
+        },
+        "read_only_bug_regressions": {
+          "green_pass": 2,
+          "red_fail": 2
+        },
+        "shell": {
+          "pass": 3,
+          "product_posts": 0,
+          "roles": [
+            "Admin",
+            "Operator",
+            "Read Only"
+          ],
+          "scope": "App/Shell/View with synthetic session and GET fixture; exact current product source"
+        },
+        "visual": {
+          "pass": 32,
+          "screenshot_count": 56,
+          "total": 32
+        }
+      },
+      "scope": "Read-only UI fixes and explicit synthetic browser regression; not live acceptance or deployment",
+      "source_commit": "3e00e6d5475d7a7dce3de25f505d862a0a6935fa",
+      "visual_observations": {
+        "bytes": 27069,
+        "sha256": "fde3201624a754453e9555625c32e240e461d904df8833f1aa438dea543789e3"
+      }
+    },
+    {
+      "acceptance_claimed": false,
+      "dev_candidate": "dev-installed-50944164",
+      "live_authenticated_browser_verified": false,
+      "platform_block": "CLEARED_BY_NORMAL_SAME_TOOL_RETRY",
+      "preview": "https://dev-preview.example.invalid:19044",
+      "private_bundle_sha256": "e6b2d7e11552c70c9104fd0cb4b37fc86f210999c4ccc9958bbfa0a0639fb355",
+      "recorded_at": "2026-10-14T04:54:13.720858+00:00",
+      "served": {
+        "app.js": "a598df2537e42a1dd1afe6eefcc1c40dc9102de1665e476b1a0f60f07152453d",
+        "foundation.css": "3049f76b67d9341920254bcbe1b26b48d52b05e9faa9bc992f0d51f6887928d7",
+        "styles.css": "b992d288ae678ad7e0d1f0c522e55084a614cf23e1ca17ff755d58fa9684cf03"
+      },
+      "source_commit": "509441641f5fe3d5220819487c7fea5f813d5ac5",
+      "tests": {
+        "administration": "20/20",
+        "browser": "35/35",
+        "journey": "426/426",
+        "p0": "42/42",
+        "servers": "14/14"
+      }
+    },
+    {
+      "acceptance_claimed": false,
+      "anonymous_session_http": 401,
+      "dev_candidate": "dev-installed-df12fde7",
+      "foundation_head": "46ddb60cad8eae7b1718588cd19421e61b5300e7",
+      "live_authenticated_browser_verified": false,
+      "preview": "https://dev-preview.example.invalid:19044",
+      "previous_candidate": "dev-installed-50944164",
+      "private_bundle_sha256": "98dd9d687fbcb75f4e887a6ee96f8f5b8b38e938ad6089de827f5bd3f687fc4a",
+      "real_agent_verified": false,
+      "recorded_at": "2026-10-14T05:24:32.573231+00:00",
+      "scope": "UXR-2 development source + approved private preview deployment; no live Agent/user acceptance",
+      "served": {
+        "app.js": "97ee5a4716519db81c7a90aa0de3436261ceed4ccc3c920dcb19e3fa8b59facc",
+        "favicon.svg": "7ec193f6192213c31b63cc5cee2e8bb5439efaaa79b07534a1916c3f3b897462",
+        "foundation.css": "3049f76b67d9341920254bcbe1b26b48d52b05e9faa9bc992f0d51f6887928d7",
+        "index.html": "672e50ea3c12917b65b08f69c1d6aeaa8e8c946c7218ba25a75e1fc1bf9245f2",
+        "styles.css": "7d134e663acbb348cff238579a001aa67bf8b7c5a03c0bd5be30785a809adf93"
+      },
+      "source_commit": "df12fde730a8f40bb961821888302de90492d7b7",
+      "tests": {
+        "journey": "430/430",
+        "private_administration": "20/20",
+        "private_p0": "44/44",
+        "service_and_connection": "57/57",
+        "setup_browser": "2/2"
+      }
+    },
+    {
+      "acceptance_claimed": false,
+      "anonymous_session_http": 401,
+      "dev_candidate": "dev-installed-1c90e9ef",
+      "live_authenticated_browser_verified": false,
+      "preview": "https://dev-preview.example.invalid:19044",
+      "previous_candidate": "dev-installed-df12fde7",
+      "private_bundle_sha256": "439ad4de4d7181f9aba4c41a0c8b193cad29bbc1b05b41c802788242f2f6fd4b",
+      "real_traffic_verified": false,
+      "recorded_at": "2026-10-14T05:32:35.184642+00:00",
+      "scope": "UXR-3/4 source + approved dev deployment; authenticated live acceptance open",
+      "served": {
+        "app.js": "def05ce30033073d4807fee067b276c6a6c2aee8826565323dde6e4c687bd642",
+        "foundation.css": "3049f76b67d9341920254bcbe1b26b48d52b05e9faa9bc992f0d51f6887928d7",
+        "styles.css": "0c31801485e67f1875af4417e454459b514bf30aaab3e7e45637e0ec4eeb071e"
+      },
+      "source_commit": "1c90e9ef0029fe53340f5bf2793eac60cf8da011",
+      "tests": {
+        "access_policy": "153/153",
+        "home_activity_admin": "163/163",
+        "journey": "437/437",
+        "p0": "44/44"
+      }
+    },
+    {
+      "acceptance_claimed": false,
+      "anonymous_session_http": 401,
+      "dev_candidate": "dev-installed-971f35e2",
+      "live_authenticated_browser_verified": false,
+      "preview": "https://dev-preview.example.invalid:19044",
+      "preview_state_preserved": true,
+      "previous_candidate": "dev-installed-1c90e9ef",
+      "private_bundle_sha256": "53558225b27f7973544a81c7e48c17fff5876aea51e09027a7c08ac09dab2f08",
+      "recorded_at": "2026-10-14T06:13:57.668474+00:00",
+      "scope": "UXR-5 cross-cutting development deployment; live authenticated user acceptance remains open",
+      "served": {
+        "app.js": "6979cd33c876d4d973255056a347dc2161208d8491814e658bf45319dbc2bc70",
+        "favicon.svg": "7ec193f6192213c31b63cc5cee2e8bb5439efaaa79b07534a1916c3f3b897462",
+        "foundation.css": "3049f76b67d9341920254bcbe1b26b48d52b05e9faa9bc992f0d51f6887928d7",
+        "index.html": "672e50ea3c12917b65b08f69c1d6aeaa8e8c946c7218ba25a75e1fc1bf9245f2",
+        "logo/datarelay-logo.svg": "5e90dfa40d1400eb24ec8e02adf9016d8b43b9995b8953cd59472789904657aa",
+        "styles.css": "3cd48eb87dae27792760425e1183fd9d25b542cfedd1b7c4c3902382cd9f3c7a"
+      },
+      "source_commit": "971f35e250a3a724803478ed68091cf61e6786fc",
+      "tests": {
+        "additional_async": "68/68",
+        "core_auth": "12/12",
+        "direct_guarded_api": "6/6",
+        "journey": "439/439",
+        "local_assets": "3/3",
+        "mfa_policy": "5/5",
+        "responsive_accessibility": "2/2",
+        "servers_async": "35/35",
+        "three_role_shell": "3/3",
+        "web_session": "5/5"
+      }
+    }
+  ],
+  "logs": {
+    "administration-final.log": {
+      "bytes": 4632,
+      "sha256": "d489c3decc155855187639bcb96312f620e8d88bec019a2063340882a0ff2c8c"
+    },
+    "dev-preview-readonly.json": {
+      "bytes": 979,
+      "sha256": "b699130abbcb8cf26884bd7c35d7beb0fffa0a289421580da5f0dff8e7ffdc82"
+    },
+    "journey-registered-final.log": {
+      "bytes": 107622,
+      "sha256": "5469f5d552264a499608486293bcfe31b915ed7b420934ffc8ab0332369ddcb1"
+    },
+    "mounted-final.log": {
+      "bytes": 5967,
+      "sha256": "4ed6b15b3b0dab37715ed0ab55d176268766491619b543a0ab0bb8a9a893f819"
+    },
+    "mounted-red.log": {
+      "bytes": 15592,
+      "sha256": "552c244c40b4c2088569d6db1502d0b64e2827228796fee618bb024425440069"
+    },
+    "p0-final.log": {
+      "bytes": 10279,
+      "sha256": "f8ba7f5b80626750aa8b109e54e19958eeaf2f04c3d5ab1c3716519bcb2b5313"
+    },
+    "return-state-red.log": {
+      "bytes": 1315,
+      "sha256": "7a0e4ebd62f562367783bcd3061dedba4caa3af9e04b613ca56471a814b3a468"
+    },
+    "selection-red.log": {
+      "bytes": 2927,
+      "sha256": "18e27f1b866e4a6c760e66db925afef217f4ede216229ae6a0554a26656c4235"
+    },
+    "shell-current.log": {
+      "bytes": 508,
+      "sha256": "785421ffffd62c9627428669db75a4c928ef9799f4f164954b5f483af49d0080"
+    },
+    "visual-freeze.log": {
+      "bytes": 197,
+      "sha256": "dbed331b749aad69777b45d2b6bb87522a3c3febbf2d27fd17798ef43f4aa2c2"
+    },
+    "wip-red.log": {
+      "bytes": 91390,
+      "sha256": "e80f93f5eeb0c70c4a8e71bf652e54dd6b2d7a4d108945a27c37abb0dbdfb99e"
+    }
+  },
+  "private_root": "/tmp/drlink-ui-resume-20261014",
+  "report": "docs/UI_REDESIGN_IMPLEMENTATION_2026-10-14.md",
+  "schema_version": 1,
+  "scope": "UI-only checkpoint; no live product mutation or acceptance",
+  "source_commit": "06bd16e843083d46d8a136d4aa0830069dc7faa6",
+  "source_files": {
+    "web/dist/styles.css": "b992d288ae678ad7e0d1f0c522e55084a614cf23e1ca17ff755d58fa9684cf03",
+    "web/src/main.tsx": "1588f052a36eb83af03efc2905b1f9fffb7cea4cb4b73860a34cf66a5a915e6c",
+    "web/src/workflow-servers.tsx": "9b1effd46ed7280571cd4ef7334010d0e98d53bd91ae14a7d91b81f7264a9d37",
+    "web/tests/workflow-servers-shell.browser.mjs": "38504dae336e60e68916b3ab70b2bee2d353be8aa4ae8c2ff8aeeace6f43d303",
+    "web/tests/workflow-servers-visual.browser.mjs": "e40d3afc43e5828ade6618d12ee6ab353b85051beb4d573471e0db18f3d418ec",
+    "web/tests/workflow-servers.browser.mjs": "df5ed09a1c1d4bf1f98f3be4c6f32ff21f9580c63152acabc2dcbe38a7a7561d"
+  }
+}

@@ -74,3 +74,28 @@ test("malformed Core collection never renders a fake empty Revision History",()=
     assert.doesNotMatch(html,/No configuration revisions on this observed Core page/);
   }
 });
+
+test("Change History renders bounded, unspoofed observed Core fields, not arbitrary unsafe text",()=>{
+ const rows=[{
+  revision:25,actor:"alice\u202eadmin",
+  command:"grant\nFALSIFIED PASS",created_at:"2026-02-31T23:59:00Z",
+  summary:"EXTERNAL_SECRET_".repeat(80),
+ }];
+ const html=markup({resource_type:"revision",limit:100,next_cursor:null,items:rows});
+ assert.match(html,/>25<\/td>/);
+ assert.match(html,/Change History/);
+ assert.match(html,/UNKNOWN/);
+ for(const unsafe of ["alice\u202eadmin","FALSIFIED PASS","EXTERNAL_SECRET_"]){
+  assert.ok(!html.includes(unsafe),"unsafe revision detail: "+unsafe.slice(0,20));
+ }
+ assert.doesNotMatch(html,/No configuration revisions on this observed Core page/);
+});
+test("Valid observed revision metadata remains readable under strict display projection",()=>{
+ const valid={resource_type:"revision",limit:100,next_cursor:null,items:[{
+  revision:12,actor:"operator-a",command:"set access rule",
+  created_at:"2026-10-11T01:00:00Z",summary:"Narrow SSH allow"
+ }]};
+ const html=markup(valid);
+ for(const field of ["operator-a","set access rule","2026-10-11T01:00:00Z","Narrow SSH allow"])
+  assert.ok(html.includes(field),field);
+});

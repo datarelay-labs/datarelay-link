@@ -1334,13 +1334,42 @@ class AgentLifecycleWorkerTests(unittest.TestCase):
                 sync.assert_called_once()
             self.assertEqual(job_claim.call_count, 3)
 
+    def test_agent_reconcile_rejects_malformed_heartbeat_before_leasing_jobs(self):
+        import drlink_agent_lifecycle as lifecycle
+
+        malformed = (
+            None,
+            [],
+            {"ok": False, "state": "connected", "reconcile_required": False},
+            {"ok": True, "state": "disconnected", "reconcile_required": False},
+            {"ok": True, "state": "connected", "reconcile_required": "false"},
+            {"ok": True, "state": "connected", "reconcile_required": 1},
+            {"ok": True, "state": "connected", "reconcile_required": []},
+        )
+        for response in malformed:
+            with self.subTest(response=response), mock.patch.object(
+                lifecycle, "load_lifecycle_intent", return_value="running"
+            ), mock.patch.object(
+                lifecycle, "heartbeat_once", return_value=response
+            ), mock.patch.object(lifecycle, "process_management_jobs_once") as claim:
+                # No Core Management Job may be leased after an ambiguous
+                # heartbeat receipt, even if the transport returned HTTP 200.
+                with self.assertRaisesRegex(ValueError, "heartbeat"):
+                    lifecycle.reconcile_once(None)
+                claim.assert_not_called()
+
     def test_management_claim_without_server_url_fails_closed(self):
         import drlink_agent_lifecycle as lifecycle
         from drlink_mgmt_sync import MgmtSyncError
 
         with tempfile.TemporaryDirectory(prefix="drlink-job-no-server-") as tmp:
-            with self.assertRaisesRegex(MgmtSyncError, "No Server management URL"):
-                lifecycle.process_management_jobs_once(tmp)
+            # The strict Agent first requires a locally enrolled machine ID.
+            # Provide that disposable identity so this specifically exercises
+            # the absence of a Server management endpoint, not identity denial.
+            _write_identity(Path(tmp), MACHINE, "isolated-agent")
+            with mock.patch.dict(os.environ, {"DRLINK_MGMT_URL": ""}):
+                with self.assertRaisesRegex(MgmtSyncError, "No Server management URL"):
+                    lifecycle.process_management_jobs_once(tmp)
 
     def test_paused_worker_does_not_touch_server(self):
         from unittest import mock

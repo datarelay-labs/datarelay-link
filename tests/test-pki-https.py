@@ -110,9 +110,11 @@ def write_env(tmp, listen_port, public_host='127.0.0.1', extra_hosts=None, publi
         'tls_server_cert': result['server_crt'],
         'tls_server_key': result['server_key'],
         'registry_file': str(Path(tmp) / 'registry.json'),
+        'control_plane_root': str(Path(tmp)),
         'enrollments_dir': str(Path(tmp) / 'enrollments'),
         'token_file': str(Path(tmp) / 'server_token'),
     }
+    assert cfg.get('control_plane_root') == str(Path(tmp)), 'PKI fixture must not open live Core'
     Path(cfg['enrollments_dir']).mkdir(parents=True, exist_ok=True)
     Path(cfg['token_file']).write_text('test-frp-token-do-not-use\n')
     os.chmod(cfg['token_file'], 0o600)
@@ -372,9 +374,11 @@ def test_enroll_uses_public_control_port():
             'port_end': 19110,
             'listen_port': 6099,
             'registry_file': str(tmp / 'registry.json'),
+            'control_plane_root': str(tmp),
             'enrollments_dir': str(tmp / 'enrollments'),
             'token_file': str(tmp / 'token'),
         }
+        assert cfg.get('control_plane_root') == str(tmp), 'PKI fixture must not open live Core'
         Path(cfg['enrollments_dir']).mkdir()
         Path(cfg['token_file']).write_text('test-frp-token-do-not-use\n')
         Path(cfg['registry_file']).write_text(json.dumps({
@@ -408,6 +412,10 @@ def test_enroll_uses_public_control_port():
         code, result = alloc.enroll('aabbccddeeff0011', ts, sig, body)
         if code != 200:
             fail('enroll public port', result)
+        # A success must be committed to this test's disposable SQLite Core,
+        # never fall back to the caller's /var/lib/drlink authority.
+        if not (tmp / 'var/lib/drlink/drlink.db').is_file():
+            fail('enroll public port Core did not use disposable fixture')
         if result.get('frp_server') != '203.0.113.10' or int(result.get('frp_server_port')) != 8443:
             fail('enroll returned listen port', result)
         if result.get('frp_transport') != 'tcp':
@@ -430,9 +438,11 @@ def test_enroll_single443_transport():
             'port_end': 19110,
             'listen_port': 6099,
             'registry_file': str(tmp / 'registry.json'),
+            'control_plane_root': str(tmp),
             'enrollments_dir': str(tmp / 'enrollments'),
             'token_file': str(tmp / 'token'),
         }
+        assert cfg.get('control_plane_root') == str(tmp), 'PKI fixture must not open live Core'
         Path(cfg['enrollments_dir']).mkdir()
         Path(cfg['token_file']).write_text('test-frp-token-do-not-use\n')
         Path(cfg['registry_file']).write_text(json.dumps({
@@ -466,6 +476,10 @@ def test_enroll_single443_transport():
         code, result = alloc.enroll('aabbccddeeff0011', ts, sig, body)
         if code != 200:
             fail('enroll single443', result)
+        # A success must be committed to this test's disposable SQLite Core,
+        # never fall back to the caller's /var/lib/drlink authority.
+        if not (tmp / 'var/lib/drlink/drlink.db').is_file():
+            fail('enroll single443 Core did not use disposable fixture')
         if result.get('frp_transport') != 'wss' or int(result.get('frp_server_port')) != 443:
             fail('enroll single443 transport', result)
         received = result.pop('response_hmac')
