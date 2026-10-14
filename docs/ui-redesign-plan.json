@@ -422,7 +422,7 @@
         "source_commit": "1121c0ac81d5f36a5436947164b802aa13805480",
         "deployed_source_head": "df12fde730a8f40bb961821888302de90492d7b7",
         "private_bundle_sha256": "98dd9d687fbcb75f4e887a6ee96f8f5b8b38e938ad6089de827f5bd3f687fc4a",
-        "preview": "https://221.139.249.111:19044",
+        "preview": "https://dev-preview.example.invalid:19044",
         "focused_tests": "Platform chooser source/P0 regressions plus enrollment browser fixture; supported Linux/macOS/Windows only.",
         "qualification": "Development source and exact-head private preview only; live authenticated browser/user/Agent acceptance remains open."
       }
@@ -447,7 +447,7 @@
         "source_commit": "455bbec2faa13464da34eab9da3c3b3039265fb1",
         "deployed_source_head": "df12fde730a8f40bb961821888302de90492d7b7",
         "private_bundle_sha256": "98dd9d687fbcb75f4e887a6ee96f8f5b8b38e938ad6089de827f5bd3f687fc4a",
-        "preview": "https://221.139.249.111:19044",
+        "preview": "https://dev-preview.example.invalid:19044",
         "focused_tests": "Exact issuance-intent, one-shot request lock, expiry and actor/role invalidation deterministic regressions.",
         "qualification": "Development source and exact-head private preview only; live authenticated browser/user/Agent acceptance remains open."
       }
@@ -472,7 +472,7 @@
         "source_commit": "455bbec2faa13464da34eab9da3c3b3039265fb1",
         "deployed_source_head": "df12fde730a8f40bb961821888302de90492d7b7",
         "private_bundle_sha256": "98dd9d687fbcb75f4e887a6ee96f8f5b8b38e938ad6089de827f5bd3f687fc4a",
-        "preview": "https://221.139.249.111:19044",
+        "preview": "https://dev-preview.example.invalid:19044",
         "focused_tests": "Exact enrollment_id detection, 10-attempt bounded polling, 10s inventory timeout/retry; Journey exact-head green. Actual Agent detection remains open.",
         "qualification": "Development source and exact-head private preview only; live authenticated browser/user/Agent acceptance remains open."
       }
@@ -497,7 +497,7 @@
         "source_commit": "455bbec2faa13464da34eab9da3c3b3039265fb1",
         "deployed_source_head": "df12fde730a8f40bb961821888302de90492d7b7",
         "private_bundle_sha256": "98dd9d687fbcb75f4e887a6ee96f8f5b8b38e938ad6089de827f5bd3f687fc4a",
-        "preview": "https://221.139.249.111:19044",
+        "preview": "https://dev-preview.example.invalid:19044",
         "focused_tests": "Exact Host admission preview/apply revision/receipt/expiry and false-success guards; live approval remains open.",
         "qualification": "Development source and exact-head private preview only; live authenticated browser/user/Agent acceptance remains open."
       }
@@ -523,7 +523,7 @@
         "source_commit": "98a1d2c5f103ad1a70d59578b3aea7caf20e0f3f",
         "deployed_source_head": "df12fde730a8f40bb961821888302de90492d7b7",
         "private_bundle_sha256": "98dd9d687fbcb75f4e887a6ee96f8f5b8b38e938ad6089de827f5bd3f687fc4a",
-        "preview": "https://221.139.249.111:19044",
+        "preview": "https://dev-preview.example.invalid:19044",
         "focused_tests": "Mounted setup browser 2/2 PASS: selected Host to Service to rule without ID re-entry; Host switch clears dependent intent.",
         "qualification": "Development source and exact-head private preview only; live authenticated browser/user/Agent acceptance remains open."
       }
@@ -549,7 +549,7 @@
         "source_commit": "df12fde730a8f40bb961821888302de90492d7b7",
         "deployed_source_head": "df12fde730a8f40bb961821888302de90492d7b7",
         "private_bundle_sha256": "98dd9d687fbcb75f4e887a6ee96f8f5b8b38e938ad6089de827f5bd3f687fc4a",
-        "preview": "https://221.139.249.111:19044",
+        "preview": "https://dev-preview.example.invalid:19044",
         "focused_tests": "Service catalog source regressions separate configuration from policy/transport and remove targetless editor.",
         "qualification": "Development source and exact-head private preview only; live authenticated browser/user/Agent acceptance remains open."
       }
@@ -575,7 +575,7 @@
         "source_commit": "df12fde730a8f40bb961821888302de90492d7b7",
         "deployed_source_head": "df12fde730a8f40bb961821888302de90492d7b7",
         "private_bundle_sha256": "98dd9d687fbcb75f4e887a6ee96f8f5b8b38e938ad6089de827f5bd3f687fc4a",
-        "preview": "https://221.139.249.111:19044",
+        "preview": "https://dev-preview.example.invalid:19044",
         "focused_tests": "Protocol action regressions for SSH/HTTP/HTTPS/TCP, invalid hosts/ports and non-enabled states.",
         "qualification": "Development source and exact-head private preview only; live authenticated browser/user/Agent acceptance remains open."
       }
@@ -600,7 +600,7 @@
         "source_commit": "df12fde730a8f40bb961821888302de90492d7b7",
         "deployed_source_head": "df12fde730a8f40bb961821888302de90492d7b7",
         "private_bundle_sha256": "98dd9d687fbcb75f4e887a6ee96f8f5b8b38e938ad6089de827f5bd3f687fc4a",
-        "preview": "https://221.139.249.111:19044",
+        "preview": "https://dev-preview.example.invalid:19044",
         "focused_tests": "Selected-host focused service form regressions; advanced lifecycle collapsed and public endpoint remains unconfirmed until Core/Agent evidence.",
         "qualification": "Development source and exact-head private preview only; live authenticated browser/user/Agent acceptance remains open."
       }
@@ -626,7 +626,7 @@
         "source_commit": "df12fde730a8f40bb961821888302de90492d7b7",
         "deployed_source_head": "df12fde730a8f40bb961821888302de90492d7b7",
         "private_bundle_sha256": "98dd9d687fbcb75f4e887a6ee96f8f5b8b38e938ad6089de827f5bd3f687fc4a",
-        "preview": "https://221.139.249.111:19044",
+        "preview": "https://dev-preview.example.invalid:19044",
         "focused_tests": "One-shot Preview/Apply, expiry, ambiguous outcome, duplicate lock and local-only cancel regressions.",
         "qualification": "Development source and exact-head private preview only; live authenticated browser/user/Agent acceptance remains open."
       }
@@ -653,7 +653,7 @@
         "source_commit": "df12fde730a8f40bb961821888302de90492d7b7",
         "deployed_source_head": "df12fde730a8f40bb961821888302de90492d7b7",
         "private_bundle_sha256": "98dd9d687fbcb75f4e887a6ee96f8f5b8b38e938ad6089de827f5bd3f687fc4a",
-        "preview": "https://221.139.249.111:19044",
+        "preview": "https://dev-preview.example.invalid:19044",
         "focused_tests": "Coherent V2 exact-head private build: Administration 20/20, Journey 430/430, P0 44/44; deployed asset parity PASS. Real authorized linked-user/Agent scenario remains open.",
         "qualification": "Development source and exact-head private preview only; live authenticated browser/user/Agent acceptance remains open."
       }
@@ -679,7 +679,7 @@
         "source_commit": "79040bbbad40cca820642047c09e2b3a17ee432a",
         "deployed_source_head": "1c90e9ef0029fe53340f5bf2793eac60cf8da011",
         "private_bundle_sha256": "439ad4de4d7181f9aba4c41a0c8b193cad29bbc1b05b41c802788242f2f6fd4b",
-        "preview": "https://221.139.249.111:19044",
+        "preview": "https://dev-preview.example.invalid:19044",
         "focused_tests": "Remote/Internet/AI plane semantics and source identity separation; explicit Agent prerequisite only for Remote. Focused policy/access suite 153/153 PASS; P0 44/44; Journey 437/437 at current source.",
         "qualification": "Development preview only; authenticated live-user/real-traffic acceptance remains open."
       }
@@ -704,7 +704,7 @@
         "source_commit": "1c90e9ef0029fe53340f5bf2793eac60cf8da011",
         "deployed_source_head": "1c90e9ef0029fe53340f5bf2793eac60cf8da011",
         "private_bundle_sha256": "439ad4de4d7181f9aba4c41a0c8b193cad29bbc1b05b41c802788242f2f6fd4b",
-        "preview": "https://221.139.249.111:19044",
+        "preview": "https://dev-preview.example.invalid:19044",
         "focused_tests": "Basic Core-choice rule editor with advanced exact-name disclosure; normal workflow has no raw JSON requirement. Focused policy/access suite 153/153 PASS; P0 44/44; Journey 437/437 at current source.",
         "qualification": "Development preview only; authenticated live-user/real-traffic acceptance remains open."
       }
@@ -729,7 +729,7 @@
         "source_commit": "1c90e9ef0029fe53340f5bf2793eac60cf8da011",
         "deployed_source_head": "1c90e9ef0029fe53340f5bf2793eac60cf8da011",
         "private_bundle_sha256": "439ad4de4d7181f9aba4c41a0c8b193cad29bbc1b05b41c802788242f2f6fd4b",
-        "preview": "https://221.139.249.111:19044",
+        "preview": "https://dev-preview.example.invalid:19044",
         "focused_tests": "Prepared SET/DELETE intent exposes rule/plane/source/destination/selector/enabled/expiry before Preview. Focused policy/access suite 153/153 PASS; P0 44/44; Journey 437/437 at current source.",
         "qualification": "Development preview only; authenticated live-user/real-traffic acceptance remains open."
       }
@@ -755,7 +755,7 @@
         "source_commit": "1c90e9ef0029fe53340f5bf2793eac60cf8da011",
         "deployed_source_head": "1c90e9ef0029fe53340f5bf2793eac60cf8da011",
         "private_bundle_sha256": "439ad4de4d7181f9aba4c41a0c8b193cad29bbc1b05b41c802788242f2f6fd4b",
-        "preview": "https://221.139.249.111:19044",
+        "preview": "https://dev-preview.example.invalid:19044",
         "focused_tests": "Core Preview, bounded impact, required regression tests and typed one-shot Apply with expiry/concurrency/UNKNOWN handling. Focused policy/access suite 153/153 PASS; P0 44/44; Journey 437/437 at current source.",
         "qualification": "Development preview only; authenticated live-user/real-traffic acceptance remains open."
       }
@@ -780,7 +780,7 @@
         "source_commit": "1c90e9ef0029fe53340f5bf2793eac60cf8da011",
         "deployed_source_head": "1c90e9ef0029fe53340f5bf2793eac60cf8da011",
         "private_bundle_sha256": "439ad4de4d7181f9aba4c41a0c8b193cad29bbc1b05b41c802788242f2f6fd4b",
-        "preview": "https://221.139.249.111:19044",
+        "preview": "https://dev-preview.example.invalid:19044",
         "focused_tests": "Current Core graph/trace, screen-only draft and authoritative Preview are separately labeled; no browser draft authority. Focused policy/access suite 153/153 PASS; P0 44/44; Journey 437/437 at current source.",
         "qualification": "Development preview only; authenticated live-user/real-traffic acceptance remains open."
       }
@@ -805,7 +805,7 @@
         "source_commit": "1c90e9ef0029fe53340f5bf2793eac60cf8da011",
         "deployed_source_head": "1c90e9ef0029fe53340f5bf2793eac60cf8da011",
         "private_bundle_sha256": "439ad4de4d7181f9aba4c41a0c8b193cad29bbc1b05b41c802788242f2f6fd4b",
-        "preview": "https://221.139.249.111:19044",
+        "preview": "https://dev-preview.example.invalid:19044",
         "focused_tests": "Focused loaded Core-modeled paths, >16 matching discovery, bounded/truncated warnings and no no-match=DENY claim. Focused policy/access suite 153/153 PASS; P0 44/44; Journey 437/437 at current source.",
         "qualification": "Development preview only; authenticated live-user/real-traffic acceptance remains open."
       }
@@ -831,7 +831,7 @@
         "source_commit": "79040bbbad40cca820642047c09e2b3a17ee432a",
         "deployed_source_head": "1c90e9ef0029fe53340f5bf2793eac60cf8da011",
         "private_bundle_sha256": "439ad4de4d7181f9aba4c41a0c8b193cad29bbc1b05b41c802788242f2f6fd4b",
-        "preview": "https://221.139.249.111:19044",
+        "preview": "https://dev-preview.example.invalid:19044",
         "focused_tests": "Policy, transport test and observed live-use evidence are separate; policy ALLOW never means connection success. Focused policy/access suite 153/153 PASS; P0 44/44; Journey 437/437 at current source.",
         "qualification": "Development preview only; authenticated live-user/real-traffic acceptance remains open."
       }
@@ -857,7 +857,7 @@
         "source_commit": "1c90e9ef0029fe53340f5bf2793eac60cf8da011",
         "deployed_source_head": "1c90e9ef0029fe53340f5bf2793eac60cf8da011",
         "private_bundle_sha256": "439ad4de4d7181f9aba4c41a0c8b193cad29bbc1b05b41c802788242f2f6fd4b",
-        "preview": "https://221.139.249.111:19044",
+        "preview": "https://dev-preview.example.invalid:19044",
         "focused_tests": "Exact Service->Host, same-plane Policy and bounded Audit pivots use already-authorized identity only. Focused policy/access suite 153/153 PASS; P0 44/44; Journey 437/437 at current source.",
         "qualification": "Development preview only; authenticated live-user/real-traffic acceptance remains open."
       }
@@ -883,7 +883,7 @@
         "source_commit": "1c90e9ef0029fe53340f5bf2793eac60cf8da011",
         "deployed_source_head": "1c90e9ef0029fe53340f5bf2793eac60cf8da011",
         "private_bundle_sha256": "439ad4de4d7181f9aba4c41a0c8b193cad29bbc1b05b41c802788242f2f6fd4b",
-        "preview": "https://221.139.249.111:19044",
+        "preview": "https://dev-preview.example.invalid:19044",
         "focused_tests": "Policy state/expiry/search/sort/chips/cards/table/AI mapping regressions retained. Focused policy/access suite 153/153 PASS; P0 44/44; Journey 437/437 at current source.",
         "qualification": "Development preview only; authenticated live-user/real-traffic acceptance remains open."
       }
@@ -909,7 +909,7 @@
         "source_commit": "1c90e9ef0029fe53340f5bf2793eac60cf8da011",
         "deployed_source_head": "1c90e9ef0029fe53340f5bf2793eac60cf8da011",
         "private_bundle_sha256": "439ad4de4d7181f9aba4c41a0c8b193cad29bbc1b05b41c802788242f2f6fd4b",
-        "preview": "https://221.139.249.111:19044",
+        "preview": "https://dev-preview.example.invalid:19044",
         "focused_tests": "Actor-private policy Saved Views and safe carried flow context retained; UI preference never grants access. Focused policy/access suite 153/153 PASS; P0 44/44; Journey 437/437 at current source.",
         "qualification": "Development preview only; authenticated live-user/real-traffic acceptance remains open."
       }
@@ -936,7 +936,7 @@
         "source_commit": "19b95265c87abf7f87dbe1b280300b6c0fd3a5bf",
         "deployed_source_head": "1c90e9ef0029fe53340f5bf2793eac60cf8da011",
         "private_bundle_sha256": "439ad4de4d7181f9aba4c41a0c8b193cad29bbc1b05b41c802788242f2f6fd4b",
-        "preview": "https://221.139.249.111:19044",
+        "preview": "https://dev-preview.example.invalid:19044",
         "focused_tests": "Selected-service diagnosis preserves return target, labels browser receipt time vs missing Core timestamp, and exposes Core next action without network-probe invention. Focused policy/access suite 153/153 PASS; P0 44/44; Journey 437/437 at current source.",
         "qualification": "Development preview only; authenticated live-user/real-traffic acceptance remains open."
       }
@@ -962,7 +962,7 @@
         "source_commit": "7b279aef5255e8ac9fcc5cf46a4dfb4208a20abe",
         "deployed_source_head": "1c90e9ef0029fe53340f5bf2793eac60cf8da011",
         "private_bundle_sha256": "439ad4de4d7181f9aba4c41a0c8b193cad29bbc1b05b41c802788242f2f6fd4b",
-        "preview": "https://221.139.249.111:19044",
+        "preview": "https://dev-preview.example.invalid:19044",
         "focused_tests": "Purpose-first Home keeps next tasks primary and moves fleet counters into secondary evidence disclosure. Focused Home/Audit/Saved Views/Search/Admin/operations suite 163/163 PASS; Journey 437/437.",
         "qualification": "Development preview only; authenticated three-role browser acceptance remains open."
       }
@@ -988,7 +988,7 @@
         "source_commit": "1c90e9ef0029fe53340f5bf2793eac60cf8da011",
         "deployed_source_head": "1c90e9ef0029fe53340f5bf2793eac60cf8da011",
         "private_bundle_sha256": "439ad4de4d7181f9aba4c41a0c8b193cad29bbc1b05b41c802788242f2f6fd4b",
-        "preview": "https://221.139.249.111:19044",
+        "preview": "https://dev-preview.example.invalid:19044",
         "focused_tests": "Core-derived attention and health rows remain actionable with bounded count/time/scope and UNKNOWN handling. Focused Home/Audit/Saved Views/Search/Admin/operations suite 163/163 PASS; Journey 437/437.",
         "qualification": "Development preview only; authenticated three-role browser acceptance remains open."
       }
@@ -1014,7 +1014,7 @@
         "source_commit": "7b279aef5255e8ac9fcc5cf46a4dfb4208a20abe",
         "deployed_source_head": "1c90e9ef0029fe53340f5bf2793eac60cf8da011",
         "private_bundle_sha256": "439ad4de4d7181f9aba4c41a0c8b193cad29bbc1b05b41c802788242f2f6fd4b",
-        "preview": "https://221.139.249.111:19044",
+        "preview": "https://dev-preview.example.invalid:19044",
         "focused_tests": "Home exposes only observed enabled loaded services as actions and never calls them reachable/popular. Focused Home/Audit/Saved Views/Search/Admin/operations suite 163/163 PASS; Journey 437/437.",
         "qualification": "Development preview only; authenticated three-role browser acceptance remains open."
       }
@@ -1040,7 +1040,7 @@
         "source_commit": "7b279aef5255e8ac9fcc5cf46a4dfb4208a20abe",
         "deployed_source_head": "1c90e9ef0029fe53340f5bf2793eac60cf8da011",
         "private_bundle_sha256": "439ad4de4d7181f9aba4c41a0c8b193cad29bbc1b05b41c802788242f2f6fd4b",
-        "preview": "https://221.139.249.111:19044",
+        "preview": "https://dev-preview.example.invalid:19044",
         "focused_tests": "Activity uses six human columns and one selected bounded Core event; raw nested payloads remain hidden. Focused Home/Audit/Saved Views/Search/Admin/operations suite 163/163 PASS; Journey 437/437.",
         "qualification": "Development preview only; authenticated three-role browser acceptance remains open."
       }
@@ -1066,7 +1066,7 @@
         "source_commit": "1c90e9ef0029fe53340f5bf2793eac60cf8da011",
         "deployed_source_head": "1c90e9ef0029fe53340f5bf2793eac60cf8da011",
         "private_bundle_sha256": "439ad4de4d7181f9aba4c41a0c8b193cad29bbc1b05b41c802788242f2f6fd4b",
-        "preview": "https://221.139.249.111:19044",
+        "preview": "https://dev-preview.example.invalid:19044",
         "focused_tests": "Audit UTC presets, applied query/page refresh, pagination, export and retention guards retained. Focused Home/Audit/Saved Views/Search/Admin/operations suite 163/163 PASS; Journey 437/437.",
         "qualification": "Development preview only; authenticated three-role browser acceptance remains open."
       }
@@ -1092,7 +1092,7 @@
         "source_commit": "1c90e9ef0029fe53340f5bf2793eac60cf8da011",
         "deployed_source_head": "1c90e9ef0029fe53340f5bf2793eac60cf8da011",
         "private_bundle_sha256": "439ad4de4d7181f9aba4c41a0c8b193cad29bbc1b05b41c802788242f2f6fd4b",
-        "preview": "https://221.139.249.111:19044",
+        "preview": "https://dev-preview.example.invalid:19044",
         "focused_tests": "Saved Views search/sort/type/chips/reset/25-row page/private reopen behavior retained including legacy unsupported state. Focused Home/Audit/Saved Views/Search/Admin/operations suite 163/163 PASS; Journey 437/437.",
         "qualification": "Development preview only; authenticated three-role browser acceptance remains open."
       }
@@ -1118,7 +1118,7 @@
         "source_commit": "1c90e9ef0029fe53340f5bf2793eac60cf8da011",
         "deployed_source_head": "1c90e9ef0029fe53340f5bf2793eac60cf8da011",
         "private_bundle_sha256": "439ad4de4d7181f9aba4c41a0c8b193cad29bbc1b05b41c802788242f2f6fd4b",
-        "preview": "https://221.139.249.111:19044",
+        "preview": "https://dev-preview.example.invalid:19044",
         "focused_tests": "Ctrl/Cmd+K Search retains old aliases, exact typed results and adds keyboard-readable What changed navigation help. Focused Home/Audit/Saved Views/Search/Admin/operations suite 163/163 PASS; Journey 437/437.",
         "qualification": "Development preview only; authenticated three-role browser acceptance remains open."
       }
@@ -1144,7 +1144,7 @@
         "source_commit": "1c90e9ef0029fe53340f5bf2793eac60cf8da011",
         "deployed_source_head": "1c90e9ef0029fe53340f5bf2793eac60cf8da011",
         "private_bundle_sha256": "439ad4de4d7181f9aba4c41a0c8b193cad29bbc1b05b41c802788242f2f6fd4b",
-        "preview": "https://221.139.249.111:19044",
+        "preview": "https://dev-preview.example.invalid:19044",
         "focused_tests": "Home plus four task groups, single title/breadcrumb/sticky shell, theme/collapse and icon+text navigation retained. Focused Home/Audit/Saved Views/Search/Admin/operations suite 163/163 PASS; Journey 437/437.",
         "qualification": "Development preview only; authenticated three-role browser acceptance remains open."
       }
@@ -1170,7 +1170,7 @@
         "source_commit": "1c90e9ef0029fe53340f5bf2793eac60cf8da011",
         "deployed_source_head": "1c90e9ef0029fe53340f5bf2793eac60cf8da011",
         "private_bundle_sha256": "439ad4de4d7181f9aba4c41a0c8b193cad29bbc1b05b41c802788242f2f6fd4b",
-        "preview": "https://221.139.249.111:19044",
+        "preview": "https://dev-preview.example.invalid:19044",
         "focused_tests": "Foundation Administration canonical role/task integration retained without duplicating common auth/users/MFA authority. Focused Home/Audit/Saved Views/Search/Admin/operations suite 163/163 PASS; Journey 437/437.",
         "qualification": "Development preview only; authenticated three-role browser acceptance remains open."
       }
@@ -1197,7 +1197,7 @@
         "source_commit": "1c90e9ef0029fe53340f5bf2793eac60cf8da011",
         "deployed_source_head": "1c90e9ef0029fe53340f5bf2793eac60cf8da011",
         "private_bundle_sha256": "439ad4de4d7181f9aba4c41a0c8b193cad29bbc1b05b41c802788242f2f6fd4b",
-        "preview": "https://221.139.249.111:19044",
+        "preview": "https://dev-preview.example.invalid:19044",
         "focused_tests": "Health/Doctor/jobs/version/revisions/export/support/integration operations retain truthful Pending/UNKNOWN/Failed evidence. Focused Home/Audit/Saved Views/Search/Admin/operations suite 163/163 PASS; Journey 437/437.",
         "qualification": "Development preview only; authenticated three-role browser acceptance remains open."
       }
@@ -1222,7 +1222,7 @@
       "evidence": {
         "source_commit": "971f35e250a3a724803478ed68091cf61e6786fc",
         "deployed_source_head": "971f35e250a3a724803478ed68091cf61e6786fc",
-        "preview": "https://221.139.249.111:19044",
+        "preview": "https://dev-preview.example.invalid:19044",
         "private_bundle_sha256": "53558225b27f7973544a81c7e48c17fff5876aea51e09027a7c08ac09dab2f08",
         "verification": "Shared readable headings, 44px primary interaction baseline and common focus-trap contract. Responsive matrix passes after RED 35.5\u201340px controls were corrected.",
         "qualification": "Exact-head private development deployment; no production/release or live-user acceptance inferred."
@@ -1248,7 +1248,7 @@
       "evidence": {
         "source_commit": "971f35e250a3a724803478ed68091cf61e6786fc",
         "deployed_source_head": "971f35e250a3a724803478ed68091cf61e6786fc",
-        "preview": "https://221.139.249.111:19044",
+        "preview": "https://dev-preview.example.invalid:19044",
         "private_bundle_sha256": "53558225b27f7973544a81c7e48c17fff5876aea51e09027a7c08ac09dab2f08",
         "verification": "Technical details disclosures normalized; critical warnings and required-test text remain outside disclosure. Focused 99/99 and Journey 439/439 PASS before exact-head build.",
         "qualification": "Exact-head private development deployment; no production/release or live-user acceptance inferred."
@@ -1274,7 +1274,7 @@
       "evidence": {
         "source_commit": "971f35e250a3a724803478ed68091cf61e6786fc",
         "deployed_source_head": "971f35e250a3a724803478ed68091cf61e6786fc",
-        "preview": "https://221.139.249.111:19044",
+        "preview": "https://dev-preview.example.invalid:19044",
         "private_bundle_sha256": "53558225b27f7973544a81c7e48c17fff5876aea51e09027a7c08ac09dab2f08",
         "verification": "Local runtime asset gate 3/3 PASS; index/app/CSS/favicon/logo are same-origin with self-only CSP. Deployed six-asset HTTP 200 and byte-parity verified.",
         "qualification": "Exact-head private development deployment; no production/release or live-user acceptance inferred."
@@ -1300,7 +1300,7 @@
       "evidence": {
         "source_commit": "971f35e250a3a724803478ed68091cf61e6786fc",
         "deployed_source_head": "971f35e250a3a724803478ed68091cf61e6786fc",
-        "preview": "https://221.139.249.111:19044",
+        "preview": "https://dev-preview.example.invalid:19044",
         "private_bundle_sha256": "53558225b27f7973544a81c7e48c17fff5876aea51e09027a7c08ac09dab2f08",
         "verification": "Production View responsive browser matrix PASS: 8 route/error modes \u00d7 4 viewports \u00d7 2 themes; no page-wide overflow, browser errors or fixture writes.",
         "qualification": "Exact-head private development deployment; no production/release or live-user acceptance inferred."
@@ -1326,7 +1326,7 @@
       "evidence": {
         "source_commit": "971f35e250a3a724803478ed68091cf61e6786fc",
         "deployed_source_head": "971f35e250a3a724803478ed68091cf61e6786fc",
-        "preview": "https://221.139.249.111:19044",
+        "preview": "https://dev-preview.example.invalid:19044",
         "private_bundle_sha256": "53558225b27f7973544a81c7e48c17fff5876aea51e09027a7c08ac09dab2f08",
         "verification": "Responsive/accessibility browser 2/2 PASS; 11 unnamed visible Policy/Access inputs fixed, dialog focus contained/restored, shared light/dark text-token pairs >=4.5:1.",
         "qualification": "Exact-head private development deployment; no production/release or live-user acceptance inferred."
@@ -1352,7 +1352,7 @@
       "evidence": {
         "source_commit": "971f35e250a3a724803478ed68091cf61e6786fc",
         "deployed_source_head": "971f35e250a3a724803478ed68091cf61e6786fc",
-        "preview": "https://221.139.249.111:19044",
+        "preview": "https://dev-preview.example.invalid:19044",
         "private_bundle_sha256": "53558225b27f7973544a81c7e48c17fff5876aea51e09027a7c08ac09dab2f08",
         "verification": "Core auth 12/12, MFA policy 5/5, Web session 5/5, three-role App/Shell 3/3 and direct guarded Web effects 6/6 PASS. Existing live preview credential was not reset; authenticated live-login acceptance remains open.",
         "qualification": "Exact-head private development deployment; no production/release or live-user acceptance inferred."
@@ -1378,7 +1378,7 @@
       "evidence": {
         "source_commit": "971f35e250a3a724803478ed68091cf61e6786fc",
         "deployed_source_head": "971f35e250a3a724803478ed68091cf61e6786fc",
-        "preview": "https://221.139.249.111:19044",
+        "preview": "https://dev-preview.example.invalid:19044",
         "private_bundle_sha256": "53558225b27f7973544a81c7e48c17fff5876aea51e09027a7c08ac09dab2f08",
         "verification": "Mounted Servers async 35/35 and additional async/paging unit 68/68 PASS, including 100/101 paging, actor/route invalidation, real timeout, superseded refresh and non-idempotent locks.",
         "qualification": "Exact-head private development deployment; no production/release or live-user acceptance inferred."
@@ -1529,7 +1529,7 @@
       "evidence": {
         "source_commit": "971f35e250a3a724803478ed68091cf61e6786fc",
         "deployed_source_head": "971f35e250a3a724803478ed68091cf61e6786fc",
-        "preview": "https://221.139.249.111:19044",
+        "preview": "https://dev-preview.example.invalid:19044",
         "app_sha256": "6979cd33c876d4d973255056a347dc2161208d8491814e658bf45319dbc2bc70",
         "styles_sha256": "3cd48eb87dae27792760425e1183fd9d25b542cfedd1b7c4c3902382cd9f3c7a",
         "foundation_css_sha256": "3049f76b67d9341920254bcbe1b26b48d52b05e9faa9bc992f0d51f6887928d7",

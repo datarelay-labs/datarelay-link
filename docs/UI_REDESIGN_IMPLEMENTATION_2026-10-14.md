@@ -25,7 +25,7 @@ Exact deployed Link source: `1c90e9ef0029fe53340f5bf2793eac60cf8da011`. UXR-3.1�
 - Global Search retains old aliases and now exposes a keyboard-readable “What changed in navigation?” help panel. Saved Views, shell preferences, Foundation Administration and operational detail paths remain intact.
 - Focused source tests: Access/Policy **153/153 PASS**; Home/Audit/Saved Views/Search/Admin/operations **163/163 PASS**; Journey **437/437 PASS**; P0 **44/44 PASS**.
 - Private RC41 bundle `439ad4de4d7181f9aba4c41a0c8b193cad29bbc1b05b41c802788242f2f6fd4b`, Foundation `46ddb60`, ten private archives; activation moved only the approved development pointer from `dev-installed-df12fde7` to `dev-installed-1c90e9ef`.
-- Served preview `https://221.139.249.111:19044`: all five assets HTTP 200 and match the installed candidate; app.js `def05ce30033073d4807fee067b276c6a6c2aee8826565323dde6e4c687bd642`, styles.css `0c31801485e67f1875af4417e454459b514bf30aaab3e7e45637e0ec4eeb071e`, anonymous session **401**.
+- Served preview `https://dev-preview.example.invalid:19044`: all five assets HTTP 200 and match the installed candidate; app.js `def05ce30033073d4807fee067b276c6a6c2aee8826565323dde6e4c687bd642`, styles.css `0c31801485e67f1875af4417e454459b514bf30aaab3e7e45637e0ec4eeb071e`, anonymous session **401**.
 
 No UXR-3/4 task is marked ACCEPTED from fixture/source/deployment evidence. Actual authenticated roles, real traffic/Agent, all route/viewports and owner acceptance remain later UXR-5/7 evidence. Next source task: **UXR-5.1**.
 
@@ -41,7 +41,7 @@ Exact deployed Link source: `df12fde730a8f40bb961821888302de90492d7b7`. This con
 - **UXR-2.6–2.9:** the Services route removes the targetless editor, separates configuration from policy/transport evidence, adds safe SSH/HTTP(S)/TCP use guidance, focuses publication on the selected Host, hides lifecycle options under disclosure, and preserves existing one-shot Preview/Apply with local-only cancel and ambiguous-outcome retirement.
 - Exact-source checks: Setup continuity browser **2/2 PASS**, related service/connection checks **57/57 PASS**, registered Journey **430/430 PASS**. The private RC41 builder independently passed Administration **20/20**, Journey **430/430** and P0 **44/44**.
 - Private RC41 bundle: `98dd9d687fbcb75f4e887a6ee96f8f5b8b38e938ad6089de827f5bd3f687fc4a`; Foundation `46ddb60`; 10/10 private archives. `dev-installed-df12fde7` passed read-only verification and atomically replaced only the approved development pointer `dev-installed-50944164`.
-- Approved HTTPS preview `https://221.139.249.111:19044` already serves through `dev-installed-current`; all five static assets are HTTP 200 and byte-identical to the installed candidate. `app.js` SHA256 `97ee5a4716519db81c7a90aa0de3436261ceed4ccc3c920dcb19e3fa8b59facc`; `styles.css` `7d134e663acbb348cff238579a001aa67bf8b7c5a03c0bd5be30785a809adf93`; anonymous `/api/v1/session` remains **401**. Existing preview Core data, account, TLS files and rollback candidate were not changed.
+- Approved HTTPS preview `https://dev-preview.example.invalid:19044` already serves through `dev-installed-current`; all five static assets are HTTP 200 and byte-identical to the installed candidate. `app.js` SHA256 `97ee5a4716519db81c7a90aa0de3436261ceed4ccc3c920dcb19e3fa8b59facc`; `styles.css` `7d134e663acbb348cff238579a001aa67bf8b7c5a03c0bd5be30785a809adf93`; anonymous `/api/v1/session` remains **401**. Existing preview Core data, account, TLS files and rollback candidate were not changed.
 
 UXR-2.1–2.10 are recorded **DEV_DEPLOYED**, not ACCEPTED. Synthetic fixtures do not substitute for a real Agent or independent user. The existing preview account credential was not reset or invented, so authenticated live-browser V2 acceptance remains open. No WBS is accepted from this checkpoint. Next source task: **UXR-3.1**.
 
@@ -135,7 +135,7 @@ Impact: UXR-1.6 and UXR-1.7 remain blocked. UXR-1.10 cannot be complete, so the 
 
 Read-only TLS-verified checks used the existing approved certificate, not an insecure TLS option. No accounts, data, services, listeners or PKI changed.
 
-- Approved preview: `https://221.139.249.111:19044`.
+- Approved preview: `https://dev-preview.example.invalid:19044`.
 - `app.js`, `styles.css`, `foundation.css`: HTTP 200; served hashes equal the original preview files and the resume baseline.
 - Anonymous `/api/v1/session`: HTTP 401.
 - This new source checkpoint is **NOT DEPLOYED**. The failing target-binding regression is a prerequisite, not a deployable feature.

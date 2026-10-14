@@ -22,7 +22,7 @@
         "served_sha256": "ed9163d376e84b5ea776695be5a95e1e7b26c52fd83cee1b58fdaef08ca2c322"
       }
     },
-    "origin": "https://221.139.249.111:19044",
+    "origin": "https://dev-preview.example.invalid:19044",
     "scope": "read-only approved development preview; no credentials or product state changed"
   },
   "followups": [
@@ -139,7 +139,7 @@
       "dev_candidate": "dev-installed-50944164",
       "live_authenticated_browser_verified": false,
       "platform_block": "CLEARED_BY_NORMAL_SAME_TOOL_RETRY",
-      "preview": "https://221.139.249.111:19044",
+      "preview": "https://dev-preview.example.invalid:19044",
       "private_bundle_sha256": "e6b2d7e11552c70c9104fd0cb4b37fc86f210999c4ccc9958bbfa0a0639fb355",
       "recorded_at": "2026-10-14T04:54:13.720858+00:00",
       "served": {
@@ -162,7 +162,7 @@
       "dev_candidate": "dev-installed-df12fde7",
       "foundation_head": "46ddb60cad8eae7b1718588cd19421e61b5300e7",
       "live_authenticated_browser_verified": false,
-      "preview": "https://221.139.249.111:19044",
+      "preview": "https://dev-preview.example.invalid:19044",
       "previous_candidate": "dev-installed-50944164",
       "private_bundle_sha256": "98dd9d687fbcb75f4e887a6ee96f8f5b8b38e938ad6089de827f5bd3f687fc4a",
       "real_agent_verified": false,
@@ -189,7 +189,7 @@
       "anonymous_session_http": 401,
       "dev_candidate": "dev-installed-1c90e9ef",
       "live_authenticated_browser_verified": false,
-      "preview": "https://221.139.249.111:19044",
+      "preview": "https://dev-preview.example.invalid:19044",
       "previous_candidate": "dev-installed-df12fde7",
       "private_bundle_sha256": "439ad4de4d7181f9aba4c41a0c8b193cad29bbc1b05b41c802788242f2f6fd4b",
       "real_traffic_verified": false,
@@ -213,7 +213,7 @@
       "anonymous_session_http": 401,
       "dev_candidate": "dev-installed-971f35e2",
       "live_authenticated_browser_verified": false,
-      "preview": "https://221.139.249.111:19044",
+      "preview": "https://dev-preview.example.invalid:19044",
       "preview_state_preserved": true,
       "previous_candidate": "dev-installed-1c90e9ef",
       "private_bundle_sha256": "53558225b27f7973544a81c7e48c17fff5876aea51e09027a7c08ac09dab2f08",
