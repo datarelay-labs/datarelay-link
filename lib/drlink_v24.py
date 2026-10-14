@@ -6087,6 +6087,44 @@ def synchronize_agent_remote_services(plane_db, *, root: Optional[str] = None,
             updated += 1
     finally:
         plane_db._batch_mode = prev_batch
+
+    # C-014: an otherwise valid signed catalog response can race Server
+    # catalog mutation and temporarily omit the Service Object backing an
+    # enrollment-seed Remote Service. Replacing the Agent catalog with that
+    # one snapshot makes runtime projection drop the already-verified seed
+    # proxy and forces a false DEGRADED result even while traffic is healthy.
+    # Re-read the signed catalog once before runtime projection. A genuinely
+    # deleted/missing Service Object is still absent on the second response
+    # and remains fail-closed in apply_agent_runtime.
+    if not catalog_error:
+        try:
+            live_catalog = mgmt.use_live_mgmt_path(
+                root or getattr(plane_db, "root", None)
+            )
+        except Exception:
+            live_catalog = False
+        if live_catalog:
+            seed_dependency_missing = False
+            for seed_row in plane_db.conn.execute(
+                "SELECT service_object FROM agent_remote_services "
+                "WHERE enrollment_seed = 1 AND enabled = 1 "
+                "AND delete_pending = 0"
+            ):
+                seed_reason = _service_dependency_status(
+                    plane_db, seed_row["service_object"]
+                )
+                if seed_reason and "missing or invalid" in seed_reason:
+                    seed_dependency_missing = True
+                    break
+            if seed_dependency_missing:
+                try:
+                    sync_agent_catalog_from_server(plane_db, root=root)
+                except Exception as exc:
+                    catalog_error = (
+                        str(exc).strip()
+                        or "Authoritative enrollment catalog recheck failed"
+                    )
+
     # Lifecycle boundary: prior verification is stale until apply_agent_runtime
     # succeeds. Clear before the pre-apply push so reconnect cannot replay it.
     _invalidate_agent_remote_service_runtime_verification(plane_db)
@@ -6610,6 +6648,17 @@ def set_remote_service_agent(
                     prev_mgmt = _agent_remote_service_mgmt_snapshot(
                         plane_db, existing, root=root, host_name=host_name
                     )
+                # Register compensation before the remote write. A transport
+                # timeout can happen after the Server committed but before the
+                # Agent received the response, so recording only after return
+                # makes the write impossible to roll back truthfully.
+                if prev_mgmt is None:
+                    _record_agent_mgmt_create(plane_db, name, root=root)
+                else:
+                    effect = dict(prev_mgmt)
+                    effect["op"] = "update-rs"
+                    _record_agent_mgmt_effect(plane_db, effect)
+                recorded_mgmt_effect = _agent_mgmt_effects(plane_db)[-1]
                 remote = mgmt.upsert_remote_service_on_server(
                     root=root,
                     name=name,
@@ -6624,13 +6673,6 @@ def set_remote_service_agent(
                     preserve_endpoint_port=endpoint_port,
                     runtime_verified=False,
                 )
-                if prev_mgmt is None:
-                    _record_agent_mgmt_create(plane_db, name, root=root)
-                else:
-                    effect = dict(prev_mgmt)
-                    effect["op"] = "update-rs"
-                    _record_agent_mgmt_effect(plane_db, effect)
-                recorded_mgmt_effect = _agent_mgmt_effects(plane_db)[-1]
                 endpoint_host = remote.get("endpoint_host") or endpoint_host
                 endpoint_port = remote.get("endpoint_port")
                 pending = int(remote.get("pending_allocation") or 0)
@@ -6643,12 +6685,47 @@ def set_remote_service_agent(
                 else:
                     status = "DISABLED"
                     reason = DISABLED_OPERATOR_REASON
+            except mgmt.MgmtAmbiguousWriteError as exc:
+                report = reconcile_agent_mgmt_side_effects(plane_db, root=root)
+                if report.get("ok"):
+                    raise ControlPlaneError(
+                        "ERROR:\nServer endpoint allocation response was lost.\n\n"
+                        "Previous configuration was restored.\n\nOriginal error:\n%s" % exc
+                    ) from exc
+                details = "\n".join(
+                    "  %s" % failure for failure in (report.get("failures") or [])
+                ) or "  unknown"
+                raise ControlPlaneError(
+                    "ERROR:\nServer endpoint allocation response was lost.\n\n"
+                    "PARTIAL: Server Remote Service state could not be fully restored.\n"
+                    "RECOVERY_REQUIRED\n\nCompensation failures:\n%s\n\n"
+                    "Original error:\n%s\n\nRun:\n  system diagnostics" % (details, exc)
+                ) from exc
             except ControlPlaneError:
+                effects = _agent_mgmt_effects(plane_db)
+                if recorded_mgmt_effect is not None:
+                    effects[:] = [
+                        item for item in effects if item is not recorded_mgmt_effect
+                    ]
                 raise
             except Exception as exc:
+                # Treat an unexpected exception at the write boundary as
+                # ambiguous too: test doubles and lower transports can fail
+                # after the Server mutation but before the return reaches us.
+                report = reconcile_agent_mgmt_side_effects(plane_db, root=root)
+                if report.get("ok"):
+                    raise ControlPlaneError(
+                        "ERROR:\nServer endpoint allocation response was lost.\n\n"
+                        "Previous configuration was restored.\n\nOriginal error:\n%s" % exc
+                    ) from exc
+                details = "\n".join(
+                    "  %s" % failure for failure in (report.get("failures") or [])
+                ) or "  unknown"
                 raise ControlPlaneError(
-                    "ERROR:\nServer endpoint allocation failed.\n\n%s\n\nNo changes were applied."
-                    % exc
+                    "ERROR:\nServer endpoint allocation response was lost.\n\n"
+                    "PARTIAL: Server Remote Service state could not be fully restored.\n"
+                    "RECOVERY_REQUIRED\n\nCompensation failures:\n%s\n\n"
+                    "Original error:\n%s\n\nRun:\n  system diagnostics" % (details, exc)
                 ) from exc
         else:
             client_sel = identity.get("machine_id") or identity.get("hostname") or host_name

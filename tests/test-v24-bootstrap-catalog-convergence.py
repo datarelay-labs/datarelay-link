@@ -354,6 +354,83 @@ class BootstrapCatalogConvergenceTests(unittest.TestCase):
             self.assertNotIn('rs-ssh', json.loads(state_path.read_text())['services'])
             self.assertEqual(restart.call_count, 1)
 
+    def test_live_synchronize_rechecks_transient_missing_seed_service_object(self):
+        state_path = Path(self.agent_tmp) / 'etc/frp/client-state.json'
+        state = json.loads(state_path.read_text())
+        state['frp_server_port'] = 443
+        state_path.write_text(json.dumps(state))
+        toml_path = state_path.parent / 'frpc.toml'
+        toml_path.write_text('serverAddr = "203.0.113.10"\nauth.token = "fixture-token"\n')
+        agent = ControlPlane(self.agent_tmp)
+        self.addCleanup(agent.close)
+        v24.project_enrolled_services_into_agent_catalog(agent, root=self.agent_tmp)
+        seed = agent.conn.execute(
+            "SELECT service_object FROM agent_remote_services WHERE name='ssh'"
+        ).fetchone()['service_object']
+        payload = json.dumps({'name': seed, 'type': 'tcp', 'port': self.local_port})
+        agent.conn.execute(
+            "INSERT INTO agent_object_catalog(kind,name,payload,synced_at) "
+            "VALUES ('service-object',?,?,?)",
+            (seed, payload, v24.utc_now_iso()),
+        )
+        agent.conn.commit()
+
+        with mock.patch.object(V24R, 'runtime_should_apply', return_value=True), \
+                mock.patch.object(V24R, '_restart_frpc') as restart, \
+                mock.patch.object(V24R, '_current_runtime_ready', return_value=True):
+            initial = V24R.apply_agent_runtime(agent, root=self.agent_tmp)
+            self.assertTrue(initial['ok'], initial)
+            before_state = state_path.read_bytes()
+            before_toml = toml_path.read_bytes()
+            restart.reset_mock()
+
+            agent.conn.execute(
+                "DELETE FROM agent_object_catalog WHERE kind='service-object' AND name=?",
+                (seed,),
+            )
+            agent.conn.commit()
+            original_get = v24.get_service_object
+            calls = []
+
+            def missing_fallback(plane, name):
+                return None if name == seed else original_get(plane, name)
+
+            def refresh_catalog(plane, *, root=None):
+                calls.append('refresh')
+                if len(calls) >= 2:
+                    plane.conn.execute(
+                        "INSERT OR REPLACE INTO agent_object_catalog"
+                        "(kind,name,payload,synced_at) VALUES ('service-object',?,?,?)",
+                        (seed, payload, v24.utc_now_iso()),
+                    )
+                    plane.conn.commit()
+                    return 1
+                return 0
+
+            with mock.patch.object(v24, 'detect_server_reachable', return_value=True), \
+                    mock.patch.object(mgmt, 'use_live_mgmt_path', return_value=True), \
+                    mock.patch.object(v24, 'sync_agent_catalog_from_server',
+                                      side_effect=refresh_catalog) as refresh, \
+                    mock.patch.object(v24, 'get_service_object',
+                                      side_effect=missing_fallback), \
+                    mock.patch.object(v24, '_push_agent_remote_service_status',
+                                      return_value=0), \
+                    mock.patch.object(V24R, 'runtime_should_apply', return_value=True), \
+                    mock.patch.object(V24R, '_current_runtime_ready', return_value=True):
+                synchronized = v24.synchronize_agent_remote_services(
+                    agent, root=self.agent_tmp
+                )
+
+            self.assertGreaterEqual(refresh.call_count, 2)
+            self.assertEqual(synchronized['status'], 'SYNCHRONIZED', synchronized)
+            row = agent.conn.execute(
+                "SELECT status, runtime_verified FROM agent_remote_services WHERE name='ssh'"
+            ).fetchone()
+            self.assertEqual((row['status'], row['runtime_verified']), ('HEALTHY', 1))
+            self.assertEqual(state_path.read_bytes(), before_state)
+            self.assertEqual(toml_path.read_bytes(), before_toml)
+            restart.assert_not_called()
+
     def test_F001_F007_same_proxy_config_metadata_delta_does_not_restart_frpc(self):
         """A harmless Agent-state projection change must not flap live proxies.
 
