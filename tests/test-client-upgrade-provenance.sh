@@ -143,6 +143,22 @@ run_upgrade() {
     bash "$source/install-client.sh" --upgrade $mode
 }
 
+
+run_source_upgrade() {
+  local tree="$1" source="$2" mode="$3"
+  shift 3
+  env -u FRP_CLIENT_UPDATE_SOURCE -u FRP_CLIENT_UPGRADE_HOOK_FAIL \
+    -u FRP_EXPECTED_SOURCE_REF -u FRP_EXPECTED_SOURCE_HEAD \
+    -u FRP_EXPECTED_RELEASE_CHANNEL -u FRP_RELEASE_CHANNEL \
+    -u FRP_TXN_SOURCE_REF \
+    FRP_CLIENT_TEST_ROOT="$tree" \
+    FRP_SKIP_SYSTEMD=1 \
+    FRP_SKIP_DOWNLOAD=1 \
+    FRP_BUNDLE_SHA256="$BUNDLE" \
+    "$@" \
+    bash "$source/install-client.sh" --upgrade --source "$source" $mode
+}
+
 assert_state_preserved() {
   local tree="$1"
   python3 - "$tree/etc/frp/client-state.json" <<'PY'
@@ -195,7 +211,26 @@ grep -q 'Upgrade complete.' "$WORKDIR/exact-apply.out" || fail "exact apply"
 assert_healed "$EXACT" development "$EXACT_REF" "$EXACT_HEAD"
 assert_idempotent "$EXACT" "$ROOT" exact
 pass "EXACT_SHA_SAME_BUNDLE_PROVENANCE_SELF_HEAL"
+
 pass "EXACT_SHA_SECOND_RUN_IDEMPOTENT"
+
+# Development provenance closure commits intentionally have a checkout HEAD
+# newer than the content-parent embedded in release-manifest.json. Explicit
+# local --source must identify the exact checkout HEAD.
+LOCAL_GIT_HEAD="$(git -C "$ROOT" rev-parse HEAD)"
+LOCAL_MANIFEST_REF="$(manifest_field "$ROOT/release-manifest.json" git_ref)"
+[[ "$LOCAL_GIT_HEAD" =~ ^[0-9a-fA-F]{40}$ ]] || fail "local source git head is not exact"
+[[ "$LOCAL_MANIFEST_REF" =~ ^[0-9a-fA-F]{40}$ ]] || fail "local manifest ref is not exact"
+[[ "$LOCAL_GIT_HEAD" != "$LOCAL_MANIFEST_REF" ]] || fail "local source regression needs provenance-only closure head"
+LOCAL_SOURCE_CHECK="$WORKDIR/local-source-check"
+write_client_fixture "$LOCAL_SOURCE_CHECK" development "$OLD_REF" "$OLD_HEAD" "$ROOT"
+LOCAL_SOURCE_VERSION_BEFORE="$(sha256sum "$LOCAL_SOURCE_CHECK/etc/drlink/version" | awk '{print $1}')"
+run_source_upgrade "$LOCAL_SOURCE_CHECK" "$ROOT" --check >"$WORKDIR/local-source-check.out"
+grep -Fq "Target source ref         : $LOCAL_GIT_HEAD" "$WORKDIR/local-source-check.out" \
+  || fail "local --source check used embedded content-parent instead of exact checkout HEAD"
+[[ "$(sha256sum "$LOCAL_SOURCE_CHECK/etc/drlink/version" | awk '{print $1}')" == "$LOCAL_SOURCE_VERSION_BEFORE" ]] \
+  || fail "local --source check mutated version state"
+pass "LOCAL_SOURCE_CHECK_PREFERS_EXACT_GIT_HEAD"
 
 ROLL="$WORKDIR/rollback"
 write_client_fixture "$ROLL" development "$OLD_REF" "$OLD_HEAD" "$ROOT"

@@ -6043,6 +6043,13 @@ frp_client_apply_upgrade() {
   target="$(printf '%s' "$candidate_meta" | awk -F'\t' '{print $1}')"
   candidate_channel="$(printf '%s' "$candidate_meta" | awk -F'\t' '{print $2}')"
   candidate_ref="$(printf '%s' "$candidate_meta" | awk -F'\t' '{print $3}')"
+  if [[ "$kind" == "source" && -z "$expected_ref" && "$candidate_channel" == "development" ]]; then
+    local checkout_ref=""
+    checkout_ref="$(frp_git_head_source_ref "$source" 2>/dev/null || true)"
+    if [[ "$checkout_ref" =~ ^[0-9a-fA-F]{40}$ ]]; then
+      candidate_ref="$(printf '%s' "$checkout_ref" | tr '[:upper:]' '[:lower:]')"
+    fi
+  fi
   candidate_head="$(frp_client_candidate_source_head "$source" "$candidate_ref")"
   PROJECT_VERSION="$target"
   frp_client_upgrade_source_version "$source"
