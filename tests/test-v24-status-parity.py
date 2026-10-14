@@ -2644,12 +2644,12 @@ class AgentPushFalseHealthyTests(unittest.TestCase):
         seen_verified = []
         real_push = v24._push_agent_remote_service_status
 
-        def spy_push(plane_db, *, root=None, names=None):
+        def spy_push(plane_db, *, root=None, names=None, require_ack=False):
             row = plane_db.conn.execute(
                 "SELECT runtime_verified FROM agent_remote_services WHERE name = 'ssh-access'"
             ).fetchone()
             seen_verified.append(int(row["runtime_verified"] or 0))
-            return real_push(plane_db, root=root, names=names)
+            return real_push(plane_db, root=root, names=names, require_ack=require_ack)
 
         original = v24._push_agent_remote_service_status
         v24._push_agent_remote_service_status = spy_push
@@ -2660,6 +2660,122 @@ class AgentPushFalseHealthyTests(unittest.TestCase):
 
         self.assertGreaterEqual(len(seen_verified), 1)
         self.assertEqual(seen_verified[0], 0)
+
+    def test_push_retries_generic_status_response_failure_once(self):
+        # The live e0a3 split was not guaranteed to surface as the dedicated
+        # ambiguous-write exception. Any failed response on this idempotent
+        # operational projection gets one bounded replay.
+        from unittest import mock
+
+        created = mgmt.upsert_remote_service_on_server(
+            root=self.agent_tmp,
+            name="generic-retry",
+            destination="this-host",
+            service="ssh",
+            enabled=True,
+            pool_class="normal",
+            target_host="127.0.0.1",
+            target_port=22,
+            target_mode="self",
+            runtime_verified=False,
+        )
+        port = int(created["endpoint_port"])
+        self.agent.conn.execute(
+            "INSERT OR REPLACE INTO agent_remote_services"
+            "(name, destination, service_object, enabled, status, endpoint_host, endpoint_port, "
+            "pending_allocation, delete_pending, pool_class, reason, runtime_verified, updated_at) "
+            "VALUES ('generic-retry', 'this-host', 'ssh', 1, 'HEALTHY', 'drlink.local', ?, "
+            "0, 0, 'normal', '', 1, '2026-10-14T00:00:00Z')",
+            (port,),
+        )
+        self.agent.conn.commit()
+
+        real_report = mgmt.report_remote_service_status_on_server
+        calls = {"count": 0}
+
+        def flaky(*, root, services):
+            calls["count"] += 1
+            if calls["count"] == 1:
+                raise OSError("simulated unclassified response loss")
+            return real_report(root=root, services=services)
+
+        with mock.patch.object(
+            mgmt, "report_remote_service_status_on_server", side_effect=flaky
+        ):
+            v24._push_agent_remote_service_status(
+                self.agent, root=self.agent_tmp, require_ack=True
+            )
+
+        self.assertEqual(calls["count"], 2)
+        server = self._server_status("generic-retry")
+        self.assertEqual(server["status"], "HEALTHY")
+        self.assertEqual(int(server["runtime_verified"] or 0), 1)
+
+    def test_synchronize_final_status_push_failure_keeps_agent_degraded(self):
+        # Live U-008 e0a3 regression: runtime recovered and public traffic was
+        # healthy, but a lost final status projection left Agent HEALTHY while
+        # the Server remained DEGRADED for multiple lifecycle intervals. A
+        # full synchronize must not publish local HEALTHY until the Server ACKs
+        # the verified projection.
+        from unittest import mock
+
+        created = mgmt.upsert_remote_service_on_server(
+            root=self.agent_tmp,
+            name="restart-status",
+            destination="this-host",
+            service="ssh",
+            enabled=True,
+            pool_class="normal",
+            target_host="127.0.0.1",
+            target_port=22,
+            target_mode="self",
+            runtime_verified=False,
+        )
+        port = int(created["endpoint_port"])
+        self.assertEqual(self._server_status("restart-status")["status"], "DEGRADED")
+        self.agent.conn.execute(
+            "INSERT OR REPLACE INTO agent_remote_services"
+            "(name, destination, service_object, enabled, status, endpoint_host, endpoint_port, "
+            "pending_allocation, delete_pending, pool_class, reason, runtime_verified, "
+            "updated_at, enrollment_seed) "
+            "VALUES ('restart-status', 'this-host', 'ssh', 1, 'DEGRADED', 'drlink.local', ?, "
+            "0, 0, 'normal', 'Runtime activation pending.', 0, "
+            "'2026-10-14T00:00:00Z', 1)",
+            (port,),
+        )
+        self.agent.conn.commit()
+
+        real_report = mgmt.report_remote_service_status_on_server
+        calls = {"count": 0}
+
+        def lose_final_ack(*, root, services):
+            calls["count"] += 1
+            if calls["count"] in (2, 3):
+                raise OSError("simulated repeated final status response loss")
+            return real_report(root=root, services=services)
+
+        with mock.patch.dict(os.environ, {
+            "FRP_DEPLOY_TEST_ROOT": self.agent_tmp,
+            "DRLINK_SKIP_ACTIVATION": "1",
+        }), mock.patch.object(
+            mgmt, "report_remote_service_status_on_server", side_effect=lose_final_ack
+        ):
+            result = v24.synchronize_agent_remote_services(
+                self.agent, root=self.agent_tmp, force_runtime=True
+            )
+
+        self.assertGreaterEqual(calls["count"], 2)
+        self.assertEqual(result["status"], "DEGRADED", result)
+        local = self.agent.conn.execute(
+            "SELECT status, runtime_verified, reason FROM agent_remote_services "
+            "WHERE name='restart-status'"
+        ).fetchone()
+        self.assertEqual(local["status"], "DEGRADED")
+        self.assertEqual(int(local["runtime_verified"] or 0), 0)
+        self.assertIn("acknowledgement failed", str(local["reason"] or "").lower())
+        server = self._server_status("restart-status")
+        self.assertEqual(server["status"], "DEGRADED")
+        self.assertEqual(int(server["runtime_verified"] or 0), 0)
 
     def test_public_restart_invalidation_clears_verified_and_server_healthy(self):
         # Comment 5883274697: public system restart shell path must invalidate

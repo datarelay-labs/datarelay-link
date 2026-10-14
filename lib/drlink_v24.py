@@ -5571,21 +5571,31 @@ def _service_dependency_status(plane_db, svc_name: str) -> Optional[str]:
     return None
 
 
-def _push_agent_remote_service_status(plane_db, *, root: Optional[str] = None, names: Optional[list] = None) -> int:
+def _push_agent_remote_service_status(
+    plane_db, *, root: Optional[str] = None, names: Optional[list] = None,
+    require_ack: bool = False,
+) -> int:
     """Tell the Server the Agent's effective Remote Service status. Never allocates.
 
     The authenticated Server response is the endpoint-ownership authority. Agent
-    local canonical fields are reconciled from that response.
+    local canonical fields are reconciled from that response. ``require_ack`` is
+    used at a lifecycle promotion boundary: if a live management path exists,
+    local HEALTHY must not be published after the Server projection cannot be
+    confirmed.
     """
     try:
         import drlink_mgmt_sync as mgmt
     except Exception:
+        if require_ack:
+            raise
         return 0
     target_root = root or getattr(plane_db, "root", None)
     try:
         if not mgmt.use_live_mgmt_path(target_root):
             return 0
     except Exception:
+        if require_ack:
+            raise
         return 0
     items = []
     rows = plane_db.conn.execute("SELECT * FROM agent_remote_services WHERE delete_pending = 0")
@@ -5610,19 +5620,19 @@ def _push_agent_remote_service_status(plane_db, *, root: Optional[str] = None, n
         return 0
     try:
         result = mgmt.report_remote_service_status_on_server(root=target_root, services=items)
-    except mgmt.MgmtAmbiguousWriteError:
-        # Remote Service status is an idempotent operational projection. A
-        # response can be lost after the Server has committed, so replay the
-        # same signed projection once instead of waiting for a later lifecycle
-        # heartbeat and exposing Agent HEALTHY / Server DEGRADED in the interim.
+    except Exception:
+        # Status projection is idempotent operational state. Transport stacks do
+        # not always classify a response-loss race as MgmtAmbiguousWriteError,
+        # so retry the identical projection once for any failed response. The
+        # retry is bounded and cannot allocate or change desired configuration.
         try:
             result = mgmt.report_remote_service_status_on_server(
                 root=target_root, services=items
             )
         except Exception:
+            if require_ack:
+                raise
             return 0
-    except Exception:
-        return 0
     return _reconcile_agent_from_server_status(plane_db, result)
 
 
@@ -6237,7 +6247,25 @@ def _synchronize_agent_remote_services_locked(plane_db, *, root: Optional[str] =
             "affected": affected,
             "runtime_error": str(exc),
         })
-    _push_agent_remote_service_status(plane_db, root=root)
+    try:
+        _push_agent_remote_service_status(plane_db, root=root, require_ack=True)
+    except Exception as exc:
+        # Runtime may already be serving traffic, but HEALTHY is a cross-surface
+        # claim. If the authoritative Server cannot acknowledge it after the
+        # bounded idempotent retry, keep the Agent fail-closed until the
+        # lifecycle worker can verify and retry the projection.
+        ack_error = "Runtime applied locally but Server acknowledgement failed: %s" % exc
+        runtime.mark_runtime_status(plane_db, ok=False, reason=ack_error)
+        # Best effort: if the failed HEALTHY response actually committed on the
+        # Server, immediately project the local DEGRADED state back as well.
+        _push_agent_remote_service_status(plane_db, root=root)
+        affected = _collect_degraded_remote_services(plane_db)
+        return _finish({
+            "status": "DEGRADED",
+            "updated": updated,
+            "affected": affected,
+            "runtime_error": ack_error,
+        })
     affected = _collect_degraded_remote_services(plane_db)
     return _finish({
         "status": "DEGRADED" if affected else "SYNCHRONIZED",
