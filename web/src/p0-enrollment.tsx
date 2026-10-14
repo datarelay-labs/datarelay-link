@@ -130,7 +130,7 @@ export function observedEnrollmentHostPage(input:unknown):{
  * rather than automatically repeating a potentially one-time operation.
  */
 export type ObservedIssuedEnrollment={
- mode:"zero-touch"|"manual",platform:string,expires_at:string,command:string,
+ enrollment_id:string,mode:"zero-touch"|"manual",platform:string,expires_at:string,command:string,
  enrollment_code:string,pre_approved:boolean,next_step:string
 };
 const BAD_COMMAND_TEXT=/[\u0000-\u0008\u000b-\u000c\u000e-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/;
@@ -141,7 +141,8 @@ export function observedIssuedEnrollment(
    ||typeof mode!=="string"||!["zero-touch","manual"].includes(mode)
    ||typeof platform!=="string"||!["linux","macos","windows"].includes(platform))return null;
  const row=input as Record<string,unknown>;
- if(row.mode!==mode||row.platform!==platform||row.state!=="pending"
+ if(typeof row.enrollment_id!=="string"||!/^[a-f0-9]{16}$/.test(row.enrollment_id)
+   ||row.mode!==mode||row.platform!==platform||row.state!=="pending"
    ||row.display_once!==true||row.management_only!==true
    ||!isObservedAbsoluteTime(row.expires_at)
    ||typeof row.ttl_seconds!=="number"||!Number.isSafeInteger(row.ttl_seconds)
@@ -158,6 +159,7 @@ export function observedIssuedEnrollment(
    ||!/^[a-f0-9]{16}\.[a-f0-9]{64}$/.test(enrollment_code)))return null;
  const next_step=historyText(row.next_step);
  return {
+  enrollment_id:row.enrollment_id as string,
   mode:mode as "zero-touch"|"manual",
   platform:platform as string,
   expires_at:row.expires_at as string,
@@ -177,6 +179,24 @@ export function currentIssuedCredentialIsUsable(input:unknown,at:number=Date.now
    ||!Number.isFinite(at))return false;
  const expires=(input as Record<string,unknown>).expires_at;
  return isObservedAbsoluteTime(expires)&&Date.parse(expires)>at;
+}
+
+export type EnrollmentDetectionState="WAITING"|"DETECTED"|"EXPIRED"|"REVOKED"|"UNKNOWN";
+export function observedIssuedEnrollmentDetection(
+ history:unknown,issued:unknown
+):EnrollmentDetectionState{
+ if(!issued||typeof issued!=="object"||Array.isArray(issued))return "UNKNOWN";
+ const id=(issued as Record<string,unknown>).enrollment_id;
+ if(typeof id!=="string"||!/^[a-f0-9]{16}$/.test(id))return "UNKNOWN";
+ const observed=history as ObservedEnrollmentHistory;
+ if(!observed||observed.status!=="ready"||!Array.isArray(observed.items))return "UNKNOWN";
+ const matches=observed.items.filter(item=>item.id===id);
+ if(matches.length!==1)return "UNKNOWN";
+ if(matches[0].state==="pending")return "WAITING";
+ if(matches[0].state==="bound"||matches[0].state==="completed")return "DETECTED";
+ if(matches[0].state==="expired")return "EXPIRED";
+ if(matches[0].state==="revoked")return "REVOKED";
+ return "UNKNOWN";
 }
 
 /** A display-once response can be structurally valid yet contradict what
@@ -290,7 +310,8 @@ export function issuedEnrollmentForCurrentIntent(
  if(state.intent!==intent||!evidence||typeof evidence!=="object"
    ||Array.isArray(evidence))return null;
  const item=evidence as Record<string,unknown>;
- if(typeof item.mode!=="string"||!["zero-touch","manual"].includes(item.mode)
+ if(typeof item.enrollment_id!=="string"||!/^[a-f0-9]{16}$/.test(item.enrollment_id)
+   ||typeof item.mode!=="string"||!["zero-touch","manual"].includes(item.mode)
    ||typeof item.platform!=="string"||!["linux","macos","windows"].includes(item.platform)
    ||typeof item.command!=="string"||!item.command.trim()||item.command.length>65536
    ||BAD_COMMAND_TEXT.test(item.command)
@@ -437,6 +458,7 @@ export function EnrollmentOnboarding({api,data,refresh,operator,onNavigate,onBus
   useEffect(()=>()=>{onBusyChange?.(false)},[]);
   const [error,setError]=useState(""),[inventoryError,setInventoryError]=useState("");
   const [copyStatus,setCopyStatus]=useState("");
+  const [detectionPolls,setDetectionPolls]=useState(0);
   const [preview,setPreview]=useState<any>(null),[confirm,setConfirm]=useState(""),[message,setMessage]=useState("");
   const [messageScope,setMessageScope]=useState<{id:unknown,role:unknown,hostId:string}|null>(null);
   const approvalGeneration=useRef(0);
@@ -470,6 +492,14 @@ export function EnrollmentOnboarding({api,data,refresh,operator,onNavigate,onBus
   currentIssueIntent.current=issuedIntent;
   const visibleIssued=issuedEnrollmentForCurrentIntent(issued,issuedIntent);
   const shownIssued=visibleIssued&&currentIssuedCredentialIsUsable(visibleIssued)?visibleIssued:null;
+  const detection=observedIssuedEnrollmentDetection(history,shownIssued);
+  const detectionPolling=step===2&&!!shownIssued&&(detection==="WAITING"||detection==="UNKNOWN")&&detectionPolls<10;
+  useEffect(()=>{setDetectionPolls(0)},[visibleIssued?.enrollment_id]);
+  useEffect(()=>{
+    if(!detectionPolling)return;
+    const timer=setTimeout(()=>{setDetectionPolls(count=>Math.min(10,count+1));refresh()},3000);
+    return()=>clearTimeout(timer);
+  },[detectionPolling,detectionPolls,shownIssued?.enrollment_id,data]);
   useEffect(()=>{
     if(!visibleIssued)return;
     const expiry=Date.parse(visibleIssued.expires_at);
@@ -513,8 +543,16 @@ export function EnrollmentOnboarding({api,data,refresh,operator,onNavigate,onBus
     const generation=++inventoryGeneration.current;
     setFetchBusy(true);setInventoryError("");setPreview(null);setConfirm("");
     setHostsScope(null);setHosts(null);setHostsComplete(null);
+    const abort=new AbortController();
+    let timer:ReturnType<typeof setTimeout>|undefined,timedOut=false;
     try{
-      const result=await api("/api/v1/inventory?resource_type=managed-host&limit=100");
+      const timeout=new Promise<never>((_,reject)=>{
+        timer=setTimeout(()=>{timedOut=true;abort.abort();reject(new Error("Managed Host inventory request timed out."))},10000);
+      });
+      const result=await Promise.race([
+        api("/api/v1/inventory?resource_type=managed-host&limit=100",{signal:abort.signal}),
+        timeout,
+      ]);
       if(generation!==inventoryGeneration.current)return;
       const observed=observedEnrollmentHostPage(result);
       if(!observed)throw new Error("Managed Host inventory response incomplete or malformed");
@@ -525,9 +563,12 @@ export function EnrollmentOnboarding({api,data,refresh,operator,onNavigate,onBus
     }catch(e:any){
       if(generation===inventoryGeneration.current){
         setHostsScope(null);setHosts(null);setHostsComplete(null);setSelectedHost("");
-        setInventoryError(String(e?.message||e));
+        setInventoryError(timedOut?"Managed Host inventory request timed out.":String(e?.message||e));
       }
-    }finally{if(generation===inventoryGeneration.current)setFetchBusy(false)}
+    }finally{
+      if(timer!==undefined)clearTimeout(timer);
+      if(generation===inventoryGeneration.current)setFetchBusy(false);
+    }
   }
   async function copyIssued(label:string,value:string){
     if(!currentIssuedCredentialIsUsable(visibleIssued)){
@@ -677,8 +718,13 @@ export function EnrollmentOnboarding({api,data,refresh,operator,onNavigate,onBus
           {copyStatus&&<p className="notice" role="status">{copyStatus}</p>}
           <p className="muted">Copy only when you intend to install this Agent. Paste secrets only into the intended trusted machine and clear sensitive clipboard content afterward.</p>
           <p>{shownIssued.next_step}</p>
+          <div className="dr-enrollment-detection" role="status" aria-live="polite">
+            <strong>{detection==="DETECTED"?"Enrollment detected by Core":detection==="WAITING"?"Waiting for Agent enrollment":detection==="EXPIRED"?"Invitation expired":detection==="REVOKED"?"Invitation revoked":"Enrollment status not yet confirmed"}</strong>
+            <span>{detection==="DETECTED"?"The invitation was consumed or bound. Approval, trust and Agent connectivity still require separate Host evidence.":detectionPolling?"Checking bounded Core enrollment history every 3 seconds (maximum 10 checks).":"Automatic checks are paused. Check again or inspect Managed Hosts; no new invitation is issued automatically."}</span>
+          </div>
+          <button type="button" className="secondary" onClick={()=>{setDetectionPolls(count=>Math.min(10,count+1));refresh()}}>Check now</button>
         </div>:<p className="muted">No currently valid invitation from this session. Return to Step 1 to create one, or continue to inspect an enrolled Host.</p>}
-        <button className="primary" onClick={()=>setStep(3)}>Next: inspect Host admission →</button>
+        <button className="primary" onClick={()=>setStep(3)}>{detection==="DETECTED"?"Continue: review detected server →":"Check for enrolled server →"}</button>
       </div>}
       {step>=3&&<div className="dr-p0-stage">
         <div className="dr-section-head"><div><h3>{step===3?"3. Review and approve the Host":"4. Verify admission, trust and connectivity"}</h3>

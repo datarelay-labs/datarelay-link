@@ -682,14 +682,14 @@ test("UX-3 enrollment Host options tolerate malformed display labels without lea
 });
 
 test("UX-3 issued Agent instructions require authentic display-once Core evidence",()=>{
- const valid={mode:"zero-touch",platform:"linux",state:"pending",
+ const valid={enrollment_id:"a".repeat(16),mode:"zero-touch",platform:"linux",state:"pending",
   expires_at:"2026-10-11T06:00:00Z",ttl_seconds:3600,
   command:"curl -f https://installer.example.invalid/agent | sh",
   display_once:true,management_only:true,pre_approved:false,
   next_step:"Run the command once on the selected Agent."};
  const parsed=enrollment.observedIssuedEnrollment(valid,"zero-touch","linux");
  assert.deepEqual(parsed,{
-  mode:"zero-touch",platform:"linux",expires_at:"2026-10-11T06:00:00Z",
+  enrollment_id:"a".repeat(16),mode:"zero-touch",platform:"linux",expires_at:"2026-10-11T06:00:00Z",
   command:valid.command,enrollment_code:"",pre_approved:false,
   next_step:valid.next_step
  });
@@ -723,7 +723,7 @@ test("UX-3 issuing malformed Core credential evidence never advances onboarding 
  assert.match(source,/setIssued\(\{intent:requestedIntent,evidence:observed\}\);refresh\(\);setStep\(2\)/);
  assert.doesNotMatch(source,/setIssued\(result\);refresh\(\);setStep\(2\)/);
  const parsed=enrollment.observedIssuedEnrollment({
-  mode:"zero-touch",platform:"windows",state:"pending",display_once:true,
+  enrollment_id:"b".repeat(16),mode:"zero-touch",platform:"windows",state:"pending",display_once:true,
   management_only:true,pre_approved:false,expires_at:"2026-10-11T06:00:00Z",
   ttl_seconds:3600,command:"pwsh -Command example",next_step:{secret:"PRIVATE_NEXT"}
  },"zero-touch","windows");

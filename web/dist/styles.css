@@ -510,3 +510,5 @@
 .dr-enrollment-choice{margin:6px 0 2px!important;font-size:13px;color:var(--dr-text-secondary)}
 .dr-enrollment-advanced{margin-top:4px}.dr-enrollment-advanced>.dr-p0-form{margin-top:12px}
 @media(max-width:560px){.dr-enrollment-platforms{grid-template-columns:1fr}.dr-enrollment-platform{min-height:64px}}
+.dr-enrollment-detection{display:grid;gap:3px;margin-top:10px;border-left:2px solid var(--dr-action-primary);padding:4px 0 4px 10px;color:var(--dr-text-secondary)}
+.dr-enrollment-detection strong{font-size:13px}.dr-enrollment-detection span{font-size:12px;line-height:1.45;color:var(--dr-text-muted)}

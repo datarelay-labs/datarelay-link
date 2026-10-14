@@ -208,13 +208,28 @@ test("UXR-2.1 enrollment starts with three supported platform choices and collap
  assert.match(html,/Create invitation →/);
 });
 
+
+
+test("UXR-2.3 enrollment detection is exact-ticket bounded with timeout and finite polling recovery",()=>{
+ const issued={enrollment_id:"a".repeat(16)};
+ const history=state=>({status:"ready",items:[{id:"a".repeat(16),state}],total:1,partial:false});
+ assert.equal(enroll.observedIssuedEnrollmentDetection(history("pending"),issued),"WAITING");
+ assert.equal(enroll.observedIssuedEnrollmentDetection(history("bound"),issued),"DETECTED");
+ assert.equal(enroll.observedIssuedEnrollmentDetection(history("completed"),issued),"DETECTED");
+ assert.equal(enroll.observedIssuedEnrollmentDetection(history("expired"),issued),"EXPIRED");
+ assert.equal(enroll.observedIssuedEnrollmentDetection(history("revoked"),issued),"REVOKED");
+ assert.equal(enroll.observedIssuedEnrollmentDetection({status:"ready",items:[{id:"b".repeat(16),state:"completed"}]},issued),"UNKNOWN");
+ const source=readFileSync(join(webRoot,"src","p0-enrollment.tsx"),"utf8");
+ assert.match(source,/new AbortController\(\)/);assert.match(source,/Managed Host inventory request timed out/);assert.match(source,/Promise\.race/);
+ assert.match(source,/detectionPolls<10/);assert.match(source,/maximum 10 checks/);assert.match(source,/no new invitation is issued automatically/);
+});
 test("UX-3 display-once enrollment ticket is scoped to exact operator and unchanged issuance intent",()=>{
  const intent={
   operatorId:"admin-a",role:"Admin",mode:"zero-touch",platform:"linux",
   ttl:"3600",label:"branch-a",note:"onboarding",preApproved:false
  };
  const original=enroll.enrollmentIssuanceIntent(intent);
- const evidence={mode:"zero-touch",platform:"linux",command:"safe test command",
+ const evidence={enrollment_id:"a".repeat(16),mode:"zero-touch",platform:"linux",command:"safe test command",
   expires_at:"2026-10-11T09:00:00Z",pre_approved:false,
   enrollment_code:"",next_step:"install"};
  assert.deepEqual(enroll.issuedEnrollmentForCurrentIntent({
