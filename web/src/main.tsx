@@ -5,7 +5,7 @@ import {AdministrationHub,type AdministrationHubTask} from "@datarelay-labs/foun
 import {createLinkFoundationAdministrationTasks} from "./foundation-administration";
 import {backupToolReadiness} from "./foundation-administration";
 import {observedCoreFlag,observedCoreCount,observedCoreNames} from "./uxb-impact-evidence";
-import {AccessEvidenceExplorer,GuidedPolicyJourney,coreFlowKey,coreCutoffKey,visibleCoreEvidence,resolveCompletePolicyMatch,observedHostInspectContext,type AccessPlane} from "./p0-access-policy";
+import {AccessEvidenceExplorer,GuidedPolicyJourney,accessPlanePurpose,coreFlowKey,coreCutoffKey,visibleCoreEvidence,resolveCompletePolicyMatch,observedHostInspectContext,type AccessPlane} from "./p0-access-policy";
 import {ServerRoute,observedServerLifecyclePlan,requireServerLifecycleReceipt,type ServerManagementAction} from "./workflow-servers";
 import {EnrollmentOnboarding} from "./p0-enrollment";
 import {navGroups,groupFor,labelFor,pageDescriptions,visibleRoute,navMatches,setupContextForObjectFamily} from "./uxb-navigation";
@@ -1271,21 +1271,33 @@ function AccessOperations({operator,onNavigate,context}:{operator:any,onNavigate
     finally{if(cutoffPlanGeneration.current===token)setCutoffBusy(false)}
   }
   const layers=(matchingDiagnosis?.layers||[]).map((x:any)=>({layer:x.layer,status:x.status,summary:x.summary}));
-  const planeLabel=plane==="remote"?"Remote Access":plane==="internet"?"Internet Access":"AI Access";
+  const purpose=accessPlanePurpose(plane as AccessPlane);
+  const planeLabel=purpose.label;
   const flowContext=connectionReviewContext(plane as AccessPlane,source,destination,selector);
   return <div className="dr-access-workspace">
     {error&&<div className="error">{error}</div>}
     {context?.originId&&<section className="dr-uxb-context card" role="note"><strong>Investigating {context.originType||"resource"}: {context.originId}</strong><p>Core resource names are not automatically Network/Service Objects. Select the exact source, destination and selector before interpreting any Core access decision.</p><button className="secondary" onClick={()=>onNavigate?.("audit","activity",context)}>Review matching Activity log →</button></section>}
     <section className="dr-page-intro"><div><p className="dr-eyebrow">Access</p><h2>Access Workspace</h2><p className="muted">Understand who can reach what, why the decision is made, and what is active now.</p></div><div className="dr-page-actions"><button className="secondary" onClick={()=>onNavigate?.("policies","access",flowContext)}>Policies</button>{operator.role!=="Read Only"&&<button className="primary" onClick={()=>onNavigate?.("drafts","access",flowContext)}>Draft change</button>}</div></section>
-    <div className="dr-access-tabs" role="tablist" aria-label="Access plane">{[["remote","Remote Access"],["internet","Internet Access"],["ai","AI Access"]].map(([value,label])=><button key={value} role="tab" aria-selected={plane===value} className={plane===value?"active":""} disabled={cutoffBusy} onClick={()=>changePlane(value)}>{label}</button>)}</div>
+    <div className="dr-access-purpose-grid" role="tablist" aria-label="Access plane">{(["remote","internet","ai"] as AccessPlane[]).map(value=>{const item=accessPlanePurpose(value);return <button key={value} role="tab" aria-selected={plane===value} className={plane===value?"active":""} disabled={cutoffBusy} onClick={()=>changePlane(value)}>
+      <strong>{item.label}</strong><small>{item.summary}</small><span>{item.agentRequired?"Managed Agent path":"No Managed Agent prerequisite"}</span>
+    </button>})}</div>
+    <section className="card dr-access-purpose-note" aria-label={planeLabel+" purpose"}>
+      <strong>{purpose.summary}</strong><div><span>Source: {purpose.source}</span><span>Target: {purpose.destination}</span><span>{plane==="ai"?"Permission":"Service"}: {purpose.selector}</span></div>
+      {plane==="internet"&&<p className="muted">Internet Access does not substitute the signed-in Web user for network source identity; Core source objects remain authoritative.</p>}
+    </section>
     <section className="card dr-access-map-card">
       <div className="dr-section-head"><div><p className="dr-eyebrow">Relationship</p><h3>{planeLabel}</h3></div><button className="dr-text-action" onClick={()=>onNavigate?.("policies","access")}>View policies →</button></div>
       <div className="dr-access-map" aria-label={planeLabel+" relationship preview"}>
         <div className="dr-access-node"><span>Source</span><strong>{source||((plane==="ai")?"AI identity":"Source object / group")}</strong><small>{source?"Selected input":"Enter a source below"}</small></div>
         <div className="dr-access-edge"><span>→</span><small>{selector||(plane==="ai"?"permission":"service")}</small></div>
-        <div className="dr-access-node policy"><span>Decision</span><strong>{matchingDiagnosis?.overall||"Policy evaluation"}</strong><small>{matchingDiagnosis?.next_action||"Test against Core policy"}</small></div>
+        <div className="dr-access-node policy"><span>Policy decision</span><strong>{matchingDiagnosis?.overall||"UNKNOWN"}</strong><small>{matchingDiagnosis?.next_action||"Run Core diagnosis"}</small></div>
         <div className="dr-access-edge"><span>→</span><small>{planeLabel}</small></div>
-        <div className="dr-access-node"><span>Destination</span><strong>{destination||"Destination object / group"}</strong><small>{matchingLive?.fidelity?"Live fidelity: "+matchingLive.fidelity:"Live evidence: UNKNOWN until refreshed"}</small></div>
+        <div className="dr-access-node"><span>Destination</span><strong>{destination||"Destination object / group"}</strong><small>{matchingLive?.fidelity?"Live evidence: "+matchingLive.fidelity:"Live evidence: UNKNOWN until refreshed"}</small></div>
+      </div>
+      <div className="dr-access-verdict-split" aria-label="Policy and transport evidence">
+        <div><span>Policy</span><strong>{matchingDiagnosis?.overall||"UNKNOWN"}</strong><small>Core authorization evaluation only</small></div>
+        <div><span>Transport test</span><strong>{matchingDiagnosis?.network_probe_performed?"Performed":"Not tested"}</strong><small>Policy ALLOW never becomes connection success</small></div>
+        <div><span>Observed live use</span><strong>{matchingLive?.fidelity||"UNKNOWN"}</strong><small>Separate bounded Core evidence</small></div>
       </div>
     </section>
     <AccessEvidenceExplorer api={api} plane={plane as AccessPlane} source={source} destination={destination} selector={selector}

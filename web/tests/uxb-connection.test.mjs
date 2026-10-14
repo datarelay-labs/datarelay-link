@@ -866,3 +866,28 @@ test("UXR-2.8/2.9 selected-host service form is focused while lifecycle safety r
  assert.match(source,/observedRemoteServicePreview\(result,body\)/);assert.match(source,/observedRemoteServiceApplyReceipt\(result,reviewed\)/);
  assert.match(source,/UNKNOWN.*Agent Job may already be queued/);
 });
+
+test("UXR-3.1 policy planes explain distinct source/target semantics without borrowing Web identity",()=>{
+ const expected={
+  remote:{agentRequired:true,selector:"Service object"},
+  internet:{agentRequired:false,source:"Source network / CIDR object"},
+  ai:{agentRequired:false,source:"AI identity",selector:"Permission object"},
+ };
+ for(const [plane,fields] of Object.entries(expected))assert.deepEqual(Object.fromEntries(Object.keys(fields).map(key=>[key,policy.accessPlanePurpose(plane)[key]])),fields);
+ const src=readFileSync(join(root,"src","main.tsx"),"utf8");
+ const workspace=src.split("function AccessOperations(",2)[1]?.split("function AuditExplorer(",1)[0]||"";
+ assert.match(src,/import \{AccessEvidenceExplorer,GuidedPolicyJourney,accessPlanePurpose/);
+ assert.match(workspace,/dr-access-purpose-grid/);assert.match(workspace,/No Managed Agent prerequisite/);
+ assert.match(workspace,/does not substitute the signed-in Web user for network source identity/);
+ assert.doesNotMatch(workspace,/operator\.username.*source|source.*operator\.username/);
+});
+
+test("UXR-3.7 Policy authorization never collapses into transport success",()=>{
+ const src=readFileSync(join(root,"src","main.tsx"),"utf8");
+ const workspace=src.split("function AccessOperations(",2)[1]?.split("function AuditExplorer(",1)[0]||"";
+ assert.match(workspace,/aria-label="Policy and transport evidence"/);
+ assert.match(workspace,/Policy<\/span><strong>\{matchingDiagnosis\?\.overall\|\|"UNKNOWN"\}/);
+ assert.match(workspace,/matchingDiagnosis\?\.network_probe_performed\?"Performed":"Not tested"/);
+ assert.match(workspace,/Policy ALLOW never becomes connection success/);
+ assert.match(workspace,/Observed live use/);assert.match(workspace,/matchingLive\?\.fidelity\|\|"UNKNOWN"/);
+});

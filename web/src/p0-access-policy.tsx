@@ -5,6 +5,13 @@ import {isObservedAbsoluteTime} from "./uxb-integrations-state";
 export type LinkApi = (path:string, init?:RequestInit)=>Promise<Record<string,any>>;
 type Navigate = (id:string,groupId?:string,context?:any)=>void;
 export type AccessPlane = "remote"|"internet"|"ai";
+
+export type AccessPlanePurpose={label:string,summary:string,source:string,destination:string,selector:string,agentRequired:boolean};
+export function accessPlanePurpose(plane:AccessPlane):AccessPlanePurpose{
+  if(plane==="internet")return {label:"Internet Access",summary:"Allow a restricted source network to reach only approved Internet destinations.",source:"Source network / CIDR object",destination:"Internet destination object",selector:"Service / port object",agentRequired:false};
+  if(plane==="ai")return {label:"AI Access",summary:"Authorize a named AI identity to use an approved permission against an AI destination.",source:"AI identity",destination:"AI provider / destination object",selector:"Permission object",agentRequired:false};
+  return {label:"Remote Access",summary:"Allow an outside source to reach an explicitly published internal service through a managed Host.",source:"Source object / group",destination:"Internal server / service object",selector:"Service object",agentRequired:true};
+}
 type SelectedFlow = {source:string,destination:string,selector:string,path?:string};
 
 const UNSAFE_CORE_TRACE=/[\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/;
