@@ -47,6 +47,10 @@ class MgmtSyncError(ControlPlaneError):
     """Raised when the Agent↔Server management path fails."""
 
 
+class MgmtAmbiguousWriteError(MgmtSyncError):
+    """A mutating request may have committed before its response was lost."""
+
+
 class MgmtAuthError(MgmtSyncError):
     """Raised when management identity authentication fails."""
 
@@ -671,19 +675,45 @@ def _request_json(
             % (code, (parsed_error or detail).strip() or exc.reason)
         ) from exc
     except Exception as exc:
+        if method.upper() != "GET":
+            raise MgmtAmbiguousWriteError(
+                "ERROR:\nDRLink Server management response was not received.\n\n"
+                "The Server may have applied the requested change before the response was lost.\n"
+                "The caller must verify or restore the previous Server state.\n\n"
+                "%s" % exc
+            ) from exc
         raise MgmtSyncError(
             "ERROR:\nDRLink Server management path is unreachable.\n\n%s\n\nNo changes were applied."
             % exc
         ) from exc
+    mutating = method.upper() != "GET"
     if not raw:
+        if mutating:
+            raise MgmtAmbiguousWriteError(
+                "ERROR:\nDRLink Server returned an empty response after a management write.\n\n"
+                "The Server may have applied the requested change.\n"
+                "The caller must verify or restore the previous Server state."
+            )
         return {}
     try:
         data = json.loads(raw.decode("utf-8"))
     except (TypeError, json.JSONDecodeError) as exc:
+        if mutating:
+            raise MgmtAmbiguousWriteError(
+                "ERROR:\nDRLink Server returned an unreadable response after a management write.\n\n"
+                "The Server may have applied the requested change.\n"
+                "The caller must verify or restore the previous Server state."
+            ) from exc
         raise MgmtSyncError(
             "ERROR:\nServer management response was not valid JSON.\n\nNo changes were applied."
         ) from exc
     if not isinstance(data, dict):
+        if mutating:
+            raise MgmtAmbiguousWriteError(
+                "ERROR:\nDRLink Server returned a malformed response after a management write.\n\n"
+                "The Server may have applied the requested change.\n"
+                "The caller must verify or restore the previous Server state."
+            )
         raise MgmtSyncError(
             "ERROR:\nServer management response was malformed.\n\nNo changes were applied."
         )
@@ -694,7 +724,16 @@ def _request_json(
             "ERROR:\nServer management request failed.\n\n%s\n\nNo changes were applied."
             % str(data.get("error")).strip()
         )
-    return _verify_response_mac(data, root=root)
+    try:
+        return _verify_response_mac(data, root=root)
+    except MgmtSyncError as exc:
+        if mutating:
+            raise MgmtAmbiguousWriteError(
+                "ERROR:\nDRLink Server management response could not be authenticated after a write.\n\n"
+                "The Server may have applied the requested change.\n"
+                "The caller must verify or restore the previous Server state."
+            ) from exc
+        raise
 
 
 def fetch_server_catalog(root: Optional[str] = None) -> dict:

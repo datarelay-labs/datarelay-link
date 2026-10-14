@@ -529,6 +529,76 @@ class MgmtApiAuthTests(unittest.TestCase):
         self.assertEqual(acked["status"], "HEALTHY")
         self.assertEqual(acked["endpoint_port"], result["endpoint_port"])
 
+    def test_agent_edit_timeout_after_server_commit_restores_previous_state(self):
+        v24.set_service_object(
+            self.server, "o004-a", type="tcp", port=18001, oneshot=True
+        )
+        v24.set_service_object(
+            self.server, "o004-b", type="tcp", port=18002, oneshot=True
+        )
+        agent = ControlPlane(self.agent_tmp)
+        try:
+            v24.ensure_v2_schema(agent.conn)
+            v24.sync_agent_catalog_from_server(agent, root=self.agent_tmp)
+            v24.set_remote_service_agent(
+                agent,
+                "o004-rs",
+                destination="this-host",
+                service="o004-a",
+                enabled=True,
+                oneshot=True,
+                root=self.agent_tmp,
+            )
+            before = agent.conn.execute(
+                "SELECT service_object, endpoint_port FROM agent_remote_services "
+                "WHERE name='o004-rs'"
+            ).fetchone()
+            original = mgmt.upsert_remote_service_on_server
+            injected = {"done": False}
+
+            def committed_then_timed_out(**kwargs):
+                result = original(**kwargs)
+                if kwargs.get("service") == "o004-b" and not injected["done"]:
+                    injected["done"] = True
+                    raise TimeoutError("simulated response timeout after Server commit")
+                return result
+
+            mgmt.upsert_remote_service_on_server = committed_then_timed_out
+            try:
+                with self.assertRaisesRegex(
+                    Exception, "Previous configuration was restored"
+                ) as raised:
+                    v24.set_remote_service_agent(
+                        agent,
+                        "o004-rs",
+                        destination="this-host",
+                        service="o004-b",
+                        enabled=True,
+                        oneshot=True,
+                        root=self.agent_tmp,
+                    )
+            finally:
+                mgmt.upsert_remote_service_on_server = original
+
+            self.assertNotIn("No changes were applied", str(raised.exception))
+            local = agent.conn.execute(
+                "SELECT service_object, endpoint_port FROM agent_remote_services "
+                "WHERE name='o004-rs'"
+            ).fetchone()
+            remote = self.server.conn.execute(
+                "SELECT so.name AS service, s.public_port "
+                "FROM published_services s "
+                "JOIN remote_service_meta m ON m.service_id=s.id "
+                "LEFT JOIN service_objects so ON so.id=m.service_object_id "
+                "WHERE s.name='o004-rs' AND s.released=0"
+            ).fetchone()
+            self.assertEqual(local["service_object"], "o004-a")
+            self.assertEqual(remote["service"], "o004-a")
+            self.assertEqual(int(local["endpoint_port"]), int(before["endpoint_port"]))
+            self.assertEqual(int(remote["public_port"]), int(before["endpoint_port"]))
+        finally:
+            agent.close()
+
     def test_F002_reconcile_preserves_own_server_reserved_port(self):
         # A missing FRP registry proxy projection must not change an existing
         # public endpoint when the Server still owns the exact reservation.
@@ -954,6 +1024,74 @@ class MgmtApiErrorClassificationTests(unittest.TestCase):
         self.assertNotEqual(msg, mgmt.AUTH_REJECTED)
         self.assertNotIn("re-enrolled", msg.lower())
         self.assertNotIn("management identity has been revoked", msg.lower())
+
+    def test_mutating_transport_failure_is_ambiguous(self):
+        original = urllib.request.urlopen
+
+        def timed_out(*args, **kwargs):
+            raise TimeoutError("simulated lost write response")
+
+        urllib.request.urlopen = timed_out
+        try:
+            with self.assertRaises(mgmt.MgmtAmbiguousWriteError) as raised:
+                mgmt._request_json(
+                    "POST",
+                    self.base + "/v1/remote-services",
+                    {"name": "ambiguous"},
+                    root=self.agent_tmp,
+                )
+        finally:
+            urllib.request.urlopen = original
+        msg = str(raised.exception)
+        self.assertIn("may have applied", msg)
+        self.assertNotIn("No changes were applied", msg)
+
+    def test_read_transport_failure_remains_no_change(self):
+        original = urllib.request.urlopen
+
+        def timed_out(*args, **kwargs):
+            raise TimeoutError("simulated read timeout")
+
+        urllib.request.urlopen = timed_out
+        try:
+            with self.assertRaises(mgmt.MgmtSyncError) as raised:
+                mgmt._request_json(
+                    "GET",
+                    self.base + "/v1/catalog",
+                    root=self.agent_tmp,
+                )
+        finally:
+            urllib.request.urlopen = original
+        self.assertNotIsInstance(raised.exception, mgmt.MgmtAmbiguousWriteError)
+        self.assertIn("No changes were applied", str(raised.exception))
+
+    def test_mutating_response_integrity_failure_is_ambiguous(self):
+        original = urllib.request.urlopen
+
+        class MissingMacResponse:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return False
+
+            def read(self):
+                return b'{"name":"ambiguous"}'
+
+        urllib.request.urlopen = lambda *args, **kwargs: MissingMacResponse()
+        try:
+            with self.assertRaises(mgmt.MgmtAmbiguousWriteError) as raised:
+                mgmt._request_json(
+                    "POST",
+                    self.base + "/v1/remote-services",
+                    {"name": "ambiguous"},
+                    root=self.agent_tmp,
+                )
+        finally:
+            urllib.request.urlopen = original
+        msg = str(raised.exception)
+        self.assertIn("may have applied", msg)
+        self.assertNotIn("No changes were applied", msg)
 
     def test_auth_error_http_remains_auth_class(self):
         body = b"{}"
