@@ -1554,9 +1554,9 @@
       "status": "DEV_DEPLOYED",
       "approval_required": false,
       "evidence": {
-        "source_commit": "971f35e250a3a724803478ed68091cf61e6786fc",
-        "deployed_source_head": "971f35e250a3a724803478ed68091cf61e6786fc",
-        "preview": "https://dev-preview.example.invalid:19044",
+        "source_commit": "1e50c66cccc486df163b220fded71d486d5c7d78",
+        "deployed_source_head": "1e50c66cccc486df163b220fded71d486d5c7d78",
+        "preview": "approved-development-preview",
         "app_sha256": "6979cd33c876d4d973255056a347dc2161208d8491814e658bf45319dbc2bc70",
         "styles_sha256": "3cd48eb87dae27792760425e1183fd9d25b542cfedd1b7c4c3902382cd9f3c7a",
         "foundation_css_sha256": "3049f76b67d9341920254bcbe1b26b48d52b05e9faa9bc992f0d51f6887928d7",
@@ -1564,13 +1564,14 @@
         "logo_sha256": "5e90dfa40d1400eb24ec8e02adf9016d8b43b9995b8953cd59472789904657aa",
         "anonymous_session_http": 401,
         "previous_candidate": "dev-installed-1c90e9ef",
-        "active_candidate": "dev-installed-971f35e2",
+        "active_candidate": "dev-installed-1e50c66c",
         "preview_state_preserved": {
           "db_sha256": "e3ba06536f7dbba337dee3c1c5f01b43660ce276abb54c5cee2d5defc5b970aa",
           "cert_sha256": "f990aa9f0b6dd8433dac5c9c072152088ff2ef5116dfaf49373f83c66b15dfbf",
           "key_sha256": "5ebbabca902feb4709d8d98a9b5a4b4977877b6e1f888f5613f510d608bd1fb6"
         },
-        "qualification": "Approved development preview pointer updated; assets byte-identical and existing DB/TLS unchanged. Authenticated live-browser acceptance remains open."
+        "qualification": "Approved development preview pointer updated; assets byte-identical and existing DB/TLS unchanged. Authenticated live-browser acceptance remains open.",
+        "private_bundle_sha256": "53558225b27f7973544a81c7e48c17fff5876aea51e09027a7c08ac09dab2f08"
       }
     },
     {
@@ -1587,9 +1588,16 @@
         "UXR-7.2"
       ],
       "owner": "CHATGPT_CHAT",
-      "status": "SPEC_BOUND",
+      "status": "BLOCKED",
       "approval_required": false,
-      "evidence": {}
+      "evidence": {
+        "status_record": "docs/UI_REDESIGN_UXR7_ACCEPTANCE_STATUS_2026-10-14.md",
+        "fixture_visual_old_manifest_sha256": "fde3201624a754453e9555625c32e240e461d904df8833f1aa438dea543789e3",
+        "fixture_visual_current_manifest_sha256": "6cab53564b291c536422f1fdb3f838f66b76e3c285e06d266e0d74954a9370c1",
+        "fixture_matrix": "32 + 32 same-name Server cases; 0 overflow, undersized controls, runtime errors, writes",
+        "blocker": "Required PDF3-5 visual sources are absent from current repo/accessible Project files and no permitted authenticated browser session is available.",
+        "acceptance_claimed": false
+      }
     },
     {
       "id": "UXR-7.4",
@@ -1608,9 +1616,16 @@
         "UXR-7.3"
       ],
       "owner": "CHATGPT_CHAT",
-      "status": "SPEC_BOUND",
+      "status": "BLOCKED",
       "approval_required": false,
-      "evidence": {}
+      "evidence": {
+        "ledger": "docs/UXB_06F_B2_BROWSER_ACCEPTANCE_LEDGER.md",
+        "deployed_source_head": "1e50c66cccc486df163b220fded71d486d5c7d78",
+        "preview_operator_census": "1 enabled Admin; 0 provisioned Operator; 0 provisioned Read Only",
+        "blocker": "Three independent permitted authenticated role sessions are required. No account/password/role reset is authorized for test convenience.",
+        "real_browser_cases_verified": 0,
+        "acceptance_claimed": false
+      }
     },
     {
       "id": "UXR-7.5",
@@ -1648,9 +1663,16 @@
         "UXR-7.3"
       ],
       "owner": "CHATGPT_CHAT",
-      "status": "SPEC_BOUND",
+      "status": "BLOCKED",
       "approval_required": false,
-      "evidence": {}
+      "evidence": {
+        "protocol": "docs/UI_REDESIGN_NOVICE_USABILITY_PROTOCOL_2026-10-14.md",
+        "participants_recorded": 0,
+        "required_participants": 5,
+        "discovery_target_seconds": 10,
+        "blocker": "Five independent real novice humans are required; scripted/LLM personas cannot substitute.",
+        "acceptance_claimed": false
+      }
     },
     {
       "id": "UXR-7.7",
@@ -1667,9 +1689,16 @@
         "UXR-7.1"
       ],
       "owner": "CHATGPT_CHAT",
-      "status": "SPEC_BOUND",
+      "status": "IMPLEMENTED",
       "approval_required": false,
-      "evidence": {}
+      "evidence": {
+        "head": "1e50c66cccc486df163b220fded71d486d5c7d78",
+        "repair": "Public evidence metadata sanitized and deterministic dist/bootstrap-* regenerated after exact-head CI exposed both defects.",
+        "public_metadata_scan": "PASS; live IPv4=0, fingerprints=0, non-doc IPv6=0",
+        "dist_rebuild": "deterministic repeated build PASS",
+        "github_ci": "Running on exact head; prior-head results are not reused.",
+        "status_record": "docs/UI_REDESIGN_UXR7_ACCEPTANCE_STATUS_2026-10-14.md"
+      }
     },
     {
       "id": "UXR-7.8",
