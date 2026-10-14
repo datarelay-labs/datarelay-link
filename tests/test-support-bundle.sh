@@ -250,6 +250,8 @@ assert_member "$ARCHIVE_SERVER" "registry-summary.json"
 assert_member "$ARCHIVE_SERVER" "access-control-summary.json"
 assert_member "$ARCHIVE_SERVER" "egress-control-summary.json"
 assert_member "$ARCHIVE_SERVER" "versions.txt"
+tar -xOzf "$ARCHIVE_SERVER" versions.txt | grep -q '^BUNDLE_SHA256=not applicable$' \
+  || fail "unpackaged server support bundle must report bundle digest as not applicable"
 assert_member "$ARCHIVE_SERVER" "os-info.txt"
 
 # Secrets must be absent
@@ -385,6 +387,9 @@ FRP_DEPLOY_TEST_ROOT="$CLIENT" python3 "$LIB" --output "$ARCHIVE_CLIENT" \
 tar -tzf "$ARCHIVE_CLIENT" >/dev/null || fail "client archive not readable"
 assert_member "$ARCHIVE_CLIENT" "client-summary.json"
 assert_member "$ARCHIVE_CLIENT" "meta.json"
+assert_member "$ARCHIVE_CLIENT" "versions.txt"
+tar -xOzf "$ARCHIVE_CLIENT" versions.txt | grep -q '^BUNDLE_SHA256=not applicable$' \
+  || fail "unpackaged client support bundle must report bundle digest as not applicable"
 assert_member "$ARCHIVE_CLIENT" "target-health/from-state.json"
 # Client summary must use real state keys and include services/health.
 python3 - "$ARCHIVE_CLIENT" <<'PY' || fail "client-summary keys/services/health"

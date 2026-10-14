@@ -380,7 +380,7 @@ class BundleBuilder:
             "FRP_VERSION=%s" % identity.get("frp_version", "unknown"),
             "RELEASE_CHANNEL=%s" % identity.get("release_channel", "unknown"),
             "SOURCE_REF=%s" % identity.get("source_ref", "unknown"),
-            "BUNDLE_SHA256=%s" % identity.get("bundle_sha256", "unknown"),
+            "BUNDLE_SHA256=%s" % identity.get("bundle_sha256", "not applicable"),
         ]
         for binary in ("/usr/local/bin/frps", "/usr/local/bin/frpc"):
             path = self.path(binary)
