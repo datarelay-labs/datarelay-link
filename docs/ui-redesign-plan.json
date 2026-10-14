@@ -1399,9 +1399,18 @@
         "UXR-3.4"
       ],
       "owner": "CHATGPT_CHAT",
-      "status": "SPEC_BOUND",
+      "status": "APPROVAL_REQUIRED",
       "approval_required": true,
-      "evidence": {}
+      "evidence": {
+        "security_contract": "docs/UI06_TWO_PERSON_TEMPORARY_ACCESS_SECURITY_CONTRACT_2026-10-14.md",
+        "current_gap": "Existing TemporaryAccessPanel is one-actor direct Core preview/apply, not requester/reviewer approval.",
+        "existing_contracts": [
+          "docs/MANAGEMENT_SURFACE_CONTRACT.md section 9.9",
+          "docs/COMPETITIVE_EXPANSION_3_0.md section 9"
+        ],
+        "approval_scope": "Exact UXR-6.1 contract requires explicit owner/security approval before schema/RBAC/API mutation.",
+        "qualification": "Design frozen only; no Core schema, permission, API, Web authority or runtime behavior changed."
+      }
     },
     {
       "id": "UXR-6.2",
