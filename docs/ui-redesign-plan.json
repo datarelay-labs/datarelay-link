@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "revision": 2,
+  "revision": 3,
   "repository": "datarelay-labs/datarelay-link",
   "roadmap": 184,
   "packet": 182,
@@ -11,7 +11,7 @@
   "priority": "P0_EXCLUSIVE_UI_REDESIGN",
   "exclusive": true,
   "scope_complete": false,
-  "next_task": "UXR-2.1",
+  "next_task": "UXR-3.1",
   "owner_acceptance": null,
   "scope_change_approval": null,
   "milestones": [
@@ -416,9 +416,16 @@
         "UXR-1.10"
       ],
       "owner": "CHATGPT_CHAT",
-      "status": "SPEC_BOUND",
+      "status": "DEV_DEPLOYED",
       "approval_required": false,
-      "evidence": {}
+      "evidence": {
+        "source_commit": "1121c0ac81d5f36a5436947164b802aa13805480",
+        "deployed_source_head": "df12fde730a8f40bb961821888302de90492d7b7",
+        "private_bundle_sha256": "98dd9d687fbcb75f4e887a6ee96f8f5b8b38e938ad6089de827f5bd3f687fc4a",
+        "preview": "https://221.139.249.111:19044",
+        "focused_tests": "Platform chooser source/P0 regressions plus enrollment browser fixture; supported Linux/macOS/Windows only.",
+        "qualification": "Development source and exact-head private preview only; live authenticated browser/user/Agent acceptance remains open."
+      }
     },
     {
       "id": "UXR-2.2",
@@ -434,9 +441,16 @@
         "UXR-2.1"
       ],
       "owner": "CHATGPT_CHAT",
-      "status": "SPEC_BOUND",
+      "status": "DEV_DEPLOYED",
       "approval_required": false,
-      "evidence": {}
+      "evidence": {
+        "source_commit": "455bbec2faa13464da34eab9da3c3b3039265fb1",
+        "deployed_source_head": "df12fde730a8f40bb961821888302de90492d7b7",
+        "private_bundle_sha256": "98dd9d687fbcb75f4e887a6ee96f8f5b8b38e938ad6089de827f5bd3f687fc4a",
+        "preview": "https://221.139.249.111:19044",
+        "focused_tests": "Exact issuance-intent, one-shot request lock, expiry and actor/role invalidation deterministic regressions.",
+        "qualification": "Development source and exact-head private preview only; live authenticated browser/user/Agent acceptance remains open."
+      }
     },
     {
       "id": "UXR-2.3",
@@ -452,9 +466,16 @@
         "UXR-2.2"
       ],
       "owner": "CHATGPT_CHAT",
-      "status": "SPEC_BOUND",
+      "status": "DEV_DEPLOYED",
       "approval_required": false,
-      "evidence": {}
+      "evidence": {
+        "source_commit": "455bbec2faa13464da34eab9da3c3b3039265fb1",
+        "deployed_source_head": "df12fde730a8f40bb961821888302de90492d7b7",
+        "private_bundle_sha256": "98dd9d687fbcb75f4e887a6ee96f8f5b8b38e938ad6089de827f5bd3f687fc4a",
+        "preview": "https://221.139.249.111:19044",
+        "focused_tests": "Exact enrollment_id detection, 10-attempt bounded polling, 10s inventory timeout/retry; Journey exact-head green. Actual Agent detection remains open.",
+        "qualification": "Development source and exact-head private preview only; live authenticated browser/user/Agent acceptance remains open."
+      }
     },
     {
       "id": "UXR-2.4",
@@ -470,9 +491,16 @@
         "UXR-2.3"
       ],
       "owner": "CHATGPT_CHAT",
-      "status": "SPEC_BOUND",
+      "status": "DEV_DEPLOYED",
       "approval_required": false,
-      "evidence": {}
+      "evidence": {
+        "source_commit": "455bbec2faa13464da34eab9da3c3b3039265fb1",
+        "deployed_source_head": "df12fde730a8f40bb961821888302de90492d7b7",
+        "private_bundle_sha256": "98dd9d687fbcb75f4e887a6ee96f8f5b8b38e938ad6089de827f5bd3f687fc4a",
+        "preview": "https://221.139.249.111:19044",
+        "focused_tests": "Exact Host admission preview/apply revision/receipt/expiry and false-success guards; live approval remains open.",
+        "qualification": "Development source and exact-head private preview only; live authenticated browser/user/Agent acceptance remains open."
+      }
     },
     {
       "id": "UXR-2.5",
@@ -489,9 +517,16 @@
         "UXR-2.4"
       ],
       "owner": "CHATGPT_CHAT",
-      "status": "SPEC_BOUND",
+      "status": "DEV_DEPLOYED",
       "approval_required": false,
-      "evidence": {}
+      "evidence": {
+        "source_commit": "98a1d2c5f103ad1a70d59578b3aea7caf20e0f3f",
+        "deployed_source_head": "df12fde730a8f40bb961821888302de90492d7b7",
+        "private_bundle_sha256": "98dd9d687fbcb75f4e887a6ee96f8f5b8b38e938ad6089de827f5bd3f687fc4a",
+        "preview": "https://221.139.249.111:19044",
+        "focused_tests": "Mounted setup browser 2/2 PASS: selected Host to Service to rule without ID re-entry; Host switch clears dependent intent.",
+        "qualification": "Development source and exact-head private preview only; live authenticated browser/user/Agent acceptance remains open."
+      }
     },
     {
       "id": "UXR-2.6",
@@ -508,9 +543,16 @@
         "UXR-1.10"
       ],
       "owner": "CHATGPT_CHAT",
-      "status": "SPEC_BOUND",
+      "status": "DEV_DEPLOYED",
       "approval_required": false,
-      "evidence": {}
+      "evidence": {
+        "source_commit": "df12fde730a8f40bb961821888302de90492d7b7",
+        "deployed_source_head": "df12fde730a8f40bb961821888302de90492d7b7",
+        "private_bundle_sha256": "98dd9d687fbcb75f4e887a6ee96f8f5b8b38e938ad6089de827f5bd3f687fc4a",
+        "preview": "https://221.139.249.111:19044",
+        "focused_tests": "Service catalog source regressions separate configuration from policy/transport and remove targetless editor.",
+        "qualification": "Development source and exact-head private preview only; live authenticated browser/user/Agent acceptance remains open."
+      }
     },
     {
       "id": "UXR-2.7",
@@ -527,9 +569,16 @@
         "UXR-2.6"
       ],
       "owner": "CHATGPT_CHAT",
-      "status": "SPEC_BOUND",
+      "status": "DEV_DEPLOYED",
       "approval_required": false,
-      "evidence": {}
+      "evidence": {
+        "source_commit": "df12fde730a8f40bb961821888302de90492d7b7",
+        "deployed_source_head": "df12fde730a8f40bb961821888302de90492d7b7",
+        "private_bundle_sha256": "98dd9d687fbcb75f4e887a6ee96f8f5b8b38e938ad6089de827f5bd3f687fc4a",
+        "preview": "https://221.139.249.111:19044",
+        "focused_tests": "Protocol action regressions for SSH/HTTP/HTTPS/TCP, invalid hosts/ports and non-enabled states.",
+        "qualification": "Development source and exact-head private preview only; live authenticated browser/user/Agent acceptance remains open."
+      }
     },
     {
       "id": "UXR-2.8",
@@ -545,9 +594,16 @@
         "UXR-2.5"
       ],
       "owner": "CHATGPT_CHAT",
-      "status": "SPEC_BOUND",
+      "status": "DEV_DEPLOYED",
       "approval_required": false,
-      "evidence": {}
+      "evidence": {
+        "source_commit": "df12fde730a8f40bb961821888302de90492d7b7",
+        "deployed_source_head": "df12fde730a8f40bb961821888302de90492d7b7",
+        "private_bundle_sha256": "98dd9d687fbcb75f4e887a6ee96f8f5b8b38e938ad6089de827f5bd3f687fc4a",
+        "preview": "https://221.139.249.111:19044",
+        "focused_tests": "Selected-host focused service form regressions; advanced lifecycle collapsed and public endpoint remains unconfirmed until Core/Agent evidence.",
+        "qualification": "Development source and exact-head private preview only; live authenticated browser/user/Agent acceptance remains open."
+      }
     },
     {
       "id": "UXR-2.9",
@@ -564,9 +620,16 @@
         "UXR-2.8"
       ],
       "owner": "CHATGPT_CHAT",
-      "status": "SPEC_BOUND",
+      "status": "DEV_DEPLOYED",
       "approval_required": false,
-      "evidence": {}
+      "evidence": {
+        "source_commit": "df12fde730a8f40bb961821888302de90492d7b7",
+        "deployed_source_head": "df12fde730a8f40bb961821888302de90492d7b7",
+        "private_bundle_sha256": "98dd9d687fbcb75f4e887a6ee96f8f5b8b38e938ad6089de827f5bd3f687fc4a",
+        "preview": "https://221.139.249.111:19044",
+        "focused_tests": "One-shot Preview/Apply, expiry, ambiguous outcome, duplicate lock and local-only cancel regressions.",
+        "qualification": "Development source and exact-head private preview only; live authenticated browser/user/Agent acceptance remains open."
+      }
     },
     {
       "id": "UXR-2.10",
@@ -584,9 +647,16 @@
         "UXR-2.9"
       ],
       "owner": "CHATGPT_CHAT",
-      "status": "SPEC_BOUND",
+      "status": "DEV_DEPLOYED",
       "approval_required": false,
-      "evidence": {}
+      "evidence": {
+        "source_commit": "df12fde730a8f40bb961821888302de90492d7b7",
+        "deployed_source_head": "df12fde730a8f40bb961821888302de90492d7b7",
+        "private_bundle_sha256": "98dd9d687fbcb75f4e887a6ee96f8f5b8b38e938ad6089de827f5bd3f687fc4a",
+        "preview": "https://221.139.249.111:19044",
+        "focused_tests": "Coherent V2 exact-head private build: Administration 20/20, Journey 430/430, P0 44/44; deployed asset parity PASS. Real authorized linked-user/Agent scenario remains open.",
+        "qualification": "Development source and exact-head private preview only; live authenticated browser/user/Agent acceptance remains open."
+      }
     },
     {
       "id": "UXR-3.1",
@@ -1250,12 +1320,12 @@
       "status": "IMPLEMENTED",
       "approval_required": false,
       "evidence": {
-        "source_commit": "509441641f5fe3d5220819487c7fea5f813d5ac5",
-        "bundle_sha256": "e6b2d7e11552c70c9104fd0cb4b37fc86f210999c4ccc9958bbfa0a0639fb355",
+        "source_commit": "df12fde730a8f40bb961821888302de90492d7b7",
+        "bundle_sha256": "98dd9d687fbcb75f4e887a6ee96f8f5b8b38e938ad6089de827f5bd3f687fc4a",
         "foundation_head": "46ddb60cad8eae7b1718588cd19421e61b5300e7",
         "foundation_package_count": 10,
-        "private_candidate": "dev-installed-50944164",
-        "qualification": "Deterministic private RC41 build and disposable install PASS; not release acceptance."
+        "private_candidate": "dev-installed-df12fde7",
+        "qualification": "Exact-head deterministic private RC41 build, web suites and disposable install PASS; not release acceptance."
       }
     },
     {
@@ -1275,14 +1345,17 @@
       "status": "DEV_DEPLOYED",
       "approval_required": false,
       "evidence": {
-        "source_commit": "509441641f5fe3d5220819487c7fea5f813d5ac5",
-        "deployed_source_head": "509441641f5fe3d5220819487c7fea5f813d5ac5",
+        "source_commit": "df12fde730a8f40bb961821888302de90492d7b7",
+        "deployed_source_head": "df12fde730a8f40bb961821888302de90492d7b7",
         "preview": "https://221.139.249.111:19044",
-        "app_sha256": "a598df2537e42a1dd1afe6eefcc1c40dc9102de1665e476b1a0f60f07152453d",
-        "styles_sha256": "b992d288ae678ad7e0d1f0c522e55084a614cf23e1ca17ff755d58fa9684cf03",
+        "app_sha256": "97ee5a4716519db81c7a90aa0de3436261ceed4ccc3c920dcb19e3fa8b59facc",
+        "styles_sha256": "7d134e663acbb348cff238579a001aa67bf8b7c5a03c0bd5be30785a809adf93",
         "foundation_css_sha256": "3049f76b67d9341920254bcbe1b26b48d52b05e9faa9bc992f0d51f6887928d7",
+        "favicon_sha256": "7ec193f6192213c31b63cc5cee2e8bb5439efaaa79b07534a1916c3f3b897462",
         "anonymous_session_http": 401,
-        "qualification": "Approved development preview updated; authenticated live-browser acceptance remains open."
+        "previous_candidate": "dev-installed-50944164",
+        "active_candidate": "dev-installed-df12fde7",
+        "qualification": "Approved development preview updated through private pointer; TLS explicit-cert asset parity PASS. Authenticated live-browser acceptance remains open."
       }
     },
     {
@@ -2515,7 +2588,7 @@
   "uxe_to_wbs": [
     {
       "id": "LEGACY19-UXE-01",
-      "meaning": "New Admin logs in and locates “Add Agent” without instructions | Can discover action and distinguish on-prem install roles",
+      "meaning": "New Admin logs in and locates \u201cAdd Agent\u201d without instructions | Can discover action and distinguish on-prem install roles",
       "source_line": 229,
       "wbs": [
         "UXR-7.5"
@@ -2539,7 +2612,7 @@
     },
     {
       "id": "LEGACY19-UXE-04",
-      "meaning": "An intentionally denied source tries to connect | A single “Why denied?” workflow shows truthful reason, policy and next action; no false ALLOW",
+      "meaning": "An intentionally denied source tries to connect | A single \u201cWhy denied?\u201d workflow shows truthful reason, policy and next action; no false ALLOW",
       "source_line": 232,
       "wbs": [
         "UXR-7.5"

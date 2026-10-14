@@ -1,3 +1,19 @@
+## 2026-10-14 continuation — V2 server-to-service journey deployed
+
+Exact deployed Link source: `df12fde730a8f40bb961821888302de90492d7b7`. This continuation implements the UXR-2 source journey without changing Core authorization, enrollment, admission, Remote Service or policy semantics.
+
+- **UXR-2.1:** Add server begins with Linux/macOS/Windows platform cards and collapsed advanced invitation settings.
+- **UXR-2.2–2.4:** display-once invitation evidence remains bound to exact operator/role/intent; enrollment detection is keyed by the Core `enrollment_id`, polling is bounded, inventory timeout/retry is explicit, and approval advances only from exact Core plan/revision/receipt evidence. Detection/approval/connection remain separate.
+- **UXR-2.5:** mounted browser continuity proves an observed Host flows into the service and rule stages without copying a Host ID, and changing the Host clears dependent service/rule intent.
+- **UXR-2.6–2.9:** the Services route removes the targetless editor, separates configuration from policy/transport evidence, adds safe SSH/HTTP(S)/TCP use guidance, focuses publication on the selected Host, hides lifecycle options under disclosure, and preserves existing one-shot Preview/Apply with local-only cancel and ambiguous-outcome retirement.
+- Exact-source checks: Setup continuity browser **2/2 PASS**, related service/connection checks **57/57 PASS**, registered Journey **430/430 PASS**. The private RC41 builder independently passed Administration **20/20**, Journey **430/430** and P0 **44/44**.
+- Private RC41 bundle: `98dd9d687fbcb75f4e887a6ee96f8f5b8b38e938ad6089de827f5bd3f687fc4a`; Foundation `46ddb60`; 10/10 private archives. `dev-installed-df12fde7` passed read-only verification and atomically replaced only the approved development pointer `dev-installed-50944164`.
+- Approved HTTPS preview `https://221.139.249.111:19044` already serves through `dev-installed-current`; all five static assets are HTTP 200 and byte-identical to the installed candidate. `app.js` SHA256 `97ee5a4716519db81c7a90aa0de3436261ceed4ccc3c920dcb19e3fa8b59facc`; `styles.css` `7d134e663acbb348cff238579a001aa67bf8b7c5a03c0bd5be30785a809adf93`; anonymous `/api/v1/session` remains **401**. Existing preview Core data, account, TLS files and rollback candidate were not changed.
+
+UXR-2.1–2.10 are recorded **DEV_DEPLOYED**, not ACCEPTED. Synthetic fixtures do not substitute for a real Agent or independent user. The existing preview account credential was not reset or invented, so authenticated live-browser V2 acceptance remains open. No WBS is accepted from this checkpoint. Next source task: **UXR-3.1**.
+
+---
+
 
 ## 2026-10-14 continuation — selected-server management gate cleared
 

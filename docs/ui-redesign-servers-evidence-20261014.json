@@ -155,6 +155,34 @@
         "p0": "42/42",
         "servers": "14/14"
       }
+    },
+    {
+      "acceptance_claimed": false,
+      "anonymous_session_http": 401,
+      "dev_candidate": "dev-installed-df12fde7",
+      "foundation_head": "46ddb60cad8eae7b1718588cd19421e61b5300e7",
+      "live_authenticated_browser_verified": false,
+      "preview": "https://221.139.249.111:19044",
+      "previous_candidate": "dev-installed-50944164",
+      "private_bundle_sha256": "98dd9d687fbcb75f4e887a6ee96f8f5b8b38e938ad6089de827f5bd3f687fc4a",
+      "real_agent_verified": false,
+      "recorded_at": "2026-10-14T05:24:32.573231+00:00",
+      "scope": "UXR-2 development source + approved private preview deployment; no live Agent/user acceptance",
+      "served": {
+        "app.js": "97ee5a4716519db81c7a90aa0de3436261ceed4ccc3c920dcb19e3fa8b59facc",
+        "favicon.svg": "7ec193f6192213c31b63cc5cee2e8bb5439efaaa79b07534a1916c3f3b897462",
+        "foundation.css": "3049f76b67d9341920254bcbe1b26b48d52b05e9faa9bc992f0d51f6887928d7",
+        "index.html": "672e50ea3c12917b65b08f69c1d6aeaa8e8c946c7218ba25a75e1fc1bf9245f2",
+        "styles.css": "7d134e663acbb348cff238579a001aa67bf8b7c5a03c0bd5be30785a809adf93"
+      },
+      "source_commit": "df12fde730a8f40bb961821888302de90492d7b7",
+      "tests": {
+        "journey": "430/430",
+        "private_administration": "20/20",
+        "private_p0": "44/44",
+        "service_and_connection": "57/57",
+        "setup_browser": "2/2"
+      }
     }
   ],
   "logs": {
