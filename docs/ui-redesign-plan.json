@@ -11,7 +11,7 @@
   "priority": "P0_EXCLUSIVE_UI_REDESIGN",
   "exclusive": true,
   "scope_complete": false,
-  "next_task": "UXR-1.6",
+  "next_task": "UXR-2.1",
   "owner_acceptance": null,
   "scope_change_approval": null,
   "milestones": [
@@ -293,12 +293,12 @@
         "UXR-1.5"
       ],
       "owner": "CHATGPT_CHAT",
-      "status": "BLOCKED",
+      "status": "IMPLEMENTED",
       "approval_required": false,
       "evidence": {
-        "implementation_report": "docs/UI_REDESIGN_IMPLEMENTATION_2026-10-14.md",
-        "blocker": "Selected-host panel correction rejected twice by the platform; coherent V1 requires those panels.",
-        "retry_policy": "Normal current-condition retry on continuation; no bypass and no permanent-ban assumption."
+        "source_commit": "509441641f5fe3d5220819487c7fea5f813d5ac5",
+        "focused_tests": "Servers 14/14; mounted Chromium 35/35; Journey 426/426; Administration 20/20; P0 42/42",
+        "qualification": "Source implemented and deterministic/browser-fixture verified; live logged-in acceptance remains open."
       }
     },
     {
@@ -316,12 +316,12 @@
         "UXR-1.5"
       ],
       "owner": "CHATGPT_CHAT",
-      "status": "BLOCKED",
+      "status": "IMPLEMENTED",
       "approval_required": false,
       "evidence": {
-        "implementation_report": "docs/UI_REDESIGN_IMPLEMENTATION_2026-10-14.md",
-        "blocker": "Selected-host panel correction rejected twice by the platform; coherent V1 requires those panels.",
-        "retry_policy": "Normal current-condition retry on continuation; no bypass and no permanent-ban assumption."
+        "source_commit": "509441641f5fe3d5220819487c7fea5f813d5ac5",
+        "focused_tests": "Servers 14/14; mounted Chromium 35/35; Journey 426/426; Administration 20/20; P0 42/42",
+        "qualification": "Source implemented and deterministic/browser-fixture verified; live logged-in acceptance remains open."
       }
     },
     {
@@ -394,12 +394,12 @@
         "UXR-1.9"
       ],
       "owner": "CHATGPT_CHAT",
-      "status": "BLOCKED",
+      "status": "IMPLEMENTED",
       "approval_required": false,
       "evidence": {
-        "implementation_report": "docs/UI_REDESIGN_IMPLEMENTATION_2026-10-14.md",
-        "blocker": "Selected-host panel correction rejected twice by the platform; coherent V1 requires those panels.",
-        "retry_policy": "Normal current-condition retry on continuation; no bypass and no permanent-ban assumption."
+        "source_commit": "509441641f5fe3d5220819487c7fea5f813d5ac5",
+        "focused_tests": "Servers 14/14; mounted Chromium 35/35; Journey 426/426; Administration 20/20; P0 42/42",
+        "qualification": "Source implemented and deterministic/browser-fixture verified; live logged-in acceptance remains open."
       }
     },
     {
@@ -1247,9 +1247,16 @@
         "UXR-1.10"
       ],
       "owner": "CHATGPT_CHAT",
-      "status": "SPEC_BOUND",
+      "status": "IMPLEMENTED",
       "approval_required": false,
-      "evidence": {}
+      "evidence": {
+        "source_commit": "509441641f5fe3d5220819487c7fea5f813d5ac5",
+        "bundle_sha256": "e6b2d7e11552c70c9104fd0cb4b37fc86f210999c4ccc9958bbfa0a0639fb355",
+        "foundation_head": "46ddb60cad8eae7b1718588cd19421e61b5300e7",
+        "foundation_package_count": 10,
+        "private_candidate": "dev-installed-50944164",
+        "qualification": "Deterministic private RC41 build and disposable install PASS; not release acceptance."
+      }
     },
     {
       "id": "UXR-7.2",
@@ -1265,9 +1272,18 @@
         "UXR-7.1"
       ],
       "owner": "CHATGPT_CHAT",
-      "status": "SPEC_BOUND",
+      "status": "DEV_DEPLOYED",
       "approval_required": false,
-      "evidence": {}
+      "evidence": {
+        "source_commit": "509441641f5fe3d5220819487c7fea5f813d5ac5",
+        "deployed_source_head": "509441641f5fe3d5220819487c7fea5f813d5ac5",
+        "preview": "https://221.139.249.111:19044",
+        "app_sha256": "a598df2537e42a1dd1afe6eefcc1c40dc9102de1665e476b1a0f60f07152453d",
+        "styles_sha256": "b992d288ae678ad7e0d1f0c522e55084a614cf23e1ca17ff755d58fa9684cf03",
+        "foundation_css_sha256": "3049f76b67d9341920254bcbe1b26b48d52b05e9faa9bc992f0d51f6887928d7",
+        "anonymous_session_http": 401,
+        "qualification": "Approved development preview updated; authenticated live-browser acceptance remains open."
+      }
     },
     {
       "id": "UXR-7.3",
@@ -2499,7 +2515,7 @@
   "uxe_to_wbs": [
     {
       "id": "LEGACY19-UXE-01",
-      "meaning": "New Admin logs in and locates \u201cAdd Agent\u201d without instructions | Can discover action and distinguish on-prem install roles",
+      "meaning": "New Admin logs in and locates “Add Agent” without instructions | Can discover action and distinguish on-prem install roles",
       "source_line": 229,
       "wbs": [
         "UXR-7.5"
@@ -2523,7 +2539,7 @@
     },
     {
       "id": "LEGACY19-UXE-04",
-      "meaning": "An intentionally denied source tries to connect | A single \u201cWhy denied?\u201d workflow shows truthful reason, policy and next action; no false ALLOW",
+      "meaning": "An intentionally denied source tries to connect | A single “Why denied?” workflow shows truthful reason, policy and next action; no false ALLOW",
       "source_line": 232,
       "wbs": [
         "UXR-7.5"

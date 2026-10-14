@@ -1,3 +1,15 @@
+
+## 2026-10-14 continuation — selected-server management gate cleared
+
+The previously recorded platform rejection was **not permanent**. A normal retry through the same `Remote_Desktop_Commander.start_process` target and selected worktree succeeded without alternate tooling or authority changes. Current source commit `509441641f5fe3d5220819487c7fea5f813d5ac5` binds metadata, admission and lifecycle actions to the already selected authorized Host and removes manual Host-ID re-entry. Existing Core preview/apply, role, revision, expiry and typed-confirmation contracts remain authoritative.
+
+Verification on this source: Servers deterministic **14/14**, mounted Chromium **35/35**, registered Journey **426/426**, Administration **20/20**, P0 **42/42**, production Web build and `git diff --check` PASS. The two new mounted UXR-1.7 cases prove exact selected-host admission request binding and wrong-target lifecycle preview rejection. These are fixture browser checks, not live-user acceptance.
+
+Private RC41 candidate build PASS: Foundation `46ddb60`, 10/10 private packages, bundle SHA256 `e6b2d7e11552c70c9104fd0cb4b37fc86f210999c4ccc9958bbfa0a0639fb355`. Development candidate `dev-installed-50944164` was verified, atomically selected and the already approved HTTPS preview was restarted against that pointer while preserving the existing preview Core root and TLS files. Served `app.js`, `styles.css`, and `foundation.css` match installed bytes; anonymous `/api/v1/session` remains HTTP 401.
+
+UXR-1.6, UXR-1.7 and source-level UXR-1.10 are now IMPLEMENTED. UXR-7.1 is IMPLEMENTED and UXR-7.2 is DEV_DEPLOYED. **No WBS is promoted to ACCEPTED from these checks.** Authenticated real-browser fidelity, all-route acceptance, real novice evidence, UI-06 and owner acceptance remain open. Next source task is UXR-2.1.
+
+---
 # Servers UI implementation checkpoint — 2026-10-14
 
 ## Follow-up: stale observations and incomplete related services
