@@ -550,3 +550,6 @@
 
 /* UXR-5.2 shared progressive disclosure for nonessential implementation evidence. */
 .dr-technical-details{margin-top:10px}.dr-technical-details>summary{min-height:44px;display:flex;align-items:center;cursor:pointer;font-weight:600;color:var(--dr-text-secondary)}.dr-technical-details[open]>summary{margin-bottom:8px}.dr-technical-details>summary:focus-visible{outline:2px solid var(--dr-focus-ring);outline-offset:2px}.dr-technical-details .plan{max-height:320px;overflow:auto}
+
+/* UXR-5.1/5.4 primary interaction target baseline across redesigned Web surfaces. */
+button.primary,button.secondary,button.danger,.dr-icon-button{min-height:44px}

@@ -13,7 +13,8 @@
     "test:servers:visual": "node tests/workflow-servers-visual.browser.mjs",
     "test:enrollment:browser": "node --test tests/workflow-enrollment.browser.mjs",
     "test:setup:browser": "node --test tests/workflow-setup-continuity.browser.mjs",
-    "test:assets": "node --test tests/uxr5-local-assets.test.mjs"
+    "test:assets": "node --test tests/uxr5-local-assets.test.mjs",
+    "test:responsive": "node --test tests/uxr5-responsive.browser.mjs"
   },
   "dependencies": {
     "qrcode.react": "4.2.0",
