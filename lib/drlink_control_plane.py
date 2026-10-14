@@ -5765,52 +5765,67 @@ class ControlPlane:
 
     # --- runtime compiler -------------------------------------------------
     def compile_runtime(self, *, fail: Optional[str] = None) -> dict:
-        rev = self.current_revision()
         self.runtime.mkdir(parents=True, exist_ok=True)
-        now = utc_now_iso()
-        artifacts = {}
-        planes = {
-            "remote": self.list_rules("remote"),
-            "internet": self.list_rules("internet"),
-            "ai": [self._ai_rule_view(r) for r in self.conn.execute("SELECT * FROM ai_access_rules ORDER BY position")],
-        }
         if fail:
+            rev = self.current_revision()
             self.conn.execute(
                 "UPDATE runtime_generations SET status = 'failed', error = ?, db_revision = ? WHERE plane = 'internet'",
                 (fail, rev),
             )
             raise ControlPlaneError(fail)
-        for plane, payload in planes.items():
-            path = self.runtime / ("%s-access.json" % plane)
-            data = {
-                "plane": plane,
-                "revision": rev,
-                "generated_at": now,
-                "rules": payload,
-                "implicit_default": "DENY",
+
+        # Runtime artifacts must represent one coherent configuration revision.
+        # Live Agents can advance the Server revision while an upgrade is
+        # rebuilding policy payloads, so discard an unstable pass instead of
+        # publishing artifacts stamped with the previous generation.
+        for _attempt in range(3):
+            rev = self.current_revision()
+            now = utc_now_iso()
+            artifacts = {}
+            planes = {
+                "remote": self.list_rules("remote"),
+                "internet": self.list_rules("internet"),
+                "ai": [self._ai_rule_view(r) for r in self.conn.execute("SELECT * FROM ai_access_rules ORDER BY position")],
             }
-            tmp = path.with_suffix(".json.tmp")
-            tmp.write_text(json.dumps(data, indent=2, sort_keys=True), encoding="utf-8")
-            tmp.replace(path)
-            os.chmod(path, 0o600)
-            artifacts[plane] = str(path)
-            ai_configured = plane != "ai" or bool(payload) or self.conn.execute("SELECT 1 FROM ai_principals LIMIT 1").fetchone()
-            status = "active" if (plane != "ai" or ai_configured) else "not_configured"
-            if plane == "ai" and not ai_configured:
-                status = "not_configured"
-            elif plane == "ai":
-                status = "active"
-            self.conn.execute(
-                "INSERT OR REPLACE INTO runtime_generations(plane, db_revision, generation, status, artifact_path, activated_at, error) "
-                "VALUES (?, ?, ?, ?, ?, ?, '')",
-                (plane, rev, rev, status, str(path), now),
+            if self.current_revision() != rev:
+                continue
+            for plane, payload in planes.items():
+                path = self.runtime / ("%s-access.json" % plane)
+                data = {
+                    "plane": plane,
+                    "revision": rev,
+                    "generated_at": now,
+                    "rules": payload,
+                    "implicit_default": "DENY",
+                }
+                tmp = path.with_suffix(".json.tmp")
+                tmp.write_text(json.dumps(data, indent=2, sort_keys=True), encoding="utf-8")
+                tmp.replace(path)
+                os.chmod(path, 0o600)
+                artifacts[plane] = str(path)
+                ai_configured = plane != "ai" or bool(payload) or self.conn.execute("SELECT 1 FROM ai_principals LIMIT 1").fetchone()
+                status = "active" if (plane != "ai" or ai_configured) else "not_configured"
+                if plane == "ai" and not ai_configured:
+                    status = "not_configured"
+                elif plane == "ai":
+                    status = "active"
+                self.conn.execute(
+                    "INSERT OR REPLACE INTO runtime_generations(plane, db_revision, generation, status, artifact_path, activated_at, error) "
+                    "VALUES (?, ?, ?, ?, ?, ?, '')",
+                    (plane, rev, rev, status, str(path), now),
+                )
+            if self.current_revision() != rev:
+                continue
+            gen_path = self.runtime / "generation.json"
+            gen_path.write_text(
+                json.dumps({"db_revision": rev, "planes": {k: rev for k in planes}, "generated_at": now}, indent=2),
+                encoding="utf-8",
             )
-        gen_path = self.runtime / "generation.json"
-        gen_path.write_text(
-            json.dumps({"db_revision": rev, "planes": {k: rev for k in planes}, "generated_at": now}, indent=2),
-            encoding="utf-8",
-        )
-        return {"revision": rev, "artifacts": artifacts}
+            return {"revision": rev, "artifacts": artifacts}
+
+        error = "configuration revision changed during runtime compilation"
+        self._mark_generation_failed(error)
+        raise ControlPlaneError(error)
 
     def _mark_generation_failed(self, error: str) -> None:
         rev = self.current_revision()

@@ -640,6 +640,39 @@ class UpgradeHookRootTests(unittest.TestCase):
         self.assertTrue(db.is_file())
         self.assertFalse((Path(tmp) / "var" / "var").exists())
 
+    def test_runtime_compile_stabilizes_when_revision_advances_during_payload_build(self):
+        tmp = tempfile.mkdtemp(prefix="drlink-runtime-race-")
+        plane = ControlPlane(tmp)
+        v24.ensure_v2_schema(plane.conn)
+        plane.compile_runtime()
+        original = plane.list_rules
+        advanced = False
+
+        def racing_list_rules(policy_plane):
+            nonlocal advanced
+            if policy_plane == "remote" and not advanced:
+                advanced = True
+                next_revision = plane.current_revision() + 1
+                plane.conn.execute(
+                    "INSERT INTO config_revisions(revision, actor, command, created_at, summary) "
+                    "VALUES (?, 'upgrade-race-test', 'concurrent revision', datetime('now'), 'fixture')",
+                    (next_revision,),
+                )
+            return original(policy_plane)
+
+        plane.list_rules = racing_list_rules
+        try:
+            plane.compile_runtime()
+            status = plane.status()
+            self.assertTrue(advanced)
+            self.assertFalse(status.get("mismatch"), status)
+            revision = status["revision"]
+            for row in (status.get("generations") or {}).values():
+                self.assertEqual(int(row["generation"]), int(revision))
+                self.assertEqual(int(row["db_revision"]), int(revision))
+        finally:
+            plane.close()
+
     def test_UPGRADE_HOOK_RECOMPILES_RUNTIME_AFTER_POPULATED_LEGACY_RECONCILE(self):
         tmp = tempfile.mkdtemp(prefix="drlink-hook-populated-")
         plane = ControlPlane(tmp)
