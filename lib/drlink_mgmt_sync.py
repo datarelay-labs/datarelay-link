@@ -1232,6 +1232,14 @@ def _publication_receipt(row):
 def _mutate_publication(plane, auth, *args, **kwargs):
     allocator = getattr(auth, "allocator", None)
     guard = getattr(allocator, "remote_service_transaction", None)
+    # Agent Remote Service management mutates only publication/reservation state.
+    # It does not change the Server access-policy runtime artifacts compiled by
+    # ControlPlane.compile_runtime().  Running the generic activation checkpoint
+    # here performs a full Server backup before replying to the Agent and can
+    # exceed the bounded management-write timeout, turning a successful commit
+    # into an ambiguous response/compensating delete.  Keep this transaction
+    # atomic with the allocator, but do not run unrelated policy activation.
+    kwargs.setdefault("compile_runtime", False)
     with guard() if callable(guard) else nullcontext():
         return plane._mutate(*args, **kwargs)
 

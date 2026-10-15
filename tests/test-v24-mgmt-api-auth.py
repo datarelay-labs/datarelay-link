@@ -18,7 +18,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "lib"))
 
-from drlink_control_plane import ControlPlane
+from drlink_control_plane import ControlPlane, ControlPlaneError
 import drlink_mgmt_sync as mgmt
 import drlink_v24 as v24
 import frp_mgmt_auth as MGMT
@@ -704,6 +704,50 @@ class MgmtApiAuthTests(unittest.TestCase):
         ).fetchone()
         self.assertIsNone(ports)
 
+    def test_remote_service_server_mutations_skip_unrelated_policy_activation_checkpoint(self):
+        # The management response must not wait for a generic policy-runtime
+        # backup/compile.  Agent Remote Service publication state is protected
+        # by the allocator transaction plus distributed compensation instead.
+        os.environ.pop("DRLINK_SKIP_ACTIVATION", None)
+        original_checkpoint = self.server._pre_activation_checkpoint
+        original_compile = self.server.compile_runtime
+        try:
+            self.server._pre_activation_checkpoint = lambda: self.fail(
+                "Remote Service management must not take a policy activation checkpoint"
+            )
+            self.server.compile_runtime = lambda **_kwargs: self.fail(
+                "Remote Service management must not compile policy runtime"
+            )
+            created = mgmt.server_upsert_remote_service(
+                self.server,
+                mgmt.MgmtAuthContext(
+                    MACHINE_A, {}, "activation-free-upsert", int(time.time()), allocator=None
+                ),
+                {
+                    "name": "no-policy-activation",
+                    "destination": "this-host",
+                    "service": "ssh",
+                    "enabled": True,
+                    "pool_class": "normal",
+                    "target_mode": "self",
+                    "target_host": "127.0.0.1",
+                    "target_port": 22,
+                },
+            )
+            self.assertIsNotNone(created["endpoint_port"])
+            deleted = mgmt.server_delete_remote_service(
+                self.server,
+                mgmt.MgmtAuthContext(
+                    MACHINE_A, {}, "activation-free-delete", int(time.time()), allocator=None
+                ),
+                "no-policy-activation",
+            )
+            self.assertEqual(deleted["status"], "DELETED")
+        finally:
+            self.server._pre_activation_checkpoint = original_checkpoint
+            self.server.compile_runtime = original_compile
+            os.environ["DRLINK_SKIP_ACTIVATION"] = "1"
+
     def test_F020_failed_registry_release_cannot_report_deleted(self):
         # The public DELETE must never discard Server publication/dependency
         # metadata when the authoritative allocator failed to release its port.
@@ -1251,22 +1295,29 @@ class MgmtApiErrorClassificationTests(unittest.TestCase):
         self.assertIn("allocation failed", str(payload.get("error") or "").lower())
 
     def test_control_plane_error_is_non_auth_not_re_enroll(self):
-        os.environ.pop("DRLINK_SKIP_ACTIVATION", None)
-        os.environ["DRLINK_FAULT_ACTIVATION"] = "1"
-        with self.assertRaises(mgmt.MgmtSyncError) as raised:
-            mgmt.upsert_remote_service_on_server(
-                root=self.agent_tmp,
-                name="svc",
-                destination="this-host",
-                service="ssh",
-                enabled=True,
-                pool_class="normal",
-                target_host="127.0.0.1",
-                target_port=22,
-                target_mode="self",
-            )
+        original = self.server.set_published_service
+
+        def fail_publication(*_args, **_kwargs):
+            raise ControlPlaneError("simulated publication control-plane failure")
+
+        self.server.set_published_service = fail_publication
+        try:
+            with self.assertRaises(mgmt.MgmtSyncError) as raised:
+                mgmt.upsert_remote_service_on_server(
+                    root=self.agent_tmp,
+                    name="svc",
+                    destination="this-host",
+                    service="ssh",
+                    enabled=True,
+                    pool_class="normal",
+                    target_host="127.0.0.1",
+                    target_port=22,
+                    target_mode="self",
+                )
+        finally:
+            self.server.set_published_service = original
         self._assert_agent_non_auth(raised.exception)
-        self.assertIn("Previous configuration was restored", str(raised.exception))
+        self.assertIn("simulated publication control-plane failure", str(raised.exception))
 
     def test_success_path_unchanged(self):
         result = mgmt.upsert_remote_service_on_server(
