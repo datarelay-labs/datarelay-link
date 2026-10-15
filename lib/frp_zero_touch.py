@@ -632,6 +632,10 @@ def render_short_url_windows_bootstrap_script(
     if not installer.lower().startswith('https://'):
         raise ValueError('installer URL must be HTTPS')
     sums_url = sha256sums_url_for_installer(installer)
+    private_ca_origin = (
+        same_https_origin(sums_url, allocator)
+        and same_https_origin(installer, allocator)
+    )
     lines = [
         '#Requires -Version 5.1',
         "# Data Relay Link - Windows Zero-Touch short URL bootstrap",
@@ -643,8 +647,39 @@ def render_short_url_windows_bootstrap_script(
         'try {',
         "  $sums = Join-Path $dir 'SHA256SUMS'",
         "  $installer = Join-Path $dir 'bootstrap-client.ps1'",
-        '  (New-Object Net.WebClient).DownloadFile(%s, $sums)' % powershell_quote(sums_url),
-        '  (New-Object Net.WebClient).DownloadFile(%s, $installer)' % powershell_quote(installer),
+    ]
+    if private_ca_origin:
+        installer_host = (urlparse(installer).hostname or '').lower()
+        lines.extend([
+            "  $ca = Join-Path $dir 'ca.crt'",
+            "  $curl = Get-Command curl.exe -ErrorAction Stop",
+            '  & $curl.Source --fail --silent --show-error --max-time 30 --proto =https --insecure -o $ca %s'
+            % powershell_quote(ca_crt_url(allocator)),
+            '  if ($LASTEXITCODE -ne 0) { throw "ca.crt download failed" }',
+            '  $caCert = New-Object System.Security.Cryptography.X509Certificates.X509Certificate2($ca)',
+            '  $fp = [BitConverter]::ToString([Security.Cryptography.SHA256]::Create().ComputeHash($caCert.RawData)) -replace \'-\',\'\'',
+            '  if ($fp.ToLowerInvariant() -ne %s) { throw "CA fingerprint mismatch" }'
+            % powershell_quote(ca),
+            '  $script:drlinkCaCert = $caCert',
+            '  $script:drlinkCaThumb = $caCert.Thumbprint',
+            '  $script:drlinkPinHost = %s' % powershell_quote(installer_host),
+            '  $oldCertCallback = [Net.ServicePointManager]::ServerCertificateValidationCallback',
+            '  [Net.ServicePointManager]::ServerCertificateValidationCallback = {',
+            '    param($snd,$cert,$chain,$pol)',
+            '    if (-not $snd.RequestUri -or $snd.RequestUri.Host.ToLowerInvariant() -ne $script:drlinkPinHost) { return $false }',
+            '    $leaf = New-Object System.Security.Cryptography.X509Certificates.X509Certificate2 $cert',
+            '    $chain.ChainPolicy.ExtraStore.Add($script:drlinkCaCert) | Out-Null',
+            '    $chain.ChainPolicy.VerificationFlags = [System.Security.Cryptography.X509Certificates.X509VerificationFlags]::AllowUnknownCertificateAuthority',
+            '    $chain.ChainPolicy.RevocationMode = [System.Security.Cryptography.X509Certificates.X509RevocationMode]::NoCheck',
+            '    if (-not $chain.Build($leaf)) { return $false }',
+            '    $rootEl = $chain.ChainElements[$chain.ChainElements.Count-1].Certificate',
+            '    return ($rootEl.Thumbprint -eq $script:drlinkCaThumb)',
+            '  }',
+        ])
+    lines.extend([
+        '  $wc = New-Object Net.WebClient',
+        '  $wc.DownloadFile(%s, $sums)' % powershell_quote(sums_url),
+        '  $wc.DownloadFile(%s, $installer)' % powershell_quote(installer),
         '  $want = $null',
         '  Get-Content -LiteralPath $sums | ForEach-Object {',
         "    if ($_ -match '^([0-9a-fA-F]{64})\\s+(?:dist/bootstrap-client\\.ps1|agent/bootstrap-client\\.ps1|bootstrap-client\\.ps1)\\s*$') {",
@@ -655,7 +690,6 @@ def render_short_url_windows_bootstrap_script(
         '  if (-not $want) { throw "bootstrap-client.ps1 hash missing from SHA256SUMS" }',
         '  $got = (Get-FileHash -Algorithm SHA256 -LiteralPath $installer).Hash.ToLowerInvariant()',
         '  if ($got -ne $want) { throw "bootstrap-client.ps1 SHA256 mismatch" }',
-        '  $wc=New-Object Net.WebClient',
         _qualified_windows_shell(installer, allocator, '$got', '$want'),
         '  $env:FRP_ALLOCATOR_URL = %s' % powershell_quote(allocator),
         '  $env:FRP_ALLOCATOR_CA_SHA256 = %s' % powershell_quote(ca),
@@ -667,12 +701,17 @@ def render_short_url_windows_bootstrap_script(
         '  Remove-Item Env:FRP_BOOTSTRAP_TICKET -ErrorAction SilentlyContinue',
         '  if ($rc -ne 0) { exit $rc }',
         '} finally {',
+    ])
+    if private_ca_origin:
+        lines.append(
+            '  [Net.ServicePointManager]::ServerCertificateValidationCallback = $oldCertCallback'
+        )
+    lines.extend([
         '  Remove-Item -LiteralPath $dir -Recurse -Force -ErrorAction SilentlyContinue',
         '}',
         '',
-    ]
+    ])
     return '\n'.join(lines)
-
 
 def redact_text(text):
     """Redact bootstrap tickets, zt1 packages, and /i/<ticket> path segments."""

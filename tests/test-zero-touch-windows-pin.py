@@ -149,6 +149,34 @@ class WindowsPinnedCaCommandTests(unittest.TestCase):
         self.assertIn("/i/", linux)
         self.assertTrue(linux.endswith("|sudo bash"))
 
+    def test_short_stage1_pins_private_allocator_before_download(self):
+        allocator = "https://203.0.113.10:6099/enroll"
+        script = zt.render_short_url_windows_bootstrap_script(
+            allocator,
+            "ab" * 32,
+            "bt1." + ("b" * 16) + "." + ("c" * 64),
+            "https://203.0.113.10:6099/artifacts/agent/bootstrap-client.ps1",
+        )
+        self.assertIn("https://203.0.113.10:6099/ca.crt", script)
+        self.assertIn("CA fingerprint mismatch", script)
+        self.assertIn("ServerCertificateValidationCallback", script)
+        self.assertEqual(script.count("--insecure"), 1)
+        self.assertLess(
+            script.index("ServerCertificateValidationCallback"),
+            script.index("DownloadFile"),
+        )
+        self.assertIn("AllowUnknownCertificateAuthority", script)
+        self.assertIn("203.0.113.10", script)
+
+        public_script = zt.render_short_url_windows_bootstrap_script(
+            allocator,
+            "ab" * 32,
+            "bt1." + ("d" * 16) + "." + ("e" * 64),
+            "https://downloads.example.test/bootstrap-client.ps1",
+        )
+        self.assertNotIn("--insecure", public_script)
+        self.assertNotIn("ServerCertificateValidationCallback", public_script)
+
     def test_strict_launcher_is_420_and_hash_before_execute(self):
         digest = "ab" * 32
         command = zt.windows_strict_launcher("remote.xdr.ooo", "A" * 22, digest)
