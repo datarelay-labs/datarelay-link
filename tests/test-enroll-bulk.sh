@@ -82,6 +82,24 @@ for ticket,record in zip(sorted(tickets), sorted(records,key=lambda r:r['id'])):
 assert any(r.get('services')==[] for r in records)
 assert any((r.get('services') or [{}])[0].get('preset')=='ssh' for r in records if r.get('services'))
 PY
+
+# A stale former official public installer URL must never leak into newly issued
+# bulk enrollment commands. Resolve it to the Server-local qualified artifact,
+# matching the single-enrollment and Server Settings surfaces.
+python3 - "$TREE/etc/drlink/config.json" <<'PY'
+import json,sys
+from pathlib import Path
+path=Path(sys.argv[1])
+cfg=json.loads(path.read_text())
+cfg['client_installer_url']='https://raw.githubusercontent.com/datarelay-labs/datarelay-link/1111111111111111111111111111111111111111/dist/bootstrap-client.sh'
+path.write_text(json.dumps(cfg)+'\n')
+PY
+python3 "$ROOT/tools/frp-enroll-bulk" --count 1 --label-prefix stale-source >"$WORK/stale-source.csv" 2>"$WORK/stale-source.err"
+grep -Fq 'https://example.test/artifacts/agent/bootstrap-client.sh' "$WORK/stale-source.csv"
+! grep -Fq 'raw.githubusercontent.com' "$WORK/stale-source.csv"
+! grep -Fq '1111111111111111111111111111111111111111' "$WORK/stale-source.csv"
+echo "PASS BULK_QUALIFIED_INSTALLER_SOURCE"
+
 # F026: a published CSV row must address the same user-visible enrollment
 # through inventory, detail and operator revoke (not just stored paired IDs).
 PUBLIC_ID="$(python3 - "$WORK/count.csv" <<'PY'

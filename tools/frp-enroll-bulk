@@ -108,7 +108,7 @@ def main(argv=None):
         parser.error('--ttl: %s' % exc)
     cfg = json.loads(CONFIG.read_text(encoding='utf-8'))
     allocator_url = str(cfg.get('allocator_public_url') or '').strip()
-    installer = str(cfg.get('client_installer_url') or '').strip()
+    installer = create.resolve_configured_installer_url(cfg, windows=False)
     ca_path = remap(cfg.get('tls_ca_cert') or '/etc/drlink/pki/ca.crt')
     ca_fp = create.fingerprint_from_cert(ca_path)
     if not allocator_url.lower().startswith('https://') or not installer or not ca_fp:
