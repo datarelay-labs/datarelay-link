@@ -238,6 +238,119 @@ def _validate_group_item(item: dict, *, kind: str, keys: frozenset, member_field
     return {"name": name, member_field: members}
 
 
+def _materialize_existing_server_resource_patch(
+    plane: ControlPlane, section: str, item: dict
+) -> dict:
+    """Fill only omitted fields from an existing Server resource."""
+    item = _require_mapping(item, "%s entry" % section)
+    if str(item.get("state") or "").strip().lower() == "absent":
+        return item
+    name = str(item.get("name") or "").strip()
+    if not name:
+        return item
+    out = dict(item)
+    if section == "networkObjects":
+        existing = plane.get_object(name)
+        if existing is None or existing["origin"] == "managed":
+            return item
+        if "type" not in out:
+            out["type"] = v24.display_network_type(existing["type"]).lower()
+        if "value" not in out:
+            values = plane._object_values(existing["id"])
+            if values:
+                out["value"] = str(values[0])
+        return out
+    if section == "networkGroups":
+        existing = plane.get_object_group(name)
+        if existing is None:
+            return item
+        if "members" not in out:
+            out["members"] = [
+                str(member["name"])
+                for member in plane._expand_group_members(existing["id"], set())
+            ]
+        return out
+    if section == "serviceObjects":
+        existing = v24.get_service_object(plane, name)
+        if existing is None:
+            return item
+        if "type" not in out:
+            out["type"] = str(existing["type"])
+        if "port" not in out:
+            out["port"] = int(existing["port"])
+        return out
+    if section == "serviceGroups":
+        existing = v24.get_service_group(plane, name)
+        if existing is None:
+            return item
+        if "members" not in out:
+            out["members"] = [
+                str(row["name"])
+                for row in plane.conn.execute(
+                    "SELECT s.name FROM service_group_members m "
+                    "JOIN service_objects s ON s.id = m.service_object_id "
+                    "WHERE m.group_id = ? ORDER BY s.name COLLATE NOCASE",
+                    (existing["id"],),
+                )
+            ]
+        return out
+    if section == "permissionObjects":
+        existing = v24.get_permission_object(plane, name)
+        if existing is None:
+            return item
+        if "permissions" not in out:
+            out["permissions"] = [
+                str(row["permission"])
+                for row in plane.conn.execute(
+                    "SELECT permission FROM permission_object_members "
+                    "WHERE permission_object_id = ? ORDER BY permission",
+                    (existing["id"],),
+                )
+            ]
+        return out
+    if section == "permissionGroups":
+        existing = v24.get_permission_group(plane, name)
+        if existing is None:
+            return item
+        if "members" not in out:
+            out["members"] = [
+                str(row["name"])
+                for row in plane.conn.execute(
+                    "SELECT p.name FROM permission_group_members m "
+                    "JOIN permission_objects p ON p.id = m.permission_object_id "
+                    "WHERE m.group_id = ? ORDER BY p.name COLLATE NOCASE",
+                    (existing["id"],),
+                )
+            ]
+        return out
+    return item
+
+
+def _materialize_existing_remote_service_patch(
+    plane: ControlPlane, item: dict
+) -> dict:
+    """Fill omitted selector fields for an existing Agent patch."""
+    item = _require_mapping(item, "remoteServices entry")
+    if str(item.get("state") or "").strip().lower() == "absent":
+        return item
+    name = str(item.get("name") or "").strip()
+    if not name:
+        return item
+    existing = plane.conn.execute(
+        "SELECT destination, service_object FROM agent_remote_services "
+        "WHERE name = ? COLLATE NOCASE AND delete_pending = 0",
+        (name,),
+    ).fetchone()
+    if existing is None:
+        return item
+    materialized = dict(item)
+    if "destination" not in materialized:
+        materialized["destination"] = str(existing["destination"])
+    if "service" not in materialized:
+        materialized["service"] = str(existing["service_object"])
+    return materialized
+
+
 def _validate_remote_service_item(item: dict) -> dict:
     item = _require_mapping(item, "remoteServices entry")
     _reject_unknown_keys(item, REMOTE_SERVICE_KEYS, "Remote Service '%s'" % item.get("name", "?"))
@@ -439,6 +552,62 @@ def _ai_rule_view(plane: ControlPlane, row) -> dict:
         "permission_kind": pkind,
         "paths": v24.list_ai_policy_path_scopes(plane, row["name"]),
     }
+
+
+def _materialize_existing_access_rule_patch(
+    plane: ControlPlane, family: str, item: dict
+) -> dict:
+    """Fill omitted fields from an existing Access Rule."""
+    item = _require_mapping(item, "%s rule" % family)
+    if str(item.get("state") or "").strip().lower() == "absent":
+        return item
+    name = str(item.get("name") or "").strip()
+    if not name:
+        return item
+    out = dict(item)
+    if family == "ai":
+        existing = plane.conn.execute(
+            "SELECT * FROM ai_policy_rules WHERE name = ? COLLATE NOCASE",
+            (name,),
+        ).fetchone()
+        if existing is None:
+            return item
+        view = _ai_rule_view(plane, existing)
+        for field in ("source", "destination", "permission", "enabled", "paths"):
+            if field not in out:
+                out[field] = copy.deepcopy(view[field])
+        return out
+
+    existing = plane._get_rule(family, name)
+    if existing is None:
+        return item
+    view = plane._rule_view(existing)
+    sources = list(view.get("sources") or [])
+    destinations = list(view.get("destinations") or [])
+    if "source" not in out and len(sources) == 1:
+        out["source"] = sources[0]
+    if "destination" not in out and len(destinations) == 1:
+        out["destination"] = destinations[0]
+    if "enabled" not in out:
+        out["enabled"] = bool(view["enabled"])
+    if "service" not in out:
+        ref = plane.conn.execute(
+            "SELECT ref_kind, ref_id FROM rule_service_refs WHERE rule_id = ?",
+            (existing["id"],),
+        ).fetchone()
+        if ref and ref["ref_kind"] == "service_object":
+            row = plane.conn.execute(
+                "SELECT name FROM service_objects WHERE id = ?", (ref["ref_id"],)
+            ).fetchone()
+            if row:
+                out["service"] = row["name"]
+        elif ref and ref["ref_kind"] == "service_group":
+            row = plane.conn.execute(
+                "SELECT name FROM service_groups WHERE id = ?", (ref["ref_id"],)
+            ).fetchone()
+            if row:
+                out["service"] = row["name"]
+    return out
 
 
 def _rule_matches_desired(plane: ControlPlane, family: str, existing, desired: dict) -> bool:
@@ -1038,19 +1207,39 @@ def prepare_v24_plan(plane: ControlPlane, raw_text: str, *, role: Optional[str] 
     validated_body: dict[str, Any] = {"context": context}
 
     if context == "server":
-        nos = [_validate_network_object_item(i) for i in (body.get("networkObjects") or [])]
+        nos = [
+            _validate_network_object_item(
+                _materialize_existing_server_resource_patch(plane, "networkObjects", i)
+            )
+            for i in (body.get("networkObjects") or [])
+        ]
         ngs = [
-            _validate_group_item(i, kind="Network Group", keys=NETWORK_GROUP_KEYS)
+            _validate_group_item(
+                _materialize_existing_server_resource_patch(plane, "networkGroups", i),
+                kind="Network Group",
+                keys=NETWORK_GROUP_KEYS,
+            )
             for i in (body.get("networkGroups") or [])
         ]
-        sos = [_validate_service_object_item(i) for i in (body.get("serviceObjects") or [])]
+        sos = [
+            _validate_service_object_item(
+                _materialize_existing_server_resource_patch(plane, "serviceObjects", i)
+            )
+            for i in (body.get("serviceObjects") or [])
+        ]
         sgs = [
-            _validate_group_item(i, kind="Service Group", keys=SERVICE_GROUP_KEYS)
+            _validate_group_item(
+                _materialize_existing_server_resource_patch(plane, "serviceGroups", i),
+                kind="Service Group",
+                keys=SERVICE_GROUP_KEYS,
+            )
             for i in (body.get("serviceGroups") or [])
         ]
         pos = []
         for raw in body.get("permissionObjects") or []:
-            item = _require_mapping(raw, "permissionObjects entry")
+            item = _materialize_existing_server_resource_patch(
+                plane, "permissionObjects", raw
+            )
             _reject_unknown_keys(item, PERMISSION_OBJECT_KEYS, "Permission Object '%s'" % item.get("name", "?"))
             _absent_and_present_fields(item)
             name = _require_name(item, "Permission Object")
@@ -1060,7 +1249,11 @@ def prepare_v24_plan(plane: ControlPlane, raw_text: str, *, role: Optional[str] 
                 perms = _normalize_member_list(item.get("permissions"), "Permission Object '%s'" % name)
                 pos.append({"name": name, "permissions": perms})
         pgs = [
-            _validate_group_item(i, kind="Permission Group", keys=PERMISSION_GROUP_KEYS)
+            _validate_group_item(
+                _materialize_existing_server_resource_patch(plane, "permissionGroups", i),
+                kind="Permission Group",
+                keys=PERMISSION_GROUP_KEYS,
+            )
             for i in (body.get("permissionGroups") or [])
         ]
         validated_body["networkObjects"] = nos
@@ -1266,7 +1459,14 @@ def prepare_v24_plan(plane: ControlPlane, raw_text: str, *, role: Optional[str] 
         ):
             if key not in body or body.get(key) is None:
                 continue
-            section = _validate_access_section(body.get(key), key=key, family=family)
+            raw_section = body.get(key)
+            if isinstance(raw_section, dict) and isinstance(raw_section.get("rules"), list):
+                raw_section = dict(raw_section)
+                raw_section["rules"] = [
+                    _materialize_existing_access_rule_patch(plane, family, rule)
+                    for rule in raw_section["rules"]
+                ]
+            section = _validate_access_section(raw_section, key=key, family=family)
             validated_body[key] = section
             if section.get("state") == "absent":
                 changes.append({"op": "RESET", "kind": "%s-access" % family, "name": "policy", "item": section})
@@ -1377,7 +1577,12 @@ def prepare_v24_plan(plane: ControlPlane, raw_text: str, *, role: Optional[str] 
                     if c.get("kind") == "%s-access" % family and c.get("op") == "CONFIGURE":
                         c["op"] = "NO_CHANGE"
     else:
-        rss = [_validate_remote_service_item(i) for i in (body.get("remoteServices") or [])]
+        rss = [
+            _validate_remote_service_item(
+                _materialize_existing_remote_service_patch(plane, i)
+            )
+            for i in (body.get("remoteServices") or [])
+        ]
         validated_body["remoteServices"] = rss
         identity = v24.load_agent_identity(plane.root)
         host_name = identity.get("hostname") or identity.get("label") or "this-host"

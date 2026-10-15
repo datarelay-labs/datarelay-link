@@ -18,6 +18,7 @@ sys.path.insert(0, str(ROOT / "lib"))
 from drlink_control_plane import ConfirmationRequired, ControlPlane
 import drlink_v24 as v24
 from drlink_v24_bundle import (
+    BundleError,
     apply_v24_plan,
     export_configuration_v24,
     prepare_v24_plan,
@@ -338,6 +339,209 @@ class BundleOmittedEnabledPreservation(unittest.TestCase):
         self.assertIn(("NO_CHANGE", "remote-access-rule", "allow1"), kinds)
         self.assertTrue(plan.no_change or all(c.get("op") == "NO_CHANGE" for c in plan.changes if "rule" in str(c.get("kind"))))
 
+    def test_server_named_resources_omitted_fields_preserve_existing(self):
+        v24.set_network_object(
+            self.plane, "patch-net", type="ip", value="192.0.2.10", oneshot=True
+        )
+        v24.set_network_group(
+            self.plane, "patch-net-group", members=["patch-net"], oneshot=True
+        )
+        v24.set_service_object(
+            self.plane, "patch-service", type="tcp", port=22, oneshot=True
+        )
+        v24.set_service_group(
+            self.plane, "patch-service-group", members=["patch-service"], oneshot=True
+        )
+        v24.set_permission_object(
+            self.plane, "patch-permission", permissions=["file-read"], oneshot=True
+        )
+        v24.set_permission_group(
+            self.plane,
+            "patch-permission-group",
+            members=["patch-permission"],
+            oneshot=True,
+        )
+
+        plan = prepare_v24_plan(
+            self.plane,
+            """configurationBundle:
+  context: server
+  networkObjects:
+    - name: patch-net
+  networkGroups:
+    - name: patch-net-group
+  serviceObjects:
+    - name: patch-service
+  serviceGroups:
+    - name: patch-service-group
+  permissionObjects:
+    - name: patch-permission
+  permissionGroups:
+    - name: patch-permission-group
+""",
+        )
+        self.assertTrue(plan.no_change)
+        named = {
+            (c.get("kind"), c.get("name"), c.get("op"))
+            for c in plan.changes
+        }
+        for kind, name in (
+            ("network-object", "patch-net"),
+            ("network-group", "patch-net-group"),
+            ("service-object", "patch-service"),
+            ("service-group", "patch-service-group"),
+            ("permission-object", "patch-permission"),
+            ("permission-group", "patch-permission-group"),
+        ):
+            self.assertIn((kind, name, "NO_CHANGE"), named)
+
+        partial = prepare_v24_plan(
+            self.plane,
+            """configurationBundle:
+  context: server
+  networkObjects:
+    - name: patch-net
+      value: 192.0.2.11
+  serviceObjects:
+    - name: patch-service
+      port: 2222
+""",
+        )
+        items = {
+            (c.get("kind"), c.get("name")): c.get("item")
+            for c in partial.changes
+            if c.get("op") in ("UPDATE", "SET")
+        }
+        self.assertEqual(items[("network-object", "patch-net")]["type"], "ip")
+        self.assertEqual(items[("service-object", "patch-service")]["type"], "tcp")
+
+        with self.assertRaises(BundleError):
+            prepare_v24_plan(
+                self.plane,
+                """configurationBundle:
+  context: server
+  networkObjects:
+    - name: brand-new
+""",
+            )
+
+    def test_server_access_rule_omitted_selectors_preserve_existing(self):
+        v24.set_network_object(
+            self.plane, "rule-src", type="ip", value="192.0.2.20", oneshot=True
+        )
+        v24.set_network_object(
+            self.plane, "rule-dst", type="ip", value="192.0.2.21", oneshot=True
+        )
+        v24.set_network_object(
+            self.plane, "rule-dst-2", type="ip", value="192.0.2.22", oneshot=True
+        )
+        v24.set_service_object(
+            self.plane, "rule-ssh", type="tcp", port=22, oneshot=True
+        )
+        v24.set_access_rule(
+            self.plane,
+            "remote",
+            "patch-rule",
+            mode="whitelist",
+            source="rule-src",
+            destination="rule-dst",
+            service="rule-ssh",
+            enabled=False,
+            oneshot=True,
+        )
+
+        plan = prepare_v24_plan(
+            self.plane,
+            """configurationBundle:
+  context: server
+  remoteAccess:
+    rules:
+      - name: patch-rule
+        destination: rule-dst-2
+""",
+        )
+        items = [
+            c
+            for c in plan.changes
+            if c.get("kind") == "remote-access-rule" and c.get("op") == "SET"
+        ]
+        self.assertEqual(len(items), 1)
+        self.assertEqual(items[0]["item"]["source"], "rule-src")
+        self.assertEqual(items[0]["item"]["service"], "rule-ssh")
+        self.assertFalse(bool(items[0]["item"]["enabled"]))
+
+        apply_v24_plan(self.plane, plan)
+        no_change = prepare_v24_plan(
+            self.plane,
+            """configurationBundle:
+  context: server
+  remoteAccess:
+    rules:
+      - name: patch-rule
+""",
+        )
+        self.assertTrue(no_change.no_change)
+
+        with self.assertRaises(BundleError):
+            prepare_v24_plan(
+                self.plane,
+                """configurationBundle:
+  context: server
+  remoteAccess:
+    rules:
+      - name: brand-new-rule
+""",
+            )
+
+    def test_ai_access_rule_omitted_selectors_preserve_existing(self):
+        self.plane.set_ai_principal("patch-bot", enabled=True)
+        _verify(self.plane, "patch-bot")
+        v24.set_network_object(
+            self.plane, "patch-ai-dst", type="ip", value="192.0.2.30", oneshot=True
+        )
+        v24.set_permission_object(
+            self.plane, "patch-ai-perm", permissions=["file-read"], oneshot=True
+        )
+        v24.set_ai_access_rule(
+            self.plane,
+            "patch-ai-rule",
+            mode="whitelist",
+            source="patch-bot",
+            destination="patch-ai-dst",
+            permission="patch-ai-perm",
+            paths=["/var/log/**"],
+            enabled=False,
+            oneshot=True,
+        )
+
+        plan = prepare_v24_plan(
+            self.plane,
+            """configurationBundle:
+  context: server
+  aiAccess:
+    rules:
+      - name: patch-ai-rule
+""",
+        )
+        self.assertTrue(plan.no_change)
+        rule = next(
+            c
+            for c in plan.changes
+            if c.get("kind") == "ai-access-rule"
+        )
+        self.assertEqual(rule["op"], "NO_CHANGE")
+
+        with self.assertRaises(BundleError):
+            prepare_v24_plan(
+                self.plane,
+                """configurationBundle:
+  context: server
+  aiAccess:
+    rules:
+      - name: brand-new-ai-rule
+""",
+            )
+
     def test_agent_remote_service_omitted_enabled_stays_disabled(self):
         self.plane.close()
         self.tmp = tempfile.mkdtemp(prefix="drlink-omit-enabled-agent-")
@@ -385,6 +589,77 @@ class BundleOmittedEnabledPreservation(unittest.TestCase):
         ).fetchone()
         self.assertFalse(bool(after["enabled"]))
         self.assertEqual(str(after["service_object"]).lower(), "https")
+
+    def test_agent_remote_service_omitted_destination_and_service_patch_existing(self):
+        self.plane.close()
+        self.tmp = tempfile.mkdtemp(prefix="drlink-omit-fields-agent-")
+        _agent_root(self.tmp)
+        os.environ["FRP_DEPLOY_TEST_ROOT"] = self.tmp
+        os.environ["DRLINK_SKIP_ACTIVATION"] = "1"
+        os.environ["DRLINK_SERVER_REACHABLE"] = "0"
+        self.plane = ControlPlane(self.tmp)
+        v24.ensure_v2_schema(self.plane.conn)
+        v24.set_service_object(self.plane, "ssh", type="tcp", port=22, oneshot=True)
+        v24.set_remote_service_agent(
+            self.plane,
+            "pub1",
+            destination="this-host",
+            service="ssh",
+            enabled=False,
+            oneshot=True,
+            root=self.tmp,
+            server_reachable=False,
+        )
+
+        plan = prepare_v24_plan(
+            self.plane,
+            """configurationBundle:
+  context: agent
+  remoteServices:
+    - name: pub1
+      enabled: true
+""",
+        )
+        items = [
+            c
+            for c in plan.changes
+            if c.get("kind") == "remote-service" and c.get("op") == "SET"
+        ]
+        self.assertEqual(len(items), 1)
+        self.assertEqual(items[0]["item"]["destination"], "agent-1")
+        self.assertEqual(items[0]["item"]["service"], "ssh")
+        self.assertTrue(bool(items[0]["item"]["enabled"]))
+        apply_v24_plan(self.plane, plan)
+
+        after = self.plane.conn.execute(
+            "SELECT destination, service_object, enabled "
+            "FROM agent_remote_services WHERE name = ?",
+            ("pub1",),
+        ).fetchone()
+        self.assertEqual(str(after["destination"]).lower(), "agent-1")
+        self.assertEqual(str(after["service_object"]).lower(), "ssh")
+        self.assertTrue(bool(after["enabled"]))
+
+        no_change = prepare_v24_plan(
+            self.plane,
+            """configurationBundle:
+  context: agent
+  remoteServices:
+    - name: pub1
+""",
+        )
+        self.assertTrue(no_change.no_change)
+
+        with self.assertRaises(BundleError):
+            prepare_v24_plan(
+                self.plane,
+                """configurationBundle:
+  context: agent
+  remoteServices:
+    - name: brand-new
+      enabled: true
+""",
+            )
 
 
 if __name__ == "__main__":
