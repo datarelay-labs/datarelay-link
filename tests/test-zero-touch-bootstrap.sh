@@ -1278,6 +1278,41 @@ export FRP_CLIENT_TEST_ROOT="$DP1"
 [[ "$(frp_client_install_class)" == "complete" ]] || fail "DP1 should be complete after repair"
 pass "DP1_PARTIAL_INSTALL_REPAIR"
 
+# RHEL/Rocky legacy-complete equivalent: older installs may have the canonical
+# /usr/local/bin/drlink but no /usr/bin/drlink secure_path copy. The public
+# contract is `sudo drlink`; bootstrap must classify this as repairable rather
+# than "already installed", restore the secure_path entry, preserve identity,
+# and leave the supplied Bootstrap Ticket unused.
+SECURE_PATH_LEGACY="$WORKDIR/client-secure-path-legacy"
+cp -a "$DP1" "$SECURE_PATH_LEGACY"
+rm -f "$SECURE_PATH_LEGACY/usr/bin/drlink"
+SECURE_KEY_BEFORE="$(sha256sum "$SECURE_PATH_LEGACY/etc/frp/client-identity.key" | awk '{print $1}')"
+export FRP_CLIENT_TEST_ROOT="$SECURE_PATH_LEGACY"
+[[ "$(frp_client_install_class)" == "partial" ]] || fail "secure-path legacy install should be partial"
+export FRP_BOOTSTRAP_TICKET="$BC_TICKET"
+export FRP_CLIENT_HOOK_LOG="$WORKDIR/secure-path-legacy.hook"
+: >"$FRP_CLIENT_HOOK_LOG"
+set +e
+frp_client_main >"$WORKDIR/secure-path-legacy.out" 2>"$WORKDIR/secure-path-legacy.err" </dev/null
+secure_path_rc=$?
+set -e
+[[ "$secure_path_rc" -eq 0 ]] || {
+  cat "$WORKDIR/secure-path-legacy.out" "$WORKDIR/secure-path-legacy.err" >&2
+  fail "secure-path legacy repair should succeed"
+}
+if grep -q 'This Agent is already installed' "$WORKDIR/secure-path-legacy.out" "$WORKDIR/secure-path-legacy.err"; then
+  fail "secure-path legacy false already-installed message"
+fi
+[[ -x "$SECURE_PATH_LEGACY/usr/bin/drlink" ]] || fail "secure-path drlink entry not restored"
+if grep -q bootstrap_redeem "$WORKDIR/secure-path-legacy.hook"; then
+  fail "secure-path legacy repair redeemed ticket"
+fi
+SECURE_KEY_AFTER="$(sha256sum "$SECURE_PATH_LEGACY/etc/frp/client-identity.key" | awk '{print $1}')"
+[[ "$SECURE_KEY_BEFORE" == "$SECURE_KEY_AFTER" ]] || fail "secure-path repair rotated identity"
+export FRP_CLIENT_TEST_ROOT="$SECURE_PATH_LEGACY"
+[[ "$(frp_client_install_class)" == "complete" ]] || fail "secure-path install should be complete after repair"
+pass "ROCKY_SUDO_SECURE_PATH_REPAIR"
+
 # Expired ticket via client.
 EXP="$WORKDIR/client-exp"
 issue_ticket >"$WORKDIR/exp-create.out"

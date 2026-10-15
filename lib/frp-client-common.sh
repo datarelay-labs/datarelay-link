@@ -812,9 +812,22 @@ frp_client_has_enrolled_local_state() {
   return 1
 }
 
-frp_client_has_canonical_cli() {
+frp_client_has_any_cli_artifact() {
   [[ -x "$(frp_client_path /usr/local/bin/drlink)" ]] \
     || [[ -x "$(frp_client_path /usr/bin/drlink)" ]]
+}
+
+frp_client_has_canonical_cli() {
+  # Linux installs intentionally keep /usr/bin/drlink for sudo secure_path
+  # compatibility (notably RHEL/Rocky). A legacy install missing that entry is
+  # repairable, not operationally complete, because the public contract is
+  # `sudo drlink`. macOS cannot write /usr/bin, so its canonical CLI remains
+  # under /usr/local/bin.
+  if declare -F frp_is_darwin >/dev/null 2>&1 && frp_is_darwin; then
+    frp_client_has_any_cli_artifact
+    return
+  fi
+  [[ -x "$(frp_client_path /usr/bin/drlink)" ]]
 }
 
 frp_client_has_frpc_runtime() {
@@ -871,7 +884,7 @@ frp_client_has_partial_install() {
   if frp_client_has_enrolled_local_state; then
     return 0
   fi
-  if frp_client_has_canonical_cli; then
+  if frp_client_has_any_cli_artifact; then
     return 0
   fi
   if frp_client_has_service_definition; then

@@ -63,12 +63,13 @@ EOF
 
 write_complete_runtime() {
   local tree="$1"
-  mkdir -p "$tree/usr/local/bin" "$tree/usr/local/lib/drlink"
+  mkdir -p "$tree/usr/local/bin" "$tree/usr/local/lib/drlink" "$tree/usr/bin"
   write_frpc "$tree/usr/local/bin/frpc"
   printf '#!/bin/sh\necho drlink client\n' >"$tree/usr/local/bin/drlink"
+  cp "$tree/usr/local/bin/drlink" "$tree/usr/bin/drlink"
   printf '#!/bin/sh\necho frpctl\n' >"$tree/usr/local/lib/drlink/frpctl"
   echo 'common' >"$tree/usr/local/lib/drlink/frp-client-common.sh"
-  chmod 0755 "$tree/usr/local/bin/drlink" "$tree/usr/local/lib/drlink/frpctl"
+  chmod 0755 "$tree/usr/local/bin/drlink" "$tree/usr/bin/drlink" "$tree/usr/local/lib/drlink/frpctl"
 }
 
 assert_class() {
