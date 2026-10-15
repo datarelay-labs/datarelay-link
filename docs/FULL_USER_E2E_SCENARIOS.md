@@ -2585,6 +2585,8 @@ unset server windows-installer-url
 
 Exercise only the canonical `set server ...` forms; standalone installer-URL aliases are not part of the v2.4 public surface.
 
+Before the first mutation, capture the current values of all four settings. The scenario may exercise clear/unset behavior, but **cleanup is part of PASS**: before leaving A-018, restore every setting to its exact pre-scenario value (including an originally configured `bootstrap_hostname` and installer URLs) and re-read the resulting onboarding output. A scenario that leaves the Server in its temporary cleared/test value is FAIL because it contaminates later Zero-Touch and provenance tests.
+
 After each relevant change, regenerate or inspect:
 
 - Enrollment endpoint;
@@ -2594,7 +2596,7 @@ After each relevant change, regenerate or inspect:
 - Remote Service endpoint presentation where applicable;
 - diagnostics/version/support evidence.
 
-Verify no change to an optional friendly hostname silently changes control/allocator identity unless the current product contract explicitly says so. Verify Linux and Windows onboarding receive the intended platform-specific installer URL and that clearing optional overrides returns to the supported default.
+Verify no change to an optional friendly hostname silently changes control/allocator identity unless the current product contract explicitly says so. Verify Linux and Windows onboarding receive the intended platform-specific installer URL and that clearing optional overrides returns to the supported default. After cleanup, verify the restored Zero-Touch command mode matches the pre-scenario mode (short URL versus pinned-CA fallback) rather than merely checking that the fields are syntactically present.
 
 ## A-019 — Prior-stable upgrade to candidate — MANDATORY when an upgrade path is claimed
 

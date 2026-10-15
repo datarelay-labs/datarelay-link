@@ -212,13 +212,70 @@ pass "STOCK_OS_TRUST_HEALTHZ"
 # entries so the exact printed curl|bash command exercises product TLS, not lab
 # dual-stack DNS breakage. Restore hosts on exit.
 SHORTURL_HOSTS_SEEDED=0
+SERVER_SETTINGS_SNAPSHOTTED=0
+ORIG_BOOTSTRAP_HOSTNAME=''
+ORIG_INSTALLER_URL=''
+
 restore_client_hosts() {
   if [[ "${SHORTURL_HOSTS_SEEDED:-0}" == "1" ]]; then
     ssh_client 'sudo bash -c "if [[ -f /etc/hosts.frp-shorturl.bak ]]; then mv -f /etc/hosts.frp-shorturl.bak /etc/hosts; fi"' >/dev/null 2>&1 || true
     SHORTURL_HOSTS_SEEDED=0
   fi
 }
-trap 'restore_client_hosts' EXIT
+
+snapshot_server_settings() {
+  local snapshot
+  snapshot="$(ssh_server 'sudo python3 - <<'"'"'PY'"'"'
+import json
+cfg = json.load(open("/etc/drlink/config.json", encoding="utf-8"))
+print(json.dumps({
+    "bootstrap_hostname": str(cfg.get("bootstrap_hostname") or ""),
+    "client_installer_url": str(cfg.get("client_installer_url") or ""),
+}))
+PY
+')"
+  ORIG_BOOTSTRAP_HOSTNAME="$(python3 -c 'import json,sys; print(json.loads(sys.stdin.read())["bootstrap_hostname"])' <<<"$snapshot")"
+  ORIG_INSTALLER_URL="$(python3 -c 'import json,sys; print(json.loads(sys.stdin.read())["client_installer_url"])' <<<"$snapshot")"
+  SERVER_SETTINGS_SNAPSHOTTED=1
+  note "SERVER_SETTINGS_SNAPSHOT=PASS"
+}
+
+restore_server_settings() {
+  [[ "${SERVER_SETTINGS_SNAPSHOTTED:-0}" == "1" ]] || return 0
+  local rc=0
+  if [[ -n "$ORIG_BOOTSTRAP_HOSTNAME" ]]; then
+    ssh_server "sudo /usr/local/bin/drlink set server bootstrap-hostname $(printf '%q' "$ORIG_BOOTSTRAP_HOSTNAME")" >/dev/null 2>&1 || rc=1
+  else
+    ssh_server "sudo /usr/local/bin/drlink unset server bootstrap-hostname" >/dev/null 2>&1 || rc=1
+  fi
+  if [[ -n "$ORIG_INSTALLER_URL" ]]; then
+    ssh_server "sudo /usr/local/bin/drlink set server installer-url $(printf '%q' "$ORIG_INSTALLER_URL")" >/dev/null 2>&1 || rc=1
+  else
+    ssh_server "sudo /usr/local/bin/drlink unset server installer-url" >/dev/null 2>&1 || rc=1
+  fi
+  if [[ "$rc" == "0" ]]; then
+    SERVER_SETTINGS_SNAPSHOTTED=0
+    note "SERVER_SETTINGS_RESTORE=PASS"
+    return 0
+  fi
+  note "SERVER_SETTINGS_RESTORE=FAIL"
+  return 1
+}
+
+cleanup_all() {
+  local original_rc=$?
+  local cleanup_rc=0
+  set +e
+  restore_client_hosts
+  restore_server_settings || cleanup_rc=1
+  ssh_server 'sudo pkill -x cloudflared 2>/dev/null || true; sudo pkill -f "[f]rp-short-url-proxy.py" 2>/dev/null || true' >/dev/null 2>&1 || true
+  trap - EXIT
+  if [[ "$original_rc" == "0" && "$cleanup_rc" != "0" ]]; then
+    exit 1
+  fi
+  exit "$original_rc"
+}
+trap 'cleanup_all' EXIT
 
 client_healthz_ok=0
 if ssh_client "curl -fsSL --proto '=https' --tlsv1.2 --connect-timeout 5 --max-time 15 -o /dev/null https://${BOOTSTRAP_HOST}/healthz" >/dev/null 2>&1; then
@@ -246,6 +303,11 @@ EOF
   pass "CLIENT_BOOTSTRAP_IPV4_HOSTS_SEED"
 fi
 pass "CLIENT_STOCK_OS_TRUST_HEALTHZ"
+
+# Snapshot the two non-secret Server settings this E2E mutates. Every exit
+# path must restore them so short-URL/fallback coverage cannot contaminate
+# later Zero-Touch UX or installer provenance.
+snapshot_server_settings
 
 # Configure bootstrap hostname + installer URL on server.
 # Tools update config.json without restarting services; allocator reloads on
@@ -394,8 +456,10 @@ grep -qiE 'Could not resolve|SSL|certificate|not known' "$OUT_DIR/bad-cert.err" 
   || note "WARN bad-cert diagnostic: $(head -2 "$OUT_DIR/bad-cert.err")"
 pass "CERT_FAILURE_FAILS_CLOSED"
 
-# Cleanup tunnel/proxy and any temporary client hosts seed.
+# Cleanup tunnel/proxy, temporary client hosts seed, and every Server setting
+# mutated by this run. Do not print PASS until state restoration succeeds.
 restore_client_hosts
+restore_server_settings || fail "restore server settings"
 ssh_server 'sudo pkill -x cloudflared 2>/dev/null || true; sudo pkill -f "[f]rp-short-url-proxy.py" 2>/dev/null || true' || true
 
 note "SHORT_URL_REAL_E2E=PASS"

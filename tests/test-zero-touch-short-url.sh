@@ -669,4 +669,22 @@ print('ok')
 PY
 pass "REDACT_HELPER"
 
+# Real short-URL E2E mutates Server bootstrap_hostname and installer-url while
+# exercising fallback behavior. It must restore both before reporting PASS so
+# later Zero-Touch commands cannot silently expand back to pinned-CA fallback
+# or advertise a stale installer source.
+RUNNER="$ROOT/tests/run-short-url-e2e.sh"
+grep -q '^snapshot_server_settings()' "$RUNNER" || fail "real E2E missing Server settings snapshot"
+grep -q '^restore_server_settings()' "$RUNNER" || fail "real E2E missing Server settings restore"
+grep -q "trap 'cleanup_all' EXIT" "$RUNNER" || fail "real E2E EXIT trap does not restore Server settings"
+snapshot_line="$(grep -n '^snapshot_server_settings$' "$RUNNER" | tail -1 | cut -d: -f1)"
+mutate_line="$(grep -n 'set-bootstrap.log' "$RUNNER" | head -1 | cut -d: -f1)"
+restore_line="$(grep -n 'restore_server_settings || fail "restore server settings"' "$RUNNER" | tail -1 | cut -d: -f1)"
+pass_line="$(grep -n 'note "SHORT_URL_REAL_E2E=PASS"' "$RUNNER" | tail -1 | cut -d: -f1)"
+[[ -n "$snapshot_line" && -n "$mutate_line" && "$snapshot_line" -lt "$mutate_line" ]] \
+  || fail "real E2E snapshots Server settings after mutation"
+[[ -n "$restore_line" && -n "$pass_line" && "$restore_line" -lt "$pass_line" ]] \
+  || fail "real E2E reports PASS before Server settings restore"
+pass "REAL_E2E_RESTORES_MUTATED_SERVER_SETTINGS"
+
 echo "ZERO_TOUCH_SHORT_URL_TEST=PASS"
