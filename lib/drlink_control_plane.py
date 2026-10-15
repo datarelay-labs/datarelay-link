@@ -513,8 +513,8 @@ class ControlPlane:
             ),
         )
 
-    def _pre_activation_checkpoint(self) -> dict:
-        """Snapshot authoritative DB + runtime artifacts before a mutating Apply."""
+    def _runtime_activation_snapshot(self) -> dict[str, bytes]:
+        """Capture runtime artifacts without the slower authoritative DB backup."""
         runtime_snap: dict[str, bytes] = {}
         if self.runtime.exists():
             for path in self.runtime.iterdir():
@@ -523,6 +523,28 @@ class ControlPlane:
                         runtime_snap[path.name] = path.read_bytes()
                     except OSError:
                         pass
+        return runtime_snap
+
+    def _restore_runtime_activation_snapshot(self, runtime_snap: dict[str, bytes]) -> None:
+        self.runtime.mkdir(parents=True, exist_ok=True)
+        wanted = set(runtime_snap)
+        for path in list(self.runtime.iterdir()):
+            if path.is_file() and path.name not in wanted:
+                try:
+                    path.unlink()
+                except OSError:
+                    pass
+        for name, data in runtime_snap.items():
+            target = self.runtime / name
+            target.write_bytes(data)
+            try:
+                os.chmod(target, 0o600)
+            except OSError:
+                pass
+
+    def _pre_activation_checkpoint(self) -> dict:
+        """Snapshot authoritative DB + runtime artifacts before a mutating Apply."""
+        runtime_snap = self._runtime_activation_snapshot()
         fd, backup_path = tempfile.mkstemp(prefix="drlink-act-", suffix=".tar")
         os.close(fd)
         try:
@@ -694,6 +716,7 @@ class ControlPlane:
         impact: Optional[dict] = None,
         confirm: Optional[bool] = None,
         compile_runtime: bool = True,
+        activate_before_commit: bool = False,
     ) -> Any:
         if impact and not _confirm_requested(confirm):
             needs_confirm = bool(
@@ -719,8 +742,12 @@ class ControlPlane:
             self._batch_results.append(result)
             return result
         checkpoint = None
+        runtime_checkpoint = None
         if compile_runtime and self._activation_should_run():
-            checkpoint = self._pre_activation_checkpoint()
+            if activate_before_commit:
+                runtime_checkpoint = self._runtime_activation_snapshot()
+            else:
+                checkpoint = self._pre_activation_checkpoint()
         public_expected_revision = self._public_expected_revision()
         self.conn.execute("BEGIN IMMEDIATE")
         try:
@@ -771,23 +798,42 @@ class ControlPlane:
                     after=summary,
                     impact=json.dumps(impact or {}, sort_keys=True)[:2000],
                 )
+            if compile_runtime and activate_before_commit and self._activation_should_run():
+                try:
+                    if self._forced_activation_failure():
+                        raise ControlPlaneError("simulated activation failure")
+                    self.compile_runtime()
+                except Exception:
+                    raise ControlPlaneError(
+                        "ERROR:\nRuntime activation failed.\n\n"
+                        "Previous configuration was restored.\n"
+                        "No configuration changes remain active."
+                    ) from None
             self._commit_open_transaction()
             if public_expected_revision is not None:
                 self._public_revision_guard_consumed = True
         except ConfirmationRequired:
             self._rollback_open_transaction()
+            if runtime_checkpoint is not None:
+                self._restore_runtime_activation_snapshot(runtime_checkpoint)
             self._cleanup_activation_checkpoint(checkpoint)
             raise
         except ConcurrencyError:
             self._rollback_open_transaction()
+            if runtime_checkpoint is not None:
+                self._restore_runtime_activation_snapshot(runtime_checkpoint)
             self._cleanup_activation_checkpoint(checkpoint)
             raise
         except ControlPlaneError:
             self._rollback_open_transaction()
+            if runtime_checkpoint is not None:
+                self._restore_runtime_activation_snapshot(runtime_checkpoint)
             self._cleanup_activation_checkpoint(checkpoint)
             raise
         except Exception as exc:
             self._rollback_open_transaction()
+            if runtime_checkpoint is not None:
+                self._restore_runtime_activation_snapshot(runtime_checkpoint)
             self._cleanup_activation_checkpoint(checkpoint)
             if isinstance(exc, sqlite3.IntegrityError) and 'unique constraint' in str(exc).lower():
                 raise ConcurrencyError(
@@ -803,7 +849,7 @@ class ControlPlane:
                     "ConfigurationBundle with dependency-aware delete ordering."
                 ) from exc
             raise ControlPlaneError("No changes were applied. %s" % exc) from exc
-        if compile_runtime and self._activation_should_run():
+        if compile_runtime and not activate_before_commit and self._activation_should_run():
             try:
                 if self._forced_activation_failure():
                     raise ControlPlaneError("simulated activation failure")

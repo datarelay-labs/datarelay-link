@@ -1232,14 +1232,13 @@ def _publication_receipt(row):
 def _mutate_publication(plane, auth, *args, **kwargs):
     allocator = getattr(auth, "allocator", None)
     guard = getattr(allocator, "remote_service_transaction", None)
-    # Agent Remote Service management mutates only publication/reservation state.
-    # It does not change the Server access-policy runtime artifacts compiled by
-    # ControlPlane.compile_runtime().  Running the generic activation checkpoint
-    # here performs a full Server backup before replying to the Agent and can
-    # exceed the bounded management-write timeout, turning a successful commit
-    # into an ambiguous response/compensating delete.  Keep this transaction
-    # atomic with the allocator, but do not run unrelated policy activation.
-    kwargs.setdefault("compile_runtime", False)
+    # Remote Service publication advances the authoritative Server revision, so
+    # access-policy generation must advance with it or real traffic fails closed
+    # with GENERATION_MISMATCH.  Compile that lightweight runtime state before
+    # committing this DB transaction instead of taking the slower full activation
+    # backup/checkpoint that can exceed the Agent management response timeout.
+    kwargs.setdefault("compile_runtime", True)
+    kwargs.setdefault("activate_before_commit", True)
     with guard() if callable(guard) else nullcontext():
         return plane._mutate(*args, **kwargs)
 
@@ -1373,8 +1372,17 @@ def server_upsert_remote_service(plane, auth: MgmtAuthContext, body: dict) -> di
             endpoint_port = int(reserved["remote_port"])
             proxy_id = reserved.get("proxy_id")
         elif endpoint_port is None and enabled:
-            # Test/local path without a live Allocator instance.
-            endpoint_port = v24.allocate_endpoint_port(plane, client["id"], name, pool_class)
+            # Test/local path without a live Allocator instance. Keep its port
+            # reservation inside this outer publication transaction so a later
+            # activation failure can roll back the complete mutation.
+            allocation_batch_prev = getattr(plane, "_batch_mode", False)
+            plane._batch_mode = True
+            try:
+                endpoint_port = v24.allocate_endpoint_port(
+                    plane, client["id"], name, pool_class
+                )
+            finally:
+                plane._batch_mode = allocation_batch_prev
 
         if enabled and runtime_verified and endpoint_port is not None:
             try:

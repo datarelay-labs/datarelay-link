@@ -704,27 +704,31 @@ class MgmtApiAuthTests(unittest.TestCase):
         ).fetchone()
         self.assertIsNone(ports)
 
-    def test_remote_service_server_mutations_skip_unrelated_policy_activation_checkpoint(self):
-        # The management response must not wait for a generic policy-runtime
-        # backup/compile.  Agent Remote Service publication state is protected
-        # by the allocator transaction plus distributed compensation instead.
+    def test_remote_service_server_mutations_compile_runtime_without_full_checkpoint(self):
+        # Publication advances the Server revision and therefore must advance the
+        # remote-policy generation before commit.  It must not take the slower
+        # pre-activation backup used by ordinary policy mutations.
         os.environ.pop("DRLINK_SKIP_ACTIVATION", None)
         original_checkpoint = self.server._pre_activation_checkpoint
         original_compile = self.server.compile_runtime
+        calls = {"compile": 0}
         try:
             self.server._pre_activation_checkpoint = lambda: self.fail(
-                "Remote Service management must not take a policy activation checkpoint"
+                "Remote Service management must not take the full activation checkpoint"
             )
-            self.server.compile_runtime = lambda **_kwargs: self.fail(
-                "Remote Service management must not compile policy runtime"
-            )
+
+            def counted_compile(**kwargs):
+                calls["compile"] += 1
+                return original_compile(**kwargs)
+
+            self.server.compile_runtime = counted_compile
             created = mgmt.server_upsert_remote_service(
                 self.server,
                 mgmt.MgmtAuthContext(
-                    MACHINE_A, {}, "activation-free-upsert", int(time.time()), allocator=None
+                    MACHINE_A, {}, "transactional-upsert", int(time.time()), allocator=None
                 ),
                 {
-                    "name": "no-policy-activation",
+                    "name": "transactional-activation",
                     "destination": "this-host",
                     "service": "ssh",
                     "enabled": True,
@@ -735,16 +739,73 @@ class MgmtApiAuthTests(unittest.TestCase):
                 },
             )
             self.assertIsNotNone(created["endpoint_port"])
+            self.assertEqual(calls["compile"], 1)
+            remote_gen = self.server.conn.execute(
+                "SELECT generation,status FROM runtime_generations WHERE plane='remote'"
+            ).fetchone()
+            self.assertEqual(remote_gen["generation"], self.server.current_revision())
+            self.assertEqual(remote_gen["status"], "active")
+
             deleted = mgmt.server_delete_remote_service(
                 self.server,
                 mgmt.MgmtAuthContext(
-                    MACHINE_A, {}, "activation-free-delete", int(time.time()), allocator=None
+                    MACHINE_A, {}, "transactional-delete", int(time.time()), allocator=None
                 ),
-                "no-policy-activation",
+                "transactional-activation",
             )
             self.assertEqual(deleted["status"], "DELETED")
+            self.assertEqual(calls["compile"], 2)
+            remote_gen = self.server.conn.execute(
+                "SELECT generation,status FROM runtime_generations WHERE plane='remote'"
+            ).fetchone()
+            self.assertEqual(remote_gen["generation"], self.server.current_revision())
+            self.assertEqual(remote_gen["status"], "active")
         finally:
             self.server._pre_activation_checkpoint = original_checkpoint
+            self.server.compile_runtime = original_compile
+            os.environ["DRLINK_SKIP_ACTIVATION"] = "1"
+
+    def test_remote_service_transactional_activation_failure_rolls_back(self):
+        os.environ.pop("DRLINK_SKIP_ACTIVATION", None)
+        original_compile = self.server.compile_runtime
+        before_revision = self.server.current_revision()
+        before_runtime = self.server._runtime_activation_snapshot()
+        try:
+            def fail_compile(**_kwargs):
+                runtime = self.server.runtime
+                runtime.mkdir(parents=True, exist_ok=True)
+                (runtime / "remote-access.json").write_text(
+                    '{"corrupt":"partial"}\n', encoding="utf-8"
+                )
+                raise ControlPlaneError("simulated transactional activation failure")
+
+            self.server.compile_runtime = fail_compile
+            with self.assertRaisesRegex(ControlPlaneError, "Runtime activation failed"):
+                mgmt.server_upsert_remote_service(
+                    self.server,
+                    mgmt.MgmtAuthContext(
+                        MACHINE_A, {}, "transactional-failure", int(time.time()), allocator=None
+                    ),
+                    {
+                        "name": "activation-failure",
+                        "destination": "this-host",
+                        "service": "ssh",
+                        "enabled": True,
+                        "pool_class": "normal",
+                        "target_mode": "self",
+                        "target_host": "127.0.0.1",
+                        "target_port": 22,
+                    },
+                )
+            self.assertEqual(self.server.current_revision(), before_revision)
+            self.assertIsNone(
+                self.server.conn.execute(
+                    "SELECT 1 FROM published_services "
+                    "WHERE name='activation-failure' AND released=0"
+                ).fetchone()
+            )
+            self.assertEqual(self.server._runtime_activation_snapshot(), before_runtime)
+        finally:
             self.server.compile_runtime = original_compile
             os.environ["DRLINK_SKIP_ACTIVATION"] = "1"
 
