@@ -1328,9 +1328,7 @@ def server_upsert_remote_service(plane, auth: MgmtAuthContext, body: dict) -> di
             endpoint_port = int(preserve)
 
         allocator = getattr(auth, "allocator", None)
-        if endpoint_port is None and not enabled:
-            pass
-        elif allocator is not None and enabled:
+        if allocator is not None:
             # Authoritative FRP registry allocation (single allocator authority).
             # Exclude only this existing publication's *own* Server reservation.
             # Its FRP registry proxy may be missing during reconnect/re-render:
@@ -1366,12 +1364,13 @@ def server_upsert_remote_service(plane, auth: MgmtAuthContext, body: dict) -> di
                     local_port=target_port,
                     preserve_port=endpoint_port,
                     extra_used=extra_used,
+                    enabled=enabled,
                 )
             except Exception as exc:
                 raise MgmtSyncError("Endpoint allocation failed: %s" % exc) from exc
             endpoint_port = int(reserved["remote_port"])
             proxy_id = reserved.get("proxy_id")
-        elif endpoint_port is None and enabled:
+        elif endpoint_port is None:
             # Test/local path without a live Allocator instance. Keep its port
             # reservation inside this outer publication transaction so a later
             # activation failure can roll back the complete mutation.

@@ -2020,6 +2020,7 @@ class Allocator:
         preserve_port=None,
         proxy_id=None,
         extra_used=None,
+        enabled=True,
     ):
         """Authoritatively allocate/reserve a Remote Service endpoint in the registry.
 
@@ -2092,7 +2093,7 @@ class Allocator:
                 'local_port': int(local_port),
                 'remote_port': int(remote_port),
                 'preset': 'custom',
-                'enabled': True,
+                'enabled': bool(enabled),
                 'v24_remote_service': True,
                 'pool_class': pool,
             }

@@ -751,6 +751,51 @@ def case_fixed_tcp_pool_port_allowed():
         env.cleanup()
 
 
+def case_disabled_fixed_reservation_uses_its_own_pool():
+    env = Env(port_start=18000, port_end=18000)
+    try:
+        code, response = env.enroll([svc('ssh', preset='ssh')])
+        if code != 200:
+            fail('disabled Fixed setup', response)
+        allocator = env.allocator
+        result = allocator.reserve_remote_service_endpoint(
+            'machine-a', 'disabled-fixed', 'fixed-tcp', local_port=1521,
+            enabled=False,
+        )
+        port = result['remote_port']
+        if not 6200 <= port <= 6299:
+            fail('disabled Fixed pool', result)
+        record = env.load_state()['clients']['machine-a']['services'][result['proxy_id']]
+        if record['enabled'] or record['remote_port'] != port:
+            fail('disabled reservation enablement', record)
+        updated = allocator.reserve_remote_service_endpoint(
+            'machine-a', 'disabled-fixed', 'fixed-tcp', local_port=1521,
+            preserve_port=port, enabled=True,
+        )
+        if updated['remote_port'] != port:
+            fail('disabled reservation moved on enable', updated)
+        allocator.release_remote_service_endpoint('machine-a', 'disabled-fixed')
+        replacement = allocator.reserve_remote_service_endpoint(
+            'machine-a', 'replacement-fixed', 'fixed-tcp', local_port=1521,
+            enabled=False,
+        )
+        if replacement['remote_port'] != port:
+            fail('Fixed freed capacity not reused', replacement)
+        before = env.load_state()
+        try:
+            allocator.reserve_remote_service_endpoint(
+                'machine-a', 'normal-overflow', 'normal', enabled=False,
+            )
+            fail('normal pool overflow accepted')
+        except MOD.PortRangeExhausted:
+            pass
+        if env.load_state() != before:
+            fail('failed disabled allocation changed registry')
+        pass_('disabled Fixed reservation uses its pool and retains ownership')
+    finally:
+        env.cleanup()
+
+
 def main():
     case_a_single_ssh()
     case_b_no_ssh()
@@ -775,6 +820,7 @@ def main():
     case_range_6000_exhaustion()
     case_admin_metadata_and_source_ip()
     case_unreadable_host_version_fallback()
+    case_disabled_fixed_reservation_uses_its_own_pool()
     print()
     print('ALLOCATOR_GENERIC_TESTS=PASS')
 

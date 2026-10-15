@@ -1475,15 +1475,21 @@ class ControlPlane:
                 "Use: unset managed-host %s"
                 % (name, name)
             )
-        refs = self.object_references(name)
-        if refs:
-            listed = "\n".join("  %s" % r["display"] for r in refs)
-            raise ControlPlaneError(
-                "Cannot remove Object %s.\n\nReferenced by:\n%s\n\nNo changes were applied."
-                % (name, listed)
-            )
+        def require_unreferenced():
+            refs = self.object_references(name)
+            if refs:
+                listed = "\n".join("  %s" % r["display"] for r in refs)
+                raise ControlPlaneError(
+                    "Cannot remove Object %s.\n\nReferenced by:\n%s\n\nNo changes were applied."
+                    % (name, listed)
+                )
+
+        require_unreferenced()
 
         def write():
+            # Membership can commit after the public preflight/confirmation.
+            # Recheck while holding the same write transaction as deletion.
+            require_unreferenced()
             self.conn.execute("DELETE FROM object_values WHERE object_id = ?", (obj["id"],))
             self.conn.execute("DELETE FROM objects WHERE id = ?", (obj["id"],))
             return {"entity": {"type": "object", "id": obj["id"], "name": name}, "operation": "delete"}
@@ -1492,6 +1498,7 @@ class ControlPlane:
             "unset object %s" % name,
             "delete object",
             write,
+            expected={"rows": [("objects", obj["id"], obj["row_version"])]},
             impact={
                 "kind": "destructive-delete",
                 "resource": public_label,

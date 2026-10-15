@@ -507,6 +507,74 @@ class RemoteServiceDistributedAtomicity(unittest.TestCase):
         ).fetchone()
         self.assertEqual(meta["pool_class"], "fixed-tcp")
 
+    def test_rejected_cross_pool_edit_preserves_enabled_publication(self):
+        created = self._create('cross-pool')
+        before = dict(self._server_pub('cross-pool'))
+        with self.assertRaisesRegex(ControlPlaneError, 'cannot be changed'):
+            self._create('cross-pool', service='db-fixed')
+        row = self.agent.conn.execute(
+            "SELECT enabled,service_object,endpoint_port FROM agent_remote_services WHERE name='cross-pool'"
+        ).fetchone()
+        self.assertEqual(int(row['enabled']), 1)
+        self.assertEqual(row['service_object'], 'ssh')
+        self.assertEqual(row['endpoint_port'], created['view']['endpoint_port'])
+        self.assertEqual(dict(self._server_pub('cross-pool')), before)
+
+    def test_offline_intent_survives_repeated_failed_runtime_synchronization(self):
+        v24.set_remote_service_agent(
+            self.agent, 'offline-recovery', destination='this-host', service='https',
+            enabled=True, oneshot=True, root=self.agent_tmp, server_reachable=False,
+        )
+        with mock.patch('drlink_v24_runtime.apply_agent_runtime',
+                        return_value={'ok': False, 'error': 'controlled runtime failure'}):
+            for _ in range(2):
+                result = v24.synchronize_agent_remote_services(
+                    self.agent, root=self.agent_tmp, force_runtime=True)
+                self.assertEqual(result['status'], 'DEGRADED')
+                row = self.agent.conn.execute(
+                    "SELECT enabled,service_object,delete_pending FROM agent_remote_services "
+                    "WHERE name='offline-recovery'"
+                ).fetchone()
+                self.assertIsNotNone(row)
+                self.assertEqual(int(row['enabled']), 1)
+                self.assertEqual(row['service_object'], 'https')
+                self.assertEqual(int(row['delete_pending']), 0)
+
+    def test_disabled_create_reserves_selected_pool_and_ownership(self):
+        for service, pool in (("ssh", "normal"), ("db-fixed", "fixed-tcp")):
+            with self.subTest(pool=pool):
+                name = "disabled-" + pool
+                created = v24.set_remote_service_agent(
+                    self.agent, name, destination="this-host", service=service,
+                    enabled=False, oneshot=True, root=self.agent_tmp,
+                    server_reachable=True,
+                )
+                pub = self._server_pub(name)
+                port = int(pub["public_port"])
+                start, end = (6200, 6299) if pool == "fixed-tcp" else (6000, 6098)
+                self.assertTrue(start <= port <= end, (pool, port))
+                self.assertEqual(created["view"]["endpoint_port"], port)
+                held = self.server.conn.execute(
+                    "SELECT * FROM port_reservations WHERE public_port=? AND released=0",
+                    (port,),
+                ).fetchone()
+                owner = self.server.conn.execute(
+                    "SELECT id, client_id FROM published_services WHERE name=?", (name,),
+                ).fetchone()
+                self.assertEqual(held["client_id"], owner["client_id"])
+                self.assertEqual(held["service_id"], owner["id"])
+                self.assertEqual(held["service_name"], name)
+                enabled = self._create(name, service=service)
+                self.assertEqual(enabled["view"]["endpoint_port"], port)
+                v24.unset_remote_service_agent(self.agent, name, root=self.agent_tmp,
+                                               server_reachable=True)
+                removed = self._server_pub(name)
+                self.assertTrue(removed is None or int(removed["released"]) == 1)
+                self.assertIsNone(self.server.conn.execute(
+                    "SELECT 1 FROM port_reservations WHERE public_port=? AND released=0",
+                    (port,),
+                ).fetchone())
+
 
 if __name__ == "__main__":
     unittest.main()
