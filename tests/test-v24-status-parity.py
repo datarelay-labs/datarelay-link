@@ -3172,6 +3172,53 @@ class AgentLifecycleWorkerTests(unittest.TestCase):
                 self.assertTrue(sync.call_args.kwargs.get("server_verification_only"),
                                 "a static degraded row must not trigger full replay of a healthy proxy")
 
+    def test_runtime_activation_pending_uses_verification_only(self):
+        from unittest import mock
+        import drlink_agent_lifecycle as lifecycle
+
+        with tempfile.TemporaryDirectory(prefix="drlink-lifecycle-runtime-pending-") as tmp:
+            root = Path(tmp)
+            (root / "etc/drlink").mkdir(parents=True)
+            (root / "etc/drlink/config.json").write_text(
+                '{"role":"agent"}\n', encoding="utf-8"
+            )
+            plane = ControlPlane(tmp)
+            v24.ensure_v2_schema(plane.conn)
+            plane.conn.execute(
+                "INSERT INTO agent_remote_services "
+                "(name, destination, service_object, enabled, status, endpoint_port, "
+                "pending_allocation, delete_pending, pool_class, reason, "
+                "runtime_verified, updated_at) VALUES "
+                "('runtime-pending', 'this-host', 'ssh', 1, 'DEGRADED', 6025, "
+                "0, 0, 'normal', 'Runtime activation pending.', 0, "
+                "'2026-10-15T00:00:00Z')"
+            )
+            plane.conn.commit()
+            self.assertFalse(
+                lifecycle.reconciliation_needed(plane),
+                "allocated runtime-pending state must not trigger full replay",
+            )
+            self.assertTrue(lifecycle.local_verification_retry_needed(plane))
+            plane.close()
+            lifecycle.set_lifecycle_intent("running", tmp)
+
+            with mock.patch(
+                "drlink_mgmt_sync.report_agent_lifecycle_on_server",
+                return_value={"ok": True, "state": "connected",
+                              "reconcile_required": False},
+            ), mock.patch(
+                "drlink_v24.synchronize_agent_remote_services",
+                return_value={"status": "SYNCHRONIZED", "updated": 1},
+            ) as sync:
+                result = lifecycle.reconcile_once(tmp)
+
+            self.assertEqual(result["status"], "SYNCHRONIZED")
+            sync.assert_called_once()
+            self.assertTrue(
+                sync.call_args.kwargs.get("server_verification_only"),
+                "runtime-pending verification must not replay the complete runtime",
+            )
+
     def test_local_degraded_status_push_failure_retries_verification_without_replay(self):
         from unittest import mock
         import drlink_agent_lifecycle as lifecycle

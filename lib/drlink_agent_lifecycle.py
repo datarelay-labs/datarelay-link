@@ -55,6 +55,11 @@ def set_lifecycle_intent(intent: str, root: Optional[str] = None) -> Path:
     return path
 
 def reconciliation_needed(plane) -> bool:
+    # An allocated DEGRADED service with runtime_verified=0 is a verification
+    # retry, not an instruction to replay the complete desired runtime.
+    # local_verification_retry_needed() handles that case through the signed
+    # server_verification_only path so one pending verification cannot demote
+    # already working proxies on every lifecycle-worker cycle.
     row = plane.conn.execute(
         "SELECT COUNT(*) AS n FROM agent_remote_services "
         "WHERE delete_pending = 1 OR pending_allocation = 1 "
@@ -62,8 +67,7 @@ def reconciliation_needed(plane) -> bool:
         "OR (upper(status) = 'HEALTHY' AND runtime_verified = 0) "
         "OR upper(status) NOT IN ('HEALTHY', 'DEGRADED') "
         "OR (upper(status) = 'DEGRADED' AND "
-        "(reason LIKE 'Runtime activation%' "
-        "OR reason LIKE '%Server unreachable%'))))"
+        "reason LIKE '%Server unreachable%')))"
     ).fetchone()
     return bool(row and int(row["n"] or 0) > 0)
 
