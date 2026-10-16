@@ -6,7 +6,7 @@
 
 ## Execute live tests first
 
-Continue the **existing** standard-reviewed Codex Full User E2E from its live session. Do not launch another competing run, force a read-only sandbox, restart completed actors, edit its source HEAD, or repeatedly wait for a new owner authorization already given. `LAB_GO`, legacy `phase-state.json` and global `NOT_READY` are diagnostic statuses, never permission switches. Readiness is diagnostic; no pre-run FCS or repeated seven-host approval sequence is required.
+Continue the **currently owner-selected** live run from its real session; protect any other actor's active Codex worktree/RUN_ID. Independently selected CLI-only/FCS runs use their own contract and nonconflicting resources. Do not launch another competing run, force a read-only sandbox, restart completed actors, edit its source HEAD, or repeatedly wait for a new owner authorization already given. `LAB_GO`, legacy `phase-state.json` and global `NOT_READY` are diagnostic statuses, never permission switches. Readiness is diagnostic; no pre-run FCS or repeated seven-host approval sequence is required.
 
 F001 and F007 remain open until genuine exact-HEAD, signed Server/Agent evidence and real unaffected SSH/HTTP/TCP during three Fixed TCP cycles show they are fixed. F004, F005, F006 and D001 also require genuine retest; old source tests and historical findings alone never become E2E PASS. A source defect is fixed **after** freezing the affected E2E run, with focused RED→GREEN regression, and then requalified on a new candidate. Continue all independent safe user tests.
 
@@ -18,7 +18,7 @@ F001 and F007 remain open until genuine exact-HEAD, signed Server/Agent evidence
 
 **Owner decision — every assigned test host may be destroyed:** Within the owner-approved disposable roster, product loss, service interruption and reboot were approved. Before testing each host, inspect its prior DRLink state, clean only eligible test-only state and **verify it is** clean; then deploy the immutable test candidate and execute actual scenarios. Do not demand a fresh owner confirmation merely because a designated test VM may fail. Keep management SSH, unrelated machines and historical evidence intact.
 
-**Safety boundary:** A real platform/tool refusal for an exact operation, especially B014 Server uninstall or a native/certificate effect, stays binding: **never retry such an effect under an alternate executor** or route. Mark only dependent scenarios BLOCKED/NOT_RUN and continue independently authorized tests. No production, credentials or permissions changes, publication, merger or release are implied.
+**Safety boundary:** A **current** platform/tool refusal for an exact operation, especially B014 Server uninstall or a native/certificate effect, stays binding; historical refusals are rechecked under the current permissions on the same tool/target: **never retry such an effect under an alternate executor** or route. Mark only dependent scenarios BLOCKED/NOT_RUN and continue independently authorized tests. No production, credentials or permissions changes, publication, merger or release are implied.
 
 ## Diagnostics are optional supporting evidence
 

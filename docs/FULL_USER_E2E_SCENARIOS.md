@@ -6,7 +6,7 @@
 > **Active worktree:** `/home/aella/datarelay-link-current`
 > **Operator runbook:** Acting personas do not consult manuals/runbooks during FULL_USER_E2E; Appendix A is historical-only and the auditor may use canonical documents only after runtime discovery to reconcile omissions.
 > **Product:** Data Relay Link
-> **Target:** v2.4 and later until superseded
+> **Target:** v2.4.0 including AI Identity/AI Access and MCP Bridge; later versions only when qualified
 > **Primary CLI:** drlink
 > **CLI/AI authority:** docs/DATA_RELAY_LINK_CLI_AI_MASTER_v2.4_FINAL.md
 > **Integrated predecessors:** docs/CLI_EXHAUSTIVE_AUDIT.md + docs/AI_ASSISTED_COMMAND_EXHAUSTIVE_AUDIT.md (their mandatory coverage is absorbed here; they are not separate prerequisites for a User E2E run)
@@ -15,7 +15,7 @@
 > **Status:** Normative living document
 > **Operator execution procedure:** docs/E2E_EXECUTION_PROCEDURE.md (per-lane readiness, independent actors, frozen evidence); the auditor reads this entire canonical document before any user action.
 > **Owner-scoped test execution (2026-10-12):** The previous global `LAB_GO` / `phase-state.json` gate is removed as a prerequisite for independently authorized tests. Run CLI FCS and Full User E2E on eligible installed and approved test hosts. Exclude hosts where enrollment or a specific platform/tool operation is denied; record only those canonical criteria as `BLOCKED` / `NOT_RUN`, not PASS. Preserve every canonical ID, separate real Direct/AI actors, real traffic/soak and the two complete same-HEAD PASS loops required before release. Never bypass a genuine security denial.
-> **Codex both-role owner override (#165):** Codex is the owner-selected independent Direct User, AI-assisted User and tool-free AI Adviser executor. Use `docs/CODEX_DUAL_ROLE_TEST_PROTOCOL.md` and preserve same goals, fresh separate threads, first advice, public CLI actions and prospective evidence. Codex also owns defect reproduction, source fixes, focused tests, authorized candidate installation and retesting after freezing evidence; no ChatGPT implementation handoff is required. Global Lab NOT_READY no longer forbids independent tests; actual denied operations still cannot run.
+> **Current owner execution override (2026-10-16):** The explicit owner-selected runtime executes the test; `CHATGPT_CHAT` is the default repository execution profile. Older Issue #165 Codex-only handoffs do not prohibit ChatGPT from an independent, isolated run. Preserve a **live** Codex actor's own worktree/RUN_ID without interference. In FULL_USER_E2E only, distinct Direct User, AI-assisted User and tool-free Adviser sessions, authentic first AI guidance, full 116-ID coverage (including MCP/AI), real traffic and two same-HEAD release PASS runs remain mandatory. For the independent 100-ID non-AI/MCP test, use `docs/CLI_ONLY_E2E_SCENARIOS.md` instead; full mirror/readiness gates cannot block it.
 
 
 ### Continuous execution and finding accumulation
@@ -67,45 +67,45 @@ A release-qualification request uses this full suite plus the exact-HEAD double-
 
 ### 1.1 User E2E execution ownership
 
-**Codex owns the complete test-and-fix loop for Issue #165**, following the execution rule in `AGENTS.md`. Codex coordinates the Direct CLI User, AI-assisted User, separate tool-free AI Adviser and auditor contexts under one RUN_ID, freezes evidence, fixes verified defects, tests and installs the authorized candidate, and performs the required retest. Role isolation is an evidence boundary, not a handoff to another implementer.
+**The current owner-selected runtime owns the complete test-and-fix loop**, following the execution rule in `AGENTS.md`. The selected runtime coordinates the Direct CLI User, AI-assisted User, separate tool-free AI Adviser and auditor contexts under one RUN_ID, freezes evidence, fixes verified defects, tests and installs the authorized candidate, and performs the required retest. Role isolation is an evidence boundary, not a handoff to another implementer.
 
 This is an owner-selected tester identity rule (the current explicit owner overrides the repository default):
 
 ~~~text
 USER_E2E_EXECUTOR=OWNER_SELECTED_RUNTIME
-ISSUE_165_USER_E2E_EXECUTOR=CODEX
+USER_E2E_EXECUTOR=CURRENT_OWNER_SELECTED_RUNTIME
 USER_E2E_FINAL_AUDITOR=OWNER_SELECTED_RUNTIME
-ISSUE_165_USER_E2E_FINAL_AUDITOR=CODEX
+USER_E2E_FINAL_AUDITOR=CURRENT_OWNER_SELECTED_RUNTIME
 CURSOR_MAY_EXECUTE_FULL_USER_E2E=NO
 CURSOR_MAY_DECLARE_USER_E2E_PASS=NO
 ~~~
 
-Codex continues from frozen findings into authorized remediation and retesting without another owner prompt. Separate genuine actor knowledge contexts and immutable candidate evidence remain required; remediation never rewrites a completed test result.
+The selected runtime continues from frozen findings into authorized remediation and retesting without another owner prompt. Separate genuine actor knowledge contexts and immutable candidate evidence remain required; remediation never rewrites a completed test result.
 
 The required loop is:
 
 ~~~text
-OWNER_SELECTED_TEST_EXECUTOR (CODEX for Issue #165)
+OWNER_SELECTED_TEST_EXECUTOR (CURRENT_OWNER_SELECTED_RUNTIME)
 → pin exact candidate HEAD/build
 → execute FULL_USER_E2E to exhaustion
 → freeze evidence and final findings
 → update the active Work Packet once
 
 If implementation change is required after the run:
-  Codex continues the same authorized workstream
+  The selected runtime continues the same authorized workstream
   → implement the bounded fix
   → run implementation-level deterministic tests
   → install/update the candidate on authorized participating test hosts
   → report exact branch/HEAD/evidence
 
-OWNER_SELECTED_TEST_EXECUTOR (CODEX for Issue #165, per-lane authorized accessible host)
+OWNER_SELECTED_TEST_EXECUTOR (CURRENT_OWNER_SELECTED_RUNTIME, per-lane authorized accessible host)
 → independently verify the implementation result with targeted deterministic regression as supporting evidence
 → because product/public-surface/contract remediation changed the candidate, start a brand-new **complete FULL_USER_E2E run from the beginning with a new RUN_ID**
 → repeat complete run → final report/readback/offboarding → remediation → complete rerun with no fixed pass limit until the latest complete run has zero new/unresolved actionable findings and zero mandatory FAIL/PARTIAL/BLOCKED
 → make the final E2E PASS/PARTIAL/FAIL determination only from the latest complete persona-led run
 ~~~
 
-Implementation-agent output may be supporting evidence for static/source review, isolated deterministic checks, or remediation verification, but it does **not** substitute for the **owner-selected CODEX** first-time Direct/AI persona-led User E2E in Issue #165. No scripted test may impersonate either Codex actor.
+Implementation-agent output may be supporting evidence for static/source review, isolated deterministic checks, or remediation verification, but it does **not** substitute for the **owner-selected runtime** first-time Direct/AI persona-led User E2E in Issue #165. No scripted test may impersonate either independent user actor.
 
 A Cursor session must never be treated as the executor of an unqualified request such as:
 
@@ -125,7 +125,7 @@ Historical PASS results, synthetic tests, unit tests, Docker-only results, Curso
 If product code, dependencies, generated runtime artifacts, or the tested build changes during a full pass, record the new HEAD/build identity and invalidate the affected pass. For final release qualification, the double-pass counter resets as defined by the release validation policy.
 
 
-For this owner-selected Work Packet, Codex must read the full current canonical contract, then follow `docs/CODEX_DUAL_ROLE_TEST_PROTOCOL.md` for **both** independent Direct and AI-assisted roles. The same separated role sessions may continue across scenarios with fresh per-scenario evidence; a cold-start user scenario still requires its own clean actor. Preserve genuine public CLI advice, exact first adviser output and all evidence. Codex fixes verified product defects under the current owner authorization after freezing test evidence, without modifying a candidate during its frozen user-test pass. The global Lab GO/phase state is **not** a start prerequisite for independently authorized Full User E2E lanes. The prior 116-ID frozen run is immutable; a missing AI mirror or excluded host remains PARTIAL/BLOCKED/NOT_RUN, never PASS.
+For FULL_USER_E2E, the selected executor must read the full current canonical contract, then follow `docs/CODEX_DUAL_ROLE_TEST_PROTOCOL.md` for **both** independent Direct and AI-assisted roles. The same separated role sessions may continue across scenarios with fresh per-scenario evidence; a cold-start user scenario still requires its own clean actor. Preserve genuine public CLI advice, exact first adviser output and all evidence. The selected implementer fixes verified product defects under the current owner authorization after freezing test evidence, without modifying a candidate during its frozen user-test pass. The global Lab GO/phase state is **not** a start prerequisite for independently authorized Full User E2E lanes. The prior 116-ID frozen run is immutable; a missing AI mirror or excluded host remains PARTIAL/BLOCKED/NOT_RUN, never PASS.
 
 ## 1.2 Immediate-execution contract (hard gate)
 
@@ -926,11 +926,13 @@ Performance and concurrency testing must progressively increase utilization from
 
 The current configured estate is sufficient by contract: do not stop a run or ask the operator to provision hypothetical 5/10/30/50-host tiers. Record the actual physical-host ceiling and stress that topology aggressively with isolated roles, services, sessions, and load processes. Missing larger lab tiers are characterization limits, not `BLOCKED_ENVIRONMENT` for FULL_USER_E2E.
 
-### 5.3 Mandatory pre-run clean-room state gate
+### 5.3 Mandatory pre-run clean-room state gate — FULL_USER_E2E only
+
+**Profile isolation:** This complete-run clean-room contract applies to expressly assigned disposable `FULL_USER_E2E` qualification hosts. It is NOT a prerequisite for the separately selected `CLI_ONLY_E2E` or non-destructive FCS. Those profiles use prospective RUN_ID ownership, per-scenario clean-fixture prerequisites and isolation instead. Do not reset another worker's host, processes or state merely because the Full User E2E uses a clean-room starting condition. A host's failed preparation blocks only that host's dependent scenarios; no global launch veto.
 
 **Owner-authorized destructive TEST HOST scope (2026-10-11):** Every host
 explicitly assigned in the current owner-private E2E host inventory is a
-**disposable test host**. The owner accepts complete loss of DRLink test state,
+**disposable test host**. The owner accepts complete loss of explicitly designated DRLink test state,
 temporary test data, service interruption, failed installs, reboots and even
 a host becoming unusable as outcomes of legitimate test operations. **Do not
 pause to ask for another owner approval merely because one of those test hosts
@@ -955,8 +957,8 @@ not part of that authorization.
    scenarios. Repeat **clean → install → test → diagnose → fix → clean →
    retest** as required until testable bugs are resolved; a broken host is
    a test result, not a reason to avoid testing.
-5. If a **specific cleanup effect** is denied by an actual tool/platform
-   security control, **do not disguise, reroute or retry that denied effect**
+5. If a **specific cleanup effect** is denied by an actual **current** tool/platform
+   security control, **do not disguise, reroute or bypass that denied effect**
    under another command/tool/host. Mark only the dependent host or criterion
    BLOCKED and continue independently clean and authorized test lanes.
    Test-host disposability alone cannot override a security-tool denial.
@@ -4246,7 +4248,7 @@ The invariant for future User E2E requests is:
 
 ~~~text
 USER_E2E_REQUEST
--> Issue #165 owner override: Codex executes independent Direct + AI-assisted roles and final audit; the current owner-selected implementer fixes verified defects after evidence is frozen; Cursor remains disabled.
+-> Current owner-selected runtime executes independent Direct + AI-assisted roles and final audit; the current owner-selected implementer fixes verified defects after evidence is frozen; Cursor remains disabled.
 -> locate this canonical document at docs/FULL_USER_E2E_SCENARIOS.md
 -> capture candidate/build identity only; do not perform a pre-run code review
 -> probe all configured test hosts, remove previous-run DRLink state/test services/load processes/temp artifacts, preserve only explicit management access infrastructure, and require the section 5.3 clean-room gate before fresh product activity

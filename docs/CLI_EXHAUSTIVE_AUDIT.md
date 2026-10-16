@@ -1,9 +1,9 @@
 # Data Relay Link — CLI Exhaustive Audit
 
 > **Document role:** Canonical exhaustive audit contract for the public `drlink` CLI
-> **Executor:** ChatGPT
+> **Executor:** owner-selected runtime; default CHATGPT_CHAT
 > **Scope:** Human-operated CLI usability, syntax, discoverability, workflow closure, safety, recovery, and cross-surface consistency
-> **Target:** v2.4 and later until superseded
+> **Target:** v2.4.0 including MCP Bridge/AI Access as product features (direct-only audits use their selected narrower test scope)
 > **Product authority:** `DATA_RELAY_LINK_CLI_AI_MASTER_v2.4_FINAL.md`, `CLI_REFERENCE.md`, `Data Relay Link CLI Information Architecture.md`
 > **Companions:** `CLI_FEATURE_SCENARIO_RECONCILIATION.md`, `AI_ASSISTED_COMMAND_EXHAUSTIVE_AUDIT.md`
 
@@ -79,7 +79,7 @@ Before mutation:
 7. create a unique evidence root and resource prefix;
 8. use disposable/namespaced resources for mutations.
 
-If the installed build does not match the intended candidate, record that fact before proceeding. Do not claim candidate findings from an older install.
+If installed build differs from candidate, record actual `INSTALLED_HEAD` and label stale observations correlation-only; continue applicable independently authorized tests. Do not invent current candidate PASS or incorrectly apply FCS's read-only restriction to this independently selected audit. Missing an exact-match installation is a candidate PASS restriction, not a global test-start veto for independent public help and one-shot commands.
 
 Recommended evidence root:
 
@@ -154,7 +154,7 @@ COMMANDS_WITHOUT_DISPOSITION=0
 
 ## 4.2 Product feature ↔ CLI surface reconciliation — product-surface audit (release-consumable)
 
-`CLI_FEATURE_SCENARIO_RECONCILIATION.md` is the canonical non-destructive contract for this product-surface audit. When the user explicitly requests CLI ↔ Feature ↔ Scenario reconciliation, deterministically resolve `datarelay-labs/datarelay-link/docs/CLI_FEATURE_SCENARIO_RECONCILIATION.md` and execute it directly without broad search or environment preparation. `Scenario` means operator-workflow coherence, not live mutation. Runtime use is read-only; mutation-bearing lifecycle steps are reconciled from discovery/catalog/parser/docs/isolated tests. Findings accumulate without pausing, and the active Work Packet is updated once after the audit is exhausted.
+`CLI_FEATURE_SCENARIO_RECONCILIATION.md` is a **separate** non-destructive FCS product-surface contract, using `FCS_CLI_ONLY` when AI/MCP is explicitly excluded and `FCS_FULL` for full release reconciliation. Its restrictions do not turn independently authorized CLI functionality E2E into a read-only test. When the user explicitly requests CLI ↔ Feature ↔ Scenario reconciliation, deterministically resolve `datarelay-labs/datarelay-link/docs/CLI_FEATURE_SCENARIO_RECONCILIATION.md` and execute it directly without broad search or environment preparation. `Scenario` means operator-workflow coherence, not live mutation. Runtime use is read-only; mutation-bearing lifecycle steps are reconciled from discovery/catalog/parser/docs/isolated tests. Findings accumulate without pausing, and the active Work Packet is updated once after the audit is exhausted.
 
 Before operator-workflow reconciliation, build a second ledger from the **product feature model**, not from the CLI. This prevents an internally consistent CLI from passing while product functionality is missing, duplicated, obsolete, or unreachable.
 

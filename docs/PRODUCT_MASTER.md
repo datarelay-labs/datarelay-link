@@ -324,6 +324,8 @@ A display name alone is never authentication.
 
 Authentication and AI Access authorization are separate.
 
+**v2.4.0 scope decision (current owner, 2026-10-16):** The v2.4.0 target includes the current Managed Host/Network Object/Service Object/Permission Object model, Remote Access, Controlled Internet Access, Zero-Touch enrollment, guided/direct CLI, ConfigurationBundle, revision/audit, product/Relay Engine lifecycle, multi-platform Agent, **AI Identity/AI Access and server-side MCP Bridge**. The MCP/AI-only exclusions in `CLI_ONLY_E2E_SCENARIOS.md` narrow **that test run only**. They are not an MCP deferral to 2.5.0 and do not relax the full v2.4.0 release gates. Record real implementation/candidate bytes and exact Source HEAD; documentation is not proof of feature completion.
+
 For the v2.4.0 target, the server-side MCP Bridge is included as part of AI Access. MCP is an integration layer over this identity and permission model; it does not introduce a separate public `AI Principal` model.
 
 Stable v2.4.0 qualification is blocked until real ChatGPT owner/UI authentication is proven end to end on a plan/surface that officially supports full MCP at evidence-capture time. The required owner/UI evidence is: OAuth Authorization Code/consent completes through the public MCP endpoint, ChatGPT discovers the exposed tools, one authorized operation succeeds, and one intentionally out-of-scope operation is denied by current AI Access policy. Machine-side SDK/HTTP conformance alone does not satisfy this gate. Because retained owner/UI JSON is external evidence, it is not terminal release authority by itself; stable attestation also requires the independently administered `stable-release-owner-ui` GitHub Environment approval gate.
