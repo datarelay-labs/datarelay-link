@@ -47,7 +47,7 @@ other standards, histories, work packets or old test reports without a reason.
 
 ## Direct audit triggers
 
-- **CLI-only E2E / CLI 단독 E2E:** immediately execute the separate §docs/CLI_ONLY_E2E_SCENARIOS.md§ with its original-ID result ledger. Exclude ONLY AI support and MCP; do not require full-lab GO, AI E2E, finished whole CI, or all hosts online before independent eligible public CLI actions. Genuine denied effects stay denied for that operation; continue other host/functional/performance lanes.
+- **CLI-only E2E / CLI 단독 E2E:** immediately execute the separate `docs/CLI_ONLY_E2E_SCENARIOS.md` with its original-ID result ledger. Exclude ONLY AI support and MCP; do not require full-lab GO, AI E2E, finished whole CI, or all hosts online before independent eligible public CLI actions. Genuine denied effects stay denied for that operation; continue other host/functional/performance lanes.
 `CLI 기능 시나리오 연계성` → `docs/CLI_FEATURE_SCENARIO_RECONCILIATION.md`.
 `CLI 전수 감사` → `docs/CLI_EXHAUSTIVE_AUDIT.md`.
 `AI 지원 명령 전수 감사` → `docs/AI_ASSISTED_COMMAND_EXHAUSTIVE_AUDIT.md`.
