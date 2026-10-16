@@ -1,6 +1,8 @@
 # Future upstream FRP upgrades
 
-frp-auto-deploy pins a **tested** FRP version. It never installs GitHub
+> **Scope:** Internal Relay Engine qualification and compatibility guide. Public Data Relay Link operators use the `drlink` update commands documented in `UPGRADE.md`. Legacy `FRP_*` environment variables or `frp-*` helper names in this file are engineering/compatibility mechanisms, not canonical public CLI vocabulary.
+
+Data Relay Link pins a **tested** FRP version. It never installs GitHub
 `latest` automatically.
 
 Current pin: see `VERSION` (`FRP_VERSION`) and `lib/frp-common.sh`
@@ -60,14 +62,14 @@ export FRP_NEW_SHA256_ARM64=...
 ./scripts/secret-scan.sh
 ```
 
-Install on a server only with `sudo frpctl frp-update`, which installs the
+Install on a server only with `sudo drlink system update engine`, which installs the
 **pinned** version, never upstream latest.
 
 Informational check:
 
 ```bash
-sudo frpctl upstream
-# or: frp-upstream
+sudo drlink system update check-engine
+# implementation tool: frp-upstream
 ```
 
 ## How to perform OCI E2E
@@ -80,7 +82,7 @@ operator cycle PASSes.
 Follow `docs/RELEASE_CHECKLIST.md` and `docs/RELEASE_VALIDATION.md`.
 Do not move or rewrite the frozen `v2.1.0` or `v2.1.1` tags.
 
-## Product upgrade (FRP Auto Deploy)
+## Product upgrade (Data Relay Link)
 
 Product upgrade is separate from upstream FRP binary upgrade.
 
@@ -107,6 +109,57 @@ A normal project upgrade must preserve:
 - release channel metadata
 
 Update is never re-enrollment.
+
+An immutable local-source upgrade preserves the installed release channel by
+default. A prior stable installation therefore rejects a development candidate;
+retrying does not change that selection. For an owner-approved development
+test transition, select `FRP_RELEASE_CHANNEL=development` together with the
+canonical installer's `--upgrade --source DIR` and immutable full-SHA source
+expectations. This is an engineering test path, not an implicit channel change
+in `drlink system update product`. Public updates require the verified artifact
+and checksum metadata to exist for their resolved channel and source ref.
+
+The generated Windows installer binds its actual outer file SHA256 to the
+Server's qualified Windows Agent manifest through the pinned allocator CA and
+hostname check before redeeming a ticket. Permanent version metadata separates
+the exact installed Source HEAD from the embedded content Source HEAD. Engine
+updates retain that provenance. A different, unverified local source tree reports
+UNKNOWN rather than inheriting the previous candidate's Source HEAD.
+
+Enrollment presets must preserve the actual target port during v2.4 migration.
+For a non-default target, migration creates a canonical TCP Service Object such
+as `enrolled-ssh-4022` on Server and Agent, preserving the existing public port.
+It never rewrites an existing operator definition or silently substitutes the
+SSH template's port 22. A conflicting generated name fails closed. The Agent
+records enrollment origin in its canonical Remote Service row, so rebuilding
+client runtime artifacts does not lose origin or cause endpoint reallocation.
+An explicit Remote Service change supersedes that seed; subsequent reconnect
+processing uses the operator's desired state and Server Service Object catalog.
+
+Confirmed Managed Host retirement removes the host's allocator identity and
+owned reservations as well as canonical inventory and AI executor credentials.
+The allocator's native registry lock covers the database mutation and
+activation, with exact previous registry bytes restored on failure. Other
+hosts, their reservations, and Managed Host Group definitions remain intact.
+Fresh enrollment on the same physical Machine ID starts from its newly issued
+identity and label; ordinary reconnect does not retire or reset an identity.
+
+Pre-enrollment keys left by a rejected Bootstrap Ticket are retained for a
+retry with a fresh Server-issued command. Keys alone do not constitute a
+partial installed Agent. Committed configuration/state, installed CLI or
+service definitions still use the guarded partial-install recovery path;
+pending redeemed enrollment retains its existing crash-safe resume contract.
+
+Runtime policy readers reopen the canonical database when restore replaces its
+file identity. Agent activation requires connection and proxy-success evidence
+after the native Linux journal/macOS log cursor captured before restart;
+missing logs cannot establish HEALTHY. A successful full apply refreshes all
+included service verification, while explicit unreachable dependencies remain
+degraded. On Linux, unchanged runtime artifacts with a verified current process
+and connection epoch preserve existing sessions instead of restarting FRPC.
+Paused Remote Services report DEGRADED with an explicit Agent-paused reason;
+management reachability alone does not establish an Agent transport connection. Unknown/transitional Doctor checks
+remain visible and prevent a clean all-green diagnostic result.
 
 ### Backup / restore version policy
 
@@ -139,40 +192,45 @@ A later bundle that hashes itself only proves **artifact identity**,
 not **externally verified artifact integrity**. Do not pipe a mutable
 `main` URL into `sudo`.
 
-One-time verified bridge (development line: `channel=dev`,
-`source_ref=main`):
+One-time verified bridge for an owner-approved development candidate:
 
-1. Choose an **immutable commit SHA** (logical identity stays `dev` / `main`).
+1. Choose a qualified **immutable full 40-character commit SHA**.
 2. Download `SHA256SUMS` and `dist/bootstrap-client.sh` from **that same commit**.
 3. Extract the expected digest for `dist/bootstrap-client.sh`.
 4. Hash the downloaded bundle. Require `expected == actual`.
-5. Run the verified bundle with explicit channel and source-ref.
+5. Run the verified bundle with explicit channel and exact source-ref/head expectations.
 
 ```bash
-COMMIT=<immutable-commit-sha>
-BASE="https://raw.githubusercontent.com/xdr-labs/frp-auto-deploy/${COMMIT}"
+COMMIT=<qualified-40-character-commit-sha>
+BASE="https://raw.githubusercontent.com/datarelay-labs/datarelay-link/${COMMIT}"
 curl -fsSL "${BASE}/SHA256SUMS" -o SHA256SUMS
 curl -fsSL "${BASE}/dist/bootstrap-client.sh" -o bootstrap-client.sh
 expected="$(awk '$2=="dist/bootstrap-client.sh" {print $1; exit}' SHA256SUMS)"
 actual="$(sha256sum bootstrap-client.sh | awk '{print $1}')"
 [[ "$expected" == "$actual" ]] || { echo "SHA256 mismatch"; exit 1; }
-sudo env FRP_RELEASE_CHANNEL=dev FRP_EXPECTED_SOURCE_REF=main \
+sudo env FRP_RELEASE_CHANNEL=development \
+  FRP_EXPECTED_SOURCE_REF="$COMMIT" FRP_EXPECTED_SOURCE_HEAD="$COMMIT" \
   FRP_BUNDLE_SHA256="$actual" bash bootstrap-client.sh --upgrade
 ```
 
-`sudo frpctl update --check` is read-only. If it reports
+On the Server, `sudo drlink system update check-engine` is the read-only
+upstream release check. Private engineering checks may use the installed
+`frp-client update --check` helper; that flag is not public `drlink` grammar. If a private check reports
 `LEGACY_CLIENT_SECURE_BRIDGE_REQUIRED` or `Legacy secure bridge required`,
 do not mutate the host until the procedure above succeeds.
 
 A client that was incorrectly labeled `stable` / `v2.1.0` with
 `BUNDLE_SHA256` unknown is not automatically `dev`. Recover it the same
-way: explicit `FRP_RELEASE_CHANNEL=dev`, expected `source_ref=main`, and
-a verified candidate whose manifest is `dev` / `main`.
+way: an explicitly selected development channel and a verified candidate bound
+to its exact source identity. Historical `dev` / `main` metadata is not a
+substitute for the new candidate's immutable source expectations.
 
 ## Server project-update build identity
 
-`sudo frpctl project-update --check` is read-only. Availability is not decided
-from `PROJECT_VERSION` alone:
+`sudo drlink system update product` authorizes a management-software update and
+any required runtime restart. It is a state-changing operation, even when the
+project version number is unchanged. Availability is not decided from
+`PROJECT_VERSION` alone:
 
 - installed version **less than** candidate → update available
 - installed version **greater than** candidate → downgrade refused
@@ -186,6 +244,46 @@ digest). That digest is not a substitute for SHA256SUMS verification.
 
 ## Rollback
 
-- Server FRP binary: `frp-update` restores the previous binary on health failure.
-- Server project tools: use `frp-project-update` rollback / restore from backup.
-- Disaster recovery: `sudo frpctl restore <backup>` after a validated backup.
+- Server FRP binary: `drlink system update engine` (implementation: `frp-update`) restores the previous binary on health failure.
+- Server project tools: use `drlink system update product` rollback / restore from backup (implementation: `frp-project-update`).
+- Disaster recovery: `sudo drlink system restore <backup>` after validating it with `sudo drlink system backup validate <backup>`.
+
+## Future release upgrade suite (from v2.3.0 prior-stable baseline)
+
+The documented stable baseline is immutable tag `v2.3.0`. `v2.2.1` remains an
+older published release for historical and rollback evidence. `v2.3.1` was not
+manufactured and is not an upgrade baseline. Do not exclude a prior-stable
+upgrade gate from a final PASS.
+
+Use the dedicated live A-019 harness
+`tests/run-v230-to-v240-upgrade-e2e.sh`. It installs immutable `v2.3.0`,
+creates meaningful non-empty prior-stable state, captures a same-run sanitized
+golden fingerprint, creates and restore-proves a v2.3 backup, and then upgrades
+that exact fixture to the v2.4 candidate. The backup archive remains lab-only
+and is never committed. A successful run from a clean worktree on the explicitly
+qualified release target publishes ignored canonical evidence at
+`e2e-reports/release-qualification/a019-v230-to-v240.json`; PASS1/PASS2 reject
+missing, dirty, non-release-target, stale-HEAD, or incomplete A-019 evidence
+before destructive production-realistic qualification begins.
+
+### Scenarios (EVERY next release)
+
+1. **v2.3.0 → next** server project upgrade, then each OS client upgrade.
+2. **Mixed-version rolling**: new server + old clients; upgrade one client at a time.
+3. **Upgrade under traffic**: continuous SSH/HTTP/Egress during server and client upgrades; measure downtime and reconnect.
+4. **Interrupted / bad upgrade**: network loss, download failure, process kill, bad artifact, health-check failure → safe rollback; old version usable; state preserved.
+5. **Backup → upgrade → restore**: backup on old version; upgrade; simulate issue; restore/recover; verify fleet.
+6. **Cross-version restore policy**: old backup → newer restore (supported if designed); newer backup → older must **fail closed**.
+7. **Disaster recovery**: Server A backup → fresh Server B install+restore with same public endpoint; existing clients reconnect without reinstall.
+
+### Invariants
+
+```text
+client IDs unchanged
+machine IDs unchanged
+ports unchanged
+services unchanged
+groups/tags unchanged
+Access unchanged
+no v2.4-only Egress state invented as v2.3 input
+```

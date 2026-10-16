@@ -23,13 +23,20 @@ try {
 
     $root = Get-FrpWindowsRoot
     Assert-FrpTrue (Test-Path -LiteralPath $root) 'root exists'
-    $env:FRP_AUTOSTART_TASK_NAME = 'FRPAutoDeployClient-Test-' + [guid]::NewGuid().ToString('N').Substring(0, 8)
+    $env:FRP_AUTOSTART_TASK_NAME = 'DataRelayLinkClient-Test-' + [guid]::NewGuid().ToString('N').Substring(0, 8)
+    $env:FRP_LIFECYCLE_TASK_NAME = 'DataRelayLinkLifecycle-Test-' + [guid]::NewGuid().ToString('N').Substring(0, 8)
 
     Install-FrpAutostartTask | Out-Null
+    Install-FrpLifecycleTask | Out-Null
     Assert-FrpTrue (Test-FrpAutostartTaskExists) 'autostart present before uninstall'
+    Assert-FrpTrue (Test-FrpLifecycleTaskHealthy) 'lifecycle task present before uninstall'
+
+    $emptyDir = Join-Path $root 'lib\data\egress-recipes'
+    New-Item -ItemType Directory -Path $emptyDir -Force | Out-Null
+    Assert-FrpTrue (Test-Path -LiteralPath $emptyDir) 'empty product subdirectory exists before uninstall'
 
     $env:FRP_WINDOWS_FAIL_AUTOSTART = '1'
-    $failOut = & $hostExe -NoProfile -ExecutionPolicy Bypass -File $clientPath uninstall 2>&1 | Out-String
+    $failOut = & $hostExe -NoProfile -ExecutionPolicy Bypass -File $clientPath system uninstall 2>&1 | Out-String
     $rcFail = $LASTEXITCODE
     Remove-Item Env:FRP_WINDOWS_FAIL_AUTOSTART -ErrorAction SilentlyContinue
     Assert-FrpEqual 1 $rcFail 'uninstall fails closed when autostart removal fails'
@@ -37,20 +44,31 @@ try {
     Assert-FrpTrue (Test-Path -LiteralPath $root) 'product root left in place after failed uninstall'
     Assert-FrpTrue (Test-FrpAutostartTaskExists) 'autostart still present after failed uninstall'
 
-    $okOut = & $hostExe -NoProfile -ExecutionPolicy Bypass -File $clientPath uninstall 2>&1 | Out-String
+    $okOut = & $hostExe -NoProfile -ExecutionPolicy Bypass -File $clientPath system uninstall 2>&1 | Out-String
     $rc = $LASTEXITCODE
     Assert-FrpEqual 0 $rc 'uninstall succeeds after autostart can be removed'
-    Assert-FrpTrue ($okOut -match 'SERVER RESERVATIONS PRESERVED') 'uninstall reservation message'
+    Assert-FrpTrue ($okOut -match 'SERVER-SIDE RESERVATIONS PRESERVED') 'uninstall reservation message'
     Assert-FrpTrue (-not (Test-Path -LiteralPath $root)) 'root removed after successful uninstall'
     Assert-FrpTrue (-not (Test-FrpAutostartTaskExists)) 'autostart gone after successful uninstall'
+    Assert-FrpTrue (-not (Test-FrpAutostartTaskExists -TaskName $env:FRP_LIFECYCLE_TASK_NAME)) 'lifecycle task gone after successful uninstall'
+    Assert-FrpTrue ($okOut -match 'Signed disconnect notification') 'best-effort disconnect is reported'
+    Assert-FrpTrue ($okOut -match 'Offline uninstall still completes') 'offline uninstall fallback is reported'
 
     $client = Get-Content -LiteralPath $clientPath -Raw
-    Assert-FrpTrue ($client -match 'SERVER RESERVATIONS PRESERVED') 'uninstall message in tool'
+    Assert-FrpTrue ($client -match 'SERVER-SIDE RESERVATIONS PRESERVED') 'uninstall message in tool'
     Assert-FrpTrue ($client -match 'leaving product files in place') 'fail-closed uninstall message in tool'
+    Assert-FrpTrue ($client -match 'unset managed-host <HOST>') 'managed-host release guidance'
+    Assert-FrpTrue ($client -match "Invoke-FrpAgentLifecycle -State 'disconnected'") 'signed disconnect hook in uninstall'
+    Assert-FrpTrue ($client -match 'Offline uninstall still completes') 'offline uninstall fallback in tool'
+    Assert-FrpTrue ($client -match 'reservations remain until removed on the server') 'server reservations remain explicit'
+    Assert-FrpTrue ($client -notmatch 'drlink client release') 'no obsolete release grammar'
+    Assert-FrpTrue ($client -notmatch 'unset client <CLIENT>') 'no obsolete unset-client grammar'
+    Assert-FrpTrue ($client -notmatch 'remain until an administrator revokes them') 'no revoke-for-ports wording'
 
     Write-FrpTestPass 'test-uninstall'
 } finally {
     Remove-Item Env:FRP_WINDOWS_FAIL_AUTOSTART -ErrorAction SilentlyContinue
     Remove-Item Env:FRP_AUTOSTART_TASK_NAME -ErrorAction SilentlyContinue
+    Remove-Item Env:FRP_LIFECYCLE_TASK_NAME -ErrorAction SilentlyContinue
     Remove-FrpWindowsTestRoot
 }

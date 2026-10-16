@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+# Data Relay Link macOS launchd frpc wrapper.
+#
+# launchd RunAtLoad has no ExecStartPre equivalent, so this wrapper is the
+# pinned ProgramArguments entrypoint: invalidate stale runtime verification,
+# then exec the real frpc with the remaining arguments.
+set -euo pipefail
+
+_frpc_launch_invalidate() {
+  local lib_dir=""
+  if [[ -n "${BASH_SOURCE[0]:-}" ]]; then
+    lib_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  fi
+  if [[ -z "$lib_dir" || ! -d "$lib_dir" ]]; then
+    lib_dir="/usr/local/lib/drlink"
+  fi
+  # Best-effort: offline management or missing DB must not block frpc start.
+  PYTHONPATH="${lib_dir}${PYTHONPATH:+:$PYTHONPATH}" python3 - <<'PY' >/dev/null 2>&1 || true
+from drlink_v24 import invalidate_runtime_verification_for_restart
+
+invalidate_runtime_verification_for_restart()
+PY
+}
+
+if [[ "$#" -lt 1 ]]; then
+  echo "ERROR: drlink-frpc-launch requires the frpc binary path" >&2
+  exit 2
+fi
+
+_frpc_launch_invalidate
+exec "$@"

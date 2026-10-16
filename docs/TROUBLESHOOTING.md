@@ -1,0 +1,281 @@
+# Data Relay Link — Troubleshooting
+
+> **Status:** v2.4 operator guide
+> **Authority:** This guide does not redefine product behavior. Use the Product Master and CLI/AI Master for normative semantics.
+
+## 1. Start with identity and role
+
+Run:
+
+```text
+system version
+show status
+```
+
+Confirm:
+
+```text
+Data Relay Link version
+release channel
+Source HEAD
+Relay Engine version
+role = DRLink Server or Agent Host
+```
+
+A wrong-role command should tell you which host context owns the operation.
+
+## 2. Run diagnostics
+
+```text
+system diagnostics
+```
+
+When escalation/evidence is needed:
+
+```text
+system support-bundle
+```
+
+Support bundles must redact raw secrets and sensitive payloads.
+
+On a current Server, `policy-summary.json` reports the canonical SQLite policy
+revision, Remote/Internet/AI policy modes, enforcement state, and total/enabled
+Rule counts. `access-control-summary.json` and `egress-control-summary.json`
+use the same read-only snapshot instead of obsolete JSON policy files. These
+are configured-policy summaries, not proof of live traffic authorization;
+Agent-local metadata is explicitly marked as non-Server policy evidence.
+No database file, credential, or full Rule payload is copied into this summary.
+A present but unreadable, busy, unsupported, or corrupt control DB is reported
+as `ACCESS ERROR`; the collector does not substitute stale JSON policy intent.
+
+
+## 3. Remote Service is DEGRADED
+
+On the owning Agent Host:
+
+```text
+show remote-service <NAME>
+show remote-services
+```
+
+Common DEGRADED categories include:
+
+```text
+destination unreachable
+Agent temporarily disconnected
+Server temporarily unreachable
+target service unavailable
+new endpoint pending allocation
+reconciliation dependency changed
+```
+
+A valid DEGRADED configuration is retained. Do not delete/recreate it merely because of a temporary outage unless the configuration itself is wrong.
+
+After connectivity returns, synchronization/activation should recover without changing an existing endpoint reservation.
+
+## 4. Endpoint says Pending allocation
+
+This can occur when a new Remote Service is validly created while the Server cannot allocate an endpoint.
+
+Expected lifecycle:
+
+```text
+configuration saved
+→ DEGRADED
+→ Endpoint: Pending allocation
+→ reconnect/synchronize
+→ allocate endpoint
+→ HEALTHY
+```
+
+If allocation remains pending after Server recovery, inspect pool capacity and diagnostics.
+
+## 5. Policy says ALLOW but connection fails
+
+Authorization and connectivity are separate.
+
+Remote Access:
+
+```text
+test remote-access source <SOURCE> destination <DESTINATION> service <SERVICE>
+```
+
+Then inspect the owning Remote Service.
+
+An ALLOW result does not prove destination reachability or runtime health.
+
+## 6. Internet Access failure
+
+Use:
+
+```text
+show internet-access
+test internet-access source <SOURCE> destination <DESTINATION> service <SERVICE>
+```
+
+Check that:
+
+- source selector is valid;
+- destination is an allowed IP/CIDR/FQDN object;
+- destination is not a Managed Host;
+- selected Service Object uses a supported Internet Access transport;
+- DNS/security validation did not reject the resolved address.
+
+Unsafe, private/local/metadata, malformed, or ambiguous destinations fail closed according to `CONTROLLED_EGRESS.md` and `SECURITY.md`.
+
+When diagnostics reports an Internet Access listener bind/port warning or error,
+follow [Internet Access listener recovery](INSTALLATION.md#internet-access-listener-recovery).
+The address/port are installer-owned: use the same immutable Server installer
+with `FRP_EGRESS_LISTEN_ADDR` and, only when changing the port,
+`FRP_EGRESS_LISTEN_PORT`, preserving the current mode and identity. Do not repair
+the listener by editing internal JSON or weakening policy.
+
+## 7. AI Access failure
+
+Check separately:
+
+```text
+AI authentication
+AI Access policy
+destination selector
+Permission Object / Permission Group
+target OS permissions
+```
+
+Test:
+
+```text
+test ai-access source <AI_IDENTITY> destination <DESTINATION> permission <PERMISSION>
+```
+
+Authentication failure is not corrected by disabling policy enforcement.
+
+## 8. ConfigurationBundle rejected
+
+First run:
+
+```text
+test configuration <FILE|->
+```
+
+Canonical input begins with:
+
+```yaml
+configurationBundle:
+  context: server
+```
+
+or:
+
+```yaml
+configurationBundle:
+  context: agent
+```
+
+Common causes:
+
+```text
+wrong context
+legacy/non-canonical schema
+unknown section
+missing required field
+missing dependency
+invalid selector
+unsupported UDP Remote Service
+state: absent combined with present-state fields
+referenced resource deletion
+```
+
+No partial authoritative mutation should remain after validation failure.
+
+## 9. Apply failed
+
+If critical runtime activation fails, the product attempts to restore the previous authoritative/runtime state.
+
+If output reports incomplete rollback, do not assume the prior state is fully active.
+
+Run:
+
+```text
+system diagnostics
+show status
+```
+
+and preserve the failure evidence before further mutation.
+
+## 10. Referenced resource cannot be deleted
+
+Use the relevant reference view:
+
+```text
+show network-object <OBJECT> references
+show network-group <GROUP> references
+show service-object <SERVICE> references
+show service-group <GROUP> references
+```
+
+Remove or change dependent references first. Data Relay Link does not cascade-delete policy dependencies.
+
+Permission Objects and Permission Groups are also protected from deletion.
+`unset permission-object <NAME>` or `unset permission-group <NAME>` reports the
+AI Access Rules and Permission Groups that still reference the resource and
+applies no change. Inspect each named dependency with `show ai-access <RULE>` or
+`show permission-group <GROUP>`. Review a replacement before using
+`set ai-access <RULE> permission <REPLACEMENT>` or
+`set permission-group <GROUP> members <RETAINED_MEMBERS>` to remove the reference.
+If the dependent Rule or Group is no longer needed, its existing
+`unset ai-access <RULE>` or `unset permission-group <GROUP>` lifecycle may be used
+after checking its own references and confirmation. Retry the original deletion
+only when all references are removed; it requires explicit y/N confirmation.
+There is no `show permission-object ... references` or Permission Group reference
+view to memorize: use the supported inspection/edit paths above and the named
+dependencies in the protected-delete error.
+
+### Invalid enrollment retention configuration
+
+Preserve diagnostics and inspect `show enrollments`. Enrollment retention is
+installer-owned; use the same immutable Server installer recovery procedure in
+[Installation](INSTALLATION.md#enrollment-retention-recovery). The diagnostic
+30-day fallback reports state without repairing or deleting it. Review retained
+terminal records and possible service interruption before recovery; there is no
+public retention setter. Verify `show enrollments` and `system diagnostics`
+afterward.
+
+## 11. Policy mode change rejected
+
+A configured Remote Access BLACKLIST is not directly flipped to WHITELIST,
+and vice versa. Internet Access and AI Access support WHITELIST only; an
+unsupported persisted mode fails closed and must be reset and recreated as
+WHITELIST.
+
+Use:
+
+```text
+1. export/record existing policy if needed
+2. unset <access-policy> policy
+3. create the first rule in the supported mode
+4. recreate required rules
+```
+
+This prevents silent reversal of existing rule meaning.
+
+## 12. Version/provenance mismatch
+
+Before stable release, candidate validation uses an exact immutable SHA or explicitly qualified candidate artifact.
+
+If version/channel/source metadata disagree, treat the candidate as not qualified and consult `VERSION_POLICY.md` and `RELEASE_VALIDATION.md`.
+
+## 13. External network prerequisites
+
+Data Relay Link does not automatically fix external:
+
+```text
+cloud security groups
+firewall/NAT/DNAT
+DNS-provider records
+SSH accounts
+target application configuration
+application certificates
+```
+
+Distinguish product failure from environment prerequisites before weakening product security.

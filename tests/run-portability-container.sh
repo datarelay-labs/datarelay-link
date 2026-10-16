@@ -72,7 +72,9 @@ python3 -m py_compile \
 while IFS= read -r -d '' f; do
   bash -n "$f"
 done < <(find . -name '*.sh' -not -path './.git/*' -print0)
-bash -n tools/frp-server-status tools/frp-update tools/frp-client tools/frpctl
+for script in tools/frp-server-status tools/frp-update tools/frp-client tools/frpctl; do
+  bash -n -- "$script"
+done
 
 ./tests/test-portability.sh
 ./tests/test-client-platform.sh

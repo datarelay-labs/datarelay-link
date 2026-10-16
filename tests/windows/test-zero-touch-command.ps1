@@ -27,5 +27,15 @@ $create = Get-Content -LiteralPath (Join-Path $repo 'tools\frp-create-client') -
 Assert-FrpTrue ($create -match '-File \$p -ZeroTouch') 'fallback Windows one-liner passes -ZeroTouch to -File'
 $zt = Get-Content -LiteralPath (Join-Path $repo 'lib\frp_zero_touch.py') -Raw
 Assert-FrpTrue ($zt -match '-File \$installer -ZeroTouch') 'Short URL Windows bootstrap passes -ZeroTouch to -File'
+Assert-FrpTrue ($zt -match '\[System\.Security\.Cryptography\.X509Certificates\.X509VerificationFlags\]') 'generated pin uses WinPS-compatible X509VerificationFlags type'
+Assert-FrpTrue ($zt -match '\[System\.Security\.Cryptography\.X509Certificates\.X509RevocationMode\]') 'generated pin uses WinPS-compatible X509RevocationMode type'
+Assert-FrpTrue ($zt -notmatch '\[Net\.Security\.X509Certificates\.') 'generated pin does not use invalid short X509 namespace'
+
+# Execute the exact enum type resolution under Windows PowerShell. This catches
+# namespace regressions that source-only string checks cannot detect.
+$vf = [System.Security.Cryptography.X509Certificates.X509VerificationFlags]::AllowUnknownCertificateAuthority
+$rm = [System.Security.Cryptography.X509Certificates.X509RevocationMode]::NoCheck
+Assert-FrpTrue ($null -ne $vf) 'X509VerificationFlags enum resolves at runtime'
+Assert-FrpTrue ($null -ne $rm) 'X509RevocationMode enum resolves at runtime'
 
 Write-FrpTestPass 'test-zero-touch-command'

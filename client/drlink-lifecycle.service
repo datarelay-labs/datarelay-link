@@ -1,0 +1,13 @@
+[Unit]
+Description=Data Relay Link Agent Lifecycle Worker
+After=network-online.target drlink-client.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 /usr/local/lib/drlink/drlink_agent_lifecycle.py worker
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

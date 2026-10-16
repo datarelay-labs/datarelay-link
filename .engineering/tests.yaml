@@ -15,6 +15,56 @@ paths:
   "tests/**":
     domains:
       - "shared"
+  "**":
+    domains:
+      - "artifact-integrity"
+    invalidates:
+      - "DRLINK-DERIVED-ARTIFACT-INTEGRITY-001"
+  "tools/drlink":
+    domains:
+      - "public-surface"
+    invalidates:
+      - "DRLINK-PUBLIC-SURFACE-PARITY-001"
+  "tools/frpctl":
+    domains:
+      - "public-surface"
+    invalidates:
+      - "DRLINK-PUBLIC-SURFACE-PARITY-001"
+  "lib/frp_cli_catalog.py":
+    domains:
+      - "public-surface"
+    invalidates:
+      - "DRLINK-PUBLIC-SURFACE-PARITY-001"
+  "lib/frp_ctl_grammar.py":
+    domains:
+      - "public-surface"
+    invalidates:
+      - "DRLINK-PUBLIC-SURFACE-PARITY-001"
+  "lib/frp_ctl_repl.py":
+    domains:
+      - "public-surface"
+    invalidates:
+      - "DRLINK-PUBLIC-SURFACE-PARITY-001"
+  "lib/drlink_*cli.py":
+    domains:
+      - "public-surface"
+    invalidates:
+      - "DRLINK-PUBLIC-SURFACE-PARITY-001"
+  "install-*.sh":
+    domains:
+      - "public-surface"
+    invalidates:
+      - "DRLINK-PUBLIC-SURFACE-PARITY-001"
+  "README*.md":
+    domains:
+      - "public-surface"
+    invalidates:
+      - "DRLINK-PUBLIC-SURFACE-PARITY-001"
+  "docs/**":
+    domains:
+      - "public-surface"
+    invalidates:
+      - "DRLINK-PUBLIC-SURFACE-PARITY-001"
 
 scenarios:
   - id: ADOPTED-TEST-001
@@ -26,14 +76,100 @@ scenarios:
       - "shared"
     triggers:
       - affected
-    cost: medium
-    estimated_seconds: 420
-    timeout_seconds: 900
+    cost: cheap
+    estimated_seconds: 90
+    timeout_seconds: 240
     platforms:
       - "linux"
-    command: "bash tests/run-all.sh"
+    command: "bash tests/run-fast-pr.sh"
     invariants:
-      - "project-native tests remain green for affected changes"
+      - "fast deterministic project-native checks remain green for affected changes"
+    release_gate: true
+
+  - id: DRLINK-PUBLIC-SURFACE-PARITY-001
+    name: Public surface parity and Surface Delta supporting evidence
+    level: ux
+    domains:
+      - "public-surface"
+    triggers:
+      - affected
+    cost: medium
+    estimated_seconds: 25
+    timeout_seconds: 120
+    agent_default: true
+    platforms:
+      - "linux"
+    command: "bash tests/test-cli-catalog-parity.sh && python3 tests/test-public-cli-grammar-parity.py && python3 tests/test-cli-feature-scenario-remediation.py && python3 tests/test-v24-cli-workflow-semantic-parity.py"
+    invariants:
+      - "catalog, grammar, help, completion, menu and canonical workflow semantics remain in parity"
+      - "deterministic output is supporting evidence and never substitutes for ChatGPT direct Surface Delta Reconciliation when public UX materially changes"
+    release_gate: true
+
+  - id: DRLINK-DERIVED-ARTIFACT-INTEGRITY-001
+    name: Derived bundles checksum and release metadata closure
+    level: static
+    domains:
+      - "artifact-integrity"
+    triggers:
+      - affected
+    cost: cheap
+    estimated_seconds: 15
+    timeout_seconds: 90
+    agent_default: true
+    platforms:
+      - "linux"
+    command: "bash tests/test-change-closure-artifacts.sh"
+    invariants:
+      - "generated bootstrap bundles equal deterministic rebuild output at exact HEAD"
+      - "SHA256SUMS covers current tracked source bytes"
+      - "release manifest provenance and artifact hashes remain coherent"
+      - "verification fails closed and never refreshes tracked metadata in the caller worktree"
+    release_gate: true
+
+  - id: DRLINK-CLI-FEATURE-SCENARIO-RELEASE
+    name: CLI feature/operator workflow reconciliation evidence validation
+    level: static
+    domains:
+      - "server"
+      - "client"
+      - "shared"
+    triggers:
+      - release
+    platforms:
+      - "linux"
+    command: "python3 scripts/check-pre-release-exhaustive-gates.py --gate cli-feature-scenario"
+    invariants:
+      - "completed product-surface reconciliation evidence is bound to the exact release HEAD"
+      - "all release-blocking reconciliation counters are zero"
+      - "the reconciliation is runtime non-destructive and validates Direct + AI-assisted operator-workflow coherence"
+      - "every applicable feature and FCS has 100% Direct-user and AI-assisted persona coverage"
+      - "scripted/harness execution is supplemental evidence and never substitutes for a user-role lane"
+      - "independent reconciliation lanes use maximum-safe parallel execution with no avoidable serial wait"
+      - "release-gate evidence requires exact Server and Agent runtime source identity, actual-user TTY persona coverage, and no tooling blockers"
+      - "FCS/finding summaries are derived from retained ledgers and must match release JSON and final GitHub report"
+      - "stale runtime observations are correlation-only and cannot be promoted to current-candidate defects"
+      - "this validator does not provision or execute Server/Agent lifecycle qualification"
+    release_gate: true
+
+  - id: DRLINK-FULL-USER-E2E-RELEASE
+    name: Full User E2E double-pass evidence
+    level: e2e
+    domains:
+      - "server"
+      - "client"
+      - "shared"
+    triggers:
+      - release
+    platforms:
+      - "linux"
+    command: "python3 scripts/check-pre-release-exhaustive-gates.py --gate full-user-e2e-all"
+    invariants:
+      - "FULL_USER_E2E PASS1 and PASS2 both passed on the exact release HEAD"
+      - "all participating installed Server/Agent runtimes match the pinned product source HEAD"
+      - "no mandatory scenario, public command, or required AI-assisted mirror is unexercised"
+      - "persona-led public UX is primary evidence; wrapper/harness output is supplemental only"
+      - "TTY-dependent persona coverage is complete and tooling blockers are zero"
+      - "scenario/finding summaries are derived from retained ledgers and match the release JSON and final GitHub report"
     release_gate: true
 
   - id: ADOPTED-STATIC-001
