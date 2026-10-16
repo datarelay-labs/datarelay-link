@@ -316,6 +316,22 @@ policy-impact analysis
 confirmation for calculated access widening or material narrowing
 ```
 
+For an enabled WHITELIST Rule, a provable subset of the same selector leaf
+references (for example, Group to one of its members) cannot broaden access and
+needs no confirmation by itself. This membership proof does not equate differently
+named objects with different traffic domains. Other replacements receive a
+conservative selector-membership review: unproven traffic directions are UNKNOWN.
+A proven membership expansion cannot narrow matches, even if broadening remains
+unknown because the added leaves overlap existing matches.
+
+Impact metadata is structured. Each of `access_broadened` and `access_narrowed`
+is independently `true`, `false`, or `null` (UNKNOWN). Bundle aggregation gives
+definite `true` priority over UNKNOWN; UNKNOWN wins only when no definite `true`
+exists for that direction; otherwise the result is `false`. Warning strings are
+presentation, not inputs to classification. Consumers must use the authoritative
+`requires_confirmation` field for admission and must not interpret `null` as
+`false` or as proof that access is unchanged. Enforcement is unaffected.
+
 ## 20. Object changes
 
 Network/Service Object or Group mutation can change Internet Access without

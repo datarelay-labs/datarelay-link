@@ -656,10 +656,21 @@ def _group_members_equal(existing: list[str], desired: list[str]) -> bool:
     return {m.lower() for m in existing} == {m.lower() for m in desired}
 
 
-def _security_impact_for_plan(plane: ControlPlane, context: str, body: dict, changes: list[dict]) -> list[str]:
+def _security_impact_for_plan(plane: ControlPlane, context: str, body: dict, changes: list[dict]) -> tuple[list[str], list[dict]]:
     impact: list[str] = []
+    structured: list[dict] = []
+
+    def add(text: str, *, broaden=False, narrow=False, detail=None):
+        if text not in impact:
+            impact.append(text)
+        structured.append(dict(detail) if detail is not None else {
+            "access_broadened": broaden,
+            "access_narrowed": narrow,
+            "requires_confirmation": True,
+        })
+
     if context != "server":
-        return impact
+        return impact, structured
     for family, key, title in (
         ("remote", "remoteAccess", "Remote Access"),
         ("internet", "internetAccess", "Internet Access"),
@@ -671,9 +682,10 @@ def _security_impact_for_plan(plane: ControlPlane, context: str, body: dict, cha
         pol = v24.get_access_policy(plane, family)
         if section.get("state") == "absent" and pol.get("mode") is not None:
             effective = "DENY ALL" if family in ("internet", "ai") else "ALLOW"
-            impact.append(
+            add(
                 "WARNING: This change resets %s.\nBefore: mode=%s enforcement=%s\nAfter: mode removed / rules removed / Effective: %s"
-                % (title, pol.get("mode"), pol.get("enforcement"), effective)
+                % (title, pol.get("mode"), pol.get("enforcement"), effective),
+                broaden=family == "remote", narrow=family in ("internet", "ai"),
             )
             continue
         want_enf = section.get("enforcement")
@@ -681,21 +693,23 @@ def _security_impact_for_plan(plane: ControlPlane, context: str, body: dict, cha
         if want_enf == "disabled" and current_enf == "enabled":
             count = v24._count_blocking_rules(plane, family if family != "ai" else "ai")
             if family in ("internet", "ai"):
-                impact.append(
+                add(
                     "WARNING: This change disables %s fail-closed.\nBefore:\n  %s\n  Enforcement: ENABLED\n  Effective enabled rules: %s\nAfter:\n  %s\n  Enforcement: DISABLED\n  Effective result: DENY ALL"
-                    % (title, str(pol.get("mode") or "-").upper(), count, str(section.get("mode") or pol.get("mode") or "-").upper())
+                    % (title, str(pol.get("mode") or "-").upper(), count, str(section.get("mode") or pol.get("mode") or "-").upper()),
+                    narrow=True,
                 )
             else:
-                impact.append(
+                add(
                     "WARNING: This change broadens %s.\nBefore:\n  %s\n  Enforcement: ENABLED\n  Effective blocking rules: %s\nAfter:\n  %s\n  Enforcement: DISABLED\n  Effective result: ALLOW ALL"
-                    % (title, str(pol.get("mode") or "-").upper(), count, str(section.get("mode") or pol.get("mode") or "-").upper())
+                    % (title, str(pol.get("mode") or "-").upper(), count, str(section.get("mode") or pol.get("mode") or "-").upper()),
+                    broaden=True,
                 )
         elif want_enf == "enabled" and current_enf == "disabled" and family in ("internet", "ai"):
             count = v24._count_blocking_rules(plane, family)
             if str(section.get("mode") or pol.get("mode") or "").lower() == "whitelist" and count:
-                impact.append(
+                add(
                     "WARNING: This change may broaden %s by re-enabling %s existing WHITELIST Rule(s)."
-                    % (title, count)
+                    % (title, count), broaden=True,
                 )
         # last blacklist rule deletion / disable
         if pol.get("mode") == "blacklist" and str(pol.get("enforcement")).lower() == "enabled":
@@ -717,9 +731,9 @@ def _security_impact_for_plan(plane: ControlPlane, context: str, body: dict, cha
                 elif rule.get("enabled") is False:
                     disabling += 1
             if enabled_before > 0 and enabled_before - deleting - disabling <= 0:
-                impact.append(
+                add(
                     "WARNING: This change broadens %s by removing the last BLACKLIST blocking Rule."
-                    % title
+                    % title, broaden=True,
                 )
         # whitelist → zero enabled rules after merge with authoritative state
         want_mode = section.get("mode") or pol.get("mode")
@@ -759,9 +773,9 @@ def _security_impact_for_plan(plane: ControlPlane, context: str, body: dict, cha
                 if enabled_after == 0 and str(
                     section.get("enforcement") or pol.get("enforcement")
                 ).lower() != "disabled":
-                    impact.append(
+                    add(
                         "WARNING: This change narrows %s; WHITELIST with zero "
-                        "enabled Rules → DENY ALL." % title
+                        "enabled Rules → DENY ALL." % title, narrow=True,
                     )
 
         # Rule mutations: WHITELIST enable and BLACKLIST/WHITELIST selector changes
@@ -795,8 +809,7 @@ def _security_impact_for_plan(plane: ControlPlane, context: str, body: dict, cha
                 )
             if hit and hit.get("warning"):
                 text = "WARNING: %s" % hit["warning"]
-                if text not in impact:
-                    impact.append(text)
+                add(text, detail=hit)
 
     # Referenced reusable selector mutations (Object/Group value or membership)
     # can broaden enabled BLACKLIST / WHITELIST policies without changing Rules.
@@ -855,8 +868,7 @@ def _security_impact_for_plan(plane: ControlPlane, context: str, body: dict, cha
             )
         if hit and hit.get("warning"):
             text = "WARNING: %s" % hit["warning"]
-            if text not in impact:
-                impact.append(text)
+            add(text, detail=hit)
 
     # Indirect broadening: deleting Permission Object/Group still referenced by
     # enabled AI BLACKLIST rules (and those rules are not deleted in this plan).
@@ -905,12 +917,12 @@ def _security_impact_for_plan(plane: ControlPlane, context: str, body: dict, cha
                     blocking_left = True
                     break
             if blocking_left:
-                impact.append(
+                add(
                     "WARNING: This change broadens AI Access by deleting '%s' while enabled "
                     "BLACKLIST Rule(s) still reference it.\nReferences:\n%s"
-                    % (name, "\n".join("  %s" % r["display"] for r in live))
+                    % (name, "\n".join("  %s" % r["display"] for r in live)), broaden=True,
                 )
-    return impact
+    return impact, structured
 
 
 @dataclass
@@ -923,6 +935,7 @@ class V24Plan:
     base_revision: Optional[int] = None
     current_revision: Optional[int] = None
     source_text: str = ""
+    structured_security_impact: list[dict] = field(default_factory=list)
 
     @property
     def mutating_changes(self) -> list[dict]:
@@ -1616,12 +1629,13 @@ def prepare_v24_plan(plane: ControlPlane, raw_text: str, *, role: Optional[str] 
     mutating = [c for c in changes if c.get("op") != "NO_CHANGE"]
     if mutating:
         _validate_plan_applyability(plane, mutating, agent=context == "agent")
-    impact = _security_impact_for_plan(plane, context, validated_body, changes)
+    impact, structured = _security_impact_for_plan(plane, context, validated_body, changes)
     return V24Plan(
         context=context,
         changes=changes,
         no_change=not mutating,
         security_impact=impact,
+        structured_security_impact=structured,
         raw=validated_body,
         base_revision=base_revision,
         current_revision=int(plane.current_revision()),
@@ -1666,20 +1680,37 @@ def _confirm_requested(confirm: bool) -> bool:
     )
 
 
+def aggregate_security_impacts(impacts: list[dict]) -> dict:
+    """Per direction: definite True dominates unknown (None), then False.
+
+    None is NOT False. Consumers must use requires_confirmation for admission,
+    not truthiness of the nullable directional metadata. Warning text is display
+    only and is never parsed to reconstruct structured decisions.
+    """
+    result = {}
+    for key in ("access_broadened", "access_narrowed"):
+        values = [item.get(key, False) for item in impacts]
+        result[key] = (True if any(v is True for v in values) else
+                       None if any(v is None for v in values) else False)
+    result["traffic_direction_unknown"] = any(v is None for v in result.values())
+    result["requires_confirmation"] = any(item.get("requires_confirmation", False) for item in impacts)
+    return result
+
+
+def _plan_security_impact(plan: V24Plan) -> dict:
+    details = plan.structured_security_impact
+    if not details and plan.security_impact:
+        # Older in-memory callers may supply display text only. Fail closed,
+        # without guessing directional facts from localized warning strings.
+        details = [{"access_broadened": None, "access_narrowed": None,
+                    "requires_confirmation": True}]
+    return aggregate_security_impacts(details)
+
+
 def _raise_plan_confirmation(plan: V24Plan) -> None:
-    texts = list(plan.security_impact or [])
-    access_narrowed = any("DENY ALL" in str(t) for t in texts)
-    access_broadened = any(
-        "broadens" in str(t).lower() or "this change resets" in str(t).lower()
-        for t in texts
-    )
     raise ConfirmationRequired(
         format_v24_plan(plan) + "\nApply these changes? [y/N]",
-        {
-            "access_broadened": bool(access_broadened),
-            "access_narrowed": bool(access_narrowed),
-            "requires_confirmation": True,
-        },
+        _plan_security_impact(plan),
     )
 
 
@@ -1755,7 +1786,7 @@ def apply_v24_plan(
                 plane._rollback_open_transaction()
                 return {"status": "NO_CHANGE", "revision": rev}
 
-            if fresh.security_impact and not confirmed:
+            if _plan_security_impact(fresh)["requires_confirmation"] and not confirmed:
                 plane._rollback_open_transaction()
                 _raise_plan_confirmation(fresh)
 

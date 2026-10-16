@@ -243,6 +243,7 @@ class ReferencedSelectorMutationSecurityImpact(unittest.TestCase):
             source_name="lan",
             destination_name="web",
             service_name="p2222",
+            resolve_fn=lambda _host: ["93.184.216.34"],  # deterministic local policy fixture
         )
         self.assertEqual(before.get("result"), "DENY")
 
@@ -272,6 +273,7 @@ class ReferencedSelectorMutationSecurityImpact(unittest.TestCase):
             source_name="lan",
             destination_name="web",
             service_name="p2222",
+            resolve_fn=lambda _host: ["93.184.216.34"],  # deterministic local policy fixture
         )
         self.assertEqual(after.get("result"), "ALLOW")
 

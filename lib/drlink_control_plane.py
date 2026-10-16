@@ -921,8 +921,11 @@ class ControlPlane:
             for item in impact["adding"]:
                 lines.append("  %s" % item)
             lines.append("")
-        lines.append("Access broadened: %s" % ("YES" if impact.get("access_broadened") else "NO"))
-        lines.append("Access narrowed: %s" % ("YES" if impact.get("access_narrowed") else "NO"))
+        for direction in ("broadened", "narrowed"):
+            key = "access_" + direction
+            value = ("UNKNOWN" if key in impact and impact[key] is None else
+                     "YES" if impact.get(key) else "NO")
+            lines.append("Access %s: %s" % (direction, value))
         if impact.get("affected_rules"):
             lines.append("")
             lines.append("Affected Rule:")

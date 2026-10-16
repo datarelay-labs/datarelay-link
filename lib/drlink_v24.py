@@ -1281,66 +1281,55 @@ def access_rule_update_security_impact(
         }
 
     if mode == "whitelist" and effectively_enabled and selector_changed:
-        # Deterministic broaden when the new source/destination/service leaf set
-        # is not a subset of the previous match set; otherwise stay silent.
+        # A subset of the same leaf references cannot add matches, even when
+        # leaves overlap. Preserve the established non-broadening fast path.
+        # Different leaf names, however, do not prove different traffic domains.
+        non_broadening = True
+        non_narrowing = True
         try:
-            broaden = False
-            if source is not None and _selector_token_changed(cur_src, source):
-                _is_g, before_leaves = _network_test_leaves(
-                    plane_db, str(cur_src), role="source"
-                )
-                _is_g, after_leaves = _network_test_leaves(
-                    plane_db, str(source), role="source"
-                )
-                if not set(x.lower() for x in after_leaves).issubset(
-                    set(x.lower() for x in before_leaves)
-                ):
-                    broaden = True
-            if destination is not None and _selector_token_changed(cur_dst, destination):
-                _is_g, before_leaves = _network_test_leaves(
-                    plane_db, str(cur_dst), role="destination"
-                )
-                _is_g, after_leaves = _network_test_leaves(
-                    plane_db, str(destination), role="destination"
-                )
-                if not set(x.lower() for x in after_leaves).issubset(
-                    set(x.lower() for x in before_leaves)
-                ):
-                    broaden = True
-            if service is not None and _selector_token_changed(cur_svc, service):
-                _is_g, before_leaves = _service_test_leaves(plane_db, str(cur_svc))
-                _is_g, after_leaves = _service_test_leaves(plane_db, str(service))
-                if not set(x.lower() for x in after_leaves).issubset(
-                    set(x.lower() for x in before_leaves)
-                ):
-                    broaden = True
-            if broaden:
-                return {
-                    "access_broadened": True,
-                    "access_narrowed": False,
-                    "requires_confirmation": True,
-                    "warning": (
-                        "This change broadens %s by expanding selectors on "
-                        "enabled WHITELIST Rule '%s'." % (title, rule_name)
-                    ),
-                    "affected_rules": [rule_name],
-                    "before": "WHITELIST / enabled Rule match set",
-                    "after": "WHITELIST / expanded match set / additional flows ALLOW",
-                }
+            for field, current, desired in (
+                ("source", cur_src, source),
+                ("destination", cur_dst, destination),
+                ("service", cur_svc, service),
+            ):
+                if not _selector_token_changed(current, desired):
+                    continue
+                if field == "service":
+                    _, before = _service_test_leaves(plane_db, str(current))
+                    _, after = _service_test_leaves(plane_db, str(desired))
+                else:
+                    _, before = _network_test_leaves(plane_db, str(current), role=field)
+                    _, after = _network_test_leaves(plane_db, str(desired), role=field)
+                before = {name.lower() for name in before}
+                after = {name.lower() for name in after}
+                non_broadening = non_broadening and after.issubset(before)
+                non_narrowing = non_narrowing and before.issubset(after)
         except ControlPlaneError:
-            # Fail closed: unknown/ambiguous selector change requires confirmation.
-            return {
-                "access_broadened": True,
-                "access_narrowed": False,
-                "requires_confirmation": True,
-                "warning": (
-                    "This change may broaden %s by changing selectors on "
-                    "enabled WHITELIST Rule '%s'." % (title, rule_name)
-                ),
-                "affected_rules": [rule_name],
-                "before": "WHITELIST / enabled Rule match set",
-                "after": "WHITELIST / changed selectors / additional flows may ALLOW",
-            }
+            non_broadening = non_narrowing = False
+        if non_broadening:
+            return None
+        return {
+            "access_broadened": None,
+            "access_narrowed": False if non_narrowing else None,
+            "traffic_direction_unknown": True,
+            "requires_confirmation": True,
+            "warning": (
+                "Selector membership changes on enabled WHITELIST %s Rule '%s'. "
+                "%s Review the selectors before applying."
+                % (title, rule_name,
+                   "Traffic direction: UNKNOWN; permitted traffic may broaden or remain equivalent."
+                   if non_narrowing else
+                   "Traffic direction: UNKNOWN; permitted traffic may broaden, narrow, or remain equivalent.")
+            ),
+            "affected_rules": [rule_name],
+            "before": "Selectors: source=%s; destination=%s; service=%s"
+            % (cur_src, cur_dst, cur_svc),
+            "after": "Selectors: source=%s; destination=%s; service=%s"
+            % (source if source is not None else cur_src,
+               destination if destination is not None else cur_dst,
+               service if service is not None else cur_svc),
+        }
+
     return None
 
 
