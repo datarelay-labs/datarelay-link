@@ -1,20 +1,29 @@
 # Data Relay Link — Feature ↔ CLI/AI ↔ Operator Workflow Reconciliation
 
 > **Document role:** Canonical non-destructive audit contract for product capability ↔ public CLI + AI-assisted operator support ↔ operator workflow coherence
-> **Executor:** owner-selected Codex as coordinator, independent User/Operator and AI-supported roles, auditor, and implementer of fixes after evidence is frozen.
+> **Executor:** current owner-selected runtime (default CHATGPT_CHAT); FCS_CLI_ONLY and FCS_FULL use distinct coverage gates.
 > **Scope:** feature/CLI/AI-assisted workflow completeness, uniqueness, discoverability, terminology, procedure, structure, safety contract, recovery guidance, and audit cleanup
-> **Target:** v2.4 and later until superseded
+> **Target:** v2.4.0 as the active full-product baseline, including AI Access and MCP Bridge; later versions only when explicitly qualified
 > **Execution boundary:** this audit is **runtime non-destructive**. It never changes Data Relay Link product state.
 > **Release relationship:** release qualification may consume a completed reconciliation result, but candidate installation/lifecycle qualification belongs to release/FULL_USER_E2E workflows
 > **Companion:** `CLI_EXHAUSTIVE_AUDIT.md`
 
-### Current owner-selected Codex executor — Issue #165
+### Owner-selected executor and scope profiles (current v2.4.0)
 
-For this Work Packet, the explicit owner instruction controls executor selection: **CODEX executes BOTH the Direct CLI user role AND the AI-assisted user role for the SAME feature, scenario, and negative/recovery steps.** In the AI-assisted lane, Codex also acts as a separate AI support persona. Codex also implements verified fixes after freezing audit evidence, under the execution rule in `AGENTS.md`. See `docs/CODEX_DUAL_ROLE_TEST_PROTOCOL.md`.
+**Current explicit owner instruction selects the implementer; absent an override use `CHATGPT_CHAT` from `.engineering/execution-profile.yaml`.** Legacy Issue #165 Codex-only context is historical task evidence, not a standing executor veto. The currently live Codex process may continue owning **its own** RUN_ID/fixtures and must not be interrupted or duplicated.
 
-The Codex auditor reads the complete canonical contract, but fresh **different Codex thread IDs** act as Direct User, AI-supported User, and AI Adviser, with no inherited auditor/source/test-answer context. These threads belong to **one locked audit RUN_ID**, not competing audits. AI Adviser sees only the goal and the AI user's already-observed public CLI output; its first answer is recorded unedited. Same starting environment and outcome are compared; `DIRECT_PASS` without a genuine AI mirror **is not PASS**. No external AI/model/service is required: all three actors are Codex. A role reset in one already-informed auditor context does not establish knowledge isolation.
+Select **exactly one** execution profile at the start:
 
-This owner override supersedes generic passages below that refer to ChatGPT as the acting test persona. It **does not** change the read-only FCS boundary, alter any security denial, expand a standalone FCS request to Full User E2E, or relax mandatory feature/command coverage. Only per-operation authorization and actual prerequisites affect a runnable FCS check; global readiness GO is not a run-wide start prerequisite.
+| Profile | Trigger | Direct coverage | AI/MCP coverage | Authorized runtime effects | Result |
+|---|---|---|---|---|---|
+| `FCS_CLI_ONLY` | Owner requests ChatGPT to inspect/test CLI ↔ feature ↔ scenario **without AI/MCP** | FCS-001..006 and FCS-009..015 = **13** direct scenarios | FCS-007/008 `EXCLUDED_AI_MCP`; omit only AI/MCP substeps elsewhere | **Non-destructive** discovery/help/Tab/menu/read-only diagnostics plus isolated regression as supporting evidence | `FCS_CLI_ONLY=PASS|FAIL|PARTIAL`, **not** full FCS release qualification |
+| `FCS_FULL` | Explicit Full Feature/CLI/AI workflow reconciliation or release FCS gate | All **15** | All **15** with truly independent AI-supported role evidence where required; FCS-007/008 included | Same non-destructive boundary | `CLI_FEATURE_SCENARIO_RECONCILIATION=PASS|FAIL` (full FCS only) |
+
+This v2.4.0 release **includes** AI Access and MCP Bridge. Their exclusion is **test-profile-only**. `FCS_CLI_ONLY` keeps 15 canonical ledger rows: 13 Direct results and 2 `EXCLUDED_AI_MCP`, and does **not** claim the canonical release FCS result. Apply the AI-adviser thread, same-scenario AI parity, first-answer, AI coverage, `MCP_TLS_OAUTH` and AI-only required feature keys **only to `FCS_FULL`**. Full release checks are not preconditions for a direct-only audit.
+
+Because FCS is specifically the **non-destructive surface reconciliation**, any actually mutating install/create/edit/delete/reboot/restore/performance/traffic function E2E belongs to `docs/CLI_ONLY_E2E_SCENARIOS.md` (100 scenarios), not to this audit. A deliberate request for CLI functionality E2E selects that latter contract; do not smuggle FCS's no-mutation restriction into it.
+
+**Shared failure rule:** no global `LAB_GO`, all-host-GO, MCP readiness, clean-room reset, full CI wait or historical denial blocks an independent nonconflicting FCS check. Recheck present permissions for the same tool/target; a genuine **current** denied operation stays denied, without rerouting it. Missing Server/Agent/TTY blocks only corresponding live persona evidence, while document, public help and source-auditor evidence continue. Record actual exceptions without inventing PASS. Actual SSH/session/process ownership is a resource-conflict gate only for the **same** mutable resource/RUN_ID.
 
 ## 1. Exact execution trigger
 
@@ -75,7 +84,7 @@ A second ChatGPT/tool session, scheduler, or operator must not reuse an existing
 
 `Scenario` means an **operator workflow audit scenario**: verify that a user can discover and understand the complete CLI lifecycle from one step to the next, both directly and with AI assistance.
 
-Every applicable feature/FCS must have two audit lanes:
+Every applicable feature/FCS in **FCS_FULL** has two audit lanes. In **FCS_CLI_ONLY**, use only the Direct lane; FCS-007/008 have explicit EXCLUDED_AI_MCP dispositions:
 
 ~~~text
 DIRECT_USER_LANE = operator pursues the goal through public drlink UX
@@ -118,9 +127,9 @@ Update the active `[AI Work]` GitHub Issue **once, after the audit has exhausted
 
 The primary executor is always a **realistic operator/user persona**, never a shell/Python test wrapper.
 
-**The owner-selected model executor performs BOTH Direct and AI-assisted lanes itself. For Issue #165 this executor is CODEX, not ChatGPT.** No different model, plugin or outside AI provider is needed. Because the auditor reads the canonical contract, fresh independently started Codex actor threads (not forks/resumes of the auditor) are required for truthful first-time Direct User, AI User and AI Adviser knowledge boundaries. Within one AI-assisted scenario resume the same AI Adviser thread for normal public-error recovery. The Codex AI User asks the adviser the natural-language goal, receives public-CLI-based advice, and follows it unedited when safe. See `docs/CODEX_DUAL_ROLE_TEST_PROTOCOL.md`. An unisolated role label or scripted answer does not count as an AI lane.
+**In `FCS_FULL` only**, independent Direct and AI-assisted User roles must execute equivalent public workflows with a truly separate tool-free AI Adviser; preserve first-answer and per-scenario evidence following `docs/CODEX_DUAL_ROLE_TEST_PROTOCOL.md`. The owner-selected runtime performs or coordinates these real separate actor sessions; absence of true isolation prevents **full** FCS PASS but never blocks independent `FCS_CLI_ONLY` Direct lanes. For `FCS_CLI_ONLY` use only the real Direct User role and classify FCS-007/008 `EXCLUDED_AI_MCP`. Automated scripts are evidence collectors, not acting personas.
 
-For each applicable Feature and FCS:
+For each **in-profile** Feature and FCS (full AI/mirror steps apply only to FCS_FULL):
 
 1. assign an explicit role/mission such as first-time Server Operator, Agent Operator, DRLink Administrator, Incident Responder, or Platform Maintainer;
 2. run the Direct lane from the public `drlink` entry point and user-visible discovery surfaces;
@@ -145,14 +154,14 @@ Parallel execution means multiple independent **persona-led audit lanes** plus s
 ~~~text
 USER_ROLE_EXECUTION=REQUIRED
 PRIMARY_PERSONA_EXECUTOR=OWNER_SELECTED_RUNTIME
-ISSUE_165_PRIMARY_PERSONA_EXECUTOR=CODEX
+PRIMARY_PERSONA_EXECUTOR=OWNER_SELECTED_RUNTIME
 SCRIPTED_USER_SCENARIO_EXECUTION=FORBIDDEN
 AUTOMATED_HARNESS_ROLE=SUPPLEMENTAL_ONLY
 DIRECT_USER_FEATURE_COVERAGE=100%
-AI_ASSISTED_FEATURE_COVERAGE=100%
-DIRECT_USER_FCS_COVERAGE=100%
-AI_ASSISTED_FCS_COVERAGE=100%
-AI_INPUT=NATURAL_LANGUAGE_GOAL_PLUS_USER_VISIBLE_OUTPUT_ONLY
+AI_ASSISTED_FEATURE_COVERAGE=100%|EXCLUDED_IN_FCS_CLI_ONLY
+DIRECT_USER_FCS_COVERAGE=100%_OF_SELECTED_13_OR_15
+AI_ASSISTED_FCS_COVERAGE=100%|EXCLUDED_IN_FCS_CLI_ONLY
+AI_INPUT=NATURAL_LANGUAGE_GOAL_PLUS_USER_VISIBLE_OUTPUT_ONLY  # FCS_FULL only
 ~~~
 
 ### Maximum-safe parallel execution — hard gate
@@ -213,13 +222,13 @@ AUDIT_SEMANTICS=FEATURE_CLI_AI_OPERATOR_WORKFLOW
 FIRST_ACTION=EXECUTE
 USER_ROLE_EXECUTION=REQUIRED
 PRIMARY_PERSONA_EXECUTOR=OWNER_SELECTED_RUNTIME
-ISSUE_165_PRIMARY_PERSONA_EXECUTOR=CODEX
+PRIMARY_PERSONA_EXECUTOR=OWNER_SELECTED_RUNTIME
 SCRIPTED_USER_SCENARIO_EXECUTION=FORBIDDEN
 AUTOMATED_HARNESS_ROLE=SUPPLEMENTAL_ONLY
 DIRECT_USER_FEATURE_COVERAGE_REQUIRED=100%
-AI_ASSISTED_FEATURE_COVERAGE_REQUIRED=100%
-DIRECT_USER_FCS_COVERAGE_REQUIRED=100%
-AI_ASSISTED_FCS_COVERAGE_REQUIRED=100%
+AI_ASSISTED_FEATURE_COVERAGE_REQUIRED=100%|EXCLUDED_IN_FCS_CLI_ONLY
+DIRECT_USER_FCS_COVERAGE_REQUIRED=100%_OF_SELECTED_13_OR_15
+AI_ASSISTED_FCS_COVERAGE_REQUIRED=100%|EXCLUDED_IN_FCS_CLI_ONLY
 CANONICAL_REPO=datarelay-labs/datarelay-link
 CANONICAL_PATH=docs/CLI_FEATURE_SCENARIO_RECONCILIATION.md
 PUBLIC_DRLINK_ONLY_FOR_USER_SCENARIOS=YES
@@ -334,11 +343,11 @@ RUNTIME_COVERAGE_COMPLETE=YES|NO
 
 `TEST_CONTRACT_HEAD` identifies the repository commit containing the audit contract. `TEST_CONTRACT_FILE_SHA256` identifies the exact contract bytes that were actually executed. `TEST_CONTRACT_DIRTY` records whether those bytes differ from the committed file at `TEST_CONTRACT_HEAD`. `PRODUCT_SOURCE_HEAD` identifies the product candidate being reconciled. Installed Server/Agent heads are independent observations.
 
-A normal reconciliation may execute a dirty contract only when its exact file SHA256 is retained. A **release-gate PASS requires `TEST_CONTRACT_DIRTY=NO`** so the contract itself is committed and reproducible.
+A direct-only audit may execute a dirty contract with its exact SHA256 recorded; it does not claim release-gate PASS. A **release-gate PASS requires `TEST_CONTRACT_DIRTY=NO`** so the contract itself is committed and reproducible.
 
 A stale installed runtime is **correlation-only evidence**. Do not classify behavior seen only on a stale runtime as a current-candidate product defect. Record `STALE_RUNTIME_CORRELATION_ONLY`, then verify the candidate surface through exact-HEAD public CLI/source/package evidence and continue all independent lanes.
 
-This audit never installs a different candidate merely to repair a mismatch. When the audit is later consumed as a release gate, the enclosing release workflow must provide exact candidate Server and Agent runtime coverage before a clean release-gate PASS can be claimed.
+Neither FCS profile installs a different candidate merely to repair a mismatch. When the audit is later consumed as a release gate, the enclosing release workflow must provide exact candidate Server and Agent runtime coverage before a clean release-gate PASS can be claimed.
 
 If an applicable Server or Agent runtime is unavailable, mark only runtime-dependent checks `BLOCKED_RUNTIME_UNAVAILABLE` and continue the feature/CLI/AI/document/operator-workflow reconciliation that remains executable. A normal audit may finish with incomplete runtime coverage; a release-gate PASS requires `RUNTIME_COVERAGE_COMPLETE=YES` and exact Server/Agent runtime match.
 
@@ -404,7 +413,7 @@ GITHUB_REPORT_READBACK=PASS|FAIL|NOT_RUN
 
 Do **not** start from the command list.
 
-Inventory at minimum:
+Inventory at minimum for the selected scope (AI Identity, MCP TLS/OAuth, Permission Objects/Groups and AI Access only in FCS_FULL; direct-only covers all other user-controllable features):
 
 ~~~text
 Server identity / public settings / deployment mode
@@ -428,7 +437,7 @@ Version / release / provenance reporting
 Uninstall / reinstall where applicable
 ~~~
 
-For release-gate reconciliation, the inventory must include these stable feature keys at least once, all with `SUPPORTED=YES`:
+For **FCS_FULL release-gate** reconciliation, the inventory must include these stable feature keys at least once, all with `SUPPORTED=YES`. `FCS_CLI_ONLY` excludes `AI_IDENTITY_ACCESS` and `MCP_TLS_OAUTH` *for its test coverage only*, without changing the v2.4.0 product scope:
 
 ~~~text
 SERVER_IDENTITY_SETTINGS
@@ -840,14 +849,14 @@ Missing isolated regression coverage for a security-sensitive/destructive contra
 
 These FCS entries are **workflow-reconciliation scenarios**, not live state-changing E2E scenarios.
 
-Every applicable FCS is executed twice as separate persona-led lanes:
+Every applicable FCS in **FCS_FULL** is executed twice as separate persona-led lanes. **FCS_CLI_ONLY** executes its 13 direct workflows once each, without AI mirrors; FCS-007/008 remain explicit exclusions:
 
 ~~~text
 FCS-xxx-DIRECT = operator pursues the scenario through public drlink discovery
-FCS-xxx-AI = operator gives AI the same natural-language goal and only user-visible product output, then evaluates the AI guidance against the same workflow contract
+FCS-xxx-AI = FCS_FULL only: operator gives AI the same natural-language goal and only user-visible product output, then evaluates the AI guidance against the same workflow contract
 ~~~
 
-The AI lane must cover the whole scenario lifecycle contract, including discovery, prerequisites, role/context, supported create/edit/delete/reset/recovery syntax, confirmation/risk semantics, and actionable next steps. Mutation-bearing guidance is inspected but not executed.
+Only for FCS_FULL, the AI lane must cover the whole scenario lifecycle contract, including discovery, prerequisites, role/context, supported create/edit/delete/reset/recovery syntax, confirmation/risk semantics, and actionable next steps. Mutation-bearing guidance is inspected but not executed.
 
 ## FCS-001 — First Server discovery
 Read-only help/menu/status/version → discover Server settings → verify next actions and feature reachability.
@@ -856,7 +865,7 @@ Read-only help/menu/status/version → discover Server settings → verify next 
 Discover Zero-Touch / Manual / Bulk syntax and semantics → verify list/show selectors and Managed Host inspection → audit revoke/remove syntax, confirmation, references, and recovery guidance. Do not issue/revoke enrollment.
 
 ## FCS-003 — Objects / Groups
-Discover Network/Service/Permission create/edit syntax → list/show → group/reference model → protected delete/dependency contract → recovery guidance. Do not create/delete Objects or Groups.
+Discover Network/Service Object/Group create/edit syntax → list/show → group/reference model → protected delete/dependency contract → recovery guidance. FCS_FULL also covers AI-specific Permission Objects/Groups. FCS_CLI_ONLY excludes only that AI-only subset. Do not create/delete Objects or Groups.
 
 ## FCS-004 — Agent Remote Service
 Discover Agent surface → create/edit/disable/delete syntax → inspect existing read-only state if available → verify duplicate/dependency/endpoint semantics through docs/source/tests. Do not mutate Remote Services.
@@ -867,10 +876,10 @@ Discover dependencies → mode/rule grammar → show → read-only test/explain 
 ## FCS-006 — Internet Access
 Same non-destructive workflow audit plus object/protocol validity, WHITELIST-only deny-by-default semantics, BLACKLIST rejection, disabled=DENY ALL, and absence of ordered-rule semantics. Do not modify policy.
 
-## FCS-007 — AI Identity / Credential / Permission / AI Access
+## FCS-007 — AI Identity / Credential / Permission / AI Access (FCS_FULL only; FCS_CLI_ONLY=EXCLUDED_AI_MCP)
 Discover identity/credential lifecycle → Permission/AI Access grammar → read-only show/test/log → inspect rejection/recovery contracts from parser/tests. Do not create/rotate/revoke credentials or identities.
 
-## FCS-008 — MCP TLS / Certificate / OAuth
+## FCS-008 — MCP TLS / Certificate / OAuth (FCS_FULL only; FCS_CLI_ONLY=EXCLUDED_AI_MCP)
 Read-only TLS/certificate status/preflight discovery → OAuth approve/deny grammar → recovery guidance → purge/renew/import/issue risk and confirmation from source/tests. Do not mutate certificate/OAuth state.
 
 ## FCS-009 — ConfigurationBundle
@@ -1013,13 +1022,13 @@ ledger/execution-lanes.tsv
   LANE_ID  KIND  START_UTC  END_UTC  RESULT  PREREQUISITE  EVIDENCE
 ~~~
 
-`docs-example-ledger.tsv` must contain every mandatory active-document/generated-output surface listed in section 21 exactly once. Do not treat a grep transcript alone as a completed documentation ledger.
+`docs-example-ledger.tsv` must contain every applicable active-document/generated-output surface in section 21 exactly once; AI/MCP-exclusive documents are mandatory only for FCS_FULL. Do not treat a grep transcript alone as a completed documentation ledger.
 
-### 22.1.1 Codex owner-selected paired-role receipts (Issue #165)
+### 22.1.1 Owner-selected runtime paired-role receipts (FCS_FULL only)
 
-Keep `ledger/fcs-results.tsv` and `ledger/feature-ledger.tsv` as existing authoritative ledgers. Add **supporting** `ledger/codex-dual-role-pairs.tsv` using the columns in `docs/CODEX_DUAL_ROLE_TEST_PROTOCOL.md`. For every applicable FCS-001..FCS-015 and discovered feature/CLI variant, record a Direct Codex user thread, a different AI-assisted Codex user thread and a different Codex AI-adviser thread within ONE RUN_ID. Capture equal goal/baseline hashes, public-only actor inputs, first AI reply, and actual role-specific public outcomes.
+Keep `ledger/fcs-results.tsv` and `ledger/feature-ledger.tsv` as existing authoritative ledgers. Add **supporting** `ledger/codex-dual-role-pairs.tsv` using the columns in `docs/CODEX_DUAL_ROLE_TEST_PROTOCOL.md`. Only for `FCS_FULL`: for every applicable FCS-001..FCS-015 and discovered feature/CLI variant, record a Direct User session, a different AI-assisted User session and a different tool-free AI Adviser session within ONE RUN_ID. For `FCS_CLI_ONLY` record the 13 Direct user receipts plus two explicit exclusions; do not create fictitious AI threads. For FCS_FULL capture equal goal/baseline hashes, public-only actor inputs and first AI reply. For FCS_CLI_ONLY record its real Direct public-output and error/negative outcomes, without synthetic AI responses.
 
-Run the read-only **paired-ledger consistency validator** after capturing both lanes. The validator is an auditor-only supporting check and cannot manufacture persona/PASS evidence. `DIRECT_PASS` plus `AI_NOT_RUN`, a missing first answer, same/inherited auditor thread or unequal starting conditions **always forbids** `FINAL_RESULT=PASS`. Genuine context isolation and operator action are checked independently.
+In **FCS_FULL only**, run the read-only **paired-ledger consistency validator** after capturing both lanes. The validator is an auditor-only supporting check and cannot manufacture persona/PASS evidence. `DIRECT_PASS` plus `AI_NOT_RUN`, a missing first answer, same/inherited auditor thread or unequal starting conditions **always forbids** `FINAL_RESULT=PASS`. Genuine context isolation and operator action are checked independently.
 
 ### 22.2 Canonical evidence authority and summary consistency
 
@@ -1038,7 +1047,7 @@ ledger/findings.tsv
 Rules:
 
 1. every FCS-001..FCS-015 appears exactly once in `fcs-results.tsv`;
-2. Direct and AI results are explicit for every applicable FCS;
+2. in FCS_FULL, Direct and AI results are explicit for every applicable FCS; in FCS_CLI_ONLY, 13 Direct FCS results and two EXCLUDED_AI_MCP entries are explicit;
 3. every P0/P1/P2/P3 finding file has exactly one corresponding `findings.tsv` row;
 4. no summary counter is entered independently of these ledgers;
 5. before final reporting, recompute FCS PASS/FAIL/BLOCKED and finding severity/open counts from the ledgers;
@@ -1073,7 +1082,7 @@ A user-blocking P2 blocks this gate.
 ## 24. Required counters
 
 ~~~text
-CLI_FEATURE_SCENARIO_RECONCILIATION=PASS|FAIL
+CLI_FEATURE_SCENARIO_RECONCILIATION=PASS|FAIL  # FCS_FULL only; FCS_CLI_ONLY reports FCS_CLI_ONLY=PASS|FAIL|PARTIAL
 FEATURE_INVENTORY_TOTAL=
 FEATURE_NO_CLI_GAPS=
 FEATURE_WITHOUT_DISCOVERABLE_CLI_COUNT=
@@ -1239,9 +1248,15 @@ must validate this record against the current Git HEAD before release qualificat
 
 For unreleased greenfield v2.4, every applicable gap/drift/legacy/duplicate/dead-end/cleanup counter must be zero for PASS.
 
+### Scope-specific result and blocker separation
+
+- FCS_CLI_ONLY: 13/13 in-scope Direct scenarios qualify only the **Direct CLI workflow audit**, FCS-007 and FCS-008 are EXCLUDED_AI_MCP. Do not demand AI adviser threads, AI-related feature completeness, ChatGPT OAuth, certificate issuance or full candidate release evidence to begin or finish Direct checks. A verified in-scope flaw yields FCS_CLI_ONLY=FAIL while independently runnable checks continue; test execution may still be complete.
+- FCS_FULL: all 15 FCS and full Direct/AI paired real-user evidence remain mandatory. MCP is part of the **v2.4.0 product** and its missing actual behavior can fail the full release gate.
+- Neither the one-time final GitHub report/readback nor a release-gate clean tree is a start permission. Distinguish AUDIT_EXECUTABLE_SCOPE_COMPLETE from FCS_PRODUCT_PASS and RELEASE_GATE_PASS; do not turn a reporting-tool error into a product bug or a global test execution blocker.
+
 ## 25. PASS / FAIL
 
-PASS requires:
+PASS requires (selected profile only; full release PASS additionally requires all 15 FCS and AI/MCP mirrors):
 
 1. every supported feature has one actionable justified public CLI lifecycle;
 2. every runtime/public command maps to a current feature;
@@ -1256,8 +1271,8 @@ PASS requires:
 11. status/version/provenance is coherent;
 12. active docs/generated guidance are canonical;
 13. `RUNTIME_MUTATION_ATTEMPT_COUNT=0`;
-14. Direct-user Feature/FCS coverage = 100% and AI-assisted Feature/FCS coverage = 100%;
-15. `FEATURES_WITHOUT_AI_SUPPORT_COUNT=0`, `FCS_WITHOUT_AI_SUPPORT_COUNT=0`, and all AI guidance drift/leak counters are zero;
+14. In `FCS_FULL`, Direct and AI-assisted Feature/FCS coverage = 100%. In `FCS_CLI_ONLY`, Direct coverage = 13/13 applicable and 2/15 `EXCLUDED_AI_MCP`; AI mirrors are excluded rather than falsely passed;
+15. In `FCS_FULL` only: `FEATURES_WITHOUT_AI_SUPPORT_COUNT=0`, `FCS_WITHOUT_AI_SUPPORT_COUNT=0`, and all AI guidance drift/leak counters are zero. For `FCS_CLI_ONLY` these counters are `EXCLUDED_BY_SCOPE`, not zero/PASS;
 16. `USER_ROLE_EXECUTION=PASS`, `SCRIPTED_USER_SCENARIO_EXECUTION_COUNT=0`, and `AUTOMATED_HARNESS_USER_SUBSTITUTION_COUNT=0`;
 17. audit-owned temporary process/file residue is zero;
 18. `PARALLEL_EXECUTION=MAXIMUM_SAFE`, `SERIAL_IDLE_WITH_RUNNABLE_WORK=NO`, and `AVOIDABLE_SERIAL_WAIT_COUNT=0`;
@@ -1265,11 +1280,11 @@ PASS requires:
 20. `AUDITOR_KNOWLEDGE_LEAK_COUNT=0` and `PRIMARY_USER_EVIDENCE_MODE=PERSONA_LED_PUBLIC_UX`;
 21. active guidance, help-only legacy paths, public noun drift, stale regression grammar, active installer legacy terms, and destructive child metadata gap counters are zero;
 22. unresolved P0/P1/user-blocking P2 = 0;
-23. no unresolved actionable usability/product-improvement finding remains. A P2/P3 observation may remain only when it is explicitly dispositioned as non-actionable for the current supported product scope.
+23. no unresolved actionable usability/product-improvement finding remains **in the selected test profile**. A P2/P3 observation may remain only when explicitly dispositioned as non-actionable within that scope; out-of-scope AI/MCP is never treated as unsupported v2.4.0 product behavior.
 
 Anything else is FAIL or explicitly BLOCKED.
 
-For a **release-gate PASS**, additionally require `TEST_CONTRACT_DIRTY=NO`, `AUDIT_RUN_LOCK=ACQUIRED` / single-run coordination PASS, exact Server and Agent candidate runtime coverage, `TTY_PERSONA_COVERAGE=PASS`, `TOOLING_BLOCKER_COUNT=0`, `GITHUB_REPORT_STATUS=PASS`, and `GITHUB_REPORT_READBACK=PASS`. A normal audit may finish honestly with dirty-contract/runtime/tooling incompleteness, but it must not be promoted to release-gate PASS.
+For a **full, release-gate PASS only**, additionally require `TEST_CONTRACT_DIRTY=NO`, `AUDIT_RUN_LOCK=ACQUIRED` / single-run coordination PASS, exact Server and Agent candidate runtime coverage, `TTY_PERSONA_COVERAGE=PASS`, `TOOLING_BLOCKER_COUNT=0`, `GITHUB_REPORT_STATUS=PASS`, and `GITHUB_REPORT_READBACK=PASS`. A normal audit may finish honestly with dirty-contract/runtime/tooling incompleteness, but it must not be promoted to release-gate PASS.
 
 A workflow is not `BLOCKED` merely because this audit refuses to execute its mutation. Mutation is intentionally out of scope; judge that workflow step from discoverability/contract/test evidence.
 
@@ -1432,9 +1447,9 @@ READ THE COMPLETE CURRENT CANONICAL CONTRACT
 → REPEAT UNTIL THE LATEST COMPLETE RUN HAS ZERO NEW/UNRESOLVED IN-SCOPE DEFECTS AND ZERO ACTIONABLE USABILITY FINDINGS
 ~~~
 
-Do not turn findings into pauses during an individual audit run. Record them and continue until that run is exhausted. Once the run is reported/read back and offboarded, findings are an immediate remediation trigger for an active release-quality workstream, not a reason to return control to the owner. Codex implements the fixes, tests them, and starts the next authorized run without waiting for another owner prompt. A subset PASS, targeted regression PASS, CI PASS, or a single audit pass never terminates the closed loop.
+Do not turn findings into pauses during an individual audit run. Record them and continue until that run is exhausted. Once the run is reported/read back and offboarded, findings are an immediate remediation trigger for an active release-quality workstream, not a reason to return control to the owner. The current owner-selected implementer implements the fixes, tests them, and starts the next authorized run without waiting for another owner prompt. A subset PASS, targeted regression PASS, CI PASS, or a single audit pass never terminates the closed loop.
 
 
-For a **standalone CLI reconciliation request**, a clean CLI result completes this trigger; it does not itself authorize state-changing FULL_USER_E2E. When the current owner intent / active Work Packet is **release-quality closure**, the scheduler must next resolve `docs/FULL_USER_E2E_SCENARIOS.md`, read that entire current contract before any E2E action, and execute its separate closed loop until clean. Only after both required release-quality gates converge on the same exact HEAD may candidate freeze / release qualification begin.
+For a **standalone CLI reconciliation request**, a clean result **in its selected profile** completes this trigger; FCS_CLI_ONLY never promotes to the full FCS release gate; it does not itself authorize state-changing FULL_USER_E2E. When the current owner intent / active Work Packet is **release-quality closure**, the scheduler must next resolve `docs/FULL_USER_E2E_SCENARIOS.md`, read that entire current contract before any E2E action, and execute its separate closed loop until clean. Only after both required release-quality gates converge on the same exact HEAD may candidate freeze / release qualification begin.
 
 Do not perform product-state mutation, host discovery, installation, upgrade, uninstall, restart, pause/resume, synchronization, rollback/restore, platform qualification, CI waiting, or release-candidate preparation as part of this CLI trigger.
