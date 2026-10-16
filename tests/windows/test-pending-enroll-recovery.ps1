@@ -62,6 +62,7 @@ try {
     $script:RedeemCalls = 0
     $script:EnrollCalls = 0
     $script:EnrollShouldFail = $false
+    $script:EnrollOperationIds = New-Object 'System.Collections.Generic.List[string]'
 
     # Mocked allocator: /bootstrap/redeem and /enroll only (no real network).
     # Overriding the module-level function by re-declaring it in this scope
@@ -81,6 +82,8 @@ try {
         }
         if ($Url -eq 'https://example.test/enroll') {
             $script:EnrollCalls++
+            $sent = $Body | ConvertFrom-Json
+            $script:EnrollOperationIds.Add([string]$sent.operation_id)
             if ($script:EnrollShouldFail) {
                 throw 'ERROR: simulated allocator unreachable (test)'
             }
@@ -134,6 +137,9 @@ try {
     Assert-FrpEqual 0 $rc1 'resume from redeemed phase succeeds'
     Assert-FrpEqual 1 $script:RedeemCalls 'resume does not re-redeem ticket'
     Assert-FrpEqual 2 $script:EnrollCalls 'resume replays enroll exactly once more'
+    Assert-FrpTrue (-not [string]::IsNullOrWhiteSpace($script:EnrollOperationIds[0])) 'first enroll carries operation id'
+    Assert-FrpEqual $script:EnrollOperationIds[0] $script:EnrollOperationIds[1] 'resume reuses exact operation id'
+    Assert-FrpTrue ($script:EnrollOperationIds[0] -match '^[0-9a-f]{32}$') 'operation id format'
     Assert-FrpTrue (Test-FrpIsEnrolled) 'resume commits local state'
     Assert-FrpTrue (-not (Test-FrpPendingEnrollExists)) 'pending cleared after successful resume'
     $state1 = Read-FrpClientState
@@ -180,6 +186,7 @@ try {
     Assert-FrpEqual 'enrolled' ([string]$pendingRaw2.phase) 'pending phase=enrolled'
     Assert-FrpTrue ($null -ne $pendingRaw2.enroll_meta -and [string]$pendingRaw2.enroll_meta.token_ciphertext) 'cached enroll response has token_ciphertext'
     Assert-FrpTrue (@($pendingRaw2.allocated_services).Count -gt 0) 'cached allocated services present'
+    Assert-FrpTrue ([string]$pendingRaw2.operation_id -match '^[0-9a-f]{32}$') 'pending operation id recorded'
     Assert-FrpTrue (-not [string]::IsNullOrWhiteSpace([string]$pendingRaw2.mgmt_fingerprint)) 'mgmt fingerprint recorded'
     Assert-FrpTrue (-not (Test-Path -LiteralPath (Get-FrpStatePath))) 'client-state.json not yet written'
 

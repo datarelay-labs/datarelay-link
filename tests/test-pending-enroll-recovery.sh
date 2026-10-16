@@ -28,10 +28,19 @@ extract_bootstrap_ticket() {
 import base64, json, re, sys
 from pathlib import Path
 text = Path(sys.argv[1]).read_text()
-m = re.search(r"sudo bash -s -- '(zt1\.[^']+)'", text)
-if not m:
+m = re.search(r"/i/([A-Za-z0-9_-]{22}|bt1\.[0-9a-f]+\.[0-9a-f]+)", text)
+if m:
+    print(m.group(1))
+    raise SystemExit(0)
+m = re.search(r"zt1\.[A-Za-z0-9_-]+", text)
+if m:
+    package = m.group(0)
+elif re.search(r"sudo bash -s -- '(zt1\.[^']+)'", text):
+    m = re.search(r"sudo bash -s -- '(zt1\.[^']+)'", text)
+    package = m.group(1)
+else:
     raise SystemExit('missing ticket')
-parts = m.group(1).split('.', 1)
+parts = package.split('.', 1)
 padded = parts[1] + ('=' * (-len(parts[1]) % 4))
 payload = json.loads(base64.urlsafe_b64decode(padded.encode('ascii')).decode('utf-8'))
 print(payload['t'])
@@ -100,7 +109,7 @@ pki = root / 'pki'
     'enrollments_dir': str(root / 'enrollments'),
     'bootstrap_dir': str(root / 'bootstrap'),
     'token_file': str(root / 'server_token'),
-    'client_installer_url': 'https://raw.githubusercontent.com/xdr-labs/frp-auto-deploy/main/dist/bootstrap-client.sh',
+    'client_installer_url': 'https://raw.githubusercontent.com/datarelay-labs/datarelay-link/main/dist/bootstrap-client.sh',
     'allocator_public_url': 'https://127.0.0.1:%s/enroll' % port,
 }, indent=2) + '\n')
 PY
@@ -109,32 +118,32 @@ SSH_USER="$(id -un)"
 
 # Server-side tree used only by frp-create-client to mint tickets.
 LIVE_TREE="$WORKDIR/live-server"
-mkdir -p "$LIVE_TREE/etc/frp-auto-deploy" "$LIVE_TREE/var/lib/frp-auto-deploy" "$LIVE_TREE/etc/frp"
-cp -a "$ALLOC_ROOT/pki" "$LIVE_TREE/etc/frp-auto-deploy/pki"
+mkdir -p "$LIVE_TREE/etc/drlink" "$LIVE_TREE/var/lib/drlink" "$LIVE_TREE/etc/frp"
+cp -a "$ALLOC_ROOT/pki" "$LIVE_TREE/etc/drlink/pki"
 python3 - "$LIVE_TREE" "$ALLOC_PORT" <<'PY'
 import json, sys
 from pathlib import Path
 tree = Path(sys.argv[1])
 port = int(sys.argv[2])
-(tree / 'etc/frp-auto-deploy/config.json').write_text(json.dumps({
+(tree / 'etc/drlink/config.json').write_text(json.dumps({
     'public_host': '203.0.113.10',
     'public_ip': '203.0.113.10',
     'frp_control_public_port': 8443,
     'frp_control_listen_port': 443,
     'allocator_public_url': 'https://127.0.0.1:%s/enroll' % port,
-    'tls_ca_cert': '/etc/frp-auto-deploy/pki/ca.crt',
-    'tls_server_cert': '/etc/frp-auto-deploy/pki/server.crt',
-    'tls_server_key': '/etc/frp-auto-deploy/pki/server.key',
-    'client_installer_url': 'https://raw.githubusercontent.com/xdr-labs/frp-auto-deploy/main/dist/bootstrap-client.sh',
-    'enrollments_dir': '/var/lib/frp-auto-deploy/enrollments',
-    'bootstrap_dir': '/var/lib/frp-auto-deploy/bootstrap',
-    'registry_file': '/var/lib/frp-auto-deploy/registry.json',
+    'tls_ca_cert': '/etc/drlink/pki/ca.crt',
+    'tls_server_cert': '/etc/drlink/pki/server.crt',
+    'tls_server_key': '/etc/drlink/pki/server.key',
+    'client_installer_url': 'https://raw.githubusercontent.com/datarelay-labs/datarelay-link/main/dist/bootstrap-client.sh',
+    'enrollments_dir': '/var/lib/drlink/enrollments',
+    'bootstrap_dir': '/var/lib/drlink/bootstrap',
+    'registry_file': '/var/lib/drlink/registry.json',
     'token_file': '/etc/frp/server_token',
 }, indent=2) + '\n')
 PY
-ln -sfn "$ALLOC_ROOT/enrollments" "$LIVE_TREE/var/lib/frp-auto-deploy/enrollments"
-ln -sfn "$ALLOC_ROOT/bootstrap" "$LIVE_TREE/var/lib/frp-auto-deploy/bootstrap"
-ln -sfn "$ALLOC_ROOT/registry.json" "$LIVE_TREE/var/lib/frp-auto-deploy/registry.json"
+ln -sfn "$ALLOC_ROOT/enrollments" "$LIVE_TREE/var/lib/drlink/enrollments"
+ln -sfn "$ALLOC_ROOT/bootstrap" "$LIVE_TREE/var/lib/drlink/bootstrap"
+ln -sfn "$ALLOC_ROOT/registry.json" "$LIVE_TREE/var/lib/drlink/registry.json"
 ln -sfn "$ALLOC_ROOT/server_token" "$LIVE_TREE/etc/frp/server_token"
 
 issue_ticket() {
@@ -147,7 +156,7 @@ run_client() {
   # run_client TREE TICKET MACHINE_ID OUT [EXTRA_ENV...]
   local tree="$1" ticket="$2" machine="$3" out="$4"
   shift 4
-  mkdir -p "$tree/etc/frp" "$tree/usr/local/bin" "$tree/usr/local/lib/frp-auto-deploy"
+  mkdir -p "$tree/etc/frp" "$tree/usr/local/bin" "$tree/usr/local/lib/drlink"
   make_frpc "$tree/usr/local/bin/frpc"
   (
     export FRP_CLIENT_TEST_ROOT="$tree"
@@ -166,7 +175,7 @@ run_client() {
       export FRP_ZERO_TOUCH=1
       # This suite validates enrollment transaction recovery, not local SSH
       # reachability. SSH username is optional metadata, so keep it blank to
-      # avoid making recovery depend on host sshd/listen-port state.
+      # avoid making the recovery test depend on host sshd/listen-port state.
       export FRP_SSH_USER=""
       export FRP_SSH_PORT=22
     else
@@ -196,7 +205,9 @@ pending_path() { printf '%s' "$1/etc/frp/enroll-pending.json"; }
 # ---------------------------------------------------------------------------
 issue_ticket customer-redeemed >"$WORKDIR/t1-create.out"
 T1_TICKET="$(extract_bootstrap_ticket "$WORKDIR/t1-create.out")"
-T1_ID="${T1_TICKET#bt1.}"; T1_ID="${T1_ID%%.*}"
+T1_ID="$(python3 -c 'import hashlib,sys
+t=sys.argv[1].strip()
+print(t.split(".")[1].lower() if t.lower().startswith("bt1.") and t.count(".")==2 else hashlib.sha256(t.encode("ascii")).hexdigest()[:16])' "$T1_TICKET")"
 T1_TREE="$WORKDIR/client-redeemed"
 T1_MACHINE='11112222333344445555666677778888'
 
@@ -207,6 +218,8 @@ fi
 [[ -f "$(pending_path "$T1_TREE")" ]] || fail "pending file missing after redeemed-phase crash"
 PENDING1_PHASE="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["phase"])' "$(pending_path "$T1_TREE")")"
 [[ "$PENDING1_PHASE" == "redeemed" ]] || fail "expected phase=redeemed, got $PENDING1_PHASE"
+PENDING1_OPERATION_ID="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("operation_id") or "")' "$(pending_path "$T1_TREE")")"
+[[ "$PENDING1_OPERATION_ID" =~ ^[0-9a-f]{32}$ ]] || fail "pending operation id missing/invalid"
 [[ ! -f "$T1_TREE/etc/frp/client-state.json" ]] || fail "client-state.json must not exist yet"
 grep -q bootstrap_redeem "$WORKDIR/t1-a.out.hook" || fail "attempt 1 did not redeem"
 grep -q '^enroll$' "$WORKDIR/t1-a.out.hook" || fail "attempt 1 did not attempt enroll"
@@ -318,6 +331,15 @@ fi
 pass "PENDING_FILE_MODE_0600"
 pass "PENDING_FILE_SECRET_NEVER_IN_CLIENT_STATE"
 
+# The live allocator is only needed by scenarios 1-3. Reap it here instead
+# of relying solely on the script EXIT trap so later helper-only scenarios
+# cannot leave a test-owned allocator visible to subsequent run-all gates.
+if [[ -n "$ALLOC_PID" ]]; then
+  frp_test_stop_pid "$ALLOC_PID" || fail "allocator cleanup after recovery scenarios failed"
+  ALLOC_PID=""
+fi
+pass "PENDING_RECOVERY_ALLOCATOR_REAPED"
+
 # ---------------------------------------------------------------------------
 # 4. Manual (non zero-touch) enrollment also gets crash-safe recovery: the
 #    pending write/load/clear helpers work independent of the Bootstrap
@@ -333,6 +355,7 @@ pass "PENDING_FILE_SECRET_NEVER_IN_CLIENT_STATE"
   mkdir -p "$FRP_CLIENT_TEST_ROOT/etc/frp"
   SVC_FILE="$WORKDIR/helper-services.json"
   printf '%s' '[{"id":"web","name":"web","preset":"custom","local_ip":"127.0.0.1","local_port":8080}]' >"$SVC_FILE"
+  export FRP_CLIENT_OPERATION_ID="0123456789abcdef0123456789abcdef"
   frp_pending_enroll_write redeemed "unit-machine-id" "unit-host" "https://example.test/enroll" \
     "abc123" "s3cr3t-value" "$SVC_FILE"
   [[ -f "$(frp_pending_enroll_path)" ]] || { echo "FAIL helper write did not create file" >&2; exit 1; }
@@ -349,16 +372,80 @@ pass "PENDING_FILE_SECRET_NEVER_IN_CLIENT_STATE"
   : >"$OUT_ALLOC"
   : >"$OUT_META"
   frp_pending_enroll_load "unit-machine-id" "$OUT_SVC" "$OUT_ALLOC" "$OUT_META" \
-    LOADED_PHASE LOADED_ID LOADED_SECRET
+    LOADED_PHASE LOADED_ID LOADED_SECRET LOADED_OPERATION_ID
   [[ "$LOADED_PHASE" == "redeemed" ]] || { echo "FAIL loaded phase $LOADED_PHASE" >&2; exit 1; }
   [[ "$LOADED_ID" == "abc123" ]] || { echo "FAIL loaded id $LOADED_ID" >&2; exit 1; }
   [[ "$LOADED_SECRET" == "s3cr3t-value" ]] || { echo "FAIL loaded secret mismatch" >&2; exit 1; }
+  [[ "$LOADED_OPERATION_ID" == "$FRP_CLIENT_OPERATION_ID" ]] || { echo "FAIL loaded operation id mismatch" >&2; exit 1; }
   python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); assert d[0]["id"]=="web"' "$OUT_SVC"
   frp_pending_enroll_clear
   [[ ! -f "$(frp_pending_enroll_path)" ]] || { echo "FAIL clear did not remove file" >&2; exit 1; }
   echo "HELPER_UNIT_OK"
 )
 pass "PENDING_ENROLL_HELPERS_WRITE_LOAD_CLEAR"
+
+# ---------------------------------------------------------------------------
+# 5. Malformed allocator responses fail cleanly. The parser must return
+#    nonzero immediately and never leak a Python traceback or continue into
+#    later metadata processing.
+# ---------------------------------------------------------------------------
+(
+  set -euo pipefail
+  . "$ROOT/lib/frp-common.sh"
+  . "$ROOT/lib/frp-client-common.sh"
+  export FRP_CLIENT_TEST_ROOT="$WORKDIR/malformed-response"
+  mkdir -p "$FRP_CLIENT_TEST_ROOT/etc/frp"
+  SVC="$WORKDIR/malformed-services.json"
+  ALLOC="$WORKDIR/malformed-allocated.json"
+  META="$WORKDIR/malformed-meta.json"
+  printf '%s\n' '[{"id":"web","name":"web","preset":"custom","local_ip":"127.0.0.1","local_port":8080}]' >"$SVC"
+  : >"$ALLOC"; : >"$META"
+  frp_allocator_curl() { printf '%s' '{not-json'; }
+  set +e
+  OUTPUT="$(frp_enroll_services 'https://example.test/enroll' '0123456789abcdef' 'fresh-secret' \
+    'unit-machine' 'unit-host' "$SVC" "$ALLOC" "$META" 2>&1)"
+  RC=$?
+  set -e
+  [[ "$RC" -ne 0 ]] || { echo "FAIL malformed enrollment response returned success" >&2; exit 1; }
+  [[ "$OUTPUT" == *'malformed enrollment response'* ]] || { echo "FAIL malformed response guidance missing" >&2; exit 1; }
+  [[ "$OUTPUT" != *'Traceback (most recent call last)'* ]] || { echo "FAIL malformed response leaked traceback" >&2; exit 1; }
+  [[ ! -s "$META" ]] || { echo "FAIL malformed response wrote enrollment metadata" >&2; exit 1; }
+)
+pass "MALFORMED_ENROLLMENT_RESPONSE_FAILS_CLEANLY"
+
+# ---------------------------------------------------------------------------
+# 6. An explicitly supplied fresh Manual Enrollment Code overrides pending
+#    resume selection, while an ordinary retry still selects exact replay.
+#    The old pending transaction is not cleared by selection itself.
+# ---------------------------------------------------------------------------
+(
+  set -euo pipefail
+  export FRP_CLIENT_SOURCED=1
+  export FRP_CLIENT_TEST_ROOT="$WORKDIR/pending-selection"
+  export FRP_TEST_MACHINE_ID='unit-machine-id'
+  . "$ROOT/install-client.sh"
+  frp_pending_enroll_exists_for() { return 0; }
+  frp_pending_enroll_allocator_url() { printf '%s' 'https://example.test/enroll'; }
+  frp_client_has_existing_install() { return 0; }
+  frp_client_existing_install_message() { :; }
+  frp_zero_touch_active() { return 1; }
+
+  unset FRP_ENROLLMENT_CODE FRP_ALLOCATOR_URL 2>/dev/null || true
+  set +e
+  frp_client_main >/dev/null 2>&1
+  set -e
+  [[ "$FRP_RESUME_PENDING" == "1" && "$FRP_REPLACE_PENDING" == "0" ]] \
+    || { echo "FAIL ordinary retry did not select pending exact replay" >&2; exit 1; }
+
+  export FRP_ENROLLMENT_CODE='fedcba9876543210.fresh-secret-value'
+  unset FRP_ALLOCATOR_URL 2>/dev/null || true
+  set +e
+  frp_client_main >/dev/null 2>&1
+  set -e
+  [[ "$FRP_RESUME_PENDING" == "0" && "$FRP_REPLACE_PENDING" == "1" ]] \
+    || { echo "FAIL fresh Manual Code did not supersede pending selection" >&2; exit 1; }
+)
+pass "FRESH_MANUAL_CODE_SUPERSEDES_PENDING_SELECTION"
 
 echo
 echo "PENDING_ENROLL_RECOVERY_TEST=PASS"

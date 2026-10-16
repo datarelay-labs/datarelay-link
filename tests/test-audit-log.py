@@ -2,6 +2,7 @@
 """Audit log redaction and rotation regressions for post-v2.1.1 hardening."""
 import json
 import os
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -91,6 +92,22 @@ class AuditLogTests(unittest.TestCase):
         tool.parent.mkdir(parents=True, exist_ok=True)
         path = self.audit.discover_audit_path(str(tool))
         self.assertEqual(path, installed / "frp_audit.py")
+
+    def test_public_audit_marks_legacy_failed_records_as_failure(self):
+        path = Path(self.root) / "var/log/drlink/audit.jsonl"
+        path.parent.mkdir(parents=True)
+        path.write_text(json.dumps({"event": "restore.failed", "details": {"error": "RestoreError"}}) + "\n")
+        config = Path(self.root) / "etc/drlink/config.json"
+        config.parent.mkdir(parents=True)
+        config.write_text("{}\n")
+        repo = Path(__file__).resolve().parents[1]
+        env = dict(os.environ, FRP_CTL_TEST_ROOT=self.root)
+        env.pop("FRP_AUDIT_LOG", None)
+        proc = subprocess.run(["bash", str(repo / "tools/drlink"), "system", "audit"],
+                              env=env, capture_output=True, text=True, timeout=30)
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        row = next(line for line in proc.stdout.splitlines() if "restore.failed" in line)
+        self.assertEqual(row.split()[-1], "failure")
 
 
 if __name__ == "__main__":

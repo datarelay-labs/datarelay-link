@@ -690,7 +690,7 @@ def case_unreadable_host_version_fallback():
     real_is_file = Path.is_file
 
     def fake_is_file(self, *args, **kwargs):
-        if str(self) == '/etc/frp-auto-deploy/version':
+        if str(self) == '/etc/drlink/version':
             raise PermissionError(13, 'Permission denied', str(self))
         return real_is_file(self, *args, **kwargs)
 
@@ -699,6 +699,101 @@ def case_unreadable_host_version_fallback():
     if got != expected:
         fail('unreadable host version fallback', got)
     pass_('unreadable 0700 host version falls back')
+
+
+def case_fixed_tcp_pool_port_allowed():
+    env = Env(port_start=6000, port_end=6098)
+    try:
+        env.registry.write_text(json.dumps({
+            'schema_version': 2,
+            'reserved': [6200],
+            'clients': {
+                'aaaaaaaa11111111aaaaaaaa11111111': {
+                    'hostname': 'host-a',
+                    'services': {
+                        'fixed1': {
+                            'remote_port': 6200,
+                            'enabled': True,
+                            'local_ip': '127.0.0.1',
+                            'local_port': 443,
+                        },
+                    },
+                },
+            },
+        }) + '\n')
+        env.allocator.load_registry()
+        pass_('legacy untagged Fixed TCP pool port 6200 allowed')
+        env.registry.write_text(json.dumps({
+            'schema_version': 2,
+            'reserved': [6500],
+            'clients': {
+                'aaaaaaaa11111111aaaaaaaa11111111': {
+                    'hostname': 'host-a',
+                    'services': {
+                        'bad': {
+                            'remote_port': 6500,
+                            'enabled': True,
+                            'local_ip': '127.0.0.1',
+                            'local_port': 80,
+                        },
+                    },
+                },
+            },
+        }) + '\n')
+        try:
+            env.allocator.load_registry()
+            fail('port 6500 should be outside configured ranges')
+        except MOD.RegistrySchemaError as exc:
+            if 'outside configured range' not in str(exc):
+                fail('outside-range message', exc)
+        pass_('port outside service and Fixed TCP pools rejected')
+    finally:
+        env.cleanup()
+
+
+def case_disabled_fixed_reservation_uses_its_own_pool():
+    env = Env(port_start=18000, port_end=18000)
+    try:
+        code, response = env.enroll([svc('ssh', preset='ssh')])
+        if code != 200:
+            fail('disabled Fixed setup', response)
+        allocator = env.allocator
+        result = allocator.reserve_remote_service_endpoint(
+            'machine-a', 'disabled-fixed', 'fixed-tcp', local_port=1521,
+            enabled=False,
+        )
+        port = result['remote_port']
+        if not 6200 <= port <= 6299:
+            fail('disabled Fixed pool', result)
+        record = env.load_state()['clients']['machine-a']['services'][result['proxy_id']]
+        if record['enabled'] or record['remote_port'] != port:
+            fail('disabled reservation enablement', record)
+        updated = allocator.reserve_remote_service_endpoint(
+            'machine-a', 'disabled-fixed', 'fixed-tcp', local_port=1521,
+            preserve_port=port, enabled=True,
+        )
+        if updated['remote_port'] != port:
+            fail('disabled reservation moved on enable', updated)
+        allocator.release_remote_service_endpoint('machine-a', 'disabled-fixed')
+        replacement = allocator.reserve_remote_service_endpoint(
+            'machine-a', 'replacement-fixed', 'fixed-tcp', local_port=1521,
+            enabled=False,
+        )
+        if replacement['remote_port'] != port:
+            fail('Fixed freed capacity not reused', replacement)
+        before = env.load_state()
+        try:
+            allocator.reserve_remote_service_endpoint(
+                'machine-a', 'normal-overflow', 'normal', enabled=False,
+            )
+            fail('normal pool overflow accepted')
+        except MOD.PortRangeExhausted:
+            pass
+        if env.load_state() != before:
+            fail('failed disabled allocation changed registry')
+        pass_('disabled Fixed reservation uses its pool and retains ownership')
+    finally:
+        env.cleanup()
 
 
 def main():
@@ -719,11 +814,13 @@ def main():
     case_future_schema_rejected()
     case_malformed_registry_rejected()
     case_duplicate_port_rejected()
+    case_fixed_tcp_pool_port_allowed()
     case_registry_write_failure()
     case_lost_response_retry()
     case_range_6000_exhaustion()
     case_admin_metadata_and_source_ip()
     case_unreadable_host_version_fallback()
+    case_disabled_fixed_reservation_uses_its_own_pool()
     print()
     print('ALLOCATOR_GENERIC_TESTS=PASS')
 

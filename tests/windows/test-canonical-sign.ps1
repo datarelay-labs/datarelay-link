@@ -12,6 +12,12 @@ try {
     # sort_keys order: alg, body_sha256, machine_id, nonce, op, schema, ts
     Assert-FrpTrue ($msg.StartsWith('{"alg":')) 'sorted keys start with alg'
 
+    $lifecycleMsg = Get-FrpSignedMessage -MachineId 'machine-id-deadbeef01' -Body '{"state":"connected"}' `
+        -Timestamp $ts -Nonce $nonce -Op 'agent.lifecycle' -Method 'POST' -Path '/v1/agent-lifecycle'
+    Assert-FrpTrue ($lifecycleMsg -match '"method":"POST"') 'method bound into lifecycle signature'
+    Assert-FrpTrue ($lifecycleMsg -match '"path":"/v1/agent-lifecycle"') 'path bound into lifecycle signature'
+    Assert-FrpTrue ($lifecycleMsg -match '"op":"agent.lifecycle"') 'lifecycle op bound into signature'
+
     $id = New-FrpEcdsaIdentity
     $sig = Protect-FrpSignMessage -PrivatePem $id.PrivatePem -Message $msg
     Assert-FrpTrue (Test-FrpSignature -PublicPem $id.PublicPem -Message $msg -SignatureBase64 $sig) 'verify'

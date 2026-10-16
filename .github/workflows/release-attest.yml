@@ -1,0 +1,595 @@
+name: release-attest
+# Build, integrity-check, SBOM, and GitHub Artifact Attestation for a release
+# candidate ref. Does NOT publish a GitHub Release, and never moves a tag.
+#
+# Dispatch this workflow on the provenance commit being attested. Stable and
+# RC use the tag; development uses that commit's full SHA. The attestation
+# certificate binds to github.sha. Manifest source_head names the parent
+# content commit, not the provenance commit itself.
+# scripts/check-release-attest-binding.py enforces the binding.
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Immutable release ref (release tag, or its full 40-hex commit SHA)
+        required: true
+        type: string
+      publish_artifacts:
+        description: Upload workflow artifacts (not a GitHub Release)
+        required: false
+        type: boolean
+        default: true
+      qualification_evidence_b64:
+        description: Base64-encoded PASS1/PASS2 qualification evidence package; required for stable tags
+        required: false
+        type: string
+        default: ''
+      qualification_chatgpt_owner_evidence_b64:
+        description: Base64-encoded ChatGPT owner/UI acceptance JSON; must record the actual supported full-MCP plan/surface and current official support reference for stable v2.4.0
+        required: false
+        type: string
+        default: ''
+
+permissions:
+  contents: read
+
+jobs:
+  qualification-evidence-validation:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      is_stable: ${{ steps.classify.outputs.is_stable }}
+      pass1_head: ${{ steps.validate.outputs.pass1_head }}
+      pass2_head: ${{ steps.validate.outputs.pass2_head }}
+      final_head: ${{ steps.validate.outputs.final_head }}
+      sha256: ${{ steps.validate.outputs.sha256 }}
+      mcp_endpoint: ${{ steps.validate.outputs.mcp_endpoint }}
+    steps:
+      - name: Reject mutable ref input
+        env:
+          INPUT_REF: ${{ inputs.ref }}
+        run: |
+          set -euo pipefail
+          if [[ "$INPUT_REF" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] \
+            || [[ "$INPUT_REF" =~ ^v[0-9]+\.[0-9]+\.[0-9]+-rc\.[0-9]+$ ]] \
+            || [[ "$INPUT_REF" =~ ^[0-9a-f]{40}$ ]]; then
+            exit 0
+          fi
+          echo "ERROR: ref must be an immutable release/RC tag or full 40-hex commit SHA" >&2
+          exit 1
+
+      # actions/checkout@v4.2.2
+      - name: Checkout immutable ref for qualification validation
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ inputs.ref }}
+          fetch-depth: 0
+
+      - name: Classify stable tag execution
+        id: classify
+        env:
+          WORKFLOW_REF: ${{ github.ref }}
+        run: |
+          set -euo pipefail
+          version="$(sed -n 's/^PROJECT_VERSION=//p' VERSION | head -n1)"
+          expected="v$version"
+          head="$(git rev-parse HEAD)"
+          tag_head="$(git rev-parse --verify "refs/tags/$expected^{commit}" 2>/dev/null || true)"
+          if [[ -n "$tag_head" && "$tag_head" == "$head" && "$WORKFLOW_REF" == "refs/tags/$expected" ]]; then
+            echo "is_stable=true" >>"$GITHUB_OUTPUT"
+          else
+            echo "is_stable=false" >>"$GITHUB_OUTPUT"
+          fi
+
+      - name: Validate retained Full Real E2E qualification evidence
+        id: validate
+        env:
+          IS_STABLE: ${{ steps.classify.outputs.is_stable }}
+          QUALIFICATION_EVIDENCE_B64: ${{ inputs.qualification_evidence_b64 }}
+        run: |
+          set -euo pipefail
+          if [[ "$IS_STABLE" != "true" ]]; then
+            echo "pass1_head=" >>"$GITHUB_OUTPUT"
+            echo "pass2_head=" >>"$GITHUB_OUTPUT"
+            echo "final_head=" >>"$GITHUB_OUTPUT"
+            echo "sha256=" >>"$GITHUB_OUTPUT"
+            echo "mcp_endpoint=" >>"$GITHUB_OUTPUT"
+            exit 0
+          fi
+          [[ -n "$QUALIFICATION_EVIDENCE_B64" ]] || {
+            echo "ERROR: retained PASS1/PASS2 qualification evidence is required for stable attestation" >&2
+            exit 1
+          }
+          evidence="$RUNNER_TEMP/release-qualification-evidence.json"
+          result="$RUNNER_TEMP/release-qualification-evidence.check"
+          printf '%s' "$QUALIFICATION_EVIDENCE_B64" | base64 --decode >"$evidence"
+          ./scripts/check-release-qualification-evidence.py \
+            --root . --evidence "$evidence" | tee "$result"
+          echo "pass1_head=$(sed -n 's/^QUALIFICATION_PASS1_HEAD=//p' "$result")" >>"$GITHUB_OUTPUT"
+          echo "pass2_head=$(sed -n 's/^QUALIFICATION_PASS2_HEAD=//p' "$result")" >>"$GITHUB_OUTPUT"
+          echo "final_head=$(sed -n 's/^QUALIFICATION_FINAL_HEAD=//p' "$result")" >>"$GITHUB_OUTPUT"
+          echo "sha256=$(sed -n 's/^QUALIFICATION_EVIDENCE_SHA256=//p' "$result")" >>"$GITHUB_OUTPUT"
+          echo "mcp_endpoint=$(sed -n 's/^QUALIFICATION_MCP_ENDPOINT=//p' "$result")" >>"$GITHUB_OUTPUT"
+
+  stable-qualification-approval:
+    needs: qualification-evidence-validation
+    if: ${{ needs.qualification-evidence-validation.outputs.is_stable == 'true' }}
+    runs-on: ubuntu-latest
+    environment:
+      name: stable-release-qualification
+    permissions:
+      contents: read
+    outputs:
+      trusted_qualification_review: ${{ steps.record.outputs.trusted_qualification_review }}
+      reviewed_sha256: ${{ steps.record.outputs.reviewed_sha256 }}
+    steps:
+      - name: Record protected qualification approval
+        id: record
+        env:
+          QUALIFICATION_EVIDENCE_SHA256: ${{ needs.qualification-evidence-validation.outputs.sha256 }}
+        run: |
+          set -euo pipefail
+          [[ "$QUALIFICATION_EVIDENCE_SHA256" =~ ^[0-9a-f]{64}$ ]]
+          echo "trusted_qualification_review=PASS" >>"$GITHUB_OUTPUT"
+          echo "reviewed_sha256=$QUALIFICATION_EVIDENCE_SHA256" >>"$GITHUB_OUTPUT"
+
+  owner-ui-evidence-validation:
+    needs: qualification-evidence-validation
+    if: ${{ needs.qualification-evidence-validation.outputs.is_stable == 'true' && github.ref == 'refs/tags/v2.4.0' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      acceptance: ${{ steps.validate.outputs.acceptance }}
+      sha256: ${{ steps.validate.outputs.sha256 }}
+      provenance_head: ${{ steps.validate.outputs.provenance_head }}
+      client_plan: ${{ steps.validate.outputs.client_plan }}
+      support_reference: ${{ steps.validate.outputs.support_reference }}
+    steps:
+      - name: Checkout immutable ref for owner/UI evidence validation
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ inputs.ref }}
+          fetch-depth: 0
+
+      - name: Validate retained ChatGPT owner/UI evidence
+        id: validate
+        env:
+          OWNER_EVIDENCE_B64: ${{ inputs.qualification_chatgpt_owner_evidence_b64 }}
+          QUALIFICATION_MCP_ENDPOINT: ${{ needs.qualification-evidence-validation.outputs.mcp_endpoint }}
+        run: |
+          set -euo pipefail
+          [[ -n "$OWNER_EVIDENCE_B64" ]] || {
+            echo "ERROR: retained ChatGPT owner/UI evidence is required for stable v2.4.0" >&2
+            exit 1
+          }
+          [[ -n "$QUALIFICATION_MCP_ENDPOINT" ]] || {
+            echo "ERROR: qualified public MCP endpoint is missing from qualification evidence" >&2
+            exit 1
+          }
+          evidence="$RUNNER_TEMP/chatgpt-owner-acceptance.json"
+          result="$RUNNER_TEMP/chatgpt-owner-acceptance.check"
+          printf '%s' "$OWNER_EVIDENCE_B64" | base64 --decode >"$evidence"
+          ./scripts/check-chatgpt-owner-acceptance.py --root . --evidence "$evidence" \
+            --expected-endpoint "$QUALIFICATION_MCP_ENDPOINT" | tee "$result"
+          evidence_sha="$(sha256sum "$evidence" | awk '{print $1}')"
+          evidence_head="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1], encoding="utf-8"))["core_provenance_head"])' "$evidence")"
+          client_plan="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1], encoding="utf-8"))["client_plan"])' "$evidence")"
+          support_reference="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1], encoding="utf-8"))["support_reference"])' "$evidence")"
+          echo "acceptance=PASS" >>"$GITHUB_OUTPUT"
+          echo "sha256=$evidence_sha" >>"$GITHUB_OUTPUT"
+          echo "provenance_head=$evidence_head" >>"$GITHUB_OUTPUT"
+          echo "client_plan=$client_plan" >>"$GITHUB_OUTPUT"
+          echo "support_reference=$support_reference" >>"$GITHUB_OUTPUT"
+          {
+            echo '### ChatGPT owner/UI evidence'
+            printf '%s\n' "- plan: $client_plan" "- support: $support_reference" "- sha256: $evidence_sha"
+          } >>"$GITHUB_STEP_SUMMARY"
+
+  stable-owner-ui-approval:
+    needs: owner-ui-evidence-validation
+    if: ${{ needs.owner-ui-evidence-validation.result == 'success' }}
+    runs-on: ubuntu-latest
+    environment:
+      name: stable-release-owner-ui
+    permissions:
+      contents: read
+    outputs:
+      trusted_owner_ui_review: ${{ steps.record.outputs.trusted_owner_ui_review }}
+      reviewed_sha256: ${{ steps.record.outputs.reviewed_sha256 }}
+    steps:
+      - name: Record protected owner/UI approval
+        id: record
+        env:
+          OWNER_EVIDENCE_SHA256: ${{ needs.owner-ui-evidence-validation.outputs.sha256 }}
+        run: |
+          set -euo pipefail
+          [[ "$OWNER_EVIDENCE_SHA256" =~ ^[0-9a-f]{64}$ ]]
+          echo "trusted_owner_ui_review=PASS" >>"$GITHUB_OUTPUT"
+          echo "reviewed_sha256=$OWNER_EVIDENCE_SHA256" >>"$GITHUB_OUTPUT"
+
+  build-attest:
+    needs:
+      - qualification-evidence-validation
+      - stable-qualification-approval
+      - owner-ui-evidence-validation
+      - stable-owner-ui-approval
+    if: ${{ always() && needs.qualification-evidence-validation.result == 'success' && (needs.stable-qualification-approval.result == 'success' || needs.stable-qualification-approval.result == 'skipped') && (needs.owner-ui-evidence-validation.result == 'success' || needs.owner-ui-evidence-validation.result == 'skipped') && (needs.stable-owner-ui-approval.result == 'success' || needs.stable-owner-ui-approval.result == 'skipped') }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    steps:
+      - name: Reject mutable ref input
+        env:
+          INPUT_REF: ${{ inputs.ref }}
+        run: |
+          set -euo pipefail
+          # Shape check only; the authoritative binding happens after checkout.
+          if [[ "$INPUT_REF" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] \
+            || [[ "$INPUT_REF" =~ ^v[0-9]+\.[0-9]+\.[0-9]+-rc\.[0-9]+$ ]]; then
+            echo "ref_kind=tag"
+          elif [[ "$INPUT_REF" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "ref_kind=commit"
+          else
+            echo "ERROR: ref must be a release/RC tag or a full 40-hex commit SHA" >&2
+            echo "       got: ${INPUT_REF}" >&2
+            echo "       branches and short SHAs are mutable and are not accepted" >&2
+            exit 1
+          fi
+
+      # actions/checkout@v4.2.2
+      - name: Checkout immutable ref
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ inputs.ref }}
+          fetch-depth: 0
+
+      - name: Validate Full Real E2E qualification evidence
+        id: qualification_evidence
+        env:
+          QUALIFICATION_EVIDENCE_B64: ${{ inputs.qualification_evidence_b64 }}
+          PREVALIDATED_PASS1_HEAD: ${{ needs.qualification-evidence-validation.outputs.pass1_head }}
+          PREVALIDATED_PASS2_HEAD: ${{ needs.qualification-evidence-validation.outputs.pass2_head }}
+          PREVALIDATED_FINAL_HEAD: ${{ needs.qualification-evidence-validation.outputs.final_head }}
+          PREVALIDATED_SHA256: ${{ needs.qualification-evidence-validation.outputs.sha256 }}
+        run: |
+          set -euo pipefail
+          if [[ -z "$QUALIFICATION_EVIDENCE_B64" ]]; then
+            echo "pass1_head=" >>"$GITHUB_OUTPUT"
+            echo "pass2_head=" >>"$GITHUB_OUTPUT"
+            echo "final_head=" >>"$GITHUB_OUTPUT"
+            echo "sha256=" >>"$GITHUB_OUTPUT"
+            echo "path=" >>"$GITHUB_OUTPUT"
+            exit 0
+          fi
+          evidence="$RUNNER_TEMP/release-qualification-evidence.json"
+          result="$RUNNER_TEMP/release-qualification-evidence.check"
+          printf '%s' "$QUALIFICATION_EVIDENCE_B64" | base64 --decode >"$evidence"
+          ./scripts/check-release-qualification-evidence.py \
+            --root . --evidence "$evidence" | tee "$result"
+          pass1_head="$(sed -n 's/^QUALIFICATION_PASS1_HEAD=//p' "$result")"
+          pass2_head="$(sed -n 's/^QUALIFICATION_PASS2_HEAD=//p' "$result")"
+          final_head="$(sed -n 's/^QUALIFICATION_FINAL_HEAD=//p' "$result")"
+          evidence_sha="$(sed -n 's/^QUALIFICATION_EVIDENCE_SHA256=//p' "$result")"
+          if [[ -n "$PREVALIDATED_SHA256" ]]; then
+            [[ "$pass1_head" == "$PREVALIDATED_PASS1_HEAD" ]]
+            [[ "$pass2_head" == "$PREVALIDATED_PASS2_HEAD" ]]
+            [[ "$final_head" == "$PREVALIDATED_FINAL_HEAD" ]]
+            [[ "$evidence_sha" == "$PREVALIDATED_SHA256" ]]
+          fi
+          echo "pass1_head=$pass1_head" >>"$GITHUB_OUTPUT"
+          echo "pass2_head=$pass2_head" >>"$GITHUB_OUTPUT"
+          echo "final_head=$final_head" >>"$GITHUB_OUTPUT"
+          echo "sha256=$evidence_sha" >>"$GITHUB_OUTPUT"
+          echo "path=$evidence" >>"$GITHUB_OUTPUT"
+
+      - name: Validate ChatGPT owner/UI evidence payload
+        id: owner_evidence
+        env:
+          OWNER_EVIDENCE_B64: ${{ inputs.qualification_chatgpt_owner_evidence_b64 }}
+          PREVALIDATED_OWNER_SHA256: ${{ needs.owner-ui-evidence-validation.outputs.sha256 }}
+          PREVALIDATED_OWNER_HEAD: ${{ needs.owner-ui-evidence-validation.outputs.provenance_head }}
+        run: |
+          set -euo pipefail
+          if [[ -z "$OWNER_EVIDENCE_B64" ]]; then
+            echo "acceptance=" >>"$GITHUB_OUTPUT"
+            echo "sha256=" >>"$GITHUB_OUTPUT"
+            echo "provenance_head=" >>"$GITHUB_OUTPUT"
+            exit 0
+          fi
+          evidence="$RUNNER_TEMP/chatgpt-owner-acceptance.json"
+          printf '%s' "$OWNER_EVIDENCE_B64" | base64 --decode >"$evidence"
+          ./scripts/check-chatgpt-owner-acceptance.py --root . --evidence "$evidence"
+          evidence_sha="$(sha256sum "$evidence" | awk '{print $1}')"
+          evidence_head="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1], encoding="utf-8"))["core_provenance_head"])' "$evidence")"
+          if [[ -n "$PREVALIDATED_OWNER_SHA256" ]]; then
+            [[ "$evidence_sha" == "$PREVALIDATED_OWNER_SHA256" ]]
+            [[ "$evidence_head" == "$PREVALIDATED_OWNER_HEAD" ]]
+          fi
+          echo "acceptance=PASS" >>"$GITHUB_OUTPUT"
+          echo "sha256=$evidence_sha" >>"$GITHUB_OUTPUT"
+          echo "provenance_head=$evidence_head" >>"$GITHUB_OUTPUT"
+
+      - name: Bind release ref to commit to checked-out HEAD
+        id: bind
+        env:
+          INPUT_REF: ${{ inputs.ref }}
+          WORKFLOW_REF: ${{ github.ref }}
+          WORKFLOW_SHA: ${{ github.sha }}
+          QUALIFICATION_PASS1_HEAD: ${{ steps.qualification_evidence.outputs.pass1_head }}
+          QUALIFICATION_PASS2_HEAD: ${{ steps.qualification_evidence.outputs.pass2_head }}
+          QUALIFICATION_FINAL_HEAD: ${{ steps.qualification_evidence.outputs.final_head }}
+          QUALIFICATION_EVIDENCE_SHA256: ${{ steps.qualification_evidence.outputs.sha256 }}
+          QUALIFICATION_TRUSTED_REVIEW: ${{ needs.stable-qualification-approval.outputs.trusted_qualification_review }}
+          QUALIFICATION_TRUSTED_REVIEW_SHA256: ${{ needs.stable-qualification-approval.outputs.reviewed_sha256 }}
+          QUALIFICATION_CHATGPT_OWNER_UI_ACCEPTANCE: ${{ steps.owner_evidence.outputs.acceptance }}
+          QUALIFICATION_CHATGPT_OWNER_EVIDENCE_SHA256: ${{ steps.owner_evidence.outputs.sha256 }}
+          QUALIFICATION_CHATGPT_OWNER_EVIDENCE_PROVENANCE_HEAD: ${{ steps.owner_evidence.outputs.provenance_head }}
+          QUALIFICATION_TRUSTED_OWNER_UI_REVIEW: ${{ needs.stable-owner-ui-approval.outputs.trusted_owner_ui_review }}
+          QUALIFICATION_TRUSTED_OWNER_UI_REVIEW_SHA256: ${{ needs.stable-owner-ui-approval.outputs.reviewed_sha256 }}
+        run: |
+          set -euo pipefail
+          ./scripts/check-release-attest-binding.py >>"$GITHUB_OUTPUT"
+
+      - name: Version consistency
+        run: |
+          set -euo pipefail
+          ./scripts/check-version-consistency.sh
+
+      - name: Build bundles twice (deterministic parity)
+        run: |
+          set -euo pipefail
+          ./scripts/build-bundles.sh
+          cp -a dist dist-build1
+          ./scripts/build-bundles.sh
+          diff -ru dist-build1 dist
+          rm -rf dist-build1
+
+      - name: Verify SHA256SUMS and release-manifest digests
+        run: |
+          set -euo pipefail
+          ./scripts/verify-sha256sums.sh
+          ./scripts/verify-release-manifest-artifacts.sh
+
+      - name: Secret and public metadata scans
+        run: |
+          set -euo pipefail
+          ./scripts/secret-scan.sh
+          ./scripts/check-public-metadata.sh
+
+      - name: Generate SPDX SBOM bound to the release commit
+        env:
+          # release_commit is the provenance commit GitHub attests. Manifest
+          # git_ref/source_head remain the qualified content parent.
+          RELEASE_COMMIT: ${{ steps.bind.outputs.release_commit }}
+        run: |
+          set -euo pipefail
+          python3 ./scripts/generate-sbom.py -o dist/sbom.spdx.json \
+            --source-commit "$RELEASE_COMMIT"
+          # Deterministic for a fixed commit: regenerating must not change bytes.
+          cp dist/sbom.spdx.json sbom-build1.json
+          python3 ./scripts/generate-sbom.py -o dist/sbom.spdx.json \
+            --source-commit "$RELEASE_COMMIT"
+          diff -u sbom-build1.json dist/sbom.spdx.json
+          rm -f sbom-build1.json
+          SBOM_EXPECTED_COMMIT="$RELEASE_COMMIT" ./scripts/verify-sbom.sh
+
+      - name: Package attestation subject set
+        id: subjects
+        env:
+          INPUT_REF: ${{ inputs.ref }}
+          QUALIFICATION_EVIDENCE_PATH: ${{ steps.qualification_evidence.outputs.path }}
+          QUALIFICATION_EVIDENCE_SHA256: ${{ steps.qualification_evidence.outputs.sha256 }}
+          TRUSTED_QUALIFICATION_REVIEW: ${{ needs.stable-qualification-approval.outputs.trusted_qualification_review }}
+          TRUSTED_QUALIFICATION_SHA256: ${{ needs.stable-qualification-approval.outputs.reviewed_sha256 }}
+          CHATGPT_OWNER_UI: ${{ steps.owner_evidence.outputs.acceptance }}
+          CHATGPT_EVIDENCE_SHA256: ${{ steps.owner_evidence.outputs.sha256 }}
+          CHATGPT_EVIDENCE_HEAD: ${{ steps.owner_evidence.outputs.provenance_head }}
+          TRUSTED_OWNER_UI_REVIEW: ${{ needs.stable-owner-ui-approval.outputs.trusted_owner_ui_review }}
+          TRUSTED_OWNER_UI_SHA256: ${{ needs.stable-owner-ui-approval.outputs.reviewed_sha256 }}
+        run: |
+          set -euo pipefail
+          mkdir -p release-subjects
+          cp dist/bootstrap-client.sh dist/bootstrap-server.sh \
+             dist/bootstrap-client.ps1 dist/uninstall-client.sh dist/uninstall-server.sh \
+             dist/sbom.spdx.json SHA256SUMS release-manifest.json \
+             release-subjects/
+          # A stable tag keeps the qualified Git HEAD. Publication identity is
+          # projected here and must not be committed back. PASS1/PASS2 values
+          # come only from the validated retained qualification evidence.
+          if [[ "$INPUT_REF" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            [[ -n "$QUALIFICATION_EVIDENCE_PATH" && -s "$QUALIFICATION_EVIDENCE_PATH" ]] || {
+              echo "ERROR: validated qualification evidence is required for stable publication" >&2
+              exit 1
+            }
+            cp "$QUALIFICATION_EVIDENCE_PATH" release-subjects/qualification-evidence.source.json
+            python3 - "$QUALIFICATION_EVIDENCE_PATH" <<'PY'
+          import json
+          import os
+          import sys
+          from pathlib import Path
+
+          source = Path(sys.argv[1])
+          data = json.loads(source.read_text(encoding="utf-8"))
+          data.update(
+              {
+                  "qualification_evidence_sha256": os.environ["QUALIFICATION_EVIDENCE_SHA256"],
+                  "trusted_qualification_review": os.environ["TRUSTED_QUALIFICATION_REVIEW"],
+                  "trusted_qualification_evidence_sha256": os.environ["TRUSTED_QUALIFICATION_SHA256"],
+                  "chatgpt_owner_ui_acceptance": os.environ["CHATGPT_OWNER_UI"],
+                  "chatgpt_owner_evidence_sha256": os.environ["CHATGPT_EVIDENCE_SHA256"],
+                  "chatgpt_owner_evidence_provenance_head": os.environ["CHATGPT_EVIDENCE_HEAD"],
+                  "trusted_owner_ui_review": os.environ["TRUSTED_OWNER_UI_REVIEW"],
+                  "trusted_owner_ui_evidence_sha256": os.environ["TRUSTED_OWNER_UI_SHA256"],
+              }
+          )
+          Path("qualification-evidence.json").write_text(
+              json.dumps(data, indent=2, sort_keys=True) + "\n",
+              encoding="utf-8",
+          )
+          PY
+            python3 ./scripts/project-stable-release.py \
+              --evidence qualification-evidence.json \
+              --output release-subjects/release-manifest.json
+          fi
+          # Subject list for attestation
+          find release-subjects -type f | sort | tee subject-list.txt
+
+      # actions/attest-build-provenance@v2.2.0 (pin by commit SHA)
+      - name: Attest release artifacts
+        id: attest
+        uses: actions/attest-build-provenance@520d128f165991a6c774bcb264f323e3d70747f4
+        with:
+          subject-path: |
+            release-subjects/bootstrap-client.sh
+            release-subjects/bootstrap-server.sh
+            release-subjects/bootstrap-client.ps1
+            release-subjects/uninstall-client.sh
+            release-subjects/uninstall-server.sh
+            release-subjects/sbom.spdx.json
+            release-subjects/SHA256SUMS
+            release-subjects/release-manifest.json
+
+      # Authoritative: a verification failure fails the release-integrity gate.
+      # There is no DEFERRED outcome and no soft-fail path.
+      - name: Verify attestation (authoritative)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BUNDLE_PATH: ${{ steps.attest.outputs.bundle-path }}
+          RELEASE_COMMIT: ${{ steps.bind.outputs.release_commit }}
+          EXPECTED_TAG: ${{ steps.bind.outputs.expected_tag }}
+          CHANNEL: ${{ steps.bind.outputs.channel }}
+        run: |
+          set -euo pipefail
+          mkdir -p attestation-evidence
+
+          if ! command -v gh >/dev/null 2>&1; then
+            echo "ERROR: gh is required to verify the attestation" >&2
+            exit 1
+          fi
+          if [[ -z "$BUNDLE_PATH" || ! -s "$BUNDLE_PATH" ]]; then
+            echo "ERROR: attestation bundle missing; nothing to verify" >&2
+            exit 1
+          fi
+
+          # Every attested subject must verify, not just one of them.
+          while IFS= read -r subject; do
+            echo "== verifying ${subject} =="
+            gh attestation verify "$subject" \
+              --repo "${{ github.repository }}" \
+              --bundle "$BUNDLE_PATH" \
+              --format json >"attestation-evidence/$(basename "$subject").json"
+          done <subject-list.txt
+
+          # Bind the signed provenance back to the release commit and tag.
+          RELEASE_COMMIT="$RELEASE_COMMIT" EXPECTED_TAG="$EXPECTED_TAG" \
+          CHANNEL="$CHANNEL" python3 - attestation-evidence/*.json <<'PY'
+          """Bind verified provenance back to the release commit and tag.
+
+          gh has already checked the signature and the subject digests. What is
+          left is to confirm the signed statement describes *this* commit, so a
+          valid attestation over some other commit cannot satisfy the gate.
+
+          Preferred source is the Fulcio certificate summary. Field names there
+          have changed across gh versions, so fall back to scanning every string
+          in the verification result rather than failing on a renamed key.
+          """
+          import json
+          import os
+          import sys
+
+          commit = os.environ['RELEASE_COMMIT']
+          tag = os.environ['EXPECTED_TAG']
+          channel = os.environ['CHANNEL']
+          # Effective publication channel from check-release-attest-binding.py.
+          # A validated stable tag reports stable while the committed manifest
+          # remains development, so this requires sourceRepositoryRef for the tag.
+          want_ref = 'refs/tags/%s' % tag if channel == 'stable' else None
+          errors = []
+
+
+          def strings(node):
+              if isinstance(node, str):
+                  yield node
+              elif isinstance(node, dict):
+                  for value in node.values():
+                      yield from strings(value)
+              elif isinstance(node, list):
+                  for value in node:
+                      yield from strings(value)
+
+
+          for path in sys.argv[1:]:
+              results = json.loads(open(path, encoding='utf-8').read())
+              if not results:
+                  errors.append('%s: empty verification result' % path)
+                  continue
+              for result in results:
+                  cert = ((result.get('verificationResult') or {})
+                          .get('signature', {})
+                          .get('certificate') or {})
+                  digest = str(cert.get('sourceRepositoryDigest') or '')
+                  ref = str(cert.get('sourceRepositoryRef') or '')
+                  found = set(strings(result))
+                  if digest:
+                      if digest != commit:
+                          errors.append(
+                              '%s: provenance commit %s != release commit %s'
+                              % (path, digest, commit)
+                          )
+                  elif commit not in found:
+                      errors.append(
+                          '%s: release commit %s absent from verified provenance'
+                          % (path, commit)
+                      )
+                  if want_ref is None:
+                      continue
+                  if ref:
+                      if ref != want_ref:
+                          errors.append(
+                              '%s: provenance ref %s != %s' % (path, ref, want_ref)
+                          )
+                  elif want_ref not in found:
+                      errors.append(
+                          '%s: %s absent from verified provenance' % (path, want_ref)
+                      )
+
+          for err in errors:
+              print('ERROR: %s' % err, file=sys.stderr)
+          print('PROVENANCE_BINDING=%s' % ('FAIL' if errors else 'PASS'))
+          sys.exit(1 if errors else 0)
+          PY
+
+          {
+            echo "schema_version=1"
+            echo "provenance_type=github-artifact-attestation"
+            echo "release_tag=${EXPECTED_TAG}"
+            echo "release_commit=${RELEASE_COMMIT}"
+            echo "content_commit=${{ steps.bind.outputs.content_commit }}"
+            echo "subject_ref=${{ inputs.ref }}"
+            echo "attestation_id=${{ steps.attest.outputs.attestation-id }}"
+            echo "attestation_url=${{ steps.attest.outputs.attestation-url }}"
+            echo "bundle_path=${BUNDLE_PATH}"
+            echo "ATTESTATION_VERIFY=PASS"
+          } | tee attestation-evidence/provenance.env
+
+      - name: Release integrity gate
+        run: |
+          set -euo pipefail
+          grep -qx 'ATTESTATION_VERIFY=PASS' attestation-evidence/provenance.env
+          echo "RELEASE_INTEGRITY=PASS"
+
+      - name: Upload workflow artifacts
+        if: ${{ inputs.publish_artifacts }}
+        # actions/upload-artifact@v4.6.0
+        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08
+        with:
+          name: data-relay-link-release-subjects
+          path: |
+            release-subjects/
+            attestation-evidence/
+            subject-list.txt
+          if-no-files-found: error

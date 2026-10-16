@@ -1,0 +1,455 @@
+#!/usr/bin/env bash
+# Negative + positive regression for qualification gate truthfulness helpers.
+set -euo pipefail
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck source=lib/prod-qual-common.sh
+source "$ROOT/tests/lib/prod-qual-common.sh"
+
+WORKDIR="$(mktemp -d)"
+trap 'rm -rf "$WORKDIR"' EXIT
+PROD_QUAL_SUMMARY="$WORKDIR/summary.txt"
+PROD_QUAL_GATES="$WORKDIR/gates.env"
+PROD_QUAL_FAILS=0
+: >"$PROD_QUAL_SUMMARY"
+: >"$PROD_QUAL_GATES"
+
+pass() { echo "PASS $1"; }
+fail() { echo "FAIL $1" >&2; exit 1; }
+
+# Overwrite semantics: last status wins; no FAIL+PASS dual lines.
+pq_gate DEMO FAIL
+pq_gate DEMO PASS
+count="$(grep -c '^DEMO=' "$PROD_QUAL_GATES" || true)"
+[[ "$count" == "1" ]] || fail "expected single DEMO gate, got $count"
+grep -qx 'DEMO=PASS' "$PROD_QUAL_GATES"
+pass "gate overwrite single line"
+
+# FAIL increments counter; PASS overwrite does not clear historical PROD_QUAL_FAILS
+# (counter is diagnostic). Final verdict uses gates.env FAIL/BLOCKED lines.
+pq_gate OTHER FAIL
+fail_lines="$(grep -E '=(FAIL|BLOCKED)$' "$PROD_QUAL_GATES" | wc -l | tr -d ' ')"
+[[ "$fail_lines" == "1" ]] || fail "expected 1 fail line"
+pass "fail line count"
+
+# --- Missing gate must not be inferred as PASS ---
+if grep -q '^MISSING_GATE=PASS$' "$PROD_QUAL_GATES"; then
+  fail "unexpected PASS for missing gate"
+fi
+pq_gate MISSING_GATE FAIL
+grep -qx 'MISSING_GATE=FAIL' "$PROD_QUAL_GATES"
+pass "missing gate explicit FAIL"
+
+# --- NOT_RUN is not PASS ---
+pq_gate CI_CASE NOT_RUN
+grep -qx 'CI_CASE=NOT_RUN' "$PROD_QUAL_GATES"
+if grep -qx 'CI_CASE=PASS' "$PROD_QUAL_GATES"; then
+  fail "NOT_RUN must not become PASS"
+fi
+pass "NOT_RUN is not PASS"
+
+# --- BLOCKED is a failing status for final count ---
+pq_gate BLOCKED_CASE BLOCKED
+grep -qx 'BLOCKED_CASE=BLOCKED' "$PROD_QUAL_GATES"
+pass "BLOCKED recorded"
+
+# --- Malformed gate file: empty value / garbage must not count as PASS ---
+echo 'MALFORMED_GATE=' >>"$PROD_QUAL_GATES"
+echo 'GARBAGE_LINE_WITHOUT_EQ' >>"$PROD_QUAL_GATES"
+if grep -qx 'MALFORMED_GATE=PASS' "$PROD_QUAL_GATES"; then
+  fail "malformed became PASS"
+fi
+pass "malformed gate not PASS"
+
+# Short URL gate keys must exist in the qualification orchestrator (not || true).
+grep -q 'SHORTURL_REAL_E2E' "$ROOT/tests/run-production-realistic-qualification.sh"
+grep -q 'SHORTURL_RELEASE_GATE' "$ROOT/tests/run-production-realistic-qualification.sh"
+if grep -n 'run_feature shorturl' "$ROOT/tests/run-production-realistic-qualification.sh" | grep -q '|| true'; then
+  fail "shorturl still non-gating via || true"
+fi
+pass "shorturl gating"
+
+# Current v2.4 targeted feature gates must never be satisfied by a historical
+# skip harness or by retired Service Profile / configurable target-health models.
+python3 - "$ROOT/tests/run-access-control-e2e.sh" "$ROOT/tests/run-production-realistic-qualification.sh" <<'PY' \
+  || fail "current targeted E2E gate ownership is not truthful"
+from pathlib import Path
+import sys
+access = Path(sys.argv[1]).read_text(encoding="utf-8")
+qual = Path(sys.argv[2]).read_text(encoding="utf-8")
+head = "\n".join(access.splitlines()[:20]).lower()
+assert "historical legacy" not in head
+assert "skip:" not in head
+assert "exit 0" not in head
+for required in (
+    "set remote-access",
+    "test remote-access",
+    "system export configuration",
+    "system apply configuration",
+    "show managed-host '$PREFIX'",
+    "RESTORE_FAILED: pre-run ConfigurationBundle remains",
+    "if ! restore; then",
+    "ACCESS_REAL_E2E=PASS",
+):
+    assert required in access, required
+assert 'show managed-hosts" | awk' not in access
+assert "system apply configuration '$PRE'\" >/dev/null 2>&1 || true" not in access
+for retired in (
+    "SERVICE_PROFILES_REAL_E2E",
+    "TARGET_HEALTH_REAL_E2E",
+    "run-service-profiles-e2e.sh",
+    "run-target-health-e2e.sh",
+):
+    assert retired not in qual, retired
+for required in (
+    "BACKUP_RESTORE_REAL_FLEET",
+    "CORRUPT_CURRENT_RESTORE_CONTRACT",
+    "SERVICE_LIFECYCLE_REAL_E2E",
+):
+    assert required in qual, required
+print("ok")
+PY
+pass "current targeted E2E gates cannot false-pass through retired harnesses"
+
+python3 - \
+  "$ROOT/tests/run-access-control-e2e.sh" \
+  "$ROOT/tests/run-backup-restore-integrity-e2e.sh" \
+  "$ROOT/tests/run-short-url-e2e.sh" \
+  "$ROOT/tests/run-support-bundle-e2e.sh" <<'PY' \
+  || fail "current targeted E2E harness contains retired public grammar"
+from pathlib import Path
+import re, sys
+forbidden = (
+    r"\bdrlink\s+egress\b",
+    r"\bdrlink\s+enrollment\s+(?:create|revoke|list)\b",
+    r"\bdrlink\s+create\s+backup\b",
+    r"\bdrlink\s+support-bundle\s+--output\b",
+    r"\bdrlink\s+(?:disable|enable)\s+service\b",
+    r"\bdrlink\s+(?:apply|discard)\b",
+    r"\bdrlink\s+(?:add|delete|create|set)\s+(?:service|profile)\b",
+    r"\bdrlink\s+release\s+service\b",
+)
+for raw in sys.argv[1:]:
+    text = Path(raw).read_text(encoding="utf-8")
+    for pattern in forbidden:
+        assert not re.search(pattern, text), (raw, pattern)
+print("ok")
+PY
+pass "current targeted E2E harness grammar is canonical"
+
+# Require PERFORMANCE_BASELINE FAIL path exists for missing artifact / null metrics.
+grep -q 'PERFORMANCE_BASELINE FAIL' "$ROOT/tests/run-prod-qual-extended.sh"
+grep -q 'PERF_BASELINE_HTTP_METRICS' "$ROOT/tests/run-prod-qual-extended.sh" \
+  || grep -q 'sample_count' "$ROOT/tests/run-prod-qual-extended.sh"
+pass "perf baseline fail path present"
+
+# --- HEAD_UNCHANGED=NO must be treated as failure signal in orchestrator ---
+grep -q 'HEAD_UNCHANGED=NO' "$ROOT/tests/run-production-realistic-qualification.sh"
+python3 - "$ROOT/tests/run-production-realistic-qualification.sh" <<'PY' || fail "HEAD_UNCHANGED=NO not failing closed"
+from pathlib import Path
+import sys
+text = Path(sys.argv[1]).read_text(encoding="utf-8")
+assert "HEAD_UNCHANGED=NO" in text
+# Must not treat NO as success in the same branch that writes YES success.
+idx = text.find('HEAD_UNCHANGED=NO')
+window = text[max(0, idx - 200): idx + 200]
+assert "FINAL=PASS" not in window.split("HEAD_UNCHANGED=NO")[0][-80:]
+print("ok")
+PY
+pass "HEAD_UNCHANGED=NO present"
+
+# --- Child non-zero / simultaneous mutation must capture RCs (not wait || true alone) ---
+python3 - "$ROOT/tests/run-prod-qual-extended.sh" <<'PY' || fail "simultaneous still swallows child RCs"
+from pathlib import Path
+import sys
+text = Path(sys.argv[1]).read_text(encoding="utf-8")
+idx = text.find("phase_simultaneous_mutation")
+assert idx > 0
+# Take function body until next phase_
+end = text.find("\nphase_", idx + 10)
+body = text[idx:end if end > 0 else idx + 4000]
+assert "wait || true" not in body, "simultaneous still uses wait || true"
+assert "SIM_CHILD_" in body or "child_pids" in body
+assert "LIVE_BACKUP_CONSISTENCY FAIL" in body
+print("ok")
+PY
+pass "simultaneous child RC capture"
+
+# --- Matrix backup/restore must increment FAILED ---
+python3 - "$ROOT/tests/run-real-e2e-matrix.sh" <<'PY' || fail "matrix backup/restore not authoritative"
+from pathlib import Path
+import sys
+text = Path(sys.argv[1]).read_text(encoding="utf-8")
+assert "FLEET_BACKUP_RC=" in text
+assert "FLEET_RESTORE_RC=" in text
+assert "FLEET_POST_RESTORE_RC=" in text or "FLEET_RESTORE=FAIL" in text
+# backup/restore failure must bump FAILED
+assert "FAILED=$((FAILED + 1))" in text
+idx = text.find("FLEET backup/restore")
+chunk = text[idx:idx+1800]
+assert "backup_rc" in chunk and "restore_rc" in chunk
+assert "FAILED=$((FAILED + 1))" in chunk
+print("ok")
+PY
+pass "matrix backup/restore authority"
+
+# --- Reboot || true only with separate recovery evidence ---
+python3 - "$ROOT/tests/run-real-e2e-matrix.sh" <<'PY' || fail "reboot recovery evidence missing"
+from pathlib import Path
+import sys
+text = Path(sys.argv[1]).read_text(encoding="utf-8")
+idx = text.find("sudo reboot")
+assert idx > 0
+window = text[idx:idx+900]
+assert "|| true" in window  # reboot itself may soft-fail mid-drop
+assert "FLEET_REBOOT_RECOVERY" in text[idx:idx+2000]
+assert "FLEET_REBOOT_RECOVERY=FAIL" in text
+print("ok")
+PY
+pass "reboot recovery separately asserted"
+
+# --- DENY must require 403, not 000/502 ---
+python3 - "$ROOT/tests/run-prod-qual-extended.sh" <<'PY' || fail "DENY still accepts 000/502"
+from pathlib import Path
+import sys
+text = Path(sys.argv[1]).read_text(encoding="utf-8")
+assert 'DENY_FQDN' in text
+assert '= "403"' in text or "='403'" in text
+# Reject the old permissive pattern accepting transport failures as deny success
+assert '000" -o' not in text
+assert "deny\" = \"000\"" not in text and "deny' = '000'" not in text
+assert "set internet-access" in text
+assert "egress_profiles" not in text
+assert "egress-control.json" not in text
+print("ok")
+PY
+pass "DENY requires 403; SQLite Internet Access authority"
+
+# --- Soak decisive probes must not be || true'd ---
+python3 - "$ROOT/tests/run-prod-qual-extended.sh" <<'PY' || fail "soak still || true on traffic"
+from pathlib import Path
+import sys, re
+text = Path(sys.argv[1]).read_text(encoding="utf-8")
+idx = text.find("phase_soak")
+end = text.find("\nphase_", idx + 10)
+body = text[idx:end if end > 0 else idx + 3500]
+# Decisive curl lines must not soft-pass via || true (|| echo 000 for capture is OK).
+for line in body.splitlines():
+    if "curl" in line and "example.com" in line:
+        assert "|| true" not in line, line
+assert "SOAK_PROBE_OK" in body and "SOAK_PROBE_FAIL" in body
+assert "avail_ok" in body
+print("ok")
+PY
+pass "soak tracks probe success/failure"
+
+# --- pq_wait_macos ownership: unrelated :2222 must not be killed ---
+python3 - "$ROOT/tests/lib/prod-qual-common.sh" <<'PY' || fail "pq_wait_macos still kills all :2222"
+from pathlib import Path
+import sys
+text = Path(sys.argv[1]).read_text(encoding="utf-8")
+assert "pq_macos_listener_owned" in text
+assert "MACOS_STALE_LISTENER_SKIP" in text
+assert "unrelated" in text.lower() or "not owned" in text.lower()
+print("ok")
+PY
+# Runtime regression with a dummy listener on an alternate port simulating ownership check.
+DUMMY_PID=""
+python3 -c 'import socket,time,os; s=socket.socket(); s.setsockopt(socket.SOL_SOCKET,socket.SO_REUSEADDR,1); s.bind(("127.0.0.1",0)); print(s.getsockname()[1]); os.fork() and (time.sleep(0.05) or None) or (s.listen(1) or time.sleep(30))' >"$WORKDIR/dummy.port" 2>/dev/null &
+# Direct unit test of ownership helper:
+UNRELATED_CMD='python3 -c "import socket,time; s=socket.socket(); s.setsockopt(socket.SOL_SOCKET,socket.SO_REUSEADDR,1); s.bind((\"127.0.0.1\",0)); print(s.getsockname()[1], flush=True); s.listen(1); time.sleep(60)"'
+# shellcheck disable=SC2086
+bash -c "$UNRELATED_CMD" >"$WORKDIR/dummy.listen" 2>"$WORKDIR/dummy.err" &
+DUMMY_PID=$!
+sleep 0.3
+# Recorded PID is empty / different → helper must return non-zero (not owned).
+set +e
+pq_macos_listener_owned "$DUMMY_PID"
+own_rc=$?
+set -e
+kill "$DUMMY_PID" 2>/dev/null || true
+wait "$DUMMY_PID" 2>/dev/null || true
+[[ "$own_rc" -ne 0 ]] || fail "unrelated dummy listener incorrectly owned"
+# Recorded PID match must be owned.
+PROD_QUAL_MACOS_SSH_PID=$$
+pq_macos_listener_owned "$$" || fail "recorded PID should be owned"
+pass "unrelated :2222 ownership proof"
+
+# --- Dedicated A-019: real v2.3 state, backup, clean exact-HEAD evidence ---
+python3 - "$ROOT/tests/run-v230-to-v240-upgrade-e2e.sh" <<'PY' || fail "A-019 harness truthfulness"
+from pathlib import Path
+import sys
+text = Path(sys.argv[1]).read_text(encoding="utf-8")
+assert "/etc/frp-auto-deploy/version" in text
+assert "/var/lib/frp-auto-deploy/registry.json" in text
+assert "V230_NO_EGRESS_FIXTURE" in text
+assert "/usr/local/sbin/frp-backup" in text
+assert "V230_BACKUP FAIL" in text
+assert "V230_BOOTSTRAP_STAGED" in text
+assert "staged v2.3.0 bootstrap sha256 mismatch" in text
+assert "V240_BOOTSTRAP_STAGED" in text
+assert "sha256sum" in text and "staged v2.4 bootstrap sha256 mismatch" in text
+assert "require-release-target.sh" in text and "RELEASE_TARGET_QUALIFIED" in text
+assert "A019_CANONICAL_EVIDENCE=NOT_PUBLISHED_NON_RELEASE_TARGET" in text
+assert "WORKTREE_CLEAN_START" in text and "WORKTREE_CLEAN_END" in text
+assert "A019_HEAD_UNCHANGED" in text
+assert "A019_CANONICAL_EVIDENCE=NOT_PUBLISHED_DIRTY_WORKTREE" in text
+assert 'SERVER="${FRP_E2E_SERVER_ALIAS:-}"' in text
+assert 'PUBLIC_HOSTNAME="${FRP_E2E_PUBLIC_HOSTNAME:-}"' in text
+assert 'PUBLIC_IP="${FRP_E2E_SERVER_IP:-}"' in text
+assert "frp-e2e-server}" not in text
+assert "221.139.249.113.nip.io" not in text
+assert "FRP_E2E_SERVER_IP:-221.139.249.113" not in text
+assert "SOURCE_HEAD=" in text and "PROVENANCE_PARENT=" in text
+assert "A019_SOURCE_PROVENANCE_BINDING" in text
+assert '[[ "$PROVENANCE_PARENT" == "$SOURCE_HEAD" ]]' in text
+assert "FRP_E2E_A019_DISPOSABLE" in text
+assert "A019_RELEASE_TARGET_PREFLIGHT" in text
+assert "A019_DISPOSABLE_TARGET_PRECHECK" in text
+assert "FRP_E2E_A019_ALLOW_CURRENT_PURGE" in text
+assert text.index('if ! frp_require_release_target >"$OUT/release-target-preflight.log"') < text.index('Purging canonical v2.4 and legacy v2.3 server state')
+assert text.index("A019_DISPOSABLE_TARGET_PRECHECK") < text.index('Purging canonical v2.4 and legacy v2.3 server state')
+assert "PRIOR_STABLE_VERSION=2.3.0" in text
+assert "PRIOR_STABLE_VERSION=2.3.1" not in text
+print("ok")
+PY
+pass "A-019 prior-stable/backup/exact-head truthfulness"
+
+python3 - "$ROOT/tests/run-production-realistic-qualification.sh" <<'PY' || fail "A-019 release evidence binding"
+from pathlib import Path
+import sys
+text = Path(sys.argv[1]).read_text(encoding="utf-8")
+assert 'doc.get("provenance_head")' in text
+assert 'doc.get("source_head")' in text
+assert 'release-manifest.json' in text
+assert '"A019_RELEASE_TARGET_PREFLIGHT"' in text
+assert '"A019_SOURCE_PROVENANCE_BINDING"' in text
+assert '"A019_DISPOSABLE_TARGET_PRECHECK"' in text
+print("ok")
+PY
+pass "A-019 qualification evidence binds source/provenance and target safety"
+
+python3 - "$ROOT/tests/run-prod-qual-extended.sh" <<'PY' || fail "A-019 golden ownership"
+from pathlib import Path
+import sys
+text = Path(sys.argv[1]).read_text(encoding="utf-8")
+main = text[text.find("\nmain()"):]
+assert "phase_golden_baseline" not in main
+assert "A019_GOLDEN_OWNER=tests/run-v230-to-v240-upgrade-e2e.sh" in main
+print("ok")
+PY
+pass "A-019 golden owned by dedicated harness"
+
+# --- Docs-free / wrong-ops: every invalid RC asserted ---
+python3 - "$ROOT/tests/run-prod-qual-extended.sh" <<'PY' || fail "invalid RC asserts incomplete"
+from pathlib import Path
+import sys
+text = Path(sys.argv[1]).read_text(encoding="utf-8")
+docs = text[text.find("phase_docs_free_ux"):text.find("phase_fixed_tcp_remote_service")]
+assert 'test "$rc1" -ne 0' in docs
+assert 'test "$rc2" -ne 0' in docs
+assert 'test "$rc3" -ne 0' in docs
+wrong = text[text.find("phase_wrong_ops"):text.find("\nmain()")]
+assert 'e3' in wrong and 'e4' in wrong
+assert 'e1' in wrong and 'e2' in wrong
+assert '-a "$e3"' in wrong or 'e3" -ne 0' in wrong
+print("ok")
+PY
+pass "invalid-command RC asserts"
+
+# --- Fixture-prep marking for config.json ---
+grep -q 'FIXTURE-PREP' "$ROOT/tests/run-prod-qual-extended.sh" \
+  || grep -q 'FIXTURE_PREP' "$ROOT/tests/run-prod-qual-extended.sh" \
+  || fail "config.json edit not marked fixture-prep"
+pass "fixture-prep marked"
+
+# --- Short-URL insecure-TLS gate must not match "-k" inside hostnames ---
+python3 - "$ROOT/tests/run-short-url-e2e.sh" <<'PY' || fail "shorturl -k hostname false-positive still present"
+import pathlib, sys
+text = pathlib.Path(sys.argv[1]).read_text()
+needle = "curl_argv=\"${CMD%%\\'https://*}\""
+if needle not in text and "curl_argv=\"${CMD%%'https://*}\"" not in text:
+    # Accept either quoting style used in the harness.
+    if "curl_argv=" not in text or "%%" not in text or "https://" not in text:
+        raise SystemExit("shorturl harness must inspect curl argv before the URL")
+if "mechanism-keyboard" in text.split("insecure TLS")[0][-200:]:
+    pass  # comment context ok
+# Must not use unscoped whole-command substring match for -k.
+bad = "if [[ \"$CMD\" == *'-k'* || \"$CMD\" == *'--insecure'* ]]; then"
+if bad in text:
+    raise SystemExit("unscoped CMD *-k* match still present")
+print("ok")
+PY
+pass "shorturl -k hostname false-positive guard"
+
+# --- Controlled Egress real-app qualification must prove configured proxy traversal. ---
+python3 - "$ROOT/tests/run-prod-qual-extended.sh" <<'PY' || fail "real-app egress qualification contract incomplete"
+from pathlib import Path
+import sys
+text = Path(sys.argv[1]).read_text(encoding="utf-8")
+start = text.find("phase_egress_allow_deny()")
+end = text.find("\n# ---------------------------------------------------------------------------\n# Resource sampler", start)
+assert start >= 0 and end > start
+body = text[start:end]
+for marker in (
+    "PROXY_CONFIGURATION_VERIFIED",
+    "PROXY_APPLICATION_PATH",
+    "WGET_REAL_PROXY",
+    "GIT_REAL_PROXY",
+    "APT_REAL_PROXY",
+    "EGRESS_GIT_POLICY_DENY_RECOVERY",
+    "EGRESS_APT_POLICY_DENY_RECOVERY",
+    "APT::Update::Error-Mode=any",
+    "archive.ubuntu.com",
+    "github.com",
+    "/var/log/drlink/egress/connections.jsonl",
+    'record.get("source_ip")',
+):
+    assert marker in body, marker
+assert 'type fqdn value github.com' in body
+assert 'type fqdn value archive.ubuntu.com' in body
+assert "unset internet-access '$apt_rule'" in body
+assert "set internet-access '$apt_rule'" in body
+assert "set internet-access '$git_rule' disabled" in body
+assert "set internet-access '$git_rule' enabled" in body
+assert "curl.exe" in body and "PROXY_CONFIGURATION_VERIFIED=PASS" in body
+cleanup = text[text.find("phase_extended_cleanup()"):text.find("\n# ---------------------------------------------------------------------------\n# Wrong-role", text.find("phase_extended_cleanup()"))]
+assert "pq-github-com" in cleanup and "pq-archive-ubuntu-com" in cleanup
+assert "rm -rf /tmp/pq-apt" in cleanup
+assert "client_cleanup_rc" in cleanup
+assert "audit_snapshot_rc" in body and "audit_snapshot_ok" in body
+assert "PROXY_AUDIT_SNAPSHOT=FAIL" in body
+assert "refusing historical evidence fallback" in body
+assert "audit_start=0" not in body
+assert 'cfg.get("egress_conn_log_file")' in body
+assert "urlsafe_b64encode" in body and "urlsafe_b64decode" in body
+assert "egress connection log path changed after snapshot" in body
+assert "set no_proxy=&& set NO_PROXY=&&" not in body
+assert "WINDOWS_PROXY_APPLICATION_PATH=PASS" in body
+assert "missing fresh Windows proxy traversal audit record" in body
+# Destructive public cleanup must honor the y/N contract introduced by the
+# final CLI reconciliation. Non-interactive qualification may not rely on
+# EOF/default cancellation or silently bypass the public command.
+for line in text.splitlines():
+    for resource in (
+        "network-object",
+        "network-group",
+        "service-object",
+        "service-group",
+        "permission-object",
+        "permission-group",
+        "ai-identity",
+        "enrollment",
+    ):
+        calls = line.count(f"drlink unset {resource}")
+        if not calls:
+            continue
+        confirms = line.count("printf 'y") + line.count("pq_ssh_confirm_yes")
+        assert confirms >= calls, line
+# Qualification must not manufacture a closed-network condition by altering routing/firewall state.
+for forbidden in ("iptables ", "nft ", "ufw ", "ip route del", "nmcli connection down"):
+    assert forbidden not in body, forbidden
+print("ok")
+PY
+pass "real-app egress proxy/config/audit/deny-recovery contract"
+
+echo "PASS harness gate truthfulness"

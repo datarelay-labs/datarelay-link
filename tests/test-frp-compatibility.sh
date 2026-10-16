@@ -59,6 +59,8 @@ export FRP_UPSTREAM_VERSION_OVERRIDE="0.99.0"
 grep -q 'Tested FRP    : 0.71.0' /tmp/frp-up.out || fail "tested version"
 grep -q 'Upstream      : 0.99.0' /tmp/frp-up.out || fail "upstream override"
 grep -q 'No update was performed' /tmp/frp-up.out || fail "no install"
+grep -q 'sudo drlink system update engine' /tmp/frp-up.out || fail "canonical engine update guidance"
+! grep -q 'sudo drlink frp-update' /tmp/frp-up.out || fail "legacy engine update guidance"
 pass "UPSTREAM_CHECK_READONLY"
 
 echo "FRP_COMPATIBILITY_TEST=PASS"

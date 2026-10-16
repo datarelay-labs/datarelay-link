@@ -662,16 +662,21 @@ function Get-FrpSignedObject {
         [Parameter(Mandatory = $true)]$Body,
         [Parameter(Mandatory = $true)][long]$Timestamp,
         [Parameter(Mandatory = $true)][string]$Nonce,
-        [string]$Op = 'enroll'
+        [string]$Op = 'enroll',
+        [string]$Method,
+        [string]$Path
     )
     Initialize-FrpCryptoTypes
     if ($Body -is [byte[]]) { $bodySha = [FrpCryptoNative]::Sha256Hex($Body) }
     elseif ($Body -is [string]) { $bodySha = [FrpCryptoNative]::Sha256HexUtf8($Body) }
     else { throw 'ERROR: Body must be string or byte[]' }
-    return @{
+    $obj = @{
         alg = 'ecdsa-p256-sha256'; body_sha256 = $bodySha; machine_id = [string]$MachineId
         nonce = ([string]$Nonce).Trim().ToLowerInvariant(); op = $Op; schema = 1; ts = [int64]$Timestamp
     }
+    if ($Method) { $obj['method'] = ([string]$Method).Trim().ToUpperInvariant() }
+    if ($Path) { $obj['path'] = ([string]$Path).Trim() }
+    return $obj
 }
 
 function Get-FrpSignedMessage {
@@ -680,9 +685,11 @@ function Get-FrpSignedMessage {
         [Parameter(Mandatory = $true)]$Body,
         [Parameter(Mandatory = $true)][long]$Timestamp,
         [Parameter(Mandatory = $true)][string]$Nonce,
-        [string]$Op = 'enroll'
+        [string]$Op = 'enroll',
+        [string]$Method,
+        [string]$Path
     )
-    $obj = Get-FrpSignedObject -MachineId $MachineId -Body $Body -Timestamp $Timestamp -Nonce $Nonce -Op $Op
+    $obj = Get-FrpSignedObject -MachineId $MachineId -Body $Body -Timestamp $Timestamp -Nonce $Nonce -Op $Op -Method $Method -Path $Path
     return (Get-FrpCanonicalJson -Object $obj)
 }
 
