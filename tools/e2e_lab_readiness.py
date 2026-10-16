@@ -239,7 +239,11 @@ def collect_host(host: dict, expected_source: str,
                  phase: str = "PREINSTALL_CLEANROOM", timeout: int = 15) -> dict:
     alias = host["ssh_alias"]
     command = WINDOWS_READ_ONLY if alias == "frp-e2e-windows" else UNIX_READ_ONLY
-    argv = ["ssh", "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=yes",
+    # Use only the explicitly allowlisted owner's configured SSH alias.
+    # Never override its host-key verification policy: disposable lab aliases
+    # may have owner-approved ephemeral-host handling in ~/.ssh/config.
+    # This is a management-route probe, not a substitute for product TLS E2E.
+    argv = ["ssh", "-o", "BatchMode=yes",
             "-o", "ConnectTimeout=5", alias, command]
     try:
         result = subprocess.run(argv, text=True, capture_output=True,
@@ -362,7 +366,11 @@ def collect_mcp_server(host: dict, expected_source: str,
     """Never accept an arbitrary host or invoke a credential/certificate mutation."""
     if host.get("ssh_alias") != MCP_SERVER_ALIAS or not valid_mcp_hostname(host.get("public_hostname")):
         raise ValueError("MCP Server must use the assigned owner alias and public hostname")
-    argv = ["ssh", "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=yes",
+    # Use only the explicitly allowlisted owner's configured SSH alias.
+    # Never override its host-key verification policy: disposable lab aliases
+    # may have owner-approved ephemeral-host handling in ~/.ssh/config.
+    # This is a management-route probe, not a substitute for product TLS E2E.
+    argv = ["ssh", "-o", "BatchMode=yes",
             "-o", "ConnectTimeout=5", MCP_SERVER_ALIAS, MCP_READ_ONLY]
     try:
         result = subprocess.run(argv, text=True, capture_output=True,

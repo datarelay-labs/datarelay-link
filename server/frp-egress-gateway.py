@@ -629,6 +629,12 @@ def _spool_exact_body(
         except OSError:
             pass
         return spool
+    except socket.timeout as exc:
+        # A slow or incomplete allowed POST is a request-framing error, not an
+        # unhandled worker exception/connection drop. The caller can emit a
+        # bounded 400 and MALFORMED_REQUEST audit without contacting upstream.
+        spool.close()
+        raise EG.EgressError("incomplete request body") from exc
     except Exception:
         spool.close()
         raise

@@ -135,7 +135,8 @@ class LabReadinessSupportingTests(unittest.TestCase):
         args, kwargs = runner.call_args
         self.assertEqual(args[0][0], "ssh")
         self.assertIn("BatchMode=yes", args[0])
-        self.assertIn("StrictHostKeyChecking=yes", args[0])
+        # Honor the approved SSH alias trust policy, never force a conflicting override.
+        self.assertFalse(any("StrictHostKeyChecking=" in arg for arg in args[0]))
         self.assertIn("frp-e2e-windows", args[0])
         command = args[0][-1]
         self.assertIn("powershell.exe -NoProfile -NonInteractive", command)
@@ -237,7 +238,7 @@ class LabReadinessSupportingTests(unittest.TestCase):
         self.assertEqual(result["status"], "PASS", result)
         argv = run.call_args.args[0]
         self.assertIn("frp-release-server", argv)
-        self.assertIn("StrictHostKeyChecking=yes", argv)
+        self.assertFalse(any("StrictHostKeyChecking=" in arg for arg in argv))
         self.assertIn("system certificate status", argv[-1])
         self.assertNotIn("system certificate preflight", argv[-1])
         self.assertNotIn("system certificate issue", argv[-1])

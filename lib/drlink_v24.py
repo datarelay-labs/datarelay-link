@@ -5599,10 +5599,15 @@ def _push_agent_remote_service_status(
             raise
         return 0
     items = []
+    # A delayed signed status response must not roll back a newer Agent
+    # generation written by the CLI or lifecycle worker while I/O was in flight.
+    # Compare the complete original row, not updated_at (which is second-granular).
+    sent_row_snapshots = {}
     rows = plane_db.conn.execute("SELECT * FROM agent_remote_services WHERE delete_pending = 0")
     for row in rows:
         if names is not None and row["name"] not in names:
             continue
+        sent_row_snapshots[str(row["name"]).lower()] = tuple(row)
         status = str(row["status"] or "DEGRADED").upper()
         if status not in ("HEALTHY", "DEGRADED", "DISABLED"):
             status = "DEGRADED"
@@ -5634,11 +5639,20 @@ def _push_agent_remote_service_status(
             if require_ack:
                 raise
             return 0
-    return _reconcile_agent_from_server_status(plane_db, result)
+    return _reconcile_agent_from_server_status(
+        plane_db, result, expected_rows=sent_row_snapshots
+    )
 
 
-def _reconcile_agent_from_server_status(plane_db, result: dict) -> int:
-    """Converge Agent local endpoint projection with authenticated Server state."""
+def _reconcile_agent_from_server_status(
+    plane_db, result: dict, *, expected_rows: Optional[dict] = None,
+) -> int:
+    """Converge Agent endpoint projection from an authenticated Server reply.
+
+    If expected_rows is supplied, do not apply a delayed ACK to a row that a
+    concurrent, independently authenticated operation has since changed.
+    The next synchronization reconciles that current generation normally.
+    """
     if not isinstance(result, dict):
         return 0
     items = result.get("services") or result.get("updated") or []
@@ -5657,6 +5671,10 @@ def _reconcile_agent_from_server_status(plane_db, result: dict) -> int:
             (name,),
         ).fetchone()
         if row is None:
+            continue
+        if expected_rows is not None and tuple(row) != expected_rows.get(name.lower()):
+            # ACK predates the current row; never overwrite its newer
+            # status, verification bit, endpoint or pending-allocation state.
             continue
         assignments = []
         values = []
@@ -6074,7 +6092,13 @@ def _synchronize_agent_remote_services_locked(plane_db, *, root: Optional[str] =
                             break
                     # Reconcile authoritative endpoint/verification projections
                     # even if a fresh Server reply reveals missing ownership.
-                    _reconcile_agent_from_server_status(plane_db, acknowledged)
+                    _reconcile_agent_from_server_status(
+                        plane_db, acknowledged,
+                        expected_rows={
+                            str(row["name"]).lower(): tuple(row)
+                            for row in snapshot_rows
+                        },
+                    )
                     if verified:
                         for name in promotable:
                             plane_db.conn.execute(
