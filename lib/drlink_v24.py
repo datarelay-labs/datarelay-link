@@ -6793,18 +6793,24 @@ def set_remote_service_agent(
             "Delete and recreate the Remote Service.\n\n"
             "No changes were applied."
         )
-    # Duplicate destination+service check (identity-safe for Managed Host binds)
+    # Only existing desired-state Remote Services claim destination+service.
+    # An offline deletion keeps a tombstone pending Server synchronization, but
+    # that tombstone must not prevent the operator from assigning the same
+    # destination+service to a new Remote Service. Disabled (not deleted)
+    # services still reserve their mapping and remain duplicate-protected.
     if destination_client_id:
         dup = plane_db.conn.execute(
             "SELECT name FROM agent_remote_services WHERE destination_client_id = ? "
-            "AND service_object = ? COLLATE NOCASE AND name != ? COLLATE NOCASE",
+            "AND service_object = ? COLLATE NOCASE AND name != ? COLLATE NOCASE "
+            "AND delete_pending = 0",
             (destination_client_id, svc_name, name),
         ).fetchone()
     else:
         dup = plane_db.conn.execute(
             "SELECT name FROM agent_remote_services WHERE destination = ? COLLATE NOCASE "
             "AND service_object = ? COLLATE NOCASE AND name != ? COLLATE NOCASE "
-            "AND (destination_client_id IS NULL OR destination_client_id = '')",
+            "AND (destination_client_id IS NULL OR destination_client_id = '') "
+            "AND delete_pending = 0",
             (dest_token, svc_name, name),
         ).fetchone()
     if dup:

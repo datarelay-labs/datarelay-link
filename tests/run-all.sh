@@ -297,6 +297,7 @@ python3 tests/test-v24-network-mutation-atomicity.py
 python3 tests/test-v24-oneshot-strict-partial-edit.py
 python3 tests/test-v24-real-managed-host-executor.py
 python3 tests/test-v24-remote-service-distributed-atomicity.py
+python3 tests/test-v24-offline-tombstone-duplicate.py
 python3 tests/test-v24-restore-atomic-cutover.py
 python3 tests/test-v24-unified-disaster-recovery.py
 python3 tests/test-v24-upgrade-policy-preservation.py
