@@ -699,7 +699,9 @@ def _authorize_policy_only(
     candidate_ips: Optional[list[str]] = None,
 ) -> tuple[dict, Optional[dict]]:
     """Authorize against canonical Internet Access policy without DNS/connect I/O."""
-    _plane, load_error, cfg, _snap = gw.cache.snapshot()
+    # authorize() performs the canonical fail-closed reload and an isolated
+    # SQLite integrity/generation check. A preceding snapshot() duplicates a
+    # full SQLite integrity scan for every proxy request, even for DENY.
     if not hasattr(gw.cache, "authorize"):
         decision = {
             "decision": EG.DECISION_DENY,
@@ -717,6 +719,10 @@ def _authorize_policy_only(
             method=method,
             candidate_ips=candidate_ips,
         )
+    # Read only the already-loaded logging configuration; do not revalidate
+    # the full control DB after authorize() has just done so.
+    with gw.cache.lock:
+        cfg = dict(gw.cache.cfg)
     decision["method"] = method
     decision["timestamp"] = EG.utc_now_iso()
     if connection_id:
@@ -735,8 +741,11 @@ def _authorize_and_connect(
     connection_id: Optional[str] = None,
 ) -> tuple[Optional[socket.socket], dict]:
     """Resolve once (if needed) → policy with candidates → connect only authorized set."""
-    _plane, load_error, cfg, _snap = gw.cache.snapshot()
-    del _plane, load_error, _snap
+    # DNS/unsafe-IP audit only needs the currently cached log configuration.
+    # The real authorization path below performs its own current DB check;
+    # avoid scanning the entire database merely to obtain the log path.
+    with gw.cache.lock:
+        cfg = dict(gw.cache.cfg)
 
     is_literal = False
     try:
