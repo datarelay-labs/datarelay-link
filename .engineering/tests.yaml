@@ -12,6 +12,17 @@ paths:
   "lib/**":
     domains:
       - "shared"
+  "install-web.sh":
+    domains:
+      - "server"
+      - "shared"
+  "uninstall-web.sh":
+    domains:
+      - "server"
+      - "shared"
+  "docs/PF9_FOUNDATION_WEB_TOTP_ADOPTION.md":
+    domains:
+      - "shared"
   "tests/**":
     domains:
       - "shared"
@@ -34,6 +45,29 @@ scenarios:
     command: "bash tests/run-all.sh"
     invariants:
       - "project-native tests remain green for affected changes"
+    release_gate: true
+
+  - id: DRLINK-PF9-SHARED-TOTP-WHEEL
+    name: DRLink Web uses reviewed Foundation TOTP wheel
+    level: unit
+    cost: cheap
+    estimated_seconds: 5
+    timeout_seconds: 30
+    agent_default: true
+    domains:
+      - "shared"
+      - "server"
+    triggers:
+      - affected
+      - pr
+      - preflight
+    platforms:
+      - "linux"
+    command: "python3 tests/test-v30-foundation-totp-wheel.py -q && python3 tests/test-v30-web-bundle.py -q"
+    invariants:
+      - "exact reviewed Foundation wheel SHA256 and source identity, no duplicate TOTP algorithm"
+      - "optional Web package and uninstall own the wheel and verifier, Core 2.4 remains independent"
+      - "existing TOTP sign-in, replay, recovery and enrollment backend remain product-owned"
     release_gate: true
 
   - id: DRLINK-CLI-FEATURE-SCENARIO-RELEASE
