@@ -426,17 +426,18 @@ def _parse_content_length(headers: dict[str, str]) -> Optional[int]:
     if cl is None:
         return None
     text = cl.strip()
-    if not text or not text.isdigit() or text != str(int(text)):
-        # Reject negatives, plus signs, whitespace forms, non-decimal.
-        if text.startswith("-") or not text.isdigit():
-            raise EG.EgressError("invalid Content-Length")
+    if not text or not text.isascii() or not text.isdigit():
         raise EG.EgressError("invalid Content-Length")
+    if len(text) > 1 and text.startswith("0"):
+        raise EG.EgressError("invalid Content-Length")
+    # Bound the digit count before decimal conversion (Python limits huge
+    # integer strings); unsupported body sizes must yield HTTP 400, not 403.
+    if len(text) > len(str(MAX_CONTENT_LENGTH)):
+        raise EG.EgressError("Content-Length too large")
     try:
         value = int(text, 10)
     except ValueError as exc:
         raise EG.EgressError("invalid Content-Length") from exc
-    if value < 0:
-        raise EG.EgressError("negative Content-Length")
     if value > MAX_CONTENT_LENGTH:
         raise EG.EgressError("Content-Length too large")
     return value

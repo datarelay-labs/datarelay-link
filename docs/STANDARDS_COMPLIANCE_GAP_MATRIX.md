@@ -38,6 +38,7 @@
 | STD-014 / P1 | Audit trail structure and confidential fields ([NIST SP 800-53](https://csrc.nist.gov/pubs/sp/800/53/r5/upd1/final), [RFC 5424](https://www.rfc-editor.org/rfc/rfc5424.html)) | `frp_egress_control.py::emit_conn_log`, `tests/test-egress-conn-log-rotation-concurrency.py` | **IMPLEMENTED / PARTIAL**: JSONL connection audit present; RFC 5424 export is optional and **not currently established**. Need timestamp/correlation/rotation/redaction/retention and SIEM integration live evidence. |
 | STD-015 / P1 | Reproducible source/artifact provenance, release integrity ([SLSA v1.2](https://slsa.dev/spec/v1.2/), [NIST SSDF](https://csrc.nist.gov/pubs/sp/800/218/final)) | `tests/test-change-closure-artifacts.sh`, `tests/test-qualified-artifacts.sh`, `docs/VERSION_POLICY.md` | **PARTIAL / NOT RELEASE QUALIFIED**: exact SHA, generated bundle parity, manifest rules visible; cryptographic attestations and release provenance must be verified at final exact HEAD. This audit branch is not a candidate for tagging. |
 | STD-016 / P2 | SSH/TCP upstream FRP transport interoperability ([FRP TLS](https://gofrp.org/en/docs/features/common/network/network-tls/), [FRP auth](https://gofrp.org/en/docs/features/common/authentication/)) | Pinned `fatedier/frp`, `server/frp-access-plugin.py`, `lib/frp_server_config.py` | **NOT VERIFIED**: pin and integration contracts documented, but independent upstream feature/version conformance not assessed in this bounded audit. |
+| STD-017 / P0 | HTTP request framing and CONNECT authority numerics must fail closed on unbounded input ([RFC 9112 §6.2](https://www.rfc-editor.org/rfc/rfc9112.html#section-6.2); [RFC 9110 §9.3.6](https://www.rfc-editor.org/rfc/rfc9110.html#section-9.3.6)) | `server/frp-egress-gateway.py::_parse_content_length`, `lib/frp_egress_control.py::parse_authority_host_port`; `test_rfc9112_extreme_content_length_is_400`, `test_rfc9112_connect_extreme_numeric_port_is_400` | **FIXED / TESTED**: bound decimal width and reject untrusted 5,000-digit values before `int()`, preserving HTTP 400 fail-closed rather than an uncaught Python integer-conversion error; tests check no upstream connection. |
 
 ## Product-specific deviations and security non-goals
 
@@ -57,6 +58,7 @@
 ## Red/green traceability
 
 * **STD-001/002**: initially three live-socket proxy tests returned **HTTP 200** for malformed/mismatched CONNECT Host; after code fix they return **HTTP 400**, with no outbound connect calls.
+* **STD-017**: enormous decimal port and Content-Length are rejected as HTTP 400 with no upstream connect and no uncaught conversion failure.
 * **STD-003**: initially absolute-form request with a URI fragment returned **HTTP 200**; after code fix returns **HTTP 400**, with no outbound connect calls.
 * **STD-006**: before fix Unicode `faß.de` was accepted and aliased to `fass.de`; after fix it raises `EgressError`, while `bücher.de` still becomes `xn--bcher-kva.de`.
 * Machine results and exact commit are recorded with the audit branch; no claim of live field qualification is made.

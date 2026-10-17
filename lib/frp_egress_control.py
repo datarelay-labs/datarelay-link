@@ -1006,21 +1006,18 @@ def parse_authority_host_port(authority: str, *, default_port: Optional[int] = N
     if port_text == "" and default_port is not None:
         port = default_port
     else:
-        if not port_text.isdigit() or port_text != str(int(port_text)):
-            # Reject leading zeros tricks / overflow / non-decimal.
-            if not port_text.isdigit():
-                raise EgressError("invalid port")
-            # Allow canonical decimal without leading zeros except "0" which is invalid port anyway.
-            if len(port_text) > 1 and port_text.startswith("0"):
-                raise EgressError("invalid port")
-            try:
-                port = int(port_text)
-            except ValueError as exc:
-                raise EgressError("invalid port") from exc
-        else:
-            if len(port_text) > 1 and port_text.startswith("0"):
-                raise EgressError("invalid port")
-            port = int(port_text)
+        # A valid TCP/UDP port fits into five ASCII decimal digits. Validate
+        # the width before calling int() so untrusted 5,000-digit numbers
+        # cannot trigger Python's integer conversion limit / internal 403.
+        if (
+            not port_text
+            or len(port_text) > 5
+            or not port_text.isascii()
+            or not port_text.isdigit()
+            or (len(port_text) > 1 and port_text.startswith("0"))
+        ):
+            raise EgressError("invalid port")
+        port = int(port_text, 10)
     if port < 1 or port > 65535:
         raise EgressError("port out of range")
     # IP literals are parseable; canonical Internet Access policy + safety checks

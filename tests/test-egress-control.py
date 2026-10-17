@@ -693,6 +693,16 @@ class EgressProxyFunctionalTests(unittest.TestCase):
         resp = self._raw(req)
         self.assertTrue(resp.startswith(b"HTTP/1.1 200"), resp[:80])
 
+    def test_rfc9112_connect_extreme_numeric_port_is_400(self):
+        """Huge numeric authority must be rejected without uncaught ValueError."""
+        req = (
+            b"CONNECT allowed.test:" + b"9" * 5000
+            + b" HTTP/1.1\r\nHost: allowed.test:443\r\n\r\n"
+        )
+        resp = self._raw(req)
+        self.assertTrue(resp.startswith(b"HTTP/1.1 400"), resp[:80])
+        self.assertEqual(self.connect_calls, [])
+
     def test_rfc9112_connect_invalid_empty_explicit_host_port(self):
         req = (
             b"CONNECT allowed.test:443 HTTP/1.1\r\n"
@@ -817,6 +827,17 @@ class EgressAdversarialTests(EgressProxyFunctionalTests):
         resp = self._raw(payload)
         self.assertTrue(resp.startswith(b"HTTP/1.1 400"), resp[:80])
         self.assertEqual(len(self.connect_calls), 0)
+
+    def test_rfc9112_extreme_content_length_is_400(self):
+        """Large digit string must not bypass malformed framing error handling."""
+        req = (
+            b"POST http://allowed.test/ HTTP/1.1\r\n"
+            b"Host: allowed.test\r\nContent-Length: " + b"9" * 5000
+            + b"\r\n\r\n"
+        )
+        resp = self._raw(req)
+        self.assertTrue(resp.startswith(b"HTTP/1.1 400"), resp[:80])
+        self.assertEqual(self.connect_calls, [])
 
     def test_invalid_cl_reject(self):
         for bad in (b"abc", b"1.5", b"+3", b"08", b""):
