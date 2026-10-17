@@ -3236,6 +3236,21 @@ def unset_service_object(plane_db, name: str, *, confirm: Optional[bool] = None)
         )
 
     def write():
+        # A signed Agent publication may have committed after the public delete
+        # preflight and TTY confirmation. Revalidate inside BEGIN IMMEDIATE to
+        # prevent deleting a Service Object that now has live references.
+        current = get_service_object(plane_db, name)
+        if not current or current["id"] != obj["id"]:
+            raise ControlPlaneError(
+                "Service Object changed while you were deleting it.\n"
+                "No changes were applied. Review current state and retry."
+            )
+        committed_refs = service_object_references(plane_db, name)
+        if committed_refs:
+            raise ControlPlaneError(
+                "ERROR:\nService Object '%s' is still referenced.\n\nReferences:\n%s\n\nNo changes were applied."
+                % (name, "\n".join("  %s" % r["display"] for r in committed_refs))
+            )
         plane_db.conn.execute("DELETE FROM service_objects WHERE id = ?", (obj["id"],))
         return {"entity": {"type": "service-object", "id": obj["id"], "name": name}, "operation": "delete"}
 
