@@ -911,8 +911,15 @@ def _to_idna_ascii(hostname: str) -> str:
         if len(label) > 63:
             raise EgressError("invalid hostname label")
         try:
-            # stdlib codec — no third-party idna dependency
+            # Python's stdlib codec implements legacy IDNA2003, not IDNA2008.
+            # Reject non-ASCII labels that it maps to a *different* U-label
+            # (e.g. faß.de -> fass.de) to avoid authorizing another domain.
+            # Valid non-lossy Unicode labels and explicit ASCII A-labels remain usable.
             encoded = label.encode("idna").decode("ascii").lower()
+            if not label.isascii() and encoded.encode("ascii").decode("idna") != label:
+                raise EgressError("lossy IDNA2003 mapping is not allowed; use an explicit A-label")
+        except EgressError:
+            raise
         except Exception as exc:
             raise EgressError("invalid hostname (IDNA): %s" % hostname) from exc
         if not HOSTNAME_LABEL_RE.match(encoded):
@@ -986,6 +993,10 @@ def parse_authority_host_port(authority: str, *, default_port: Optional[int] = N
             raise EgressError("malformed authority")
         if ":" in text:
             host, port_text = text.rsplit(":", 1)
+            # An explicit colon must carry a valid port, even when callers
+            # permit the port to be omitted entirely (HTTP Host field).
+            if not port_text:
+                raise EgressError("invalid port")
         else:
             host = text
             if default_port is None:
@@ -995,21 +1006,18 @@ def parse_authority_host_port(authority: str, *, default_port: Optional[int] = N
     if port_text == "" and default_port is not None:
         port = default_port
     else:
-        if not port_text.isdigit() or port_text != str(int(port_text)):
-            # Reject leading zeros tricks / overflow / non-decimal.
-            if not port_text.isdigit():
-                raise EgressError("invalid port")
-            # Allow canonical decimal without leading zeros except "0" which is invalid port anyway.
-            if len(port_text) > 1 and port_text.startswith("0"):
-                raise EgressError("invalid port")
-            try:
-                port = int(port_text)
-            except ValueError as exc:
-                raise EgressError("invalid port") from exc
-        else:
-            if len(port_text) > 1 and port_text.startswith("0"):
-                raise EgressError("invalid port")
-            port = int(port_text)
+        # A valid TCP/UDP port fits into five ASCII decimal digits. Validate
+        # the width before calling int() so untrusted 5,000-digit numbers
+        # cannot trigger Python's integer conversion limit / internal 403.
+        if (
+            not port_text
+            or len(port_text) > 5
+            or not port_text.isascii()
+            or not port_text.isdigit()
+            or (len(port_text) > 1 and port_text.startswith("0"))
+        ):
+            raise EgressError("invalid port")
+        port = int(port_text, 10)
     if port < 1 or port > 65535:
         raise EgressError("port out of range")
     # IP literals are parseable; canonical Internet Access policy + safety checks

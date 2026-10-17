@@ -245,6 +245,14 @@ class EgressPolicyTests(unittest.TestCase):
         host, port = EG.parse_authority_host_port("1.2.3.4:443")
         self.assertEqual((host, port), ("1.2.3.4", 443))
 
+    def test_idna2003_alias_does_not_authorize_different_fqdn(self):
+        """Avoid stdlib IDNA2003 aliases until full IDNA2008 is supported."""
+        self.assertEqual(EG.canonicalize_hostname("bücher.de"), ("xn--bcher-kva.de", "exact"))
+        self.assertEqual(EG.canonicalize_hostname("fass.de"), ("fass.de", "exact"))
+        self.assertEqual(EG.canonicalize_hostname("xn--fa-hia.de"), ("xn--fa-hia.de", "exact"))
+        with self.assertRaises(EG.EgressError):
+            EG.canonicalize_hostname("faß.de")
+
     def test_ssrf_ranges(self):
         blocked = [
             "127.0.0.1",
@@ -650,6 +658,60 @@ class EgressProxyFunctionalTests(unittest.TestCase):
             time.sleep(0.2)
         self.assertTrue(self._upstream_saw(hello), msg=self.origin.total_bytes()[:200])
 
+    def test_rfc9112_connect_host_required_before_upstream(self):
+        """RFC 9112 §3.2: HTTP/1.1 must have a Host field."""
+        req = b"CONNECT allowed.test:443 HTTP/1.1\r\n\r\n"
+        resp = self._raw(req)
+        self.assertTrue(resp.startswith(b"HTTP/1.1 400"), resp[:80])
+        self.assertEqual(self.connect_calls, [])
+
+    def test_rfc9112_connect_host_authority_mismatch(self):
+        """A mismatched Host must not be permitted into a CONNECT tunnel."""
+        req = (
+            b"CONNECT allowed.test:443 HTTP/1.1\r\n"
+            b"Host: other.test:443\r\n\r\n"
+        )
+        resp = self._raw(req)
+        self.assertTrue(resp.startswith(b"HTTP/1.1 400"), resp[:80])
+        self.assertEqual(self.connect_calls, [])
+
+    def test_rfc9112_connect_host_port_mismatch(self):
+        req = (
+            b"CONNECT allowed.test:443 HTTP/1.1\r\n"
+            b"Host: allowed.test:8443\r\n\r\n"
+        )
+        resp = self._raw(req)
+        self.assertTrue(resp.startswith(b"HTTP/1.1 400"), resp[:80])
+        self.assertEqual(self.connect_calls, [])
+
+    def test_rfc9112_connect_host_without_port_uses_target_port(self):
+        """No explicit Host port is permitted; a colon with no digits is not."""
+        req = (
+            b"CONNECT allowed.test:443 HTTP/1.1\r\n"
+            b"Host: allowed.test\r\n\r\n"
+        )
+        resp = self._raw(req)
+        self.assertTrue(resp.startswith(b"HTTP/1.1 200"), resp[:80])
+
+    def test_rfc9112_connect_extreme_numeric_port_is_400(self):
+        """Huge numeric authority must be rejected without uncaught ValueError."""
+        req = (
+            b"CONNECT allowed.test:" + b"9" * 5000
+            + b" HTTP/1.1\r\nHost: allowed.test:443\r\n\r\n"
+        )
+        resp = self._raw(req)
+        self.assertTrue(resp.startswith(b"HTTP/1.1 400"), resp[:80])
+        self.assertEqual(self.connect_calls, [])
+
+    def test_rfc9112_connect_invalid_empty_explicit_host_port(self):
+        req = (
+            b"CONNECT allowed.test:443 HTTP/1.1\r\n"
+            b"Host: allowed.test:\r\n\r\n"
+        )
+        resp = self._raw(req)
+        self.assertTrue(resp.startswith(b"HTTP/1.1 400"), resp[:80])
+        self.assertEqual(self.connect_calls, [])
+
     def test_connect_deny_port(self):
         req = b"CONNECT allowed.test:8443 HTTP/1.1\r\nHost: allowed.test:8443\r\n\r\n"
         resp = self._raw(req)
@@ -765,6 +827,17 @@ class EgressAdversarialTests(EgressProxyFunctionalTests):
         resp = self._raw(payload)
         self.assertTrue(resp.startswith(b"HTTP/1.1 400"), resp[:80])
         self.assertEqual(len(self.connect_calls), 0)
+
+    def test_rfc9112_extreme_content_length_is_400(self):
+        """Large digit string must not bypass malformed framing error handling."""
+        req = (
+            b"POST http://allowed.test/ HTTP/1.1\r\n"
+            b"Host: allowed.test\r\nContent-Length: " + b"9" * 5000
+            + b"\r\n\r\n"
+        )
+        resp = self._raw(req)
+        self.assertTrue(resp.startswith(b"HTTP/1.1 400"), resp[:80])
+        self.assertEqual(self.connect_calls, [])
 
     def test_invalid_cl_reject(self):
         for bad in (b"abc", b"1.5", b"+3", b"08", b""):
@@ -928,6 +1001,17 @@ class EgressAdversarialTests(EgressProxyFunctionalTests):
         )
         resp = self._raw(payload)
         self.assertIn(b"200", resp.split(b"\r\n", 1)[0])
+
+    def test_rfc9112_absolute_form_fragment_is_invalid(self):
+        """A request-target must not silently discard a URI fragment."""
+        req = (
+            b"GET http://allowed.test/path#ignored HTTP/1.1\r\n"
+            b"Host: allowed.test\r\n"
+            b"Connection: close\r\n\r\n"
+        )
+        resp = self._raw(req)
+        self.assertTrue(resp.startswith(b"HTTP/1.1 400"), resp[:80])
+        self.assertEqual(self.connect_calls, [])
 
     def test_absolute_https_uri_reject(self):
         """ABSOLUTE_HTTPS_URI_REJECT — deterministic 400 (not 405). Use CONNECT instead."""
