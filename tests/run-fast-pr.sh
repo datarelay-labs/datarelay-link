@@ -54,6 +54,8 @@ python3 tests/test-v24-cli-workflow-semantic-parity.py
 python3 tests/test-v24-readonly-selector-operands.py
 python3 tests/test-v24-admin-concurrency-ux.py
 python3 tests/test-v24-reference-delete-serialization.py
+python3 tests/test-v24-reference-delete-upsert-race.py
+python3 tests/test-v24-offline-tombstone-duplicate.py
 
 echo "=== derived artifact closure ==="
 bash tests/test-change-closure-artifacts.sh

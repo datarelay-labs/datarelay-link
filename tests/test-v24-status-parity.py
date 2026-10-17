@@ -510,16 +510,21 @@ class InProcessDeleteRaceTests(unittest.TestCase):
 
             class LocalAllocator:
                 port = None
+                enabled = None
                 releases = 0
                 def reserve_remote_service_endpoint(allocator, *args, **kwargs):
                     self.assertTrue(server.conn.in_transaction)
                     allocator.port = 6204
+                    # Disabled services retain ownership of their public port,
+                    # while the allocator records that the proxy is inactive.
+                    allocator.enabled = bool(kwargs.get("enabled", True))
                     return {"remote_port": 6204, "proxy_id": "rs-owned"}
                 def release_remote_service_endpoint(allocator, *args):
                     self.assertTrue(server.conn.in_transaction)
                     allocator.releases += 1
                     port = allocator.port
                     allocator.port = None
+                    allocator.enabled = None
                     return {"released_port": port}
 
             allocator = LocalAllocator()
@@ -549,10 +554,12 @@ class InProcessDeleteRaceTests(unittest.TestCase):
             self.assertIsNone(allocator.port)
             body.update(enabled=False, preserve_endpoint_port=6204)
             resurrected = mgmt.server_upsert_remote_service(server, auth, body)
-            self.assertIsNone(allocator.port)  # Disabled replay reserved no registry proxy.
+            self.assertEqual(allocator.port, 6204)  # Disabled preserves the reserved port.
+            self.assertFalse(allocator.enabled)  # But it never activates publication.
             self.assertEqual(mgmt.server_delete_remote_service(
                 server, auth, "owned", resurrected["publication"],
             )["status"], "DELETED")
+            self.assertIsNone(allocator.port)  # Explicit deletion releases ownership.
             self.assertEqual(server.conn.execute(
                 "SELECT released FROM port_reservations WHERE public_port=6204"
             ).fetchone()[0], 1)

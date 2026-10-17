@@ -3136,6 +3136,10 @@ frpctl_menu_commands() {
 }
 
 frpctl_clear_screen() {
+  if [[ ! -t 1 ]]; then
+    printf 'ERROR: system clear requires an interactive terminal. Run sudo drlink in a terminal, then enter system clear.\n' >&2
+    return 1
+  fi
   if command -v clear >/dev/null 2>&1; then
     command clear
   else

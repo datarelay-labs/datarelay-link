@@ -3236,6 +3236,21 @@ def unset_service_object(plane_db, name: str, *, confirm: Optional[bool] = None)
         )
 
     def write():
+        # A signed Agent publication may have committed after the public delete
+        # preflight and TTY confirmation. Revalidate inside BEGIN IMMEDIATE to
+        # prevent deleting a Service Object that now has live references.
+        current = get_service_object(plane_db, name)
+        if not current or current["id"] != obj["id"]:
+            raise ControlPlaneError(
+                "Service Object changed while you were deleting it.\n"
+                "No changes were applied. Review current state and retry."
+            )
+        committed_refs = service_object_references(plane_db, name)
+        if committed_refs:
+            raise ControlPlaneError(
+                "ERROR:\nService Object '%s' is still referenced.\n\nReferences:\n%s\n\nNo changes were applied."
+                % (name, "\n".join("  %s" % r["display"] for r in committed_refs))
+            )
         plane_db.conn.execute("DELETE FROM service_objects WHERE id = ?", (obj["id"],))
         return {"entity": {"type": "service-object", "id": obj["id"], "name": name}, "operation": "delete"}
 
@@ -5599,10 +5614,15 @@ def _push_agent_remote_service_status(
             raise
         return 0
     items = []
+    # A delayed signed status response must not roll back a newer Agent
+    # generation written by the CLI or lifecycle worker while I/O was in flight.
+    # Compare the complete original row, not updated_at (which is second-granular).
+    sent_row_snapshots = {}
     rows = plane_db.conn.execute("SELECT * FROM agent_remote_services WHERE delete_pending = 0")
     for row in rows:
         if names is not None and row["name"] not in names:
             continue
+        sent_row_snapshots[str(row["name"]).lower()] = tuple(row)
         status = str(row["status"] or "DEGRADED").upper()
         if status not in ("HEALTHY", "DEGRADED", "DISABLED"):
             status = "DEGRADED"
@@ -5634,11 +5654,20 @@ def _push_agent_remote_service_status(
             if require_ack:
                 raise
             return 0
-    return _reconcile_agent_from_server_status(plane_db, result)
+    return _reconcile_agent_from_server_status(
+        plane_db, result, expected_rows=sent_row_snapshots
+    )
 
 
-def _reconcile_agent_from_server_status(plane_db, result: dict) -> int:
-    """Converge Agent local endpoint projection with authenticated Server state."""
+def _reconcile_agent_from_server_status(
+    plane_db, result: dict, *, expected_rows: Optional[dict] = None,
+) -> int:
+    """Converge Agent endpoint projection from an authenticated Server reply.
+
+    If expected_rows is supplied, do not apply a delayed ACK to a row that a
+    concurrent, independently authenticated operation has since changed.
+    The next synchronization reconciles that current generation normally.
+    """
     if not isinstance(result, dict):
         return 0
     items = result.get("services") or result.get("updated") or []
@@ -5657,6 +5686,10 @@ def _reconcile_agent_from_server_status(plane_db, result: dict) -> int:
             (name,),
         ).fetchone()
         if row is None:
+            continue
+        if expected_rows is not None and tuple(row) != expected_rows.get(name.lower()):
+            # ACK predates the current row; never overwrite its newer
+            # status, verification bit, endpoint or pending-allocation state.
             continue
         assignments = []
         values = []
@@ -6074,7 +6107,13 @@ def _synchronize_agent_remote_services_locked(plane_db, *, root: Optional[str] =
                             break
                     # Reconcile authoritative endpoint/verification projections
                     # even if a fresh Server reply reveals missing ownership.
-                    _reconcile_agent_from_server_status(plane_db, acknowledged)
+                    _reconcile_agent_from_server_status(
+                        plane_db, acknowledged,
+                        expected_rows={
+                            str(row["name"]).lower(): tuple(row)
+                            for row in snapshot_rows
+                        },
+                    )
                     if verified:
                         for name in promotable:
                             plane_db.conn.execute(
@@ -6754,18 +6793,24 @@ def set_remote_service_agent(
             "Delete and recreate the Remote Service.\n\n"
             "No changes were applied."
         )
-    # Duplicate destination+service check (identity-safe for Managed Host binds)
+    # Only existing desired-state Remote Services claim destination+service.
+    # An offline deletion keeps a tombstone pending Server synchronization, but
+    # that tombstone must not prevent the operator from assigning the same
+    # destination+service to a new Remote Service. Disabled (not deleted)
+    # services still reserve their mapping and remain duplicate-protected.
     if destination_client_id:
         dup = plane_db.conn.execute(
             "SELECT name FROM agent_remote_services WHERE destination_client_id = ? "
-            "AND service_object = ? COLLATE NOCASE AND name != ? COLLATE NOCASE",
+            "AND service_object = ? COLLATE NOCASE AND name != ? COLLATE NOCASE "
+            "AND delete_pending = 0",
             (destination_client_id, svc_name, name),
         ).fetchone()
     else:
         dup = plane_db.conn.execute(
             "SELECT name FROM agent_remote_services WHERE destination = ? COLLATE NOCASE "
             "AND service_object = ? COLLATE NOCASE AND name != ? COLLATE NOCASE "
-            "AND (destination_client_id IS NULL OR destination_client_id = '')",
+            "AND (destination_client_id IS NULL OR destination_client_id = '') "
+            "AND delete_pending = 0",
             (dest_token, svc_name, name),
         ).fetchone()
     if dup:

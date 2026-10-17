@@ -494,6 +494,54 @@ class RemoteServiceDistributedAtomicity(unittest.TestCase):
         self.assertIsNotNone(tomb)
         self.assertEqual(int(tomb["delete_pending"]), 1)
 
+    def test_offline_tombstone_replacement_releases_old_server_port_on_reconnect(self):
+        """Deletion must sync before publishing replacement with same target/service."""
+        original = self._create("old-ssh", service="ssh")
+        old_port = int(original["view"]["endpoint_port"])
+        self.assertEqual(int(self._server_pub("old-ssh")["released"]), 0)
+
+        # Signed Server still holds the old publication, but the local Agent is
+        # deliberately offline. Its delete_pending row cannot keep blocking
+        # the replacement's desired mapping.
+        os.environ.pop("DRLINK_MGMT_URL", None)
+        v24.unset_remote_service_agent(
+            self.agent, "old-ssh", root=self.agent_tmp, server_reachable=False
+        )
+        old_tomb = self.agent.conn.execute(
+            "SELECT delete_pending FROM agent_remote_services WHERE name='old-ssh'"
+        ).fetchone()
+        self.assertEqual(int(old_tomb["delete_pending"]), 1)
+        self.assertEqual(int(self._server_pub("old-ssh")["public_port"]), old_port)
+
+        replacement = v24.set_remote_service_agent(
+            self.agent, "new-ssh", destination="this-host", service="ssh",
+            enabled=True, oneshot=True, root=self.agent_tmp, server_reachable=False,
+        )
+        self.assertEqual(replacement["view"]["status"], "DEGRADED")
+        self.assertEqual(replacement["view"]["endpoint"], "Pending allocation")
+
+        os.environ["DRLINK_MGMT_URL"] = self.base_url
+        result = v24.synchronize_agent_remote_services(
+            self.agent, root=self.agent_tmp, force_runtime=True,
+        )
+        self.assertIn(result["status"], {"SYNCHRONIZED", "DEGRADED"})
+        self.assertIsNone(self.agent.conn.execute(
+            "SELECT 1 FROM agent_remote_services WHERE name='old-ssh'"
+        ).fetchone())
+        old = self._server_pub("old-ssh")
+        self.assertTrue(old is None or int(old["released"]) == 1)
+        new = self._server_pub("new-ssh")
+        self.assertIsNotNone(new)
+        self.assertEqual(int(new["released"]), 0)
+        self.assertEqual(new["service_name"], "ssh")
+        self.assertIsNotNone(new["public_port"])
+        active = self.server.conn.execute(
+            "SELECT COUNT(*) FROM published_services "
+            "WHERE client_id=? AND name IN ('old-ssh','new-ssh') AND released=0",
+            (MACHINE,),
+        ).fetchone()[0]
+        self.assertEqual(active, 1)
+
     def test_fixed_tcp_endpoint_pool_unchanged(self):
         created = self._create("fixed-svc", service="db-fixed")
         self.assertIsNotNone(created["view"]["endpoint_port"])

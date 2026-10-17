@@ -1311,6 +1311,38 @@ def server_upsert_remote_service(plane, auth: MgmtAuthContext, body: dict) -> di
 
     def write():
         nonlocal endpoint_port, proxy_id, publication, status, reason
+        # The initial dependency lookup happens before BEGIN IMMEDIATE. A public
+        # Server deletion/edit can commit before this Agent publication acquires
+        # the write lock. Re-resolve under the same transaction as the insert,
+        # otherwise a deleted Service Object may still obtain a live endpoint.
+        try:
+            latest_target = resolve_authoritative_remote_target(
+                plane,
+                destination=destination,
+                owner_client_id=client["id"],
+                service_name=service,
+                destination_client_id=agent_supplied_client_id,
+                server_bound_client_id=prior_client_id,
+            )
+        except ControlPlaneError as exc:
+            raise MgmtSyncError(
+                "Remote Service dependency changed during publication. "
+                "Synchronize the catalog and retry. No changes were applied."
+            ) from exc
+        latest_object = latest_target["service_object"]
+        if (
+            str(latest_object["id"]) != str(sobj["id"])
+            or str(latest_object["type"]) != str(sobj["type"])
+            or int(latest_object["port"]) != int(sobj["port"])
+            or str(latest_target["target_host"]) != target_host
+            or int(latest_target["target_port"]) != target_port
+            or str(latest_target["target_mode"]) != target_mode
+            or latest_target.get("destination_client_id") != destination_client_id
+        ):
+            raise MgmtSyncError(
+                "Remote Service dependency changed during publication. "
+                "Synchronize the catalog and retry. No changes were applied."
+            )
         # Serialize publication and local allocator bookkeeping together. No
         # Agent network I/O runs while this Server write transaction is held.
         existing = plane.conn.execute(
