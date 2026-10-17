@@ -75,14 +75,44 @@ def _public_endpoint_host(plane: ControlPlane, stored: str = "") -> str:
     return stored or "pending"
 
 
-def _agent_service_status(plane, row, runtime_level):
+def _agent_authenticated_management(plane, runtime_level):
+    """One bounded signed Server catalog read before projecting Agent HEALTHY.
+
+    FRP transport success is not evidence of an enrolled management identity.
+    The signed Server GET rejects unknown/revoked Managed Hosts and validates
+    the returned response. Do not expose private authentication errors.
+    """
+    if runtime_level != 'Healthy':
+        return None
+    import drlink_mgmt_sync as mgmt
+    if not mgmt.use_live_mgmt_path(plane.root):
+        # Explicit local/fault-injection management mode has no remote claim.
+        return None
+    try:
+        catalog = mgmt.fetch_server_catalog(plane.root)
+        return (
+            isinstance(catalog, dict)
+            and isinstance(catalog.get('managedHosts'), list)
+            and bool(catalog['managedHosts'])
+        )
+    except Exception:
+        # Fail closed: revoked/unknown identity, TLS failure, network outage,
+        # or unverifiable response must not project public HEALTHY.
+        return False
+
+
+def _agent_service_status(plane, row, runtime_level, management_verified=None):
     if not row['enabled']:
         return 'DISABLED'
     from drlink_agent_lifecycle import load_lifecycle_intent
     if load_lifecycle_intent(plane.root) == 'paused':
         return 'DEGRADED'
     stored = str(row['status'] or 'DEGRADED')
-    if stored == 'HEALTHY' and (not row['runtime_verified'] or runtime_level != 'Healthy'):
+    if stored == 'HEALTHY' and (
+        not row['runtime_verified']
+        or runtime_level != 'Healthy'
+        or management_verified is False
+    ):
         return 'DEGRADED'
     return stored
 
@@ -681,6 +711,11 @@ def handle_show(plane: ControlPlane, rest: list[str]) -> Optional[int]:
             return 0
         sys.stdout.write("%-18s %-14s %-10s %-24s %s\n" % ("NAME", "DESTINATION", "SERVICE", "ENDPOINT", "STATUS"))
         runtime_level = _agent_runtime_level(plane)
+        management_verified = (
+            _agent_authenticated_management(plane, runtime_level)
+            if any(row['enabled'] and str(row['status']).upper() == 'HEALTHY' for row in rows)
+            else None
+        )
         for row in rows:
             endpoint = (
                 "Pending allocation"
@@ -689,7 +724,7 @@ def handle_show(plane: ControlPlane, rest: list[str]) -> Optional[int]:
             )
             sys.stdout.write(
                 "%-18s %-14s %-10s %-24s %s\n"
-                % (row["name"], row["destination"], row["service_object"], endpoint, _agent_service_status(plane, row, runtime_level))
+                % (row["name"], row["destination"], row["service_object"], endpoint, _agent_service_status(plane, row, runtime_level, management_verified))
             )
         return 0
     if res == "remote-service":
@@ -706,7 +741,15 @@ def handle_show(plane: ControlPlane, rest: list[str]) -> Optional[int]:
             if row["pending_allocation"] or row["endpoint_port"] is None
             else "%s:%s" % (_public_endpoint_host(plane, row["endpoint_host"]), row["endpoint_port"])
         )
-        effective_status = _agent_service_status(plane, row, _agent_runtime_level(plane))
+        runtime_level = _agent_runtime_level(plane)
+        management_verified = (
+            _agent_authenticated_management(plane, runtime_level)
+            if row['enabled'] and str(row['status']).upper() == 'HEALTHY'
+            else None
+        )
+        effective_status = _agent_service_status(
+            plane, row, runtime_level, management_verified
+        )
         sys.stdout.write(
             "Remote Service: %s\nDestination: %s\nService: %s\nStatus: %s\nEndpoint: %s\nEnabled: %s\n"
             % (
@@ -721,6 +764,17 @@ def handle_show(plane: ControlPlane, rest: list[str]) -> Optional[int]:
         from drlink_agent_lifecycle import load_lifecycle_intent
         if row['enabled'] and load_lifecycle_intent(plane.root) == 'paused':
             sys.stdout.write('Reason: Agent runtime is intentionally paused.\n')
+        elif row['enabled'] and management_verified is False:
+            sys.stdout.write(
+                "Reason: The Server management identity or authenticated catalog "
+                "could not be verified. FRP transport success alone does not "
+                "prove a published Remote Service.\n"
+                "Next action:\n"
+                "  system diagnostics\n"
+                "  Verify this Agent is enrolled in Server: show managed-hosts\n"
+                "Then verify:\n"
+                "  show remote-service %s\n" % row['name']
+            )
         elif row["reason"]:
             sys.stdout.write("Reason: %s\n" % row["reason"])
             reason = str(row["reason"]).strip().lower()
