@@ -911,8 +911,15 @@ def _to_idna_ascii(hostname: str) -> str:
         if len(label) > 63:
             raise EgressError("invalid hostname label")
         try:
-            # stdlib codec — no third-party idna dependency
+            # Python's stdlib codec implements legacy IDNA2003, not IDNA2008.
+            # Reject non-ASCII labels that it maps to a *different* U-label
+            # (e.g. faß.de -> fass.de) to avoid authorizing another domain.
+            # Valid non-lossy Unicode labels and explicit ASCII A-labels remain usable.
             encoded = label.encode("idna").decode("ascii").lower()
+            if not label.isascii() and encoded.encode("ascii").decode("idna") != label:
+                raise EgressError("lossy IDNA2003 mapping is not allowed; use an explicit A-label")
+        except EgressError:
+            raise
         except Exception as exc:
             raise EgressError("invalid hostname (IDNA): %s" % hostname) from exc
         if not HOSTNAME_LABEL_RE.match(encoded):
@@ -986,6 +993,10 @@ def parse_authority_host_port(authority: str, *, default_port: Optional[int] = N
             raise EgressError("malformed authority")
         if ":" in text:
             host, port_text = text.rsplit(":", 1)
+            # An explicit colon must carry a valid port, even when callers
+            # permit the port to be omitted entirely (HTTP Host field).
+            if not port_text:
+                raise EgressError("invalid port")
         else:
             host = text
             if default_port is None:

@@ -406,6 +406,10 @@ def _parse_request(raw: bytes) -> tuple[str, str, str, dict[str, str], bytes]:
         headers[key] = value.lstrip(" ")
         if not _header_value_safe(headers[key]):
             raise EG.EgressError("unsafe header value")
+    # RFC 9112 §3.2: HTTP/1.1 proxy requests require exactly one valid Host.
+    # This gateway supports only authority-bearing CONNECT / absolute-form URIs.
+    if version == "HTTP/1.1" and not headers.get("host"):
+        raise EG.EgressError("missing Host header")
     return method.upper(), target, version, headers, rest
 
 
@@ -450,6 +454,10 @@ def _absolute_uri_authority(target: str, headers: dict[str, str]) -> tuple[str, 
 
     v1 supports http:// only. Absolute-form https:// is rejected (use CONNECT).
     """
+    # RFC 9112 absolute-form contains an absolute-URI, not a URI fragment.
+    # urlsplit() otherwise silently discards the fragment before forwarding.
+    if "#" in target:
+        raise EG.EgressError("fragment not allowed in proxy request-target")
     lower = target.lower()
     if lower.startswith("https://"):
         raise EG.EgressError("absolute-form https URI not supported; use CONNECT")
@@ -1363,6 +1371,14 @@ def _handle_client_inner(gw: GatewayState, request: socket.socket, client_addres
     if method == "CONNECT":
         try:
             host, port = EG.parse_authority_host_port(target)
+            # Host and CONNECT target must identify the same destination.
+            # RFC 9112 §3.2 mandates Host on HTTP/1.1; optional on 1.0.
+            if headers.get("host"):
+                host_name, host_port = EG.parse_authority_host_port(
+                    headers["host"], default_port=port
+                )
+                if (host_name, host_port) != (host, port):
+                    raise EG.EgressError("CONNECT target and Host disagree")
         except EG.EgressError:
             state, load_error, cfg, _snap = gw.cache.snapshot()
             del state, load_error, _snap
