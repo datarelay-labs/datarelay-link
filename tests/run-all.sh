@@ -254,6 +254,7 @@ python3 tests/test-audit-tail-validation.py
 python3 tests/test-release-partial-acl.py
 python3 tests/test-v24-upgrade-reconcile.py
 python3 tests/test-v24-status-parity.py
+python3 tests/test-v24-reference-delete-upsert-race.py
 python3 tests/test-v24-bootstrap-catalog-convergence.py
 python3 tests/test-v24-managed-host-policy.py
 python3 tests/test-v24-runtime-allocator.py
