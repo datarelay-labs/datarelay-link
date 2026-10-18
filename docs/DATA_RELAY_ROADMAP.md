@@ -290,6 +290,7 @@ The additional 3.0 security/operations features are intentionally split by prior
 | P1 Must Ship | Public Automation API + Service Accounts | Supported versioned automation surface with scoped non-human principals and full audit |
 | P1 Must Ship | Signed Event Webhook | Generic optional signed HTTPS event delivery with bounded retry/health; direct vendor connectors remain later |
 | P1 Must Ship | Access Hygiene Recommendations | Read-only evidence-qualified stale/unused/orphaned/expiring access findings; no automatic mutation |
+| P1 Must Ship | Controlled Egress Proxy User Authentication | 3.0 opt-in TLS-protected HTTP Proxy Basic credentials, local Proxy User management, and user+source+destination authorization |
 | P2 stretch | Lightweight JIT Access Request / Approval | One local requester→Admin flow that creates normal Temporary Access; not a GA blocker |
 | P2 conditional | Active connection termination | Ship only per plane where deterministic lifecycle control is proven; not a 3.0 GA blocker |
 
@@ -301,6 +302,7 @@ DRL3-1  policy expiry + Host approval + service-account/webhook foundations
 DRL3-2  local Web MFA/session baseline + pending-host visibility
 DRL3-3  Temporary Access parity + Host approval + Automation API/service-account management
 DRL3-4  Temporary Access preview/test UX + optional lightweight JIT request model
+        + Controlled Egress proxy credential binding and fail-closed enforcement
 DRL3-5  Live Access Visibility → Emergency Cutoff + Access Hygiene + signed Webhook
 DRL3-6  bounded staged Agent update rollout
 DRL3-7  hardening/recovery/scale for all admitted surfaces
@@ -331,6 +333,8 @@ Required:
 - staged Agent update rollout canary/wave/failure-pause/rollback bounds frozen;
 - signed event Webhook event classes, signature/secret lifecycle, queue/retry/resource bounds, and health semantics frozen;
 - Access Hygiene evidence-quality and read-only recommendation rules frozen;
+- Proxy User scope/credential lifecycle, HTTPS-proxy TLS endpoint, 407/Basic challenge,
+  Internet Access credential+source+destination AND-policy and fail-closed state frozen;
 - lightweight JIT request/approval stretch semantics frozen as a one-step Temporary Access producer with no GA dependency;
 - 3.0 GA / 3.1+ / out-of-scope matrix frozen;
 - cross-document contract gate defined for Product Master / Version Policy / Roadmap /
@@ -564,6 +568,46 @@ Explicitly excluded from the core Temporary Access primitive:
 Acceptance requires CLI/Web policy-test parity and no discrepancy between graph/preview
 and the Core evaluator, including before/at/after-expiry cases.
 
+### Controlled Egress Proxy User Authentication — P1 Must Ship
+
+Data Relay Link 3.0 adds **optional local Proxy User Username/Password authentication**
+for agentless Internet Access using standard HTTP Proxy Basic (`Proxy-Authorization`).
+This is a **planned 3.0 feature**, not a v2.4/v2.5 implemented capability.
+
+- Admin can create/list, disable/revoke/delete, reset/change/rotate passwords and
+  bind Proxy Users to an Internet Access policy via canonical Core, CLI and optional Web.
+  Proxy Users are distinct from Web operators, Managed Host/Agent identities, AI
+  Identities and Public Automation API Service Accounts. Never reveal passwords in
+  list, help, history, audit, diagnostics, bundles, support packages or backups.
+- Existing source IP/Network Object and destination/Service Object WHITELIST rules
+  remain authoritative. When proxy authentication is enabled for a policy,
+  **ALLOW requires valid Proxy User AND permitted observed source AND permitted
+  destination/service**; valid credentials never bypass the network policy.
+  NAT-shared sources can be distinguished by Proxy User, not exempted from the
+  source restriction. Missing/corrupt auth state or revoked credentials deny new
+  authorization, with no silent source-only fallback.
+- Enforce Basic authentication only on a verified TLS-protected HTTPS proxy
+  client-to-gateway hop, or an explicitly reviewed equivalently secure channel.
+  Cleartext HTTP proxy credentials are prohibited; application TLS remains end-to-end,
+  without TLS interception or a protected-host Agent requirement.
+- Missing/incorrect credentials on an auth-required endpoint receive HTTP `407
+  Proxy Authentication Required` with `Proxy-Authenticate`; other policy denials
+  remain denied even for correctly authenticated users. Strip proxy credentials
+  before upstream forwarding. Passwords use approved salted slow password
+  verifiers, bounded verification attempts and safe rotation/revocation.
+- Existing source-only Internet Access remains available **only for scopes where
+  credential authentication is explicitly not enabled**. Enabling/disabling
+  this requirement is an authorized, audited policy mutation; upgrades and
+  restore may not silently loosen an enabled requirement.
+
+**3.0 acceptance:** same-Core CLI/Web account management, identity-bound policy
+preview/audit, no plaintext-at-rest/readback, 407 and denied-traffic negative cases,
+TLS-only credential carriage, upstream-header redaction, brute-force/rate bounds,
+NAT-shared host attribution, concurrency, restart, upgrade and backup/restore.
+Verify positive HTTP and HTTPS CONNECT with authentic applications; qualify
+curl/wget/git/apt individually where HTTPS proxy support is actually available.
+Do not claim unsupported proxy-client combinations as PASS.
+
 ## 15. DRL3-5 — Diagnosis, Health, and Attention
 
 **Goal:** make "why does this not work?" a first-class product workflow.
@@ -714,6 +758,8 @@ Required:
 - mixed-load verification that audit ingestion does not starve configuration writers,
   relay enforcement, or CLI recovery;
 - schema-aware secret/credential/payload redaction regressions;
+- Proxy User credential/TLS, identity-policy, 407/rate-limit/header stripping,
+  revoke/rotate and backup/restore regressions with actual proxy traffic;
 - read-model rebuild/recovery;
 - backup/restore including new 3.0 Core-owned management metadata;
 - Web update/uninstall/reinstall semantics;
@@ -893,6 +939,7 @@ Managed Update / Staged Rollout
 Public Automation API + Service Accounts
 Signed Event Webhook
 Access Hygiene Recommendations
+Controlled Egress Proxy User Authentication (opt-in TLS-protected Basic)
 Audit / Revision Explorer
 manual filtered NDJSON audit export
 bounded safe fleet jobs

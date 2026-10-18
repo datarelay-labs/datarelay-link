@@ -20,6 +20,7 @@ that users of mature secure-connectivity products reasonably expect.
 | P1 | Public Automation API + scoped Service Accounts | GA Must Ship |
 | P1 | Signed Generic Webhook Notifications | GA Must Ship |
 | P1 | Access Hygiene / Stale Access Review | GA Must Ship, recommendation-only |
+| P1 | Controlled Egress Proxy User Authentication | GA Must Ship; optional per-policy TLS-protected Proxy Basic |
 | P2 | Lightweight one-step JIT Access Request / Approval | Stretch, non-blocking |
 
 The existing exclusions remain: no SSO/IdP requirement, device-posture/MDM platform,
@@ -504,6 +505,71 @@ ACCESS_HYGIENE_NO_AUTO_REVOKE=PASS
 ACCESS_HYGIENE_CORE_WEB_API_MCP_PARITY=PASS
 ```
 
+## 8A. P1 — Controlled Egress Proxy User Authentication
+
+### 8A.1 Product scope and identity model
+
+Add optional **HTTP Proxy Basic Username/Password** authentication for agentless
+Internet Access. A local **Proxy User** is a data-plane caller identity, separate
+from a Web operator, Managed Host Agent identity, AI Identity and Automation
+Service Account. Core owns durable records, secure password verifiers and policy
+bindings; CLI and optional Web use that one authority.
+
+- Admin creates/lists users (without password readback), changes/resets/rotates
+  passwords, disables/revokes and deletes accounts with reference protection.
+- Credential data uses an approved salted slow KDF and secure input. No cleartext
+  password persists in SQLite, backups, configuration bundles, audit, support files,
+  logs, CLI history, tab completion or Web/Management API response.
+- Authentication is optional **per explicitly authorized Internet Access scope**.
+  With it enabled, ALLOW requires **valid Proxy User AND allowed observed-source
+  Network Object AND allowed destination/service WHITELIST**. Neither credentials
+  nor NAT-shared attribution bypass a source restriction. Unreadable, absent or
+  corrupt auth policy fails closed, never falling back to IP-only authorization.
+- Existing source-only behavior remains supported where credential authentication
+  is explicitly not required; admin policy changes enabling/disabling this
+  condition are revisioned, attributable and audited.
+- Credential rotation/revocation denies subsequent authentication. Established
+  CONNECT sessions are not promised immediate termination without independent
+  lifecycle qualification.
+
+### 8A.2 Transport and security requirements
+
+- Implement standards-compatible `Proxy-Authorization: Basic`, authenticated
+  missing/invalid `407 Proxy Authentication Required` and
+  `Proxy-Authenticate` challenge.
+- **Protect client → proxy Basic credentials with verified HTTPS-proxy TLS** (or
+  separately approved equivalent). Do not ship credentials in cleartext HTTP.
+  This does not terminate/intercept application TLS or require a host Agent.
+- Apply brute-force limits, bounded credential verification, constant-time
+  comparisons where applicable, source/account throttling, safe error handling
+  and deny-by-default unknown or revoked accounts.
+- Strip `Proxy-Authorization`/proxy-specific credentials before forwarding.
+  Never expose them in audit, URL, history, request dump, diagnostic or bundle.
+- Authentication failure must not cause external DNS/connect/upstream I/O or
+  an authorization bypass; correct credentials cannot override a denied
+  source, destination, port or malformed policy.
+
+### 8A.3 Management parity and acceptance
+
+- Freeze canonical CLI account lifecycle and policy-binding grammar before coding;
+  support same-Core Admin actions and policy preview in optional Web, without
+  a duplicate Web credential database or a secret retrieval API.
+- Test create/list/reset/change/disable/revoke/delete, reference integrity,
+  password verifier secrecy, audit, backup/restore, restart and upgrade.
+- Real positive and negative HTTP/HTTPS CONNECT traffic: valid credential plus
+  allowed source/destination succeeds; missing/wrong/disabled credential receives
+  407 where auth is required; valid credential plus denied source/port/FQDN
+  remains DENY; auth policy corruption must fail closed.
+- Verify authentic HTTPS proxy TLS, credential stripping, flood/rate bounds,
+  NAT-shared hosts with different Proxy Users, concurrency and negative logs.
+- Qualify curl, wget, git and apt individually only where each application supports
+  the required TLS-protected proxy + Basic combination; never invent a PASS.
+
+**Priority:** P1 / 3.0 GA Must Ship. This roadmap addition does not authorize
+3.0 feature implementation ahead of the current exclusive UI redesign work.
+It does not change 2.4/2.5 release scope, introduce SSO, a credential vault,
+TLS interception or new mandatory Agent software.
+
 ## 9. P2 Stretch — Lightweight one-step JIT Access Request / Approval
 
 This is explicitly **not a 3.0 GA blocker**.
@@ -535,9 +601,11 @@ defer it to later 3.x.
 ```text
 DRL3-0
   freeze admission state, Automation API/service-account auth, webhook envelope/signing,
-  access-hygiene evidence rules, staged-update risk/rollback contract
+  access-hygiene evidence rules, staged-update risk/rollback contract,
+  Proxy User identity/policy binding, HTTPS-proxy TLS and Basic/407 contract
 
 DRL3-1
+  local Proxy User credential/verifier and fail-closed policy state,
   Core schema/query/auth primitives for Host admission, Service Accounts,
   Automation API adapter, webhook queue/event boundary, hygiene read model
 
@@ -546,11 +614,13 @@ DRL3-2
   notification delivery health, hygiene findings
 
 DRL3-3
+  Proxy User CLI/Web management, password rotation and policy binding,
   Host approval/quarantine mutations, pre-approved enrollment,
   Service Account/token administration, webhook endpoint administration,
   public Automation API v1 contract
 
 DRL3-4
+  HTTPS-proxy Basic 407 enforcement and credential+source+destination authorization;
   admission/quarantine and hygiene findings participate in preview/graph/explain;
   existing Temporary Access remains JIT substrate
 
@@ -561,6 +631,7 @@ DRL3-6
   bounded staged Agent update rollout using Job Engine; canary/halt-on-failure
 
 DRL3-7
+  Proxy User TLS/407/rate-limit/header stripping/credential rotation tests;
   hardening, rate/resource limits, queue recovery, token/webhook secret lifecycle,
   mixed-load qualification
 
@@ -578,6 +649,7 @@ Bounded Staged Managed Agent Updates
 Public Automation API + scoped Service Accounts
 Signed Generic Webhook Notifications
 Access Hygiene / Stale Access Review
+Controlled Egress Proxy User Authentication (TLS-protected opt-in Basic)
 ```
 
 ### Stretch, not release-blocking
