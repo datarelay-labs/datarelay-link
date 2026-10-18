@@ -396,7 +396,14 @@ class PolicyCache:
                 if self.load_error or self.plane is None:
                     self.engine.mark_unhealthy(self.load_error or "control plane unavailable")
                     return
-                gen = self._RP.generation_status(self.plane, "internet")
+                # ControlPlaneCache.reload already verified the DB fingerprint
+                # and ran full integrity validation when it changed. Do not
+                # re-scan the full database for every CONNECT.
+                verified = self._cp.fingerprint
+                gen = self._RP.generation_status(
+                    self.plane, "internet",
+                    validated_revision=int(verified[0]) if verified else -1,
+                )
                 if not gen.get("healthy"):
                     self.load_error = gen.get("error") or "internet policy unhealthy"
                     self.engine.mark_unhealthy(self.load_error)
@@ -470,10 +477,12 @@ class PolicyCache:
                 self.reload(force=False)
                 load_error = self.load_error
                 snap = self.engine.snapshot()
+                verified = self._cp.fingerprint if self._cp is not None else None
                 unhealthy = (
                     self.plane is None
                     or self._RP is None
                     or self._cp is None
+                    or verified is None
                     or load_error
                     or snap is None
                     or not snap.healthy
@@ -494,6 +503,7 @@ class PolicyCache:
                 port=int(port),
                 protocol=protocol,
                 candidate_ips=candidate_ips,
+                validated_revision=int(verified[0]),
             )
             if decision.get("decision") == self._RP.DECISION_ALLOW:
                 decision["decision"] = EG.DECISION_ALLOW

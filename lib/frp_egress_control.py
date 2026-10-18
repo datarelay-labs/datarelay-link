@@ -9,6 +9,7 @@ Agentless authorization is source IP/CIDR + FQDN:port allowlists.
 from __future__ import annotations
 
 import fcntl
+import functools
 import importlib.util
 import ipaddress
 import json
@@ -771,7 +772,11 @@ def infer_legacy_protocol(port: int) -> str:
     )
 
 
+@functools.lru_cache(maxsize=1)
 def _load_psl_module():
+    # An immutable packaged PSL helper must be loaded only once per process.
+    # Its load_psl() already caches the validated rule set and is thread-safe.
+    # Live policy inputs remain validated on every (re)load.
     try:
         from frp_public_suffix import (  # noqa: WPS433
             assert_wildcard_public_suffix_safe,

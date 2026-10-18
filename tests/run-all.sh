@@ -176,6 +176,7 @@ python3 tests/test-egress-conn-log-rotation.py
 python3 tests/test-egress-conn-log-rotation-concurrency.py
 python3 tests/test-egress-shared-parent-permissions.py
 python3 tests/test-egress-concurrency-isolation.py
+python3 tests/test-p013-policy-hotpath.py
 python3 tests/test-egress-parent-traverse.py
 python3 tests/test-egress-create-safe-default.py
 python3 tests/test-enabled-egress-mutation-confirm.py
