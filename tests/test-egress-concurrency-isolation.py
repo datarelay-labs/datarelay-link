@@ -375,5 +375,85 @@ class InternetAccessDbFdIsolation(unittest.TestCase):
         self.assertLessEqual(_db_fd_count(db_path), before + 1)
 
 
+class GatewayDenyPathNoDuplicateSnapshotTests(unittest.TestCase):
+    """Guard a single fail-closed authorization pass, including missing API fallback."""
+
+    def setUp(self):
+        from types import SimpleNamespace
+        from unittest.mock import patch
+
+        self.SimpleNamespace = SimpleNamespace
+        self.patch = patch
+        self.tmp = tempfile.TemporaryDirectory(prefix="drlink-p013-gateway-")
+        self.addCleanup(self.tmp.cleanup)
+        self.previous_root = os.environ.get("FRP_DEPLOY_TEST_ROOT")
+        os.environ["FRP_DEPLOY_TEST_ROOT"] = self.tmp.name
+        self.addCleanup(self.restore_root)
+        gateway_file = ROOT / "server" / "frp-egress-gateway.py"
+        spec = importlib.util.spec_from_file_location("p013_gateway_no_duplicate", gateway_file)
+        self.GW = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(self.GW)
+
+    def restore_root(self):
+        if self.previous_root is None:
+            os.environ.pop("FRP_DEPLOY_TEST_ROOT", None)
+        else:
+            os.environ["FRP_DEPLOY_TEST_ROOT"] = self.previous_root
+
+    def fake_cache(self, with_authorize):
+        class Cache:
+            def __init__(self):
+                self.lock = threading.RLock()
+                self.cfg = {}
+                self.authorize_count = 0
+                self.snapshot_count = 0
+
+            def snapshot(self):
+                self.snapshot_count += 1
+                raise AssertionError("DENY must not trigger a redundant full Control DB snapshot")
+
+        cache = Cache()
+        if with_authorize:
+            def authorize(**kwargs):
+                cache.authorize_count += 1
+                return {
+                    "decision": "DENY",
+                    "reason": "NO_POLICY",
+                    "authorized_candidates": [],
+                    "candidate_ips": list(kwargs.get("candidate_ips") or []),
+                }
+
+            cache.authorize = authorize
+        return cache
+
+    def test_policy_deny_uses_single_authorize_without_extra_db_snapshot(self):
+        cache = self.fake_cache(True)
+        gw = self.SimpleNamespace(cache=cache)
+        with self.patch.object(self.GW.EG, "emit_conn_log") as audit:
+            upstream, decision = self.GW._authorize_and_connect(
+                gw, source_ip="127.0.0.1", hostname="1.1.1.1", port=443,
+                method="CONNECT", protocol="https", connection_id="p013-regression",
+            )
+        self.assertIsNone(upstream)
+        self.assertEqual(decision["decision"], "DENY")
+        self.assertEqual(cache.authorize_count, 1)
+        self.assertEqual(cache.snapshot_count, 0)
+        audit.assert_called_once()
+
+    def test_missing_policy_authorize_api_denies_without_name_error_or_scan(self):
+        cache = self.fake_cache(False)
+        gw = self.SimpleNamespace(cache=cache)
+        decision, cfg = self.GW._authorize_policy_only(
+            gw, source_ip="127.0.0.1", hostname="1.1.1.1", port=443,
+            method="CONNECT", protocol="https", candidate_ips=["1.1.1.1"],
+        )
+        self.assertEqual(decision["decision"], "DENY")
+        self.assertEqual(decision["reason"], "CONTROL_PLANE_UNAVAILABLE")
+        self.assertIn("authorize unavailable", decision["detail"])
+        self.assertEqual(decision["authorized_candidates"], [])
+        self.assertEqual(cache.snapshot_count, 0)
+        self.assertEqual(cfg, {})
+
+
 if __name__ == "__main__":
     unittest.main()

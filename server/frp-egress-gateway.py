@@ -706,7 +706,7 @@ def _authorize_policy_only(
         decision = {
             "decision": EG.DECISION_DENY,
             "reason": "CONTROL_PLANE_UNAVAILABLE",
-            "detail": load_error or "SQLite control plane authorize unavailable",
+            "detail": "SQLite control plane authorize unavailable",
             "authorized_candidates": [],
             "candidate_ips": list(candidate_ips or []),
         }
