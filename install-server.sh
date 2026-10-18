@@ -2055,12 +2055,13 @@ frp_server_end_tmp() {
 frp_server_ensure_sandbox_dirs() {
   # Persistent paths listed in unit ReadWritePaths must exist before systemd
   # starts the allocator/frontend. Missing dirs cause status=226/NAMESPACE.
-  local etc_frp etc_proj var_lib var_log run_dir
+  local etc_frp etc_proj var_lib var_log run_dir lib_dir
   etc_frp="$(frp_server_fs /etc/frp)"
   etc_proj="$(frp_server_fs /etc/drlink)"
   var_lib="$(frp_server_fs /var/lib/drlink)"
   var_log="$(frp_server_fs /var/log/drlink)"
   run_dir="$(frp_server_fs /run/drlink)"
+  lib_dir="$(frp_server_fs /usr/local/lib/drlink)"
   mkdir -p "$etc_frp" "$etc_proj" "$var_lib" "$var_log" "$run_dir"
   mkdir -p "$var_log/access" "$var_log/egress"
   chmod 700 "$etc_frp" "$etc_proj" "$var_lib" "$var_log" "$run_dir"
@@ -2090,6 +2091,25 @@ frp_server_ensure_sandbox_dirs() {
     chmod 700 "$etc_frp" "$etc_proj" "$var_lib" "$var_log" "$run_dir" 2>/dev/null || true
     chmod 700 "$var_log/access" "$var_log/egress" 2>/dev/null || true
     if getent passwd drlink-egress >/dev/null 2>&1; then
+      # Fresh installs can create the shared Python module directory with umask
+      # 077 (0700 root:root). The non-root drlink-egress service must traverse
+      # this directory to execute frp-egress-gateway.py/drlink-tcp-egress.py.
+      # Grant only directory execute, never world traversal or PKI access.
+      if [[ -d "$lib_dir" ]]; then
+        if command -v setfacl >/dev/null 2>&1 &&
+           setfacl -m u:drlink-egress:--x "$lib_dir" 2>/dev/null; then
+          :
+        else
+          chgrp drlink-egress "$lib_dir" || {
+            echo "ERROR: cannot grant egress runtime access to $lib_dir" >&2
+            return 1
+          }
+          chmod 0710 "$lib_dir" || {
+            echo "ERROR: cannot restrict egress runtime directory $lib_dir" >&2
+            return 1
+          }
+        fi
+      fi
       acl_ok=0
       if command -v setfacl >/dev/null 2>&1; then
         if setfacl -m u:drlink-egress:--x "$etc_proj" "$var_lib" "$var_log" "$run_dir" 2>/dev/null; then
