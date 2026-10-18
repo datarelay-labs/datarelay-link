@@ -488,6 +488,23 @@ Required controls include:
 
 These transport/security controls are independent of the BLACKLIST/WHITELIST rule semantics.
 
+**3.0 P1 planned capability — Controlled Egress Proxy User Authentication:**
+The existing agentless Internet Access proxy gains optional HTTP Proxy Basic
+Username/Password authentication with local Proxy User management (create,
+list, reset/rotate, disable/revoke/delete) through canonical Core, CLI and
+optional Web. Users are distinct from Managed Host, Web operator, AI Identity
+and Automation Service Account records. Secrets use salted slow verifiers and
+remain absent from public output, audit and plaintext backup.
+
+When enabled, valid Proxy User credentials **AND** allowed observed source
+**AND** allowed destination/service are all required. An authorized username
+never opens an otherwise disallowed host/FQDN/port; missing/corrupt credential
+state fails closed. Require TLS protection for client-to-proxy Basic credentials,
+standard 407 challenge and complete proxy-secret/header redaction without TLS
+interception. Source-only access is available only when policy has not
+enabled Proxy User authentication. This is **not implemented by or promised
+for v2.4/v2.5**.
+
 ## 21. Network responsibility boundary
 
 Data Relay Link does not silently mutate external cloud security groups, customer firewalls, NAT/DNAT, DNS providers, SSH accounts, routes, or application certificates unless a separately approved product feature explicitly says so.
@@ -847,6 +864,18 @@ remain outside 3.0.
 existing Core, policy, audit, Attention, Job, and update foundations instead of changing
 Data Relay Link into PAM, SASE, an identity platform, or an RMM product. Exact surface and
 acceptance contracts are frozen in `docs/COMPETITIVE_EXPANSION_3_0.md`.
+
+### 2026-10-18 — 3.0 Controlled Egress Proxy User Authentication
+
+**Decision:** Add optional TLS-protected Proxy Basic Username/Password as a
+3.0 P1 GA feature, with independent local Proxy User credentials and same-Core
+CLI/Web lifecycle. Existing Internet Access source/destination WHITELIST
+remains necessary after a credential succeeds; the feature never converts
+a Managed Host enrollment identity into a Proxy credential. Do not introduce
+SSO, a general credential vault, TLS interception or an outbound Agent.
+Freeze management grammar/security requirements before implementation and
+qualify real HTTPS proxy client interoperability. The 2.4/2.5 line and
+the existing 66-WBS UI exclusive implementation priority remain unchanged.
 
 ### 2026-10 — First-class audit logging contract
 
