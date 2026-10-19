@@ -138,5 +138,37 @@ configurationBundle:
             )
 
 
+    def test_malformed_yaml_errors_never_echo_submitted_input(self):
+        # The PyYAML exception string embeds document lines or user-provided
+        # tag/alias names. Public CLI errors must show location, not the text.
+        sentinel = "LAB_ONLY_SENTINEL_DO_NOT_ECHO_85"
+        documents = {
+            "unclosed_sequence": (
+                "configurationBundle:\n  context: server\n  nested: ["
+                + sentinel + "\n"
+            ),
+            "unsupported_tag": (
+                "configurationBundle:\n  context: server\n  nested: "
+                "!!python/object:" + sentinel + " harmless\n"
+            ),
+            "undefined_alias": (
+                "configurationBundle:\n  context: server\n  nested: *"
+                + sentinel + "\n"
+            ),
+        }
+        for loader in (parse_v24_bundle, _safe_load_yaml):
+            for label, document in documents.items():
+                with self.subTest(loader=loader.__name__, label=label):
+                    with self.assertRaises(BundleError) as caught:
+                        loader(document)
+                    message = str(caught.exception)
+                    self.assertNotIn(sentinel, message)
+                    self.assertNotIn("nested:", message)
+                    self.assertIn("line", message)
+                    if loader is parse_v24_bundle:
+                        self.assertIn("No changes were applied.", message)
+
+
+
 if __name__ == "__main__":
     unittest.main()

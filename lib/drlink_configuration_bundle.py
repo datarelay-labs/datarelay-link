@@ -201,12 +201,43 @@ def _load_yaml_reject_duplicate_keys(text: str) -> Any:
     return yaml.load(text, Loader=_UniqueKeySafeLoader)
 
 
+def _public_yaml_error_detail(exc: Exception) -> str:
+    """Return a usable error location without echoing any submitted YAML.
+
+    PyYAML exception strings embed source snippets, attacker-chosen YAML tags,
+    and alias names. Only our fixed, line-only duplicate-key errors are safe to
+    quote; all other exceptions are reduced to type and numeric source marks.
+    """
+    yaml = _yaml()
+    if type(exc) is yaml.YAMLError:
+        detail = str(exc)
+        if re.fullmatch(
+            r"(?:duplicate YAML mapping key at line [1-9][0-9]*; "
+            r"each key may appear only once|"
+            r"unhashable YAML mapping key at line [1-9][0-9]*)",
+            detail,
+        ):
+            return detail
+
+    label = (
+        "Unsupported YAML tag or value"
+        if isinstance(exc, yaml.constructor.ConstructorError)
+        else "Invalid YAML syntax"
+    )
+    for mark in (getattr(exc, "context_mark", None), getattr(exc, "problem_mark", None)):
+        line = getattr(mark, "line", None)
+        column = getattr(mark, "column", None)
+        if isinstance(line, int) and line >= 0 and isinstance(column, int) and column >= 0:
+            return "%s at line %d, column %d" % (label, line + 1, column + 1)
+    return label
+
+
 def _safe_load_yaml(text: str) -> Any:
     yaml = _yaml()
     try:
         data = _load_yaml_reject_duplicate_keys(text)
     except yaml.YAMLError as exc:
-        raise BundleError("Malformed YAML: %s" % exc) from exc
+        raise BundleError("Malformed YAML: %s" % _public_yaml_error_detail(exc)) from None
     return data
 
 

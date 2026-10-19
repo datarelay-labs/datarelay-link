@@ -25,7 +25,11 @@ from drlink_control_plane import (
     ConfirmationRequired,
     ControlPlane,
 )
-from drlink_configuration_bundle import BundleError, _load_yaml_reject_duplicate_keys
+from drlink_configuration_bundle import (
+    BundleError,
+    _load_yaml_reject_duplicate_keys,
+    _public_yaml_error_detail,
+)
 import drlink_v24 as v24
 
 
@@ -1093,8 +1097,8 @@ def parse_v24_bundle(raw_text: str) -> dict:
     except yaml.YAMLError as exc:
         raise BundleError(
             "ERROR:\nConfiguration input is not valid ConfigurationBundle YAML.\n\n"
-            "%s\n\nNo changes were applied." % exc
-        ) from exc
+            "%s\n\nNo changes were applied." % _public_yaml_error_detail(exc)
+        ) from None
     if not isinstance(data, dict):
         raise BundleError(
             "ERROR:\nConfiguration input is not valid ConfigurationBundle YAML.\n\n"
