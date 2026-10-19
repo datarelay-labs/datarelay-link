@@ -66,6 +66,11 @@ def _load_module(name: str, rel: str):
 EG = _load_module("frp_egress_control", "frp_egress_control.py")
 FP = _load_module("frp_policy_fingerprint", "frp_policy_fingerprint.py")
 try:
+    # The drlink-egress user can traverse the trusted library directory, but
+    # its 0710 mode intentionally forbids listing it. Regular sibling imports
+    # inside the canonical policy therefore need known-path preloading.
+    _load_module("drlink_control_db", "drlink_control_db.py")
+    _load_module("drlink_control_plane", "drlink_control_plane.py")
     RP = _load_module("drlink_runtime_policy", "drlink_runtime_policy.py")
 except ImportError:
     RP = None
