@@ -2799,6 +2799,28 @@ def get_service_group(plane_db, name: str):
     ).fetchone()
 
 
+def validate_service_object_port(value: object) -> int:
+    """Validate public Service Object port inputs without exposing raw values.
+
+    Both one-shot CLI inputs and internal callers must use the same 1..65535
+    contract. Avoid leaking Python int() errors or attacker-controlled tokens
+    into public diagnostics.
+    """
+    message = (
+        "Service Object port must be an integer from 1 to 65535. "
+        "Use: set service-object <NAME> type <tcp|udp|fixed-tcp> port <PORT>."
+    )
+    try:
+        if isinstance(value, bool):
+            raise ValueError("boolean is not a port")
+        port = int(str(value).strip())
+    except (TypeError, ValueError, OverflowError):
+        raise ControlPlaneError(message) from None
+    if port < 1 or port > 65535:
+        raise ControlPlaneError(message)
+    return port
+
+
 def set_service_object(
     plane_db,
     name: str,
@@ -2840,9 +2862,7 @@ def set_service_object(
             stype = str(type).strip().lower()
             if stype not in SERVICE_TYPES:
                 raise ControlPlaneError("Service Object type must be tcp, udp, or fixed-tcp")
-        port = int(port)
-        if port < 1 or port > 65535:
-            raise ControlPlaneError("Invalid port: %s" % port)
+        port = validate_service_object_port(port)
         if existing:
             refs = service_object_references(plane_db, name)
             if existing["type"] != stype and refs:

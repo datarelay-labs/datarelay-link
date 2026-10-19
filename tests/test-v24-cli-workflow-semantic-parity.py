@@ -547,6 +547,48 @@ class BundleSecurityImpact(_Base):
         self.assertIn("DENY ALL", text)
 
 
+
+class ServiceObjectPortInputRecovery(_Base):
+    """Real CLI mistakes must yield safe, actionable port guidance."""
+
+    def test_non_numeric_and_out_of_range_cli_reject_without_ghost_state(self):
+        for raw in ("badport", "65536", "0"):
+            with self.subTest(raw=raw):
+                rc, out, err = self._run(
+                    "set", "service-object", "r87-bad-port", "type", "tcp", "port", raw
+                )
+                detail = out + err
+                self.assertNotEqual(rc, 0)
+                self.assertIn("Service Object port must be an integer from 1 to 65535", detail)
+                self.assertNotIn("invalid literal", detail)
+                self.assertNotIn(raw, detail)
+                self.assertIsNone(v24.get_service_object(self.plane, "r87-bad-port"))
+        rc, _out, err = self._run(
+            "set", "service-object", "r87-bad-port", "type", "tcp", "port", "8443"
+        )
+        self.assertEqual(rc, 0, err)
+        self.assertEqual(v24.get_service_object(self.plane, "r87-bad-port")["port"], 8443)
+
+    def test_existing_valid_port_survives_bad_cli_edit_and_direct_caller(self):
+        v24.set_service_object(self.plane, "r87-corrected-port", type="tcp", port=8443, oneshot=True)
+        before = self.plane.current_revision()
+        rc, out, err = self._run(
+            "set", "service-object", "r87-corrected-port", "port", "non_numeric_value"
+        )
+        self.assertNotEqual(rc, 0)
+        self.assertIn("Service Object port must be an integer from 1 to 65535", out + err)
+        self.assertNotIn("non_numeric_value", out + err)
+        with self.assertRaisesRegex(ControlPlaneError, "Service Object port must be an integer from 1 to 65535"):
+            v24.set_service_object(self.plane, "r87-corrected-port", port="badport", oneshot=True)
+        self.assertEqual(self.plane.current_revision(), before)
+        self.assertEqual(v24.get_service_object(self.plane, "r87-corrected-port")["port"], 8443)
+        rc, _out, err = self._run(
+            "set", "service-object", "r87-corrected-port", "port", "8444"
+        )
+        self.assertEqual(rc, 0, err)
+        self.assertEqual(v24.get_service_object(self.plane, "r87-corrected-port")["port"], 8444)
+
+
 class AgentShowStatusRuntime(_Base):
     def test_paused_inventory_and_offline_endpoint_remain_truthful(self):
         self.plane.close()

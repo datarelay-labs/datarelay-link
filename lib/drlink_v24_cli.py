@@ -1144,7 +1144,7 @@ def handle_set(plane: ControlPlane, rest: list[str]) -> Optional[int]:
             resource="Service Object",
             allowed_hint="type, port",
         )
-        port = int(kv["port"]) if "port" in kv else None
+        port = v24.validate_service_object_port(kv["port"]) if "port" in kv else None
         from drlink_control_cli import _run
 
         result = _run(
