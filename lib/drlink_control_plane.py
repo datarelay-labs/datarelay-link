@@ -264,18 +264,29 @@ def normalize_object_value(obj_type: str, value: str) -> str:
     if kind == "host":
         try:
             return str(ipaddress.ip_address(text))
-        except ValueError as exc:
-            raise ControlPlaneError("Invalid host value: %s" % text) from exc
+        except ValueError:
+            # Public diagnostics must not echo submitted credentials or other
+            # sensitive material accidentally pasted as an IP address.
+            raise ControlPlaneError(
+                "Invalid host value. Use a single IPv4 or IPv6 address "
+                "(for example, 192.0.2.10)."
+            ) from None
     if kind == "network":
         try:
             net = ipaddress.ip_network(text, strict=False)
             return str(net)
-        except ValueError as exc:
-            raise ControlPlaneError("Invalid network value: %s" % text) from exc
+        except ValueError:
+            raise ControlPlaneError(
+                "Invalid network value. Use an IPv4 or IPv6 CIDR prefix "
+                "(for example, 192.0.2.0/24)."
+            ) from None
     if kind == "fqdn":
         host = text.rstrip(".").lower()
         if not FQDN_RE.fullmatch(host):
-            raise ControlPlaneError("Invalid FQDN value: %s" % text)
+            raise ControlPlaneError(
+                "Invalid FQDN value. Use a DNS hostname (for example, "
+                "api.example.com) without URL, path, or credentials."
+            )
         return host
     raise ControlPlaneError("Unknown object type: %s" % obj_type)
 

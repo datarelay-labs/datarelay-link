@@ -548,6 +548,43 @@ class BundleSecurityImpact(_Base):
 
 
 
+
+class NetworkObjectInvalidValuePrivacy(_Base):
+    """S-014/S-024: invalid IP/CIDR/FQDN must fail closed without echoing paste."""
+
+    def test_network_object_invalid_input_never_echoes_original(self):
+        marker = "TEST_ONLY_SECRET_MARKER_88_DO_NOT_ECHO"
+        cases = (
+            ("ip", "token:" + marker, "Invalid host value"),
+            ("cidr", "192.0.2.0/" + marker, "Invalid network value"),
+            ("fqdn", "https://user:" + marker + "@api.example.com/v1", "Invalid FQDN value"),
+        )
+        initial_revision = self.plane.current_revision()
+        for name, (kind, raw, guide) in enumerate(cases):
+            with self.subTest(kind=kind):
+                rc, out, err = self._run(
+                    "set", "network-object", "rev88-input-error", "type", kind, "value", raw
+                )
+                text = out + err
+                self.assertNotEqual(rc, 0)
+                self.assertIn(guide, text)
+                self.assertNotIn(marker, text)
+                self.assertNotIn(raw, text)
+                self.assertNotIn("Traceback", text)
+                self.assertIsNone(self.plane.get_object("rev88-input-error"))
+                self.assertEqual(self.plane.current_revision(), initial_revision)
+        rc, _out, err = self._run(
+            "set", "network-object", "rev88-input-error", "type", "fqdn", "value", "API.Example.COM."
+        )
+        self.assertEqual(rc, 0, err)
+        record = self.plane.get_object("rev88-input-error")
+        self.assertIsNotNone(record)
+        normalized = self.plane.conn.execute(
+            "SELECT normalized FROM object_values WHERE object_id = ?", (record["id"],)
+        ).fetchone()
+        self.assertEqual(normalized["normalized"], "api.example.com")
+
+
 class ServiceObjectPortInputRecovery(_Base):
     """Real CLI mistakes must yield safe, actionable port guidance."""
 
