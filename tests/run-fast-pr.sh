@@ -49,6 +49,7 @@ bash tests/test-fresh-client-source-provenance.sh
 python3 tests/test-fresh-client-trust-bootstrap.py
 python3 tests/test-zero-touch-windows-pin.py
 python3 tests/test-v24-final-closure.py
+python3 tests/test-v24-bundle-duplicate-mapping-keys.py
 python3 tests/test-v24-doc-consistency.py
 python3 tests/test-v24-cli-ai-master-closure.py
 python3 tests/test-v24-cli-workflow-semantic-parity.py

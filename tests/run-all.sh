@@ -281,6 +281,7 @@ python3 tests/test-v24-service-policy-consistency.py
 python3 tests/test-v24-access-broadening-bundle-order.py
 python3 tests/test-v24-bundle-stale-plan-safety.py
 python3 tests/test-v24-bundle-omitted-enabled-preservation.py
+python3 tests/test-v24-bundle-duplicate-mapping-keys.py
 python3 tests/test-v24-public-name-namespace-ambiguity.py
 python3 tests/test-v24-rule-mutation-security-impact.py
 python3 tests/test-v24-referenced-selector-mutation-security-impact.py

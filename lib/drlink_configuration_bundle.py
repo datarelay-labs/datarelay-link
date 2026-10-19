@@ -161,10 +161,50 @@ def _yaml():
     return _mod
 
 
+def _load_yaml_reject_duplicate_keys(text: str) -> Any:
+    """Safe YAML parsing that rejects ambiguous repeated mapping keys.
+
+    Inspect authored mappings before PyYAML flattens merge keys, so an explicit
+    override of a YAML merge alias stays compatible. Normal duplicate keys at
+    any nesting depth must not silently replace previous configuration intent.
+    """
+    yaml = _yaml()
+
+    class _UniqueKeySafeLoader(yaml.SafeLoader):
+        def construct_mapping(self, node, deep=False):
+            seen = set()
+            for key_node, _ in node.value:
+                # The YAML merge tag is resolved by the underlying SafeLoader.
+                # An explicitly authored override of a merged key is valid.
+                key = (
+                    "<<"
+                    if key_node.tag == "tag:yaml.org,2002:merge"
+                    else self.construct_object(key_node, deep=deep)
+                )
+                try:
+                    if key in seen:
+                        # Do not include PyYAML source marks here: their
+                        # rendered snippets may echo submitted credentials.
+                        raise yaml.YAMLError(
+                            "duplicate YAML mapping key at line %d; "
+                            "each key may appear only once"
+                            % (key_node.start_mark.line + 1)
+                        )
+                    seen.add(key)
+                except TypeError:
+                    raise yaml.YAMLError(
+                        "unhashable YAML mapping key at line %d"
+                        % (key_node.start_mark.line + 1)
+                    ) from None
+            return super().construct_mapping(node, deep=deep)
+
+    return yaml.load(text, Loader=_UniqueKeySafeLoader)
+
+
 def _safe_load_yaml(text: str) -> Any:
     yaml = _yaml()
     try:
-        data = yaml.safe_load(text)
+        data = _load_yaml_reject_duplicate_keys(text)
     except yaml.YAMLError as exc:
         raise BundleError("Malformed YAML: %s" % exc) from exc
     return data
