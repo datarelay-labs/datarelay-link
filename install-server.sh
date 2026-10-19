@@ -2110,6 +2110,27 @@ frp_server_ensure_sandbox_dirs() {
           }
         fi
       fi
+      # The pinned public suffix list is a nonsecret regular file in a
+      # nested directory created 0700 under restrictive install umask. Allow
+      # the unprivileged Egress service to traverse that *specific* directory
+      # without listing it; never grant access to other library/state dirs.
+      # This runs after file staging for both clean install and project update.
+      if [[ -d "$lib_dir/data" ]] &&
+         ! frp_service_user_can_traverse "$lib_dir/data"; then
+        if command -v setfacl >/dev/null 2>&1 &&
+           setfacl -m u:drlink-egress:--x "$lib_dir/data" 2>/dev/null; then
+          :
+        else
+          chgrp drlink-egress "$lib_dir/data" || {
+            echo "ERROR: cannot grant Egress PSL directory traverse" >&2
+            return 1
+          }
+          chmod 0710 "$lib_dir/data" || {
+            echo "ERROR: cannot restrict Egress PSL directory" >&2
+            return 1
+          }
+        fi
+      fi
       acl_ok=0
       if command -v setfacl >/dev/null 2>&1; then
         if setfacl -m u:drlink-egress:--x "$etc_proj" "$var_lib" "$var_log" "$run_dir" 2>/dev/null; then

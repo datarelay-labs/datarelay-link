@@ -81,5 +81,68 @@ class NonListableEgressRuntimeImports(unittest.TestCase):
                 library.chmod(0o700)
 
 
+@unittest.skipUnless(os.geteuid() == 0 and shutil.which("runuser"), "root and runuser required")
+class NativeEgressPslInstallPermissions(unittest.TestCase):
+    def test_server_sandbox_grants_only_psl_directory_traverse(self):
+        """Real installer helper must allow PSL read without directory listing."""
+        import pwd
+
+        try:
+            pwd.getpwnam("drlink-egress")
+        except KeyError:
+            self.skipTest("dedicated drlink-egress account not installed")
+
+        with tempfile.TemporaryDirectory(prefix="drlink-egress-psl-") as tmp:
+            root = Path(tmp)
+            root.chmod(0o711)
+            directory = root / "usr/local/lib/drlink/data"
+            directory.mkdir(parents=True)
+            for path in (root / "usr", root / "usr/local", root / "usr/local/lib"):
+                path.chmod(0o755)
+            directory.parent.chmod(0o700)
+            directory.chmod(0o700)
+            suffix = directory / "public_suffix_list.dat"
+            suffix.write_text("// fixture public suffix list\ncom\n", encoding="ascii")
+            suffix.chmod(0o644)
+
+            secret = root / "etc/frp/server_token"
+            secret.parent.mkdir(parents=True)
+            secret.parent.chmod(0o700)
+            secret.write_text("test-private-value\n", encoding="ascii")
+            secret.chmod(0o600)
+
+            env = dict(os.environ, FRP_SERVER_TEST_ROOT=str(root))
+            prepare = subprocess.run(
+                ["bash", "-c", 'source "$1"; frp_server_ensure_sandbox_dirs',
+                 "bash", str(ROOT / "install-server.sh")],
+                env=env, capture_output=True, text=True, timeout=35,
+            )
+            self.assertEqual(prepare.returncode, 0, "installer sandbox preparation failed: %s" % prepare.stderr[-600:])
+
+            code = textwrap.dedent("""
+                import os, sys
+                from pathlib import Path
+                data = Path(sys.argv[1])
+                secret = Path(sys.argv[2])
+                assert (data / "public_suffix_list.dat").read_text().startswith("// fixture")
+                assert not os.access(data, os.R_OK), "PSL directory listing must remain denied"
+                assert not os.access(secret, os.R_OK), "server token must remain inaccessible"
+                print("PSL_LEAST_PRIVILEGE_TRAVERSE=PASS")
+            """)
+            probe = subprocess.run(
+                ["runuser", "-u", "drlink-egress", "--", sys.executable,
+                 "-c", code, str(directory), str(secret)],
+                capture_output=True, text=True, timeout=12,
+            )
+            self.assertEqual(
+                probe.returncode, 0,
+                "PSL_DIRECTORY_UNTRAVERSABLE_OR_ACCESS_WIDENED: %s"
+                % probe.stderr[-500:],
+            )
+            self.assertIn("PSL_LEAST_PRIVILEGE_TRAVERSE=PASS", probe.stdout)
+            self.assertFalse(stat.S_IMODE(directory.stat().st_mode) & 0o005)
+            self.assertEqual(stat.S_IMODE(secret.stat().st_mode), 0o600)
+
+
 if __name__ == "__main__":
     unittest.main()
