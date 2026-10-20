@@ -44,6 +44,7 @@ python3 tests/test-egress-runtime-no-list-permission.py
 python3 tests/test-v24-upgrade-reconcile.py
 python3 tests/test-doctor-proxy-identity.py
 python3 tests/test-doctor-agent-runtime-projection.py
+python3 tests/test-agent-idle-runtime-health.py
 python3 tests/test-agent-catalog-progress.py
 bash tests/test-fresh-client-source-provenance.sh
 python3 tests/test-fresh-client-trust-bootstrap.py

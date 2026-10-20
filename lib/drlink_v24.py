@@ -7625,6 +7625,25 @@ def probe_agent_runtime_unit(*, root: Optional[str] = None) -> dict:
     except Exception:
         lifecycle_intent = "running"
     paused = lifecycle_intent == "paused"
+
+    def inactive_status():
+        if paused:
+            return {"level": "Paused", "detail": "Agent runtime is intentionally paused"}
+        try:
+            from frp_doctor import Paths, agent_runtime_required
+            required = agent_runtime_required(
+                Paths(root), _load_enrolled_client_state(root, None)
+            )
+        except Exception:
+            required = True
+        if not required:
+            return {
+                "level": "Healthy",
+                "detail": "Agent runtime is inactive as expected; no enabled relay services",
+                "runtime_required": False,
+            }
+        return {"level": "Critical", "detail": "drlink-client.service is inactive"}
+
     inject = str(os.environ.get("DRLINK_TEST_RUNTIME_UNIT") or "").strip()
     if inject:
         # Formats: "failed:start-limit-hit" | "active" | "inactive" | "unknown:reason"
@@ -7641,9 +7660,7 @@ def probe_agent_runtime_unit(*, root: Optional[str] = None) -> dict:
                 return {"level": "Warning", "detail": "runtime is active while lifecycle intent is paused"}
             return {"level": "Healthy", "detail": "drlink-client.service is active"}
         if state in ("inactive", "dead"):
-            if paused:
-                return {"level": "Paused", "detail": "Agent runtime is intentionally paused"}
-            return {"level": "Critical", "detail": "drlink-client.service is inactive"}
+            return inactive_status()
         return {"level": "Unknown", "detail": detail or inject}
 
     root_s = str(root or "").rstrip("/")
@@ -7709,9 +7726,7 @@ def probe_agent_runtime_unit(*, root: Optional[str] = None) -> dict:
             return {"level": "Warning", "detail": "runtime is active while lifecycle intent is paused"}
         return {"level": "Healthy", "detail": "drlink-client.service is active"}
     if active in ("inactive", "dead"):
-        if paused:
-            return {"level": "Paused", "detail": "Agent runtime is intentionally paused"}
-        return {"level": "Critical", "detail": "drlink-client.service is inactive"}
+        return inactive_status()
     if active:
         return {"level": "Warning", "detail": "drlink-client.service is %s" % active}
     return {"level": "Unknown", "detail": "drlink-client.service status could not be read"}

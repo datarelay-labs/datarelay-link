@@ -261,6 +261,7 @@ python3 tests/test-v24-bootstrap-catalog-convergence.py
 python3 tests/test-v24-managed-host-policy.py
 python3 tests/test-v24-runtime-allocator.py
 python3 tests/test-doctor-agent-runtime-projection.py
+python3 tests/test-agent-idle-runtime-health.py
 python3 tests/test-v24-mgmt-api-auth.py
 python3 tests/test-v24-cli-ai-master.py
 python3 tests/test-v24-cli-ai-master-closure.py

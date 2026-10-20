@@ -263,6 +263,41 @@ def client_has_enabled_services(state):
     return False
 
 
+def agent_runtime_required(paths, state):
+    """An idle runtime is valid only when desired and rendered intent agree.
+
+    Read the existing catalog without migrations or writes. Unknown inventory
+    keeps normal runtime checks; an empty generated projection alone is not
+    evidence that no services were requested.
+    """
+    if not isinstance(state, dict) or state.get('schema_version') != 1:
+        return True
+    services = state.get('services')
+    if not isinstance(services, dict):
+        return True
+    for rec in services.values():
+        if not isinstance(rec, dict) or rec.get('enabled', True) is not False:
+            return True
+    db_file = paths.p('/var/lib/drlink/drlink.db')
+    if not db_file.is_file():
+        return True
+    try:
+        import sqlite3
+        from urllib.parse import quote
+        uri = 'file:%s?mode=ro' % quote(db_file.as_posix(), safe='/')
+        conn = sqlite3.connect(uri, uri=True, timeout=0.25)
+        try:
+            rows = conn.execute(
+                'SELECT enabled, delete_pending FROM agent_remote_services'
+            ).fetchall()
+        finally:
+            conn.close()
+    except (OSError, sqlite3.Error):
+        return True
+    return any(enabled != 0 or delete_pending != 0
+               for enabled, delete_pending in rows)
+
+
 def macos_map_path(abs_path):
     """Mirror lib/frp-macos.sh frp_macos_map_path for doctor file probes."""
     p = str(abs_path or '')
@@ -3604,10 +3639,10 @@ def check_client(report, paths, facts, skip_network):
         report.add('frpc_config', FAIL, 'frpc.toml is missing', '', 'sudo drlink system synchronize, or restore from backup', 'state')
 
     check_agent_runtime_projection(report, paths, state)
-    if state is not None and not client_has_enabled_services(state):
+    if not agent_runtime_required(paths, state):
         info = (facts.get('units') or {}).get('frpc') or {}
         active = str(info.get('active') or 'unknown')
-        if active in ('inactive', 'failed'):
+        if active == 'inactive' and str(info.get('result') or 'success') == 'success':
             report.add(
                 'frpc_service', PASS,
                 'frpc is inactive because no enabled services are published',

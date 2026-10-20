@@ -5955,7 +5955,7 @@ class ControlPlane:
             runtime = probe_agent_runtime_unit(root=self.root)
             level = runtime.get("level") or "Unknown"
             detail = runtime.get("detail") or "unavailable"
-            if level == "Healthy":
+            if level == "Healthy" and runtime.get("runtime_required") is not False:
                 extra.append("Agent Runtime   : Healthy")
             else:
                 extra.append("Agent Runtime   : %s — %s" % (level, detail))
@@ -5967,7 +5967,9 @@ class ControlPlane:
                 identity = load_agent_identity(self.root) or {}
                 if detect_server_reachable(self, self.root):
                     from drlink_v24_runtime import _current_runtime_ready
-                    if level == 'Healthy' and _current_runtime_ready(self.root, '', {}):
+                    if level == 'Healthy' and runtime.get('runtime_required') is False:
+                        server_line = 'Management connected; no enabled relay services'
+                    elif level == 'Healthy' and _current_runtime_ready(self.root, '', {}):
                         server_line = 'Connected'
                     else:
                         server_line = 'Management reachable; Agent transport unverified'
