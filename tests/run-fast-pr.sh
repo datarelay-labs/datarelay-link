@@ -26,6 +26,7 @@ python3 tests/test-client-python-runtime.py
 python3 tests/test-cli-reconciliation-role-parser-regression.py
 python3 tests/test-permission-dependency-recovery.py
 python3 tests/test-internet-access-recovery-guidance.py
+python3 tests/test-doctor-egress-sqlite-authority.py
 python3 tests/test-enrollment-retention-recovery-guidance.py
 python3 tests/test-public-help-required-operands.py
 python3 tests/test-native-restore-confirmation.py
