@@ -5909,7 +5909,10 @@ class ControlPlane:
         )
 
     def status(self) -> dict:
+        from drlink_v24 import detect_cli_role
+
         rev = self.current_revision()
+        role = detect_cli_role(self.root)
         gens = {r["plane"]: dict(r) for r in self.conn.execute("SELECT * FROM runtime_generations")}
         clients = self.conn.execute("SELECT COUNT(*) FROM clients").fetchone()[0]
         services = self.conn.execute("SELECT COUNT(*) FROM published_services WHERE released = 0").fetchone()[0]
@@ -5918,9 +5921,30 @@ class ControlPlane:
             integrity_check(self.conn)
         except Exception:
             db_ok = False
+
+        def agent_server_policy_lag(plane: str, generation: dict) -> bool:
+            # Agent Bundles advance local desired-state revisions, then verify
+            # FRPC through the Agent activation path. They deliberately do not
+            # recompile these Server authorization artifacts. Exempt only an
+            # internally coherent old active row, never an explicit failure.
+            value = generation.get("generation")
+            return (
+                role == "agent"
+                and plane in ("remote", "internet", "ai")
+                and generation.get("status") == "active"
+                and type(value) is int
+                and type(generation.get("db_revision")) is int
+                and generation["db_revision"] == value
+                and 0 <= value < rev
+                and generation.get("error") in (None, "")
+            )
+
         mismatch = any(
-            g.get("status") == "mismatch" or (g.get("generation") != rev and g.get("status") == "active")
-            for g in gens.values()
+            g.get("status") == "mismatch" or (
+                g.get("generation") != rev and g.get("status") == "active"
+                and not agent_server_policy_lag(plane, g)
+            )
+            for plane, g in gens.items()
         )
         return {
             "db_healthy": db_ok,
