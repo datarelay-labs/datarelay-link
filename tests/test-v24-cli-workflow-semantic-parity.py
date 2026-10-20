@@ -159,6 +159,32 @@ class RemoteAccessSemanticParity(_Base):
         self.assertIn("ALLOW", out2)
 
 
+class CancelledRuleAttributeMutation(_Base):
+    def test_last_whitelist_rule_disable_cancel_has_nonzero_exit(self):
+        """A public CLI cancel must not report success to automation."""
+        v24.set_network_object(self.plane, "cancel-source", type="ip", value="192.0.2.151", oneshot=True)
+        v24.set_network_object(self.plane, "cancel-destination", type="ip", value="10.254.204.151", oneshot=True)
+        v24.set_access_rule(
+            self.plane, "remote", "cancel-last-allow",
+            mode="whitelist", source="cancel-source",
+            destination="cancel-destination", service="ssh",
+            enabled=True, oneshot=True,
+        )
+        revision_before = self.plane.current_revision()
+        self.assertTrue(self.plane._get_rule("remote", "cancel-last-allow")["enabled"])
+        with mock.patch.dict(os.environ, {"DRLINK_CONFIRM": ""}), mock.patch("sys.stdin", io.StringIO("")):
+            rc, out, err = self._run(
+                "unset", "remote-access", "cancel-last-allow", "enabled"
+            )
+        self.assertNotEqual(rc, 0, "Cancelled public mutation must not exit successfully")
+        self.assertIn("Cancelled.", out)
+        self.assertIn("No changes were applied.", out)
+        self.assertNotIn("Traceback", out + err)
+        self.assertEqual(self.plane.current_revision(), revision_before)
+        self.assertTrue(self.plane._get_rule("remote", "cancel-last-allow")["enabled"])
+
+
+
 class InternetAccessSemanticParity(_Base):
     def test_fqdn_resolution_failure_is_reported_without_allow(self):
         v24.set_network_object(self.plane, "agent-src", type="ip", value="10.10.10.20", oneshot=True)

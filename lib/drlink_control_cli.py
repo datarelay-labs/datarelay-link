@@ -1145,7 +1145,9 @@ def _unset(plane: ControlPlane, rest, client_sel):
             _run(plane.unset_rule_service, plane_name, name, rest[3], int(rest[4]))
             return 0
         if rest[2] == "enabled":
-            _run(plane.set_rule_enabled, plane_name, name, False)
+            result = _run(plane.set_rule_enabled, plane_name, name, False)
+            if isinstance(result, dict) and result.get("cancelled"):
+                return 1
             return 0
         raise SystemExit("Unknown unset")
     if res == "published-service":
