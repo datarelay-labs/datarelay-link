@@ -252,6 +252,7 @@ python3 tests/test-release-manifest-schema.py
 ./tests/test-fresh-install-sandbox-rollback.sh
 python3 tests/test-audit-log.py
 python3 tests/test-audit-tail-validation.py
+python3 tests/test-public-audit-control-history.py
 ./tests/test-frp-compatibility.sh
 ./tests/test-backup-restore.sh
 ./tests/test-server-uninstall-fail-closed.sh
