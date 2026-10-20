@@ -2364,7 +2364,10 @@ frp_client_journal_cursor() {
     fi
     return 0
   fi
-  journalctl -u "$(frp_client_runtime_unit)" -n 0 --show-cursor --no-pager 2>/dev/null \
+  # A management-only Agent has no client-unit journal before its first
+  # proxy activation. Use the actual journal tail as the pre-start boundary;
+  # readiness still reads only client-unit entries after this cursor.
+  journalctl -n 0 --show-cursor --no-pager 2>/dev/null \
     | sed -n 's/^-- cursor: //p' | tail -n1 || true
 }
 
