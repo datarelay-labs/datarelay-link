@@ -71,6 +71,7 @@ try:
     # inside the canonical policy therefore need known-path preloading.
     _load_module("drlink_control_db", "drlink_control_db.py")
     _load_module("drlink_control_plane", "drlink_control_plane.py")
+    _load_module("drlink_v24", "drlink_v24.py")
     RP = _load_module("drlink_runtime_policy", "drlink_runtime_policy.py")
 except ImportError:
     RP = None
