@@ -62,6 +62,7 @@ python3 tests/test-v24-readonly-selector-operands.py
 python3 tests/test-v24-admin-concurrency-ux.py
 python3 tests/test-v24-reference-delete-serialization.py
 python3 tests/test-v24-reference-delete-upsert-race.py
+python3 tests/test-v24-network-object-remote-reference.py
 python3 tests/test-p013-policy-hotpath.py
 python3 tests/test-v24-offline-tombstone-duplicate.py
 

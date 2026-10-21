@@ -1418,6 +1418,30 @@ class ControlPlane:
                     "display": "Fixed TCP: %s" % row["name"],
                 }
             )
+        # Static Relay destinations remain named Network Object dependencies,
+        # not disposable target-address snapshots. Disabled publications still
+        # own their configuration/reservation; only released ones stop referring
+        # to the object. Managed Host destinations use immutable client_id below.
+        for row in self.conn.execute(
+            "SELECT s.name, c.label, c.hostname, c.id AS owner_id "
+            "FROM remote_service_meta m "
+            "JOIN published_services s ON s.id = m.service_id "
+            "JOIN clients c ON c.id = s.client_id "
+            "WHERE m.destination_name = ? COLLATE NOCASE "
+            "AND COALESCE(m.destination_client_id, '') = '' "
+            "AND IFNULL(s.released, 0) = 0 ORDER BY c.id, s.name",
+            (obj["name"],),
+        ):
+            owner = row["label"] or row["hostname"] or row["owner_id"][:8]
+            refs.append(
+                {
+                    "kind": "remote-service",
+                    "name": row["name"],
+                    "owner": owner,
+                    "section": "Remote Services",
+                    "display": "Remote Service: %s (Agent %s)" % (row["name"], owner),
+                }
+            )
         if obj["type"] == "managed_endpoint":
             for row in self.conn.execute(
                 "SELECT r.name FROM ai_rule_targets t JOIN ai_access_rules r ON r.id = t.rule_id "
