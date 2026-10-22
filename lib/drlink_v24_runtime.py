@@ -538,16 +538,27 @@ def _runtime_log_cursor() -> str:
     return cursor
 
 
+def _supervisor_process_running(pid):
+    # The unit template may exec the legacy frpc binary for an existing Admin
+    # configuration. Unit metadata alone is not evidence of the live runtime.
+    try:
+        args = Path('/proc/%d/cmdline' % int(pid)).read_bytes().split(b'\0')
+        return b'/usr/local/lib/drlink/drlink_frpc_supervisor.py' in args
+    except (OSError, ValueError, TypeError):
+        return False
+
+
 def _supervised_invocation(root=None):
     if (root and str(root).rstrip('/') not in ('', '/')) or not sys.platform.startswith('linux'):
         return ''
     try:
         props = subprocess.check_output(
-            ['systemctl', 'show', 'drlink-client', '-p', 'ActiveState', '-p', 'InvocationID', '-p', 'ExecStart'],
+            ['systemctl', 'show', 'drlink-client', '-p', 'ActiveState', '-p', 'InvocationID', '-p', 'ExecStart', '-p', 'MainPID'],
             text=True, timeout=5)
         data = dict(line.split('=', 1) for line in props.splitlines() if '=' in line)
         if (data.get('ActiveState') == 'active'
                 and 'drlink_frpc_supervisor.py' in data.get('ExecStart', '')
+                and _supervisor_process_running(data.get('MainPID'))
                 and re.fullmatch(r'[0-9a-f]{32}', data.get('InvocationID', ''))
                 and _trusted_existing_frpc_admin(_frpc_toml_path(root), _frpc_toml_path(root).read_text()) is None):
             return data['InvocationID']
@@ -580,13 +591,14 @@ def _current_runtime_ready(root, host_id, expected) -> bool:
         return False
     try:
         props = subprocess.check_output(
-            ['systemctl', 'show', 'drlink-client', '-p', 'ActiveState', '-p', 'InvocationID', '-p', 'ExecStart'],
+            ['systemctl', 'show', 'drlink-client', '-p', 'ActiveState', '-p', 'InvocationID', '-p', 'ExecStart', '-p', 'MainPID'],
             text=True, timeout=5)
         data = dict(line.split('=', 1) for line in props.splitlines() if '=' in line)
         invocation = data.get('InvocationID', '')
         if data.get('ActiveState') != 'active' or not re.fullmatch(r'[0-9a-f]{32}', invocation):
             return False
         if ('drlink_frpc_supervisor.py' in data.get('ExecStart', '')
+                and _supervisor_process_running(data.get('MainPID'))
                 and _trusted_existing_frpc_admin(_frpc_toml_path(root), _frpc_toml_path(root).read_text()) is None):
             from drlink_frpc_supervisor import live_status
             return live_status(_frpc_toml_path(root), invocation) is not None

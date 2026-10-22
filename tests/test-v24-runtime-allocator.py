@@ -31,6 +31,17 @@ def _write_json(path: Path, data: dict) -> None:
 
 
 class RuntimeRenderTests(unittest.TestCase):
+    def test_unit_template_does_not_misidentify_legacy_admin_exec_as_supervised(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            config = Path(tmp, 'frpc.toml')
+            config.write_text('serverAddr = "host"\nauth.token = "fixture"\n')
+            props = ('ActiveState=active\nInvocationID=' + 'a' * 32
+                     + '\nExecStart=/usr/bin/python3 drlink_frpc_supervisor.py\nMainPID=123\n')
+            with (mock.patch.object(runtime.subprocess, 'check_output', return_value=props),
+                  mock.patch.object(runtime, '_frpc_toml_path', return_value=config),
+                  mock.patch.object(runtime, '_supervisor_process_running', return_value=False, create=True)):
+                self.assertEqual(runtime._supervised_invocation(), '')
+
     def test_existing_runtime_requires_current_connection_epoch(self):
         service = {'web': {'id': 'rs-web', 'enabled': True}}
         props = 'ActiveState=active\nInvocationID=' + 'a' * 32 + '\n'
