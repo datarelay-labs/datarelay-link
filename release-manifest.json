@@ -3,7 +3,7 @@
   "project_version": "2.4.0",
   "frp_version": "0.71.0",
   "channel": "development",
-  "git_ref": "30469b78db01880c5643e6499e3d687a2343db89",
+  "git_ref": "f3d340af228dab6f5814ed26465cfc5b8589b5e4",
   "owner": "datarelay-labs",
   "repo": "datarelay-link",
   "https_raw_base": "https://raw.githubusercontent.com/datarelay-labs/datarelay-link",
@@ -66,22 +66,22 @@
     "bootstrap-client.sh": {
       "path": "dist/bootstrap-client.sh",
       "url_path": "dist/bootstrap-client.sh",
-      "sha256": "68af95b08d3d5e3baa88b49211e60e8063cf6862e3a540bf9a411d398400b4ab"
+      "sha256": "1c59cb0c3ae141e3f07b335af33572dac7b0ba7fd492fc51129b8a0996b6c4a9"
     },
     "bootstrap-client.ps1": {
       "path": "dist/bootstrap-client.ps1",
       "url_path": "dist/bootstrap-client.ps1",
-      "sha256": "4352160630e96175e51d0adbd393893b537f4f4da5684a8ddc4fd90c4a220d1d"
+      "sha256": "4dc70f04535333aa4831ef02f75066735d40a4d0874451cf64955722e48d922f"
     },
     "bootstrap-server.sh": {
       "path": "dist/bootstrap-server.sh",
       "url_path": "dist/bootstrap-server.sh",
-      "sha256": "c4c208fc906439f0c9272fcc368e779548befa0ad683bbd9cbd08a4b946c289f"
+      "sha256": "5b1c510682dd81bd71df8d9e7ba2f36c9fcee69ecac950f8e9da186976834869"
     },
     "uninstall-client.sh": {
       "path": "dist/uninstall-client.sh",
       "url_path": "dist/uninstall-client.sh",
-      "sha256": "18b1e8ff1beb49773bcb6cc6b7f1ff5fbeb3e9cdeda7aec749abe0dbd0ea14b7"
+      "sha256": "c7ac1ebc4ed5dc0ca8f6d67531a8b15a16aac2fa33dbddaab99c9e41f1387554"
     },
     "uninstall-server.sh": {
       "path": "dist/uninstall-server.sh",
@@ -89,9 +89,9 @@
       "sha256": "e49f8fbf55301fb00ce456cb880fb0e3083e216f7e44404f406e9de8362671c7"
     }
   },
-  "source_head": "30469b78db01880c5643e6499e3d687a2343db89",
+  "source_head": "f3d340af228dab6f5814ed26465cfc5b8589b5e4",
   "features": {
     "mcp_included": true
   },
-  "immutable_source_ref": "30469b78db01880c5643e6499e3d687a2343db89"
+  "immutable_source_ref": "f3d340af228dab6f5814ed26465cfc5b8589b5e4"
 }

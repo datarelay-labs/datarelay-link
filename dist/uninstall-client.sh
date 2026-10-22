@@ -1,6 +1,29 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Resolve discovery/invalid arguments before privilege checks or host mutation.
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -h|--help)
+      cat <<'EOF'
+Usage: uninstall-client.sh
+       uninstall-client.sh --help
+
+Remove the Data Relay Link Agent role completely from this host.
+Local software, identity, configuration and autostart state are removed.
+Server-side Managed Host records and endpoint reservations remain.
+
+  -h, --help  Show this help without changing the host.
+EOF
+      exit 0
+      ;;
+    *)
+      echo "ERROR: unknown option: $1" >&2
+      exit 2
+      ;;
+  esac
+done
+
 if [[ ${EUID} -ne 0 && -z "${FRP_UNINSTALL_TEST_ROOT:-}" && -z "${FRP_CLIENT_TEST_ROOT:-}" ]]; then
   echo 'Run as root' >&2
   exit 1
