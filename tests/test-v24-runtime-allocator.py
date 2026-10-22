@@ -232,6 +232,43 @@ class FRPAuthenticatedReloadSecurityTests(unittest.TestCase):
 
 
 class RuntimeApplyRemoveTests(unittest.TestCase):
+    def _populate_capacity_projection(self):
+        # Distinct canonical services with a shared local target are sufficient
+        # to expose projection work growth; no wall-clock/SLO assertion.
+        for index in range(1, 199):
+            self.plane.conn.execute(
+                "INSERT INTO agent_remote_services "
+                "(name,destination,service_object,enabled,status,endpoint_host,endpoint_port,"
+                "pending_allocation,delete_pending,pool_class,reason,updated_at) "
+                "SELECT ?,destination,service_object,enabled,status,endpoint_host,?,"
+                "pending_allocation,delete_pending,pool_class,reason,updated_at "
+                "FROM agent_remote_services WHERE name='web'",
+                ('capacity-%s' % index, 6010 + index))
+        self.plane.conn.commit()
+
+    def test_capacity_projection_reads_identity_once_and_refreshes_next_call(self):
+        self._populate_capacity_projection()
+        state = runtime.load_client_state(self.tmp)
+        with mock.patch.object(v24, 'load_agent_identity', wraps=v24.load_agent_identity) as identity:
+            first = runtime.build_desired_runtime_services(self.plane, state, root=self.tmp)
+            self.assertEqual(sum(bool(rec.get('v24_remote_service')) for rec in first.values()), 199)
+            self.assertEqual(identity.call_count, 1)
+            second = runtime.build_desired_runtime_services(self.plane, state, root=self.tmp)
+            self.assertEqual(second, first)
+            self.assertEqual(identity.call_count, 2)  # no cache across operations
+
+    def test_capacity_single_service_status_only_resolves_its_target(self):
+        self._populate_capacity_projection()
+        queries = []
+        self.plane.conn.set_trace_callback(queries.append)
+        try:
+            status, _ = runtime.verified_remote_service_status(self.plane, 'web', root=self.tmp)
+        finally:
+            self.plane.conn.set_trace_callback(None)
+        self.assertEqual(status, 'DEGRADED')  # fixture has no installed v2.4 proxy
+        targets = [q for q in queries if "kind='service-object'" in q]
+        self.assertEqual(len(targets), 1, 'one status must not resolve all 199 targets')
+
     def _provision_existing_secure_admin_fixture(self):
         # Explicitly test the already-approved/admin-provisioned path;
         # the product must not auto-open a new HTTP management endpoint.

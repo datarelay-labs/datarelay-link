@@ -202,6 +202,7 @@ def build_desired_runtime_services(
     state: dict,
     *,
     root: Optional[str] = None,
+    only_name: Optional[str] = None,
 ) -> dict:
     """Merge legacy client-state services with v2.4 Remote Services."""
     services = {}
@@ -227,8 +228,12 @@ def build_desired_runtime_services(
         services[sid_s] = dict(rec)
         services[sid_s]["id"] = services[sid_s].get("id") or sid_s
 
+    # Operation-local only: never retain identity across lifecycle/CLI calls.
+    identity = None
     for row in rows:
         name = str(row["name"])
+        if only_name is not None and name.lower() != only_name.lower():
+            continue
         proxy_id = remote_service_proxy_id(name)
         enabled = bool(row["enabled"]) and str(row["status"] or "") != "DISABLED"
         endpoint_port = row["endpoint_port"]
@@ -267,7 +272,8 @@ def build_desired_runtime_services(
             if sobj is not None:
                 target_port = int(sobj["port"] if not isinstance(sobj, dict) else sobj.get("port"))
             dest = str(row["destination"] or "")
-            identity = v24.load_agent_identity(root)
+            if identity is None:
+                identity = v24.load_agent_identity(root)
             host_name = identity.get("hostname") or identity.get("label") or ""
             self_machine_id = str(identity.get("machine_id") or "").strip()
             bound_client_id = str(row["destination_client_id"] or "").strip()
@@ -1237,7 +1243,9 @@ def verified_remote_service_status(
     state = load_client_state(actual_root)
     proxy_id = remote_service_proxy_id(name)
     record = (state.get('services') or {}).get(proxy_id)
-    desired = build_desired_runtime_services(plane_db, state, root=actual_root).get(proxy_id)
+    desired = build_desired_runtime_services(
+        plane_db, state, root=actual_root, only_name=name
+    ).get(proxy_id)
     installed = _configured_v24_runtime_ports(actual_root)
     if (not record or not desired or record != desired or row['pending_allocation']
             or row['endpoint_port'] is None
