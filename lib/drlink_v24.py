@@ -6492,9 +6492,17 @@ def set_remote_service_agent(
     root: Optional[str] = None,
     server_reachable: bool = True,
     reconcile_existing: bool = False,
+    _local_validation: bool = False,
 ) -> dict:
     name = validate_public_name(name, "Remote Service name")
-    if not reconcile_existing and not _agent_synchronize_lock_held():
+    # Bundle previews execute local CRUD in a rollback-only savepoint. They
+    # must not wait on or create the live management lock. This exemption
+    # cannot authorize network writes or runtime activation.
+    if _local_validation and (server_reachable or reconcile_existing
+            or not getattr(plane_db, "_batch_mode", False)
+            or not plane_db.conn.in_transaction):
+        raise ControlPlaneError("Local Agent validation requires an offline batch transaction")
+    if not _local_validation and not reconcile_existing and not _agent_synchronize_lock_held():
         import drlink_v24_runtime as runtime
         from frp_control_locks import ExclusiveFileLock, LockTimeout
 

@@ -38,6 +38,7 @@ python3 tests/test-full-e2e-public-recovery-regressions.py
 python3 tests/test-cli-rule-selector-and-runtime-recovery.py
 python3 tests/test-native-public-consent.py
 python3 tests/test-client-uninstall-arguments.py
+python3 tests/test-v24-agent-bundle-synchronization-lock.py
 bash tests/test-status-surface-parity.sh
 bash tests/test-proxy-readiness-session-causality.sh
 bash tests/test-client-proxy-health-wait.sh
