@@ -538,6 +538,34 @@ def _runtime_log_cursor() -> str:
     return cursor
 
 
+def _supervised_invocation(root=None):
+    if (root and str(root).rstrip('/') not in ('', '/')) or not sys.platform.startswith('linux'):
+        return ''
+    try:
+        props = subprocess.check_output(
+            ['systemctl', 'show', 'drlink-client', '-p', 'ActiveState', '-p', 'InvocationID', '-p', 'ExecStart'],
+            text=True, timeout=5)
+        data = dict(line.split('=', 1) for line in props.splitlines() if '=' in line)
+        if (data.get('ActiveState') == 'active'
+                and 'drlink_frpc_supervisor.py' in data.get('ExecStart', '')
+                and re.fullmatch(r'[0-9a-f]{32}', data.get('InvocationID', ''))
+                and _trusted_existing_frpc_admin(_frpc_toml_path(root), _frpc_toml_path(root).read_text()) is None):
+            return data['InvocationID']
+    except (OSError, subprocess.SubprocessError):
+        pass
+    return ''
+
+
+def _wait_supervised_runtime(root, host_id, desired):
+    import time
+    until = time.monotonic() + 60
+    while time.monotonic() < until:
+        if _current_runtime_ready(root, host_id, desired):
+            return
+        time.sleep(.2)
+    raise ControlPlaneError('Isolated proxy generation could not be verified; previous configuration will be restored')
+
+
 def _current_runtime_ready(root, host_id, expected) -> bool:
     if any(str(os.environ.get(key) or '').lower() in ('1', 'yes', 'true', 'y')
            for key in ('DRLINK_FAULT_RUNTIME_VERIFY', 'DRLINK_FAULT_RUNTIME_RESTART', 'DRLINK_FAULT_RUNTIME_CONFIG')):
@@ -552,12 +580,16 @@ def _current_runtime_ready(root, host_id, expected) -> bool:
         return False
     try:
         props = subprocess.check_output(
-            ['systemctl', 'show', 'drlink-client', '-p', 'ActiveState', '-p', 'InvocationID'],
+            ['systemctl', 'show', 'drlink-client', '-p', 'ActiveState', '-p', 'InvocationID', '-p', 'ExecStart'],
             text=True, timeout=5)
         data = dict(line.split('=', 1) for line in props.splitlines() if '=' in line)
         invocation = data.get('InvocationID', '')
         if data.get('ActiveState') != 'active' or not re.fullmatch(r'[0-9a-f]{32}', invocation):
             return False
+        if ('drlink_frpc_supervisor.py' in data.get('ExecStart', '')
+                and _trusted_existing_frpc_admin(_frpc_toml_path(root), _frpc_toml_path(root).read_text()) is None):
+            from drlink_frpc_supervisor import live_status
+            return live_status(_frpc_toml_path(root), invocation) is not None
         logs = subprocess.check_output(
             ['journalctl', '_SYSTEMD_INVOCATION_ID=' + invocation, '-n', '2000', '--no-pager'],
             text=True, timeout=15).splitlines()
@@ -874,6 +906,7 @@ def _apply_agent_runtime_serialized(
 
     restart_attempted = False
     reload_attempted = False
+    isolated_attempted = False
     hot_reload_admin = _trusted_existing_frpc_admin(prev_toml, backup_toml)
     artifacts_written = False
     try:
@@ -933,7 +966,8 @@ def _apply_agent_runtime_serialized(
             and _unchanged_frpc_common(backup_toml, toml_text)
             and _current_runtime_ready(root, host_id, state.get("services") or {})
         )
-        cursor = _runtime_log_cursor() if real_runtime and not reload_safe else None
+        isolated_runtime = bool(_supervised_invocation(root))
+        cursor = _runtime_log_cursor() if real_runtime and not reload_safe and not isolated_runtime else None
         # The journal cursor and authenticated reload probe may take time.
         # Do not write files from a desired set built before a concurrent
         # signed delete, disable, or endpoint change. We cannot hold a DB
@@ -952,7 +986,10 @@ def _apply_agent_runtime_serialized(
         artifacts_written = True
         _atomic_write_json(prev_state_path, new_state)
         _atomic_write_text(prev_toml, toml_text)
-        if reload_safe:
+        if isolated_runtime:
+            isolated_attempted = True
+            _wait_supervised_runtime(root, host_id, desired)
+        elif reload_safe:
             reload_attempted = True
             _reload_frpc_authenticated(
                 prev_toml, root=root, host_id=host_id, expected=desired,
@@ -989,7 +1026,9 @@ def _apply_agent_runtime_serialized(
                 _atomic_write_text(prev_state_path, backup_state)
             if artifacts_written and backup_toml is not None:
                 _atomic_write_text(prev_toml, backup_toml)
-            if restart_attempted and backup_toml is not None:
+            if isolated_attempted and backup_toml is not None:
+                _wait_supervised_runtime(root, host_id, state.get('services') or {})
+            elif restart_attempted and backup_toml is not None:
                 _restart_frpc(root)
             elif reload_attempted and backup_toml is not None:
                 _reload_frpc_authenticated(

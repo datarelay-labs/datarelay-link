@@ -2,6 +2,16 @@
 
 **Source:** frozen Codex Full User E2E `codex-reviewed-20261010T085035Z`, actionable `F001` and `F007`. This is **ChatGPT engineering analysis**, not a substitute for the black-box operator's findings, not full E2E evidence, and not authorization to change shared/production configuration.
 
+## Current credential-free Linux remediation (Issue165 ROUND7)
+
+The owner explicitly requested the confirmed R6-F001 root-cause fix after runnable native testing, while prohibiting new Admin credentials. The Linux implementation therefore isolates each proxy in a child frpc process **inside the existing drlink-client systemd unit**. It reuses the enrolled transport identity and certificate verification, stable proxy names and allocator ownership. It creates no listener or new credential. Windows and macOS retain their existing separate runtime paths and require independent qualification.
+
+Canonical client-state.json/frpc.toml and the existing Agent synchronization/runtime locks remain authoritative. A product-owned reconciler projects each proxy into a mode0600 TOML under private /etc/frp/runtime-proxies. Unchanged proxy processes keep their PID and connections; only changed/removed proxy processes stop. Common transport/auth changes and explicit lifecycle restart intentionally affect the whole runtime. Existing securely provisioned Admin configurations retain the legacy authenticated reload path.
+
+A private nonsecret status snapshot binds the exact canonical configuration hash, systemd invocation, live parent/child process start times and each child's latest successful login/proxy-registration epoch. Readiness fails closed for disconnected, dead, stale or mismatched generations. Atomic canonical writes drive reconciliation; failed activation restores the prior canonical files and waits for verified convergence without a whole-unit restart. The standard product updater converges the unit once when migrating; ordinary reboot/start restores the desired proxy set. Derived private TOML remains product secret-bearing state and must never be exported into receipts.
+
+Acceptance requires deterministic process-lifetime/epoch/privacy regression plus matched installed native HTTP/TCP collision and long-session traffic. Historical results below remain historical; this design alone closes no original E2E parent and grants no release authority. The earlier Admin-only provisioning dependency below applies to that older optional path, not to this credential-free implementation.
+
 ## Verified from source and deterministic regression
 
 - `lib/drlink_v24_runtime.py::apply_agent_runtime` rebuilds `frpc.toml` from canonical Remote Services. Before commit `df101fbf`, any difference between the full JSON client-state and the generated state forced a **complete `drlink-client` FRP restart even when the actual rendered proxy TOML and verified runtime generation were unchanged**.

@@ -239,6 +239,25 @@ class RuntimeApplyRemoveTests(unittest.TestCase):
         self.assertIsNotNone(runtime._trusted_existing_frpc_admin(config, text))
         return config, state
 
+    def test_isolated_apply_and_failed_rollback_never_restart_unrelated_runtime(self):
+        from drlink_control_db import ControlPlaneError
+        config = Path(self.tmp, 'etc/frp/frpc.toml')
+        before = config.read_bytes()
+        state = Path(self.tmp, 'etc/frp/client-state.json')
+        before_state = state.read_bytes()
+        with (mock.patch.object(runtime, '_supervised_invocation', return_value='a' * 32),
+              mock.patch.object(runtime, '_current_runtime_ready', return_value=True),
+              mock.patch.object(runtime, '_restart_frpc') as restart,
+              mock.patch.object(runtime, '_wait_supervised_runtime',
+                                side_effect=[ControlPlaneError('registration failed'), None]) as wait):
+            result = runtime.apply_agent_runtime(self.plane, root=self.tmp)
+        self.assertFalse(result['ok'])
+        self.assertNotIn('RECOVERY_REQUIRED', result['error'])
+        self.assertEqual(wait.call_count, 2)
+        restart.assert_not_called()
+        self.assertEqual(config.read_bytes(), before)
+        self.assertEqual(state.read_bytes(), before_state)
+
     def test_F007_securely_provisioned_admin_reloads_changed_proxy_without_full_restart(self):
         config, state = self._provision_existing_secure_admin_fixture()
         with (mock.patch.object(runtime, "_current_runtime_ready", return_value=True),
