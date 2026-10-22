@@ -5340,7 +5340,7 @@ frp_agent_payload_libdir() {
 
 frp_agent_lib_payload_files() {
   local here
-  here="$(frp_agent_payload_libdir)"
+  here="${1:-${_FRP_CLIENT_CANDIDATE_PAYLOAD_LIBDIR:-$(frp_agent_payload_libdir)}}"
   PYTHONPATH="${here}${PYTHONPATH:+:$PYTHONPATH}" python3 -c \
     'from drlink_agent_payload import agent_lib_files; print("\n".join(agent_lib_files()))'
 }
@@ -5451,11 +5451,11 @@ frp_client_install_management_files() {
 }
 
 frp_client_upgrade_destinations() {
-  local f
+  local f payload_lib="${1:-}"
   while IFS= read -r f; do
     [[ -n "$f" ]] || continue
     printf '%s\n' "usr/local/lib/drlink/${f}:0644:lib/${f}"
-  done < <(frp_agent_lib_payload_files)
+  done < <(frp_agent_lib_payload_files "$payload_lib")
   printf '%s\n' \
     "usr/local/lib/drlink/com.datarelay.drlink.frpc.plist:0644:client/com.datarelay.drlink.frpc.plist" \
     "usr/local/lib/drlink/com.datarelay.drlink.lifecycle.plist:0644:client/com.datarelay.drlink.lifecycle.plist" \
@@ -5840,7 +5840,7 @@ frp_client_upgrade_stage() {
     }
     mkdir -p "$(dirname "${staged}/${rel}")"
     install -m "$mode" "${source}/${src}" "${staged}/${rel}"
-  done < <(frp_client_upgrade_destinations)
+  done < <(frp_client_upgrade_destinations "${source}/lib")
 }
 
 frp_client_upgrade_install_staged() {
@@ -6179,6 +6179,9 @@ PY
   # shellcheck disable=SC2064
   trap 'rm -rf "'"$staged"'"; _frp_client_upgrade_release_lock' RETURN
 
+  # Keep one candidate-owned payload catalog through staging, backup, install,
+  # verification and rollback. The installed catalog can change mid-upgrade.
+  local _FRP_CLIENT_CANDIDATE_PAYLOAD_LIBDIR="${source}/lib"
   echo "Staging new management files..."
   frp_client_upgrade_stage "$source" "$staged" || return 1
 
