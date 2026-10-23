@@ -106,8 +106,13 @@ class AuditLogTests(unittest.TestCase):
         proc = subprocess.run(["bash", str(repo / "tools/drlink"), "system", "audit"],
                               env=env, capture_output=True, text=True, timeout=30)
         self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
-        row = next(line for line in proc.stdout.splitlines() if "restore.failed" in line)
-        self.assertEqual(row.split()[-1], "failure")
+        lines = proc.stdout.splitlines()
+        header = next(line for line in lines if line.startswith("TIME (UTC)"))
+        row = next(line for line in lines if "restore.failed" in line)
+        # RESULT precedes REVISION and ACTOR; the final token is the actor.
+        result_start = header.index("RESULT")
+        revision_start = header.index("REVISION")
+        self.assertEqual(row[result_start:revision_start].strip(), "failure")
 
 
 if __name__ == "__main__":
