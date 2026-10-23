@@ -159,6 +159,32 @@ class RemoteAccessSemanticParity(_Base):
         self.assertIn("ALLOW", out2)
 
 
+class CancelledRuleAttributeMutation(_Base):
+    def test_last_whitelist_rule_disable_cancel_has_nonzero_exit(self):
+        """A public CLI cancel must not report success to automation."""
+        v24.set_network_object(self.plane, "cancel-source", type="ip", value="192.0.2.151", oneshot=True)
+        v24.set_network_object(self.plane, "cancel-destination", type="ip", value="10.254.204.151", oneshot=True)
+        v24.set_access_rule(
+            self.plane, "remote", "cancel-last-allow",
+            mode="whitelist", source="cancel-source",
+            destination="cancel-destination", service="ssh",
+            enabled=True, oneshot=True,
+        )
+        revision_before = self.plane.current_revision()
+        self.assertTrue(self.plane._get_rule("remote", "cancel-last-allow")["enabled"])
+        with mock.patch.dict(os.environ, {"DRLINK_CONFIRM": ""}), mock.patch("sys.stdin", io.StringIO("")):
+            rc, out, err = self._run(
+                "unset", "remote-access", "cancel-last-allow", "enabled"
+            )
+        self.assertNotEqual(rc, 0, "Cancelled public mutation must not exit successfully")
+        self.assertIn("Cancelled.", out)
+        self.assertIn("No changes were applied.", out)
+        self.assertNotIn("Traceback", out + err)
+        self.assertEqual(self.plane.current_revision(), revision_before)
+        self.assertTrue(self.plane._get_rule("remote", "cancel-last-allow")["enabled"])
+
+
+
 class InternetAccessSemanticParity(_Base):
     def test_fqdn_resolution_failure_is_reported_without_allow(self):
         v24.set_network_object(self.plane, "agent-src", type="ip", value="10.10.10.20", oneshot=True)
@@ -545,6 +571,85 @@ class BundleSecurityImpact(_Base):
         )
         text = "\n".join(plan.security_impact)
         self.assertIn("DENY ALL", text)
+
+
+
+
+class NetworkObjectInvalidValuePrivacy(_Base):
+    """S-014/S-024: invalid IP/CIDR/FQDN must fail closed without echoing paste."""
+
+    def test_network_object_invalid_input_never_echoes_original(self):
+        marker = "TEST_ONLY_SECRET_MARKER_88_DO_NOT_ECHO"
+        cases = (
+            ("ip", "token:" + marker, "Invalid host value"),
+            ("cidr", "192.0.2.0/" + marker, "Invalid network value"),
+            ("fqdn", "https://user:" + marker + "@api.example.com/v1", "Invalid FQDN value"),
+        )
+        initial_revision = self.plane.current_revision()
+        for name, (kind, raw, guide) in enumerate(cases):
+            with self.subTest(kind=kind):
+                rc, out, err = self._run(
+                    "set", "network-object", "rev88-input-error", "type", kind, "value", raw
+                )
+                text = out + err
+                self.assertNotEqual(rc, 0)
+                self.assertIn(guide, text)
+                self.assertNotIn(marker, text)
+                self.assertNotIn(raw, text)
+                self.assertNotIn("Traceback", text)
+                self.assertIsNone(self.plane.get_object("rev88-input-error"))
+                self.assertEqual(self.plane.current_revision(), initial_revision)
+        rc, _out, err = self._run(
+            "set", "network-object", "rev88-input-error", "type", "fqdn", "value", "API.Example.COM."
+        )
+        self.assertEqual(rc, 0, err)
+        record = self.plane.get_object("rev88-input-error")
+        self.assertIsNotNone(record)
+        normalized = self.plane.conn.execute(
+            "SELECT normalized FROM object_values WHERE object_id = ?", (record["id"],)
+        ).fetchone()
+        self.assertEqual(normalized["normalized"], "api.example.com")
+
+
+class ServiceObjectPortInputRecovery(_Base):
+    """Real CLI mistakes must yield safe, actionable port guidance."""
+
+    def test_non_numeric_and_out_of_range_cli_reject_without_ghost_state(self):
+        for raw in ("badport", "65536", "0"):
+            with self.subTest(raw=raw):
+                rc, out, err = self._run(
+                    "set", "service-object", "r87-bad-port", "type", "tcp", "port", raw
+                )
+                detail = out + err
+                self.assertNotEqual(rc, 0)
+                self.assertIn("Service Object port must be an integer from 1 to 65535", detail)
+                self.assertNotIn("invalid literal", detail)
+                self.assertNotIn(raw, detail)
+                self.assertIsNone(v24.get_service_object(self.plane, "r87-bad-port"))
+        rc, _out, err = self._run(
+            "set", "service-object", "r87-bad-port", "type", "tcp", "port", "8443"
+        )
+        self.assertEqual(rc, 0, err)
+        self.assertEqual(v24.get_service_object(self.plane, "r87-bad-port")["port"], 8443)
+
+    def test_existing_valid_port_survives_bad_cli_edit_and_direct_caller(self):
+        v24.set_service_object(self.plane, "r87-corrected-port", type="tcp", port=8443, oneshot=True)
+        before = self.plane.current_revision()
+        rc, out, err = self._run(
+            "set", "service-object", "r87-corrected-port", "port", "non_numeric_value"
+        )
+        self.assertNotEqual(rc, 0)
+        self.assertIn("Service Object port must be an integer from 1 to 65535", out + err)
+        self.assertNotIn("non_numeric_value", out + err)
+        with self.assertRaisesRegex(ControlPlaneError, "Service Object port must be an integer from 1 to 65535"):
+            v24.set_service_object(self.plane, "r87-corrected-port", port="badport", oneshot=True)
+        self.assertEqual(self.plane.current_revision(), before)
+        self.assertEqual(v24.get_service_object(self.plane, "r87-corrected-port")["port"], 8443)
+        rc, _out, err = self._run(
+            "set", "service-object", "r87-corrected-port", "port", "8444"
+        )
+        self.assertEqual(rc, 0, err)
+        self.assertEqual(v24.get_service_object(self.plane, "r87-corrected-port")["port"], 8444)
 
 
 class AgentShowStatusRuntime(_Base):

@@ -202,6 +202,7 @@ def build_desired_runtime_services(
     state: dict,
     *,
     root: Optional[str] = None,
+    only_name: Optional[str] = None,
 ) -> dict:
     """Merge legacy client-state services with v2.4 Remote Services."""
     services = {}
@@ -227,8 +228,12 @@ def build_desired_runtime_services(
         services[sid_s] = dict(rec)
         services[sid_s]["id"] = services[sid_s].get("id") or sid_s
 
+    # Operation-local only: never retain identity across lifecycle/CLI calls.
+    identity = None
     for row in rows:
         name = str(row["name"])
+        if only_name is not None and name.lower() != only_name.lower():
+            continue
         proxy_id = remote_service_proxy_id(name)
         enabled = bool(row["enabled"]) and str(row["status"] or "") != "DISABLED"
         endpoint_port = row["endpoint_port"]
@@ -267,7 +272,8 @@ def build_desired_runtime_services(
             if sobj is not None:
                 target_port = int(sobj["port"] if not isinstance(sobj, dict) else sobj.get("port"))
             dest = str(row["destination"] or "")
-            identity = v24.load_agent_identity(root)
+            if identity is None:
+                identity = v24.load_agent_identity(root)
             host_name = identity.get("hostname") or identity.get("label") or ""
             self_machine_id = str(identity.get("machine_id") or "").strip()
             bound_client_id = str(row["destination_client_id"] or "").strip()
@@ -538,6 +544,45 @@ def _runtime_log_cursor() -> str:
     return cursor
 
 
+def _supervisor_process_running(pid):
+    # The unit template may exec the legacy frpc binary for an existing Admin
+    # configuration. Unit metadata alone is not evidence of the live runtime.
+    try:
+        args = Path('/proc/%d/cmdline' % int(pid)).read_bytes().split(b'\0')
+        return b'/usr/local/lib/drlink/drlink_frpc_supervisor.py' in args
+    except (OSError, ValueError, TypeError):
+        return False
+
+
+def _supervised_invocation(root=None):
+    if (root and str(root).rstrip('/') not in ('', '/')) or not sys.platform.startswith('linux'):
+        return ''
+    try:
+        props = subprocess.check_output(
+            ['systemctl', 'show', 'drlink-client', '-p', 'ActiveState', '-p', 'InvocationID', '-p', 'ExecStart', '-p', 'MainPID'],
+            text=True, timeout=5)
+        data = dict(line.split('=', 1) for line in props.splitlines() if '=' in line)
+        if (data.get('ActiveState') == 'active'
+                and 'drlink_frpc_supervisor.py' in data.get('ExecStart', '')
+                and _supervisor_process_running(data.get('MainPID'))
+                and re.fullmatch(r'[0-9a-f]{32}', data.get('InvocationID', ''))
+                and _trusted_existing_frpc_admin(_frpc_toml_path(root), _frpc_toml_path(root).read_text()) is None):
+            return data['InvocationID']
+    except (OSError, subprocess.SubprocessError):
+        pass
+    return ''
+
+
+def _wait_supervised_runtime(root, host_id, desired):
+    import time
+    until = time.monotonic() + 60
+    while time.monotonic() < until:
+        if _current_runtime_ready(root, host_id, desired):
+            return
+        time.sleep(.2)
+    raise ControlPlaneError('Isolated proxy generation could not be verified; previous configuration will be restored')
+
+
 def _current_runtime_ready(root, host_id, expected) -> bool:
     if any(str(os.environ.get(key) or '').lower() in ('1', 'yes', 'true', 'y')
            for key in ('DRLINK_FAULT_RUNTIME_VERIFY', 'DRLINK_FAULT_RUNTIME_RESTART', 'DRLINK_FAULT_RUNTIME_CONFIG')):
@@ -552,12 +597,17 @@ def _current_runtime_ready(root, host_id, expected) -> bool:
         return False
     try:
         props = subprocess.check_output(
-            ['systemctl', 'show', 'drlink-client', '-p', 'ActiveState', '-p', 'InvocationID'],
+            ['systemctl', 'show', 'drlink-client', '-p', 'ActiveState', '-p', 'InvocationID', '-p', 'ExecStart', '-p', 'MainPID'],
             text=True, timeout=5)
         data = dict(line.split('=', 1) for line in props.splitlines() if '=' in line)
         invocation = data.get('InvocationID', '')
         if data.get('ActiveState') != 'active' or not re.fullmatch(r'[0-9a-f]{32}', invocation):
             return False
+        if ('drlink_frpc_supervisor.py' in data.get('ExecStart', '')
+                and _supervisor_process_running(data.get('MainPID'))
+                and _trusted_existing_frpc_admin(_frpc_toml_path(root), _frpc_toml_path(root).read_text()) is None):
+            from drlink_frpc_supervisor import live_status
+            return live_status(_frpc_toml_path(root), invocation) is not None
         logs = subprocess.check_output(
             ['journalctl', '_SYSTEMD_INVOCATION_ID=' + invocation, '-n', '2000', '--no-pager'],
             text=True, timeout=15).splitlines()
@@ -874,6 +924,7 @@ def _apply_agent_runtime_serialized(
 
     restart_attempted = False
     reload_attempted = False
+    isolated_attempted = False
     hot_reload_admin = _trusted_existing_frpc_admin(prev_toml, backup_toml)
     artifacts_written = False
     try:
@@ -933,7 +984,8 @@ def _apply_agent_runtime_serialized(
             and _unchanged_frpc_common(backup_toml, toml_text)
             and _current_runtime_ready(root, host_id, state.get("services") or {})
         )
-        cursor = _runtime_log_cursor() if real_runtime and not reload_safe else None
+        isolated_runtime = bool(_supervised_invocation(root))
+        cursor = _runtime_log_cursor() if real_runtime and not reload_safe and not isolated_runtime else None
         # The journal cursor and authenticated reload probe may take time.
         # Do not write files from a desired set built before a concurrent
         # signed delete, disable, or endpoint change. We cannot hold a DB
@@ -952,7 +1004,10 @@ def _apply_agent_runtime_serialized(
         artifacts_written = True
         _atomic_write_json(prev_state_path, new_state)
         _atomic_write_text(prev_toml, toml_text)
-        if reload_safe:
+        if isolated_runtime:
+            isolated_attempted = True
+            _wait_supervised_runtime(root, host_id, desired)
+        elif reload_safe:
             reload_attempted = True
             _reload_frpc_authenticated(
                 prev_toml, root=root, host_id=host_id, expected=desired,
@@ -989,7 +1044,9 @@ def _apply_agent_runtime_serialized(
                 _atomic_write_text(prev_state_path, backup_state)
             if artifacts_written and backup_toml is not None:
                 _atomic_write_text(prev_toml, backup_toml)
-            if restart_attempted and backup_toml is not None:
+            if isolated_attempted and backup_toml is not None:
+                _wait_supervised_runtime(root, host_id, state.get('services') or {})
+            elif restart_attempted and backup_toml is not None:
                 _restart_frpc(root)
             elif reload_attempted and backup_toml is not None:
                 _reload_frpc_authenticated(
@@ -1186,7 +1243,9 @@ def verified_remote_service_status(
     state = load_client_state(actual_root)
     proxy_id = remote_service_proxy_id(name)
     record = (state.get('services') or {}).get(proxy_id)
-    desired = build_desired_runtime_services(plane_db, state, root=actual_root).get(proxy_id)
+    desired = build_desired_runtime_services(
+        plane_db, state, root=actual_root, only_name=name
+    ).get(proxy_id)
     installed = _configured_v24_runtime_ports(actual_root)
     if (not record or not desired or record != desired or row['pending_allocation']
             or row['endpoint_port'] is None

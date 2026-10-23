@@ -263,6 +263,41 @@ def client_has_enabled_services(state):
     return False
 
 
+def agent_runtime_required(paths, state):
+    """An idle runtime is valid only when desired and rendered intent agree.
+
+    Read the existing catalog without migrations or writes. Unknown inventory
+    keeps normal runtime checks; an empty generated projection alone is not
+    evidence that no services were requested.
+    """
+    if not isinstance(state, dict) or state.get('schema_version') != 1:
+        return True
+    services = state.get('services')
+    if not isinstance(services, dict):
+        return True
+    for rec in services.values():
+        if not isinstance(rec, dict) or rec.get('enabled', True) is not False:
+            return True
+    db_file = paths.p('/var/lib/drlink/drlink.db')
+    if not db_file.is_file():
+        return True
+    try:
+        import sqlite3
+        from urllib.parse import quote
+        uri = 'file:%s?mode=ro' % quote(db_file.as_posix(), safe='/')
+        conn = sqlite3.connect(uri, uri=True, timeout=0.25)
+        try:
+            rows = conn.execute(
+                'SELECT enabled, delete_pending FROM agent_remote_services'
+            ).fetchall()
+        finally:
+            conn.close()
+    except (OSError, sqlite3.Error):
+        return True
+    return any(enabled != 0 or delete_pending != 0
+               for enabled, delete_pending in rows)
+
+
 def macos_map_path(abs_path):
     """Mirror lib/frp-macos.sh frp_macos_map_path for doctor file probes."""
     p = str(abs_path or '')
@@ -2185,6 +2220,45 @@ def egress_snapshot_missing_diagnosis(parent):
     return detail, remedy
 
 
+def _egress_sqlite_revision(paths, cfg):
+    """Observe current Internet Access authority without creating or migrating it."""
+    import sys as _sys
+
+    prev_bytecode = _sys.dont_write_bytecode
+    _sys.dont_write_bytecode = True
+    try:
+        from drlink_control_plane import ControlPlane
+        from drlink_runtime_policy import root_from_cfg
+
+        plane = ControlPlane(
+            paths.root or root_from_cfg(cfg if isinstance(cfg, dict) else None),
+            read_only=True,
+        )
+        try:
+            # All status reads must describe the same SQLite snapshot, even
+            # when an administrator commits a configuration concurrently.
+            plane.conn.execute('BEGIN')
+            status = plane.status()
+            revision = status.get('revision')
+            generation = (status.get('generations') or {}).get('internet') or {}
+            if status.get('db_healthy') is not True:
+                raise ValueError('authoritative SQLite integrity check failed')
+            if status.get('mismatch'):
+                raise ValueError('authoritative SQLite runtime generation mismatch')
+            if (
+                type(revision) is not int
+                or generation.get('status') != 'active'
+                or generation.get('db_revision') != revision
+                or generation.get('generation') != revision
+            ):
+                raise ValueError('current Internet Access generation is unavailable or unhealthy')
+            return revision
+        finally:
+            plane.close()
+    finally:
+        _sys.dont_write_bytecode = prev_bytecode
+
+
 def check_egress_control(report, paths, facts, cfg):
     """Validate Controlled Egress policy, unit, and listen configuration (read-only)."""
     import importlib.util
@@ -2231,6 +2305,29 @@ def check_egress_control(report, paths, facts, cfg):
         )
         return
 
+    try:
+        revision = _egress_sqlite_revision(paths, cfg)
+        report.add(
+            'EGRESS_SQLITE_AUTHORITY', PASS,
+            'SQLite Internet Access authority is healthy',
+            'revision=%s generation=%s (consistent read-only snapshot)' % (revision, revision),
+            '',
+            'state',
+        )
+    except Exception as exc:
+        report.add(
+            'EGRESS_SQLITE_AUTHORITY', FAIL,
+            'SQLite Internet Access authority is unavailable or unhealthy (fail-closed)',
+            str(exc),
+            'Run: sudo drlink show internet-access\n'
+            'Restore a verified Server backup if authoritative SQLite state is missing or corrupt; '
+            'doctor does not create or migrate drlink.db',
+            'state',
+        )
+
+    # This optional legacy file is not the current authorization policy.
+    # Its absence must not suppress independent listener/unit/runtime checks.
+    state = None
     egress_rel = '/var/lib/drlink/egress-control.json'
     if isinstance(cfg, dict):
         configured = str(cfg.get('egress_control_file') or '').strip()
@@ -2244,28 +2341,27 @@ def check_egress_control(report, paths, facts, cfg):
             '',
             'state',
         )
-        return
-    try:
-        egress_path = paths.p(egress_rel)
-        state = eg.load_egress_state(
-            path=egress_path,
-            cfg=cfg if isinstance(cfg, dict) else None,
-            persist_migration=False,  # doctor is read-only
-        )
-        report.add(
-            'EGRESS_CONFIG_ERROR', PASS,
-            'egress-control.json is readable and valid',
-            egress_rel, '', 'state',
-        )
-    except Exception as exc:
-        report.add(
-            'EGRESS_CONFIG_ERROR', FAIL,
-            'EGRESS_CONFIG_ERROR: egress-control.json is invalid (fail-closed)',
-            str(exc),
-            'ignore obsolete egress-control.json; use show internet-access / Fixed TCP',
-            'state',
-        )
-        return
+    else:
+        try:
+            egress_path = paths.p(egress_rel)
+            state = eg.load_egress_state(
+                path=egress_path,
+                cfg=cfg if isinstance(cfg, dict) else None,
+                persist_migration=False,  # doctor is read-only
+            )
+            report.add(
+                'EGRESS_CONFIG_ERROR', PASS,
+                'egress-control.json is readable and valid',
+                egress_rel, '', 'state',
+            )
+        except Exception as exc:
+            report.add(
+                'EGRESS_CONFIG_ERROR', FAIL,
+                'EGRESS_CONFIG_ERROR: egress-control.json is invalid (fail-closed)',
+                str(exc),
+                'ignore obsolete egress-control.json; use show internet-access / Fixed TCP',
+                'state',
+            )
 
     try:
         host, port = eg.listen_bind(cfg if isinstance(cfg, dict) else None)
@@ -2503,21 +2599,23 @@ def check_egress_control(report, paths, facts, cfg):
                 'runtime',
             )
 
-    try:
-        relays = eg.list_tcp_relays(state) if hasattr(eg, 'list_tcp_relays') else []
-    except Exception:
-        relays = []
-    report.add(
-        'EGRESS_TCP_RELAYS', INFO,
-        'Fixed TCP relays',
-        'count=%d enabled=%d'
-        % (
-            len(relays),
-            sum(1 for _rid, relay in relays if isinstance(relay, dict) and relay.get('enabled')),
-        ),
-        '',
-        'state',
-    )
+    relays = []
+    if state is not None:
+        try:
+            relays = eg.list_tcp_relays(state) if hasattr(eg, 'list_tcp_relays') else []
+        except Exception:
+            relays = []
+        report.add(
+            'EGRESS_TCP_RELAYS', INFO,
+            'Fixed TCP relays',
+            'count=%d enabled=%d'
+            % (
+                len(relays),
+                sum(1 for _rid, relay in relays if isinstance(relay, dict) and relay.get('enabled')),
+            ),
+            '',
+            'state',
+        )
     for rid, relay in relays:
         if not isinstance(relay, dict):
             continue
@@ -2711,7 +2809,8 @@ def check_egress_control(report, paths, facts, cfg):
             'runtime',
         )
 
-    for issue in eg.doctor_issues(state):
+    legacy_issues = eg.doctor_issues(state) if state is not None else ()
+    for issue in legacy_issues:
         cls = str(issue.get('class') or 'EGRESS_CONFIG_ERROR')
         severity = str(issue.get('severity') or 'error').lower()
         status = FAIL if severity == 'error' else (WARN if severity == 'warn' else INFO)
@@ -3604,10 +3703,10 @@ def check_client(report, paths, facts, skip_network):
         report.add('frpc_config', FAIL, 'frpc.toml is missing', '', 'sudo drlink system synchronize, or restore from backup', 'state')
 
     check_agent_runtime_projection(report, paths, state)
-    if state is not None and not client_has_enabled_services(state):
+    if not agent_runtime_required(paths, state):
         info = (facts.get('units') or {}).get('frpc') or {}
         active = str(info.get('active') or 'unknown')
-        if active in ('inactive', 'failed'):
+        if active == 'inactive' and str(info.get('result') or 'success') == 'success':
             report.add(
                 'frpc_service', PASS,
                 'frpc is inactive because no enabled services are published',
@@ -4086,6 +4185,14 @@ def main(argv=None):
             skip_network=args.skip_network or bool(facts.get('skip_network')),
             scope=args.scope,
         )
+    except PermissionError:
+        sys.stderr.write(
+            'ERROR: diagnostics cannot read protected install state.\n'
+            'Run as the installation owner or administrator.\n'
+            'For a system install, retry with: sudo drlink system diagnostics\n'
+            'No changes were applied.\n'
+        )
+        return 1
     except Exception as exc:
         sys.stderr.write('ERROR: doctor internal error: %s\n' % redact(str(exc)))
         if args.verbose:

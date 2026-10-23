@@ -174,6 +174,13 @@ same desired state
 
 A ConfigurationBundle is a patch/desired-change document. It does not take ownership of every Data Relay Link resource.
 
+Repeated YAML mapping keys are invalid and rejected before planning changes.
+This includes repeated context, resource sections, and nested fields such as
+value or port. They must not silently overwrite earlier values. Normal
+YAML merge aliases with explicit field overrides remain supported.
+Duplicate-key errors report a line number without echoing supplied values.
+
+
 A resource with `state: absent` cannot also describe desired present-state fields.
 
 Invalid example:

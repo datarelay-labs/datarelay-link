@@ -35,7 +35,7 @@ done
 echo "=== Python compile ==="
 python3 -m py_compile server/frp-port-allocator.py server/frp-access-plugin.py server/frp-egress-gateway.py server/drlink-tcp-egress.py server/migrate_token.py server/drlink-mcp-bridge.py scripts/build-bundles.py scripts/generate-sbom.py scripts/check-chatgpt-owner-acceptance.py lib/frp_mgmt_auth.py lib/frp_pki.py lib/frp_frontend.py lib/frp_doctor.py lib/frp_install_txn.py lib/frp_client_registry.py lib/frp_audit.py lib/frp_project_files.py lib/frp_control_locks.py lib/frp_server_config.py lib/frp_zero_touch.py lib/drlink_qualified_artifacts.py lib/frp_ctl_grammar.py lib/frp_cli_catalog.py lib/frp_version_identity.py lib/frp_ctl_repl.py lib/frp_enrollment_lifecycle.py lib/frp_access_control.py lib/frp_egress_control.py lib/frp_egress_runtime.py lib/frp_infrastructure_ports.py lib/frp_health_check.py lib/frp_service_profiles.py lib/frp_machine_id.py lib/frp_bounded_server.py lib/frp_public_suffix.py lib/frp_policy_fingerprint.py lib/frp_state_paths.py lib/drlink_control_db.py lib/drlink_control_plane.py lib/drlink_control_cli.py lib/drlink_ai_agent.py lib/drlink_mcp_bridge.py lib/drlink_agent_payload.py
 python3 -m py_compile tools/frp-create-client tools/frp-enrollments tools/frp-enrollment-revoke tools/frp-enrollment-purge tools/frp-enroll-bulk tools/frp-clients tools/frp-client-info tools/frp-client-set tools/frp-release-client tools/frp-release-service tools/frp-revoke-client tools/frp-set-client-installer-url tools/frp-server-set tools/frp-backup tools/frp-restore
-python3 -m py_compile tests/test-allocator.py tests/test-chatgpt-owner-acceptance.py tests/test-enrollment-security.py tests/test-mgmt-identity.py tests/test-pki-https.py tests/test-bootstrap-ticket.py tests/test-frontend-proxy.py tests/test-single443-mgmt-origin.py tests/test-client-registry.py tests/test-access-control.py tests/test-egress-control.py tests/test-service-profiles.py tests/test-destructive-selector-toctou.py tests/test-egress-create-safe-default.py tests/test-policy-fingerprint.py tests/test-strict-cli-parsing.py tests/test-cli-backend-reverse-parity.py tests/test-enabled-egress-mutation-confirm.py tests/test-lifecycle-contract-matrix.py tests/test-allocator-tls-slow-handshake.py tests/test-http-relay-half-close-idle.py tests/test-http-connection-critical-headers.py tests/test-nonce-capacity-replay.py tests/test-restore-corrupt-current.py tests/test-egress-confirm-toctou.py tests/test-state-paths-backup-restore.py tests/test-enrollment-ttl-help.py tests/test-enrollment-pair-atomicity.py tests/test-enrollment-retention-policy.py tests/test-frpctl-completion-inventory.py tests/test-cli-flag-metadata.py tests/test-operator-workflow-regressions.py tests/test-ai-access-mcp-e2e.py tests/test-mcp-public-endpoint-e2e.py tests/test-mcp-public-tls-lifecycle.py tests/test-mcp-remote-connector-interop.py tests/test-oauth-manual-consent-browser.py tests/test-oauth-redirect-uri-validation.py tests/test-oauth-cimd-ssrf.py tests/test-oauth-pending-bounds.py tests/test-oauth-revoke-form.py tests/test-bounded-zero-touch.py tests/test-configuration-bundle.py tests/test-read-only-db-contention.py tests/mcp_sdk_interop_client.py tests/mcp_sdk_env.py tests/test-qualified-artifacts.py tests/test-v24-ai-policy-cli-parity.py tests/test-egress-concurrency-isolation.py tests/test-egress-parent-traverse.py
+python3 -m py_compile tests/test-allocator.py tests/test-chatgpt-owner-acceptance.py tests/test-enrollment-security.py tests/test-mgmt-identity.py tests/test-pki-https.py tests/test-bootstrap-ticket.py tests/test-frontend-proxy.py tests/test-single443-mgmt-origin.py tests/test-client-registry.py tests/test-access-control.py tests/test-egress-control.py tests/test-service-profiles.py tests/test-destructive-selector-toctou.py tests/test-egress-create-safe-default.py tests/test-policy-fingerprint.py tests/test-strict-cli-parsing.py tests/test-cli-backend-reverse-parity.py tests/test-enabled-egress-mutation-confirm.py tests/test-lifecycle-contract-matrix.py tests/test-allocator-tls-slow-handshake.py tests/test-http-relay-half-close-idle.py tests/test-http-connection-critical-headers.py tests/test-nonce-capacity-replay.py tests/test-restore-corrupt-current.py tests/test-egress-confirm-toctou.py tests/test-state-paths-backup-restore.py tests/test-enrollment-ttl-help.py tests/test-enrollment-pair-atomicity.py tests/test-enrollment-retention-policy.py tests/test-frpctl-completion-inventory.py tests/test-cli-flag-metadata.py tests/test-operator-workflow-regressions.py tests/test-ai-access-mcp-e2e.py tests/test-mcp-public-endpoint-e2e.py tests/test-mcp-public-tls-lifecycle.py tests/test-mcp-remote-connector-interop.py tests/test-oauth-manual-consent-browser.py tests/test-oauth-redirect-uri-validation.py tests/test-oauth-cimd-ssrf.py tests/test-oauth-pending-bounds.py tests/test-oauth-revoke-form.py tests/test-bounded-zero-touch.py tests/test-configuration-bundle.py tests/test-read-only-db-contention.py tests/mcp_sdk_interop_client.py tests/mcp_sdk_env.py tests/test-qualified-artifacts.py tests/test-v24-ai-policy-cli-parity.py tests/test-egress-concurrency-isolation.py tests/test-egress-parent-traverse.py tests/test-egress-runtime-no-list-permission.py
 
 # Check complete test registration before the expensive full functional suite.
 # Previously this ran last and wasted an entire CI run when new tests were
@@ -176,7 +176,9 @@ python3 tests/test-egress-conn-log-rotation.py
 python3 tests/test-egress-conn-log-rotation-concurrency.py
 python3 tests/test-egress-shared-parent-permissions.py
 python3 tests/test-egress-concurrency-isolation.py
+python3 tests/test-p013-policy-hotpath.py
 python3 tests/test-egress-parent-traverse.py
+python3 tests/test-egress-runtime-no-list-permission.py
 python3 tests/test-egress-create-safe-default.py
 python3 tests/test-enabled-egress-mutation-confirm.py
 python3 tests/test-operator-workflow-regressions.py
@@ -234,6 +236,8 @@ python3 tests/test-cli-feature-scenario-remediation.py
 python3 tests/test-cli-reconciliation-role-parser-regression.py
 python3 tests/test-permission-dependency-recovery.py
 python3 tests/test-internet-access-recovery-guidance.py
+python3 tests/test-doctor-egress-sqlite-authority.py
+python3 tests/test-agent-status-policy-generation.py
 python3 tests/test-enrollment-retention-recovery-guidance.py
 python3 tests/test-public-help-required-operands.py
 python3 tests/test-native-restore-confirmation.py
@@ -248,16 +252,19 @@ python3 tests/test-release-manifest-schema.py
 ./tests/test-fresh-install-sandbox-rollback.sh
 python3 tests/test-audit-log.py
 python3 tests/test-audit-tail-validation.py
+python3 tests/test-public-audit-control-history.py
 ./tests/test-frp-compatibility.sh
 ./tests/test-backup-restore.sh
 ./tests/test-server-uninstall-fail-closed.sh
 python3 tests/test-release-partial-acl.py
 python3 tests/test-v24-upgrade-reconcile.py
 python3 tests/test-v24-status-parity.py
+python3 tests/test-v24-reference-delete-upsert-race.py
 python3 tests/test-v24-bootstrap-catalog-convergence.py
 python3 tests/test-v24-managed-host-policy.py
 python3 tests/test-v24-runtime-allocator.py
 python3 tests/test-doctor-agent-runtime-projection.py
+python3 tests/test-agent-idle-runtime-health.py
 python3 tests/test-v24-mgmt-api-auth.py
 python3 tests/test-v24-cli-ai-master.py
 python3 tests/test-v24-cli-ai-master-closure.py
@@ -278,6 +285,7 @@ python3 tests/test-v24-service-policy-consistency.py
 python3 tests/test-v24-access-broadening-bundle-order.py
 python3 tests/test-v24-bundle-stale-plan-safety.py
 python3 tests/test-v24-bundle-omitted-enabled-preservation.py
+python3 tests/test-v24-bundle-duplicate-mapping-keys.py
 python3 tests/test-v24-public-name-namespace-ambiguity.py
 python3 tests/test-v24-rule-mutation-security-impact.py
 python3 tests/test-v24-referenced-selector-mutation-security-impact.py
@@ -296,6 +304,7 @@ python3 tests/test-v24-network-mutation-atomicity.py
 python3 tests/test-v24-oneshot-strict-partial-edit.py
 python3 tests/test-v24-real-managed-host-executor.py
 python3 tests/test-v24-remote-service-distributed-atomicity.py
+python3 tests/test-v24-offline-tombstone-duplicate.py
 python3 tests/test-v24-restore-atomic-cutover.py
 python3 tests/test-v24-unified-disaster-recovery.py
 python3 tests/test-v24-upgrade-policy-preservation.py

@@ -25,7 +25,11 @@ from drlink_control_plane import (
     ConfirmationRequired,
     ControlPlane,
 )
-from drlink_configuration_bundle import BundleError
+from drlink_configuration_bundle import (
+    BundleError,
+    _load_yaml_reject_duplicate_keys,
+    _public_yaml_error_detail,
+)
 import drlink_v24 as v24
 
 
@@ -1020,7 +1024,8 @@ def _validate_plan_applyability(
     plane._batch_results = []
     try:
         for change in ordered:
-            _apply_one(plane, change, server_reachable_override=False if agent else None)
+            _apply_one(plane, change, server_reachable_override=False if agent else None,
+                       local_validation=agent)
             if agent and change.get('kind') == 'remote-service' and change.get('op') == 'DELETE':
                 # Preview models the final desired local state, without RPC.
                 # Offline deletion tombstones belong to execution/reconnect,
@@ -1089,12 +1094,12 @@ def parse_v24_bundle(raw_text: str) -> dict:
     _reject_markdown_prose(text)
     yaml = _yaml()
     try:
-        data = yaml.safe_load(text)
+        data = _load_yaml_reject_duplicate_keys(text)
     except yaml.YAMLError as exc:
         raise BundleError(
             "ERROR:\nConfiguration input is not valid ConfigurationBundle YAML.\n\n"
-            "%s\n\nNo changes were applied." % exc
-        ) from exc
+            "%s\n\nNo changes were applied." % _public_yaml_error_detail(exc)
+        ) from None
     if not isinstance(data, dict):
         raise BundleError(
             "ERROR:\nConfiguration input is not valid ConfigurationBundle YAML.\n\n"
@@ -1769,6 +1774,32 @@ def apply_v24_plan(
     confirmed = _confirm_requested(confirm)
 
     is_agent = str(plan.context or "").lower() == "agent"
+    if is_agent and not v24._agent_synchronize_lock_held():
+        # Synchronization takes this lock before writing SQLite. Apply must
+        # use the same order, including its final current-state validation,
+        # and retain the guard through activation/compensation.
+        if plane.conn.in_transaction:
+            raise ControlPlaneError("Agent Bundle apply requires the synchronization guard before a database transaction")
+        import drlink_v24_runtime as runtime
+        from frp_control_locks import ExclusiveFileLock, LockTimeout
+
+        lock_path = runtime._client_state_path(plane.root).with_name("client-synchronize.lock")
+        timeout = float(os.environ.get("DRLINK_SYNCHRONIZE_LOCK_TIMEOUT") or 180)
+        try:
+            with ExclusiveFileLock(lock_path, timeout=timeout):
+                previous_depth = v24._agent_synchronize_lock_enter()
+                try:
+                    return apply_v24_plan(
+                        plane, plan, confirm=confirm, command=command,
+                        summary=summary, snapshot_meta=snapshot_meta,
+                    )
+                finally:
+                    v24._agent_synchronize_lock_restore(previous_depth)
+        except LockTimeout as exc:
+            raise ControlPlaneError(
+                "ERROR:\nAnother Agent synchronization is already in progress.\n\n"
+                "Retry after it finishes.\n\nNo changes were applied."
+            ) from exc
     compile_runtime = not is_agent
     plane._agent_mgmt_side_effects = []
     checkpoint = None
@@ -1935,7 +1966,8 @@ def _finalize_agent_bundle_runtime(plane: ControlPlane, plan: V24Plan, checkpoin
     )
 
 
-def _apply_one(plane: ControlPlane, change: dict, *, server_reachable_override: Optional[bool] = None) -> None:
+def _apply_one(plane: ControlPlane, change: dict, *, server_reachable_override: Optional[bool] = None,
+               local_validation: bool = False) -> None:
     kind = change["kind"]
     item = change.get("item") or {}
     name = change.get("name")
@@ -2069,6 +2101,7 @@ def _apply_one(plane: ControlPlane, change: dict, *, server_reachable_override: 
                 oneshot=True,
                 root=plane.root,
                 server_reachable=reachable,
+                _local_validation=local_validation,
             )
     else:
         raise ControlPlaneError("Unsupported bundle change: %s" % kind)

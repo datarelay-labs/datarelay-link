@@ -241,13 +241,13 @@ def _ask_yes_no(io: WizardIO, prompt: str, *, default: Optional[bool] = None) ->
 def _validate_network_value(typ: str, value: str) -> Optional[str]:
     if typ == "ip":
         if not IP_RE.match(value):
-            return "Invalid IP '%s'." % value
+            return "Invalid IP address. Use an IPv4 address such as 192.0.2.10."
     elif typ == "cidr":
         if not CIDR_RE.match(value):
-            return "Invalid CIDR '%s'." % value
+            return "Invalid CIDR. Use an IPv4 network such as 192.0.2.0/24."
     elif typ == "fqdn":
         if not FQDN_RE.match(value):
-            return "Invalid FQDN '%s'." % value
+            return "Invalid FQDN. Use a hostname such as host.example.com (no URL scheme or path)."
     return None
 
 

@@ -2799,6 +2799,28 @@ def get_service_group(plane_db, name: str):
     ).fetchone()
 
 
+def validate_service_object_port(value: object) -> int:
+    """Validate public Service Object port inputs without exposing raw values.
+
+    Both one-shot CLI inputs and internal callers must use the same 1..65535
+    contract. Avoid leaking Python int() errors or attacker-controlled tokens
+    into public diagnostics.
+    """
+    message = (
+        "Service Object port must be an integer from 1 to 65535. "
+        "Use: set service-object <NAME> type <tcp|udp|fixed-tcp> port <PORT>."
+    )
+    try:
+        if isinstance(value, bool):
+            raise ValueError("boolean is not a port")
+        port = int(str(value).strip())
+    except (TypeError, ValueError, OverflowError):
+        raise ControlPlaneError(message) from None
+    if port < 1 or port > 65535:
+        raise ControlPlaneError(message)
+    return port
+
+
 def set_service_object(
     plane_db,
     name: str,
@@ -2840,9 +2862,7 @@ def set_service_object(
             stype = str(type).strip().lower()
             if stype not in SERVICE_TYPES:
                 raise ControlPlaneError("Service Object type must be tcp, udp, or fixed-tcp")
-        port = int(port)
-        if port < 1 or port > 65535:
-            raise ControlPlaneError("Invalid port: %s" % port)
+        port = validate_service_object_port(port)
         if existing:
             refs = service_object_references(plane_db, name)
             if existing["type"] != stype and refs:
@@ -3236,6 +3256,21 @@ def unset_service_object(plane_db, name: str, *, confirm: Optional[bool] = None)
         )
 
     def write():
+        # A signed Agent publication may have committed after the public delete
+        # preflight and TTY confirmation. Revalidate inside BEGIN IMMEDIATE to
+        # prevent deleting a Service Object that now has live references.
+        current = get_service_object(plane_db, name)
+        if not current or current["id"] != obj["id"]:
+            raise ControlPlaneError(
+                "Service Object changed while you were deleting it.\n"
+                "No changes were applied. Review current state and retry."
+            )
+        committed_refs = service_object_references(plane_db, name)
+        if committed_refs:
+            raise ControlPlaneError(
+                "ERROR:\nService Object '%s' is still referenced.\n\nReferences:\n%s\n\nNo changes were applied."
+                % (name, "\n".join("  %s" % r["display"] for r in committed_refs))
+            )
         plane_db.conn.execute("DELETE FROM service_objects WHERE id = ?", (obj["id"],))
         return {"entity": {"type": "service-object", "id": obj["id"], "name": name}, "operation": "delete"}
 
@@ -5599,10 +5634,15 @@ def _push_agent_remote_service_status(
             raise
         return 0
     items = []
+    # A delayed signed status response must not roll back a newer Agent
+    # generation written by the CLI or lifecycle worker while I/O was in flight.
+    # Compare the complete original row, not updated_at (which is second-granular).
+    sent_row_snapshots = {}
     rows = plane_db.conn.execute("SELECT * FROM agent_remote_services WHERE delete_pending = 0")
     for row in rows:
         if names is not None and row["name"] not in names:
             continue
+        sent_row_snapshots[str(row["name"]).lower()] = tuple(row)
         status = str(row["status"] or "DEGRADED").upper()
         if status not in ("HEALTHY", "DEGRADED", "DISABLED"):
             status = "DEGRADED"
@@ -5634,11 +5674,20 @@ def _push_agent_remote_service_status(
             if require_ack:
                 raise
             return 0
-    return _reconcile_agent_from_server_status(plane_db, result)
+    return _reconcile_agent_from_server_status(
+        plane_db, result, expected_rows=sent_row_snapshots
+    )
 
 
-def _reconcile_agent_from_server_status(plane_db, result: dict) -> int:
-    """Converge Agent local endpoint projection with authenticated Server state."""
+def _reconcile_agent_from_server_status(
+    plane_db, result: dict, *, expected_rows: Optional[dict] = None,
+) -> int:
+    """Converge Agent endpoint projection from an authenticated Server reply.
+
+    If expected_rows is supplied, do not apply a delayed ACK to a row that a
+    concurrent, independently authenticated operation has since changed.
+    The next synchronization reconciles that current generation normally.
+    """
     if not isinstance(result, dict):
         return 0
     items = result.get("services") or result.get("updated") or []
@@ -5657,6 +5706,10 @@ def _reconcile_agent_from_server_status(plane_db, result: dict) -> int:
             (name,),
         ).fetchone()
         if row is None:
+            continue
+        if expected_rows is not None and tuple(row) != expected_rows.get(name.lower()):
+            # ACK predates the current row; never overwrite its newer
+            # status, verification bit, endpoint or pending-allocation state.
             continue
         assignments = []
         values = []
@@ -6074,7 +6127,13 @@ def _synchronize_agent_remote_services_locked(plane_db, *, root: Optional[str] =
                             break
                     # Reconcile authoritative endpoint/verification projections
                     # even if a fresh Server reply reveals missing ownership.
-                    _reconcile_agent_from_server_status(plane_db, acknowledged)
+                    _reconcile_agent_from_server_status(
+                        plane_db, acknowledged,
+                        expected_rows={
+                            str(row["name"]).lower(): tuple(row)
+                            for row in snapshot_rows
+                        },
+                    )
                     if verified:
                         for name in promotable:
                             plane_db.conn.execute(
@@ -6433,9 +6492,17 @@ def set_remote_service_agent(
     root: Optional[str] = None,
     server_reachable: bool = True,
     reconcile_existing: bool = False,
+    _local_validation: bool = False,
 ) -> dict:
     name = validate_public_name(name, "Remote Service name")
-    if not reconcile_existing and not _agent_synchronize_lock_held():
+    # Bundle previews execute local CRUD in a rollback-only savepoint. They
+    # must not wait on or create the live management lock. This exemption
+    # cannot authorize network writes or runtime activation.
+    if _local_validation and (server_reachable or reconcile_existing
+            or not getattr(plane_db, "_batch_mode", False)
+            or not plane_db.conn.in_transaction):
+        raise ControlPlaneError("Local Agent validation requires an offline batch transaction")
+    if not _local_validation and not reconcile_existing and not _agent_synchronize_lock_held():
         import drlink_v24_runtime as runtime
         from frp_control_locks import ExclusiveFileLock, LockTimeout
 
@@ -6754,18 +6821,24 @@ def set_remote_service_agent(
             "Delete and recreate the Remote Service.\n\n"
             "No changes were applied."
         )
-    # Duplicate destination+service check (identity-safe for Managed Host binds)
+    # Only existing desired-state Remote Services claim destination+service.
+    # An offline deletion keeps a tombstone pending Server synchronization, but
+    # that tombstone must not prevent the operator from assigning the same
+    # destination+service to a new Remote Service. Disabled (not deleted)
+    # services still reserve their mapping and remain duplicate-protected.
     if destination_client_id:
         dup = plane_db.conn.execute(
             "SELECT name FROM agent_remote_services WHERE destination_client_id = ? "
-            "AND service_object = ? COLLATE NOCASE AND name != ? COLLATE NOCASE",
+            "AND service_object = ? COLLATE NOCASE AND name != ? COLLATE NOCASE "
+            "AND delete_pending = 0",
             (destination_client_id, svc_name, name),
         ).fetchone()
     else:
         dup = plane_db.conn.execute(
             "SELECT name FROM agent_remote_services WHERE destination = ? COLLATE NOCASE "
             "AND service_object = ? COLLATE NOCASE AND name != ? COLLATE NOCASE "
-            "AND (destination_client_id IS NULL OR destination_client_id = '')",
+            "AND (destination_client_id IS NULL OR destination_client_id = '') "
+            "AND delete_pending = 0",
             (dest_token, svc_name, name),
         ).fetchone()
     if dup:
@@ -7560,6 +7633,25 @@ def probe_agent_runtime_unit(*, root: Optional[str] = None) -> dict:
     except Exception:
         lifecycle_intent = "running"
     paused = lifecycle_intent == "paused"
+
+    def inactive_status():
+        if paused:
+            return {"level": "Paused", "detail": "Agent runtime is intentionally paused"}
+        try:
+            from frp_doctor import Paths, agent_runtime_required
+            required = agent_runtime_required(
+                Paths(root), _load_enrolled_client_state(root, None)
+            )
+        except Exception:
+            required = True
+        if not required:
+            return {
+                "level": "Healthy",
+                "detail": "Agent runtime is inactive as expected; no enabled relay services",
+                "runtime_required": False,
+            }
+        return {"level": "Critical", "detail": "drlink-client.service is inactive"}
+
     inject = str(os.environ.get("DRLINK_TEST_RUNTIME_UNIT") or "").strip()
     if inject:
         # Formats: "failed:start-limit-hit" | "active" | "inactive" | "unknown:reason"
@@ -7576,9 +7668,7 @@ def probe_agent_runtime_unit(*, root: Optional[str] = None) -> dict:
                 return {"level": "Warning", "detail": "runtime is active while lifecycle intent is paused"}
             return {"level": "Healthy", "detail": "drlink-client.service is active"}
         if state in ("inactive", "dead"):
-            if paused:
-                return {"level": "Paused", "detail": "Agent runtime is intentionally paused"}
-            return {"level": "Critical", "detail": "drlink-client.service is inactive"}
+            return inactive_status()
         return {"level": "Unknown", "detail": detail or inject}
 
     root_s = str(root or "").rstrip("/")
@@ -7644,9 +7734,7 @@ def probe_agent_runtime_unit(*, root: Optional[str] = None) -> dict:
             return {"level": "Warning", "detail": "runtime is active while lifecycle intent is paused"}
         return {"level": "Healthy", "detail": "drlink-client.service is active"}
     if active in ("inactive", "dead"):
-        if paused:
-            return {"level": "Paused", "detail": "Agent runtime is intentionally paused"}
-        return {"level": "Critical", "detail": "drlink-client.service is inactive"}
+        return inactive_status()
     if active:
         return {"level": "Warning", "detail": "drlink-client.service is %s" % active}
     return {"level": "Unknown", "detail": "drlink-client.service status could not be read"}

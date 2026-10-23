@@ -129,6 +129,30 @@ class WizardCancelAtomicty(unittest.TestCase):
         self.assertEqual(vals[0], "203.0.113.10")
         self.assertEqual(self._rev(), rev)
 
+    def test_invalid_network_value_wizard_errors_never_echo_submitted_text(self):
+        """S-014/O-015: a pasted credential-like value must not appear in wizard errors."""
+        marker = "TEST_ONLY_WIZARD_VALUE_MARKER_NOT_A_SECRET"
+        samples = (
+            ("ip", "1", "https://" + marker + ".example.invalid/path", "Invalid IP"),
+            ("cidr", "2", "192.0.2.1/999" + marker, "Invalid CIDR"),
+            ("fqdn", "3", "https://" + marker + ".example.invalid", "Invalid FQDN"),
+        )
+        initial_revision = self._rev()
+        for kind, selection, invalid, guidance in samples:
+            with self.subTest(kind=kind):
+                name = "test-wizard-redaction-" + kind
+                output = []
+                set_wizard_io(ScriptedIO([selection, invalid, "cancel"], out=output))
+                with redirect_stdout(io.StringIO()):
+                    rc = cli.dispatch(["set", "network-object", name], root=self.tmp, plane=self.plane)
+                self.assertEqual(rc, 0)
+                diagnostic = "\n".join(line for line in output if "ERROR:" in line)
+                self.assertIn(guidance, diagnostic)
+                self.assertNotIn(marker, diagnostic)
+                self.assertNotIn(invalid, diagnostic)
+                self.assertIsNone(self.plane.get_object(name))
+                self.assertEqual(self._rev(), initial_revision)
+
     def test_invalid_input_remains_on_step(self):
         set_wizard_io(ScriptedIO(["2", "10.10.999.0/24", "10.10.0.0/16", "1"]))
         out_lines = []

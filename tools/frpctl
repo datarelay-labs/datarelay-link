@@ -3136,6 +3136,10 @@ frpctl_menu_commands() {
 }
 
 frpctl_clear_screen() {
+  if [[ ! -t 1 ]]; then
+    printf 'ERROR: system clear requires an interactive terminal. Run sudo drlink in a terminal, then enter system clear.\n' >&2
+    return 1
+  fi
   if command -v clear >/dev/null 2>&1; then
     command clear
   else
@@ -3496,18 +3500,24 @@ PY
 frpctl_audit_tail() {
   # Default: human-readable recent events. Optional lightweight filters:
   # last <N> | managed-host <HOST> | event <EVENT>
+  # Read both connection events and revision-bound configuration audit.
   # Raw JSONL remains on disk; --json is an advanced escape hatch only.
-  local root="${FRP_DEPLOY_TEST_ROOT:-${FRP_CTL_TEST_ROOT:-}}" registry_py=""
+  local root="${FRP_DEPLOY_TEST_ROOT:-${FRP_CTL_TEST_ROOT:-}}" registry_py="" control_db_py=""
   registry_py="$(frpctl_lib_candidate frp_client_registry.py 2>/dev/null || true)"
-  python3 - "$root" "$registry_py" "$@" <<'PY'
+  control_db_py="$(frpctl_lib_candidate drlink_control_db.py 2>/dev/null || true)"
+  python3 -B - "$root" "$registry_py" "$control_db_py" "$@" <<'PY'
+from datetime import datetime, timezone
+import heapq
 import importlib.util
 import json
+import re
 import sys
 from pathlib import Path
 
 root = sys.argv[1]
 registry_py = sys.argv[2]
-args = sys.argv[3:]
+control_db_py = sys.argv[3]
+args = sys.argv[4:]
 path = Path("/var/log/drlink/audit.jsonl")
 if root:
     path = Path(root + "/var/log/drlink/audit.jsonl")
@@ -3574,22 +3584,123 @@ if managed_host_selector is not None:
         print("Run: show managed-hosts", file=sys.stderr)
         raise SystemExit(2)
 
-if not path.is_file():
-    print("(no audit log)")
-    raise SystemExit(0)
+def _control_token(value):
+    # Control metadata contains identifiers, never arbitrary command operands.
+    # Reject control characters rather than letting a stored actor/id inject a
+    # terminal sequence or a second apparent event into the table.
+    text = str(value or "")
+    return text if re.fullmatch(r"[A-Za-z0-9_.:@+-]{1,128}", text) else "-"
 
-raw_lines = path.read_text(encoding="utf-8").splitlines()
-records = []
-for line in raw_lines:
-    line = line.strip()
-    if not line:
-        continue
+
+def _control_event(row):
+    action = str(row["action"] or "")
+    if re.fullmatch(r"system rollback [1-9][0-9]{0,17}", action):
+        return action
+    if action in ("apply", "system apply configuration"):
+        return "system apply configuration"
+    # Do not echo free-form historical commands, values, paths, or summaries.
+    # The entity id, revision and actor identify the exact stored operation.
+    nouns = {
+        "object": "network-object", "object-group": "network-group",
+        "client": "managed-host", "managed-endpoint": "managed-host",
+        "managed-host": "managed-host", "client-group": "managed-host-group",
+        "published-service": "remote-service", "service-preset": "service-object",
+        "fixed-tcp": "fixed-tcp", "enrollment-plan": "enrollment-plan",
+        "remote-access": "remote-access", "internet-access": "internet-access",
+        "ai-access": "ai-access", "ai-principal": "ai-identity",
+    }
+    verb = action.split(" ", 1)[0]
+    noun = nouns.get(row["entity_type"])
+    if noun and verb in ("set", "unset", "create", "delete", "upsert"):
+        return "%s %s" % (verb, noun)
+    return "configuration.change"
+
+
+def _control_record(row):
+    result = str(row["result"] or "")
+    if result.lower() not in (
+        "ok", "success", "failure", "fail", "failed", "error", "allow", "allowed",
+        "deny", "denied", "applied", "nochange", "no_change", "revision_conflict",
+        "validation_failed", "rejected", "cancelled", "canceled", "aborted",
+    ):
+        result = "unknown"
+    # Bundle-attempt rows retain the outcome in operation; result can be the
+    # generic audit-write success even when the configuration was rejected.
+    operation = str(row["operation"] or "").upper()
+    if row["entity_type"] == "configuration-bundle" and operation in (
+        "APPLIED", "NOCHANGE", "NO_CHANGE", "REVISION_CONFLICT",
+        "VALIDATION_FAILED", "FAILED", "REJECTED", "CANCELLED",
+    ):
+        result = operation
+    revision = row["revision"]
+    if revision is not None and (type(revision) is not int or revision < 0):
+        raise ValueError("invalid control audit revision")
+    timestamp = str(row["timestamp"] or "")
+    if not re.fullmatch(
+        r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}"
+        r"(?:\.[0-9]{1,9})?(?:Z|[+-][0-9]{2}:[0-9]{2})", timestamp
+    ):
+        timestamp = ""
+    return {
+        "source": "control-db", "id": row["id"], "timestamp": timestamp,
+        "event": _control_event(row), "target": _control_token(row["entity_id"]),
+        "revision": revision, "actor": _control_token(row["actor"]),
+        "result": result,
+    }
+
+
+available_feeds = set()
+
+
+def _records():
+    if path.is_file():
+        available_feeds.add("connection")
+        try:
+            with path.open(encoding="utf-8") as stream:
+                for line in stream:
+                    try:
+                        rec = json.loads(line)
+                    except (TypeError, ValueError):
+                        continue
+                    if isinstance(rec, dict):
+                        yield rec
+        except (OSError, UnicodeError) as exc:
+            raise RuntimeError("The connection audit log could not be read.") from exc
+
+    db_path = Path(root or "/") / "var/lib/drlink/drlink.db"
     try:
-        rec = json.loads(line)
-    except Exception:
-        continue
-    if isinstance(rec, dict):
-        records.append(rec)
+        db_path.lstat()
+    except FileNotFoundError:
+        # An older deployment can legitimately have only the JSONL feed.
+        return
+    except OSError as exc:
+        raise RuntimeError("Control DB audit is unavailable.") from exc
+    available_feeds.add("control")
+    conn = None
+    try:
+        if not control_db_py:
+            raise RuntimeError("Control DB reader is missing")
+        spec = importlib.util.spec_from_file_location("drlink_control_db", control_db_py)
+        control_db = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(control_db)
+        conn = control_db.connect_read_only(path=db_path)
+        # Stream all relevant history before the global filter/limit. A fixed
+        # recent-row cap would hide older matches for a sparse event filter.
+        # Never SELECT raw before/after/impact summaries or Bundle contents.
+        rows = conn.execute(
+            "SELECT id, timestamp, revision, actor, action, entity_type, "
+            "entity_id, operation, result FROM audit_events ORDER BY id"
+        )
+        for row in rows:
+            yield _control_record(row)
+    except Exception as exc:
+        raise RuntimeError(
+            "Control DB audit is unavailable or incompatible; "
+            "a complete audit result could not be read."
+        ) from exc
+    finally:
+        if conn is not None:
+            conn.close()
 
 def _hay(rec):
     details = rec.get("details") if isinstance(rec.get("details"), dict) else {}
@@ -3603,25 +3714,51 @@ def _hay(rec):
     ]
     return " ".join(bits).lower()
 
-filtered = []
-for rec in records:
-    if event_filter and event_filter not in str(rec.get("event") or "").lower():
-        continue
-    if client_filter and client_filter not in _hay(rec):
-        continue
-    filtered.append(rec)
-filtered = filtered[-limit:]
+def _timestamp(rec):
+    raw = str(rec.get("ts") or rec.get("time") or rec.get("timestamp") or "")
+    try:
+        stamp = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        if stamp.tzinfo is None:
+            stamp = stamp.replace(tzinfo=timezone.utc)
+        return stamp.astimezone(timezone.utc)
+    except (ValueError, OverflowError, OSError):
+        return None
+
+
+def _order(rec):
+    stamp = _timestamp(rec)
+    try:
+        return stamp.timestamp() if stamp is not None else float("-inf")
+    except (ValueError, OverflowError, OSError):
+        return float("-inf")
+
+
+# Both feeds may be large: retain only N matching events in memory and sort
+# the final tail oldest-to-newest. The source iteration order breaks ties.
+latest = []
+try:
+    for sequence, rec in enumerate(_records()):
+        if event_filter and event_filter not in str(rec.get("event") or "").lower():
+            continue
+        if client_filter and client_filter not in _hay(rec):
+            continue
+        item = (_order(rec), sequence, rec)
+        if len(latest) < limit:
+            heapq.heappush(latest, item)
+        elif item[:2] > latest[0][:2]:
+            heapq.heapreplace(latest, item)
+except RuntimeError as exc:
+    print("ERROR: %s" % exc, file=sys.stderr)
+    raise SystemExit(1)
+filtered = [item[2] for item in sorted(latest)]
 
 if want_json:
     print("\n".join(json.dumps(rec, sort_keys=True) for rec in filtered) if filtered else "(no audit log)")
     raise SystemExit(0)
 
 def _time(rec):
-    raw = str(rec.get("ts") or rec.get("time") or rec.get("timestamp") or "")
-    if not raw:
-        return "-"
-    text = raw.replace("T", " ").replace("Z", "")
-    return text[:16] if len(text) >= 16 else text
+    stamp = _timestamp(rec)
+    return stamp.strftime("%Y-%m-%d %H:%M:%S") if stamp is not None else "-"
 
 def _target(rec):
     details = rec.get("details") if isinstance(rec.get("details"), dict) else {}
@@ -3650,18 +3787,27 @@ def _result(rec):
     return "success"
 
 if not filtered:
-    print("(no matching audit events)")
+    print("(no matching audit events)" if available_feeds else "(no audit log)")
     raise SystemExit(0)
 
-print("%-19s %-24s %-16s %s" % ("TIME", "EVENT", "TARGET", "RESULT"))
+def _cell(value, width):
+    # Connection rows keep their existing JSON shape; make every human table
+    # cell safe as well as the newly exposed control metadata.
+    text = "".join(c if c.isprintable() else "?" for c in str(value))
+    return text[:width]
+
+
+print("%-19s %-26s %-16s %-18s %-8s %s" % ("TIME (UTC)", "EVENT", "TARGET", "RESULT", "REVISION", "ACTOR"))
 for rec in filtered:
     print(
-        "%-19s %-24s %-16s %s"
+        "%-19s %-26s %-16s %-18s %-8s %s"
         % (
-            _time(rec)[:19],
-            str(rec.get("event") or "-")[:24],
-            _target(rec)[:16],
-            _result(rec)[:24],
+            _cell(_time(rec), 19),
+            _cell(rec.get("event") or "-", 26),
+            _cell(_target(rec), 16),
+            _cell(_result(rec), 18),
+            _cell(rec.get("revision") if rec.get("revision") is not None else "-", 20),
+            _cell(rec.get("actor") or "-", 128),
         )
     )
 PY

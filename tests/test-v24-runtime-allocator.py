@@ -31,6 +31,17 @@ def _write_json(path: Path, data: dict) -> None:
 
 
 class RuntimeRenderTests(unittest.TestCase):
+    def test_unit_template_does_not_misidentify_legacy_admin_exec_as_supervised(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            config = Path(tmp, 'frpc.toml')
+            config.write_text('serverAddr = "host"\nauth.token = "fixture"\n')
+            props = ('ActiveState=active\nInvocationID=' + 'a' * 32
+                     + '\nExecStart=/usr/bin/python3 drlink_frpc_supervisor.py\nMainPID=123\n')
+            with (mock.patch.object(runtime.subprocess, 'check_output', return_value=props),
+                  mock.patch.object(runtime, '_frpc_toml_path', return_value=config),
+                  mock.patch.object(runtime, '_supervisor_process_running', return_value=False, create=True)):
+                self.assertEqual(runtime._supervised_invocation(), '')
+
     def test_existing_runtime_requires_current_connection_epoch(self):
         service = {'web': {'id': 'rs-web', 'enabled': True}}
         props = 'ActiveState=active\nInvocationID=' + 'a' * 32 + '\n'
@@ -221,6 +232,43 @@ class FRPAuthenticatedReloadSecurityTests(unittest.TestCase):
 
 
 class RuntimeApplyRemoveTests(unittest.TestCase):
+    def _populate_capacity_projection(self):
+        # Distinct canonical services with a shared local target are sufficient
+        # to expose projection work growth; no wall-clock/SLO assertion.
+        for index in range(1, 199):
+            self.plane.conn.execute(
+                "INSERT INTO agent_remote_services "
+                "(name,destination,service_object,enabled,status,endpoint_host,endpoint_port,"
+                "pending_allocation,delete_pending,pool_class,reason,updated_at) "
+                "SELECT ?,destination,service_object,enabled,status,endpoint_host,?,"
+                "pending_allocation,delete_pending,pool_class,reason,updated_at "
+                "FROM agent_remote_services WHERE name='web'",
+                ('capacity-%s' % index, 6010 + index))
+        self.plane.conn.commit()
+
+    def test_capacity_projection_reads_identity_once_and_refreshes_next_call(self):
+        self._populate_capacity_projection()
+        state = runtime.load_client_state(self.tmp)
+        with mock.patch.object(v24, 'load_agent_identity', wraps=v24.load_agent_identity) as identity:
+            first = runtime.build_desired_runtime_services(self.plane, state, root=self.tmp)
+            self.assertEqual(sum(bool(rec.get('v24_remote_service')) for rec in first.values()), 199)
+            self.assertEqual(identity.call_count, 1)
+            second = runtime.build_desired_runtime_services(self.plane, state, root=self.tmp)
+            self.assertEqual(second, first)
+            self.assertEqual(identity.call_count, 2)  # no cache across operations
+
+    def test_capacity_single_service_status_only_resolves_its_target(self):
+        self._populate_capacity_projection()
+        queries = []
+        self.plane.conn.set_trace_callback(queries.append)
+        try:
+            status, _ = runtime.verified_remote_service_status(self.plane, 'web', root=self.tmp)
+        finally:
+            self.plane.conn.set_trace_callback(None)
+        self.assertEqual(status, 'DEGRADED')  # fixture has no installed v2.4 proxy
+        targets = [q for q in queries if "kind='service-object'" in q]
+        self.assertEqual(len(targets), 1, 'one status must not resolve all 199 targets')
+
     def _provision_existing_secure_admin_fixture(self):
         # Explicitly test the already-approved/admin-provisioned path;
         # the product must not auto-open a new HTTP management endpoint.
@@ -238,6 +286,25 @@ class RuntimeApplyRemoveTests(unittest.TestCase):
         config.chmod(0o600)
         self.assertIsNotNone(runtime._trusted_existing_frpc_admin(config, text))
         return config, state
+
+    def test_isolated_apply_and_failed_rollback_never_restart_unrelated_runtime(self):
+        from drlink_control_db import ControlPlaneError
+        config = Path(self.tmp, 'etc/frp/frpc.toml')
+        before = config.read_bytes()
+        state = Path(self.tmp, 'etc/frp/client-state.json')
+        before_state = state.read_bytes()
+        with (mock.patch.object(runtime, '_supervised_invocation', return_value='a' * 32),
+              mock.patch.object(runtime, '_current_runtime_ready', return_value=True),
+              mock.patch.object(runtime, '_restart_frpc') as restart,
+              mock.patch.object(runtime, '_wait_supervised_runtime',
+                                side_effect=[ControlPlaneError('registration failed'), None]) as wait):
+            result = runtime.apply_agent_runtime(self.plane, root=self.tmp)
+        self.assertFalse(result['ok'])
+        self.assertNotIn('RECOVERY_REQUIRED', result['error'])
+        self.assertEqual(wait.call_count, 2)
+        restart.assert_not_called()
+        self.assertEqual(config.read_bytes(), before)
+        self.assertEqual(state.read_bytes(), before_state)
 
     def test_F007_securely_provisioned_admin_reloads_changed_proxy_without_full_restart(self):
         config, state = self._provision_existing_secure_admin_fixture()

@@ -109,8 +109,34 @@ def open_plane(cfg: Optional[dict] = None, root: Optional[str] = None) -> Contro
     return ControlPlane(root or root_from_cfg(cfg))
 
 
-def generation_status(plane: ControlPlane, plane_name: str) -> dict:
-    st = plane.status()
+def generation_status(
+    plane: ControlPlane, plane_name: str, *, validated_revision: Optional[int] = None
+) -> dict:
+    if validated_revision is None:
+        # Direct CLI and standalone callers retain the complete integrity and
+        # foreign-key scan. Only an already-validated runtime cache may opt out.
+        st = plane.status()
+    else:
+        # PolicyCache/ControlPlaneCache validated the exact DB fingerprint
+        # (including a full integrity check on first load and every change).
+        # Check revision and ALL active plane generations on the request's own
+        # SQLite connection; any racing update is a fail-closed mismatch.
+        rev = plane.current_revision()
+        gens = {
+            row["plane"]: dict(row)
+            for row in plane.conn.execute("SELECT * FROM runtime_generations")
+        }
+        valid = rev == int(validated_revision)
+        st = {
+            "revision": rev,
+            "generations": gens,
+            "db_healthy": valid,
+            "mismatch": not valid or any(
+                row.get("status") == "mismatch"
+                or (row.get("status") == "active" and row.get("generation") != rev)
+                for row in gens.values()
+            ),
+        }
     gen = (st.get("generations") or {}).get(plane_name) or {}
     mismatch = bool(st.get("mismatch"))
     if gen.get("status") == "mismatch":
@@ -358,6 +384,7 @@ def authorize_internet(
     port: int,
     protocol: str,
     candidate_ips: Optional[list[str]] = None,
+    validated_revision: Optional[int] = None,
 ) -> dict:
     """Authorize outbound Internet Access using canonical ordered rules.
 
@@ -365,7 +392,7 @@ def authorize_internet(
     candidate granularity and only authorized candidates may be connected.
     Direct IP literals must be authorized by explicit Host/CIDR selectors.
     """
-    gen = generation_status(plane, "internet")
+    gen = generation_status(plane, "internet", validated_revision=validated_revision)
     base = {
         "source_ip": source_ip,
         "hostname": hostname,
@@ -753,7 +780,12 @@ class ControlPlaneCache:
             db_fp = (stat.st_ino, stat.st_size, getattr(stat, "st_mtime_ns", int(stat.st_mtime * 1e9)))
         except OSError:
             db_fp = (None, None, None)
-        return (revision, mismatch, db_fp, str(db))
+        # SQLite WAL commits can change authoritative policy rows without
+        # changing the main drlink.db inode/size/mtime or config revision.
+        # A long-lived read-only connection observes commits via data_version,
+        # forcing an integrity check even for same-revision external writes.
+        db_data_version = int(plane.conn.execute("PRAGMA data_version").fetchone()[0])
+        return (revision, mismatch, db_fp, str(db), db_data_version)
 
     def reload(self, force: bool = False) -> None:
         with self.lock:

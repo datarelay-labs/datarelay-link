@@ -161,12 +161,83 @@ def _yaml():
     return _mod
 
 
+def _load_yaml_reject_duplicate_keys(text: str) -> Any:
+    """Safe YAML parsing that rejects ambiguous repeated mapping keys.
+
+    Inspect authored mappings before PyYAML flattens merge keys, so an explicit
+    override of a YAML merge alias stays compatible. Normal duplicate keys at
+    any nesting depth must not silently replace previous configuration intent.
+    """
+    yaml = _yaml()
+
+    class _UniqueKeySafeLoader(yaml.SafeLoader):
+        def construct_mapping(self, node, deep=False):
+            seen = set()
+            for key_node, _ in node.value:
+                # The YAML merge tag is resolved by the underlying SafeLoader.
+                # An explicitly authored override of a merged key is valid.
+                key = (
+                    "<<"
+                    if key_node.tag == "tag:yaml.org,2002:merge"
+                    else self.construct_object(key_node, deep=deep)
+                )
+                try:
+                    if key in seen:
+                        # Do not include PyYAML source marks here: their
+                        # rendered snippets may echo submitted credentials.
+                        raise yaml.YAMLError(
+                            "duplicate YAML mapping key at line %d; "
+                            "each key may appear only once"
+                            % (key_node.start_mark.line + 1)
+                        )
+                    seen.add(key)
+                except TypeError:
+                    raise yaml.YAMLError(
+                        "unhashable YAML mapping key at line %d"
+                        % (key_node.start_mark.line + 1)
+                    ) from None
+            return super().construct_mapping(node, deep=deep)
+
+    return yaml.load(text, Loader=_UniqueKeySafeLoader)
+
+
+def _public_yaml_error_detail(exc: Exception) -> str:
+    """Return a usable error location without echoing any submitted YAML.
+
+    PyYAML exception strings embed source snippets, attacker-chosen YAML tags,
+    and alias names. Only our fixed, line-only duplicate-key errors are safe to
+    quote; all other exceptions are reduced to type and numeric source marks.
+    """
+    yaml = _yaml()
+    if type(exc) is yaml.YAMLError:
+        detail = str(exc)
+        if re.fullmatch(
+            r"(?:duplicate YAML mapping key at line [1-9][0-9]*; "
+            r"each key may appear only once|"
+            r"unhashable YAML mapping key at line [1-9][0-9]*)",
+            detail,
+        ):
+            return detail
+
+    label = (
+        "Unsupported YAML tag or value"
+        if isinstance(exc, yaml.constructor.ConstructorError)
+        else "Invalid YAML syntax"
+    )
+    for mark in (getattr(exc, "context_mark", None), getattr(exc, "problem_mark", None)):
+        line = getattr(mark, "line", None)
+        column = getattr(mark, "column", None)
+        if isinstance(line, int) and line >= 0 and isinstance(column, int) and column >= 0:
+            return "%s at line %d, column %d" % (label, line + 1, column + 1)
+    return label
+
+
 def _safe_load_yaml(text: str) -> Any:
     yaml = _yaml()
     try:
-        data = yaml.safe_load(text)
+        data = _load_yaml_reject_duplicate_keys(text)
     except yaml.YAMLError as exc:
-        raise BundleError("Malformed YAML: %s" % exc) from exc
+        raise BundleError("Malformed YAML: %s" % _public_yaml_error_detail(exc)) from None
     return data
 
 

@@ -159,4 +159,64 @@ grep -q 'AFTER=linux-cursor-gen1' "$WORK/state/units" || fail "Linux wait did no
 pass "LINUX_PROXY_WAIT_REGRESSION"
 pass "LINUX_STALE_CURSOR_CAUSALITY"
 
+# A management-only install has no client-unit journal before its first
+# Remote Service. Capture a real system-journal boundary, then require fresh
+# client-unit evidence after that boundary; unrelated/stale logs cannot pass.
+rm -f "$WORK/state/units" "$WORK/state/fresh-client"
+cat >"$BIN/journalctl" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+unit=""
+after_cursor=""
+show_cursor=0
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -u) unit="$2"; shift 2 ;;
+    --after-cursor) after_cursor="$2"; shift 2 ;;
+    --show-cursor) show_cursor=1; shift ;;
+    -n) shift 2 ;;
+    *) shift ;;
+  esac
+done
+state_dir="${FRP_FAKE_JOURNAL_STATE:?}"
+printf 'UNIT=%s AFTER=%s CURSOR=%s\n' "$unit" "$after_cursor" "$show_cursor" >>"$state_dir/units"
+if (( show_cursor )); then
+  # No drlink-client invocation has ever written a journal entry.
+  if [[ -z "$unit" && ! -f "$state_dir/journal-unavailable" ]]; then
+    printf '%s\n' '-- cursor: system-before-first-client'
+  fi
+  exit 0
+fi
+if [[ "$unit" != "drlink-client" || "$after_cursor" != "system-before-first-client" ]]; then
+  # An unrelated unit (or a read without the boundary) has misleading success.
+  printf '%s\n' 'login to server success' '[host-ssh] start proxy success'
+  exit 0
+fi
+if [[ -f "$state_dir/fresh-client" ]]; then
+  printf '%s\n' 'login to server success' '[host-ssh] start proxy success'
+fi
+EOF
+chmod 0755 "$BIN/journalctl"
+
+CURSOR_FIRST_CLIENT="$(frp_client_journal_cursor)"
+[[ "$CURSOR_FIRST_CLIENT" == "system-before-first-client" ]] \
+  || fail "first client activation requires an existing system journal cursor"
+export FRP_PROXY_WAIT_CURSOR="$CURSOR_FIRST_CLIENT"
+if wait_for_proxies host-ssh; then
+  fail "unrelated/stale journal success must not qualify the first client activation"
+fi
+touch "$WORK/state/fresh-client"
+if ! wait_for_proxies host-ssh; then
+  fail "fresh client login and proxy success after the system cursor must qualify"
+fi
+grep -q 'UNIT=drlink-client AFTER=system-before-first-client CURSOR=0' "$WORK/state/units" \
+  || fail "readiness must remain client-unit and post-cursor scoped"
+pass "FIRST_CLIENT_ACTIVATION_WITH_EMPTY_UNIT_JOURNAL"
+pass "FIRST_CLIENT_FRESH_SCOPED_EVIDENCE_REQUIRED"
+
+touch "$WORK/state/journal-unavailable"
+[[ -z "$(frp_client_journal_cursor)" ]] \
+  || fail "unavailable journal must not produce fabricated generation evidence"
+pass "UNAVAILABLE_JOURNAL_HAS_NO_SYNTHETIC_CURSOR"
+
 echo "CLIENT_PROXY_HEALTH_WAIT_TEST=PASS"

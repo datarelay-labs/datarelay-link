@@ -388,7 +388,7 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-ExecStart=/usr/local/bin/frpc -c /etc/frp/frpc.toml
+ExecStart=/usr/bin/python3 /usr/local/lib/drlink/drlink_frpc_supervisor.py
 Restart=always
 RestartSec=5
 

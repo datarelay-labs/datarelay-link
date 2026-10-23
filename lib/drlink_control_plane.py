@@ -264,18 +264,29 @@ def normalize_object_value(obj_type: str, value: str) -> str:
     if kind == "host":
         try:
             return str(ipaddress.ip_address(text))
-        except ValueError as exc:
-            raise ControlPlaneError("Invalid host value: %s" % text) from exc
+        except ValueError:
+            # Public diagnostics must not echo submitted credentials or other
+            # sensitive material accidentally pasted as an IP address.
+            raise ControlPlaneError(
+                "Invalid host value. Use a single IPv4 or IPv6 address "
+                "(for example, 192.0.2.10)."
+            ) from None
     if kind == "network":
         try:
             net = ipaddress.ip_network(text, strict=False)
             return str(net)
-        except ValueError as exc:
-            raise ControlPlaneError("Invalid network value: %s" % text) from exc
+        except ValueError:
+            raise ControlPlaneError(
+                "Invalid network value. Use an IPv4 or IPv6 CIDR prefix "
+                "(for example, 192.0.2.0/24)."
+            ) from None
     if kind == "fqdn":
         host = text.rstrip(".").lower()
         if not FQDN_RE.fullmatch(host):
-            raise ControlPlaneError("Invalid FQDN value: %s" % text)
+            raise ControlPlaneError(
+                "Invalid FQDN value. Use a DNS hostname (for example, "
+                "api.example.com) without URL, path, or credentials."
+            )
         return host
     raise ControlPlaneError("Unknown object type: %s" % obj_type)
 
@@ -1405,6 +1416,30 @@ class ControlPlane:
                     "name": row["name"],
                     "section": "Fixed TCP",
                     "display": "Fixed TCP: %s" % row["name"],
+                }
+            )
+        # Static Relay destinations remain named Network Object dependencies,
+        # not disposable target-address snapshots. Disabled publications still
+        # own their configuration/reservation; only released ones stop referring
+        # to the object. Managed Host destinations use immutable client_id below.
+        for row in self.conn.execute(
+            "SELECT s.name, c.label, c.hostname, c.id AS owner_id "
+            "FROM remote_service_meta m "
+            "JOIN published_services s ON s.id = m.service_id "
+            "JOIN clients c ON c.id = s.client_id "
+            "WHERE m.destination_name = ? COLLATE NOCASE "
+            "AND COALESCE(m.destination_client_id, '') = '' "
+            "AND IFNULL(s.released, 0) = 0 ORDER BY c.id, s.name",
+            (obj["name"],),
+        ):
+            owner = row["label"] or row["hostname"] or row["owner_id"][:8]
+            refs.append(
+                {
+                    "kind": "remote-service",
+                    "name": row["name"],
+                    "owner": owner,
+                    "section": "Remote Services",
+                    "display": "Remote Service: %s (Agent %s)" % (row["name"], owner),
                 }
             )
         if obj["type"] == "managed_endpoint":
@@ -5898,7 +5933,10 @@ class ControlPlane:
         )
 
     def status(self) -> dict:
+        from drlink_v24 import detect_cli_role
+
         rev = self.current_revision()
+        role = detect_cli_role(self.root)
         gens = {r["plane"]: dict(r) for r in self.conn.execute("SELECT * FROM runtime_generations")}
         clients = self.conn.execute("SELECT COUNT(*) FROM clients").fetchone()[0]
         services = self.conn.execute("SELECT COUNT(*) FROM published_services WHERE released = 0").fetchone()[0]
@@ -5907,9 +5945,30 @@ class ControlPlane:
             integrity_check(self.conn)
         except Exception:
             db_ok = False
+
+        def agent_server_policy_lag(plane: str, generation: dict) -> bool:
+            # Agent Bundles advance local desired-state revisions, then verify
+            # FRPC through the Agent activation path. They deliberately do not
+            # recompile these Server authorization artifacts. Exempt only an
+            # internally coherent old active row, never an explicit failure.
+            value = generation.get("generation")
+            return (
+                role == "agent"
+                and plane in ("remote", "internet", "ai")
+                and generation.get("status") == "active"
+                and type(value) is int
+                and type(generation.get("db_revision")) is int
+                and generation["db_revision"] == value
+                and 0 <= value < rev
+                and generation.get("error") in (None, "")
+            )
+
         mismatch = any(
-            g.get("status") == "mismatch" or (g.get("generation") != rev and g.get("status") == "active")
-            for g in gens.values()
+            g.get("status") == "mismatch" or (
+                g.get("generation") != rev and g.get("status") == "active"
+                and not agent_server_policy_lag(plane, g)
+            )
+            for plane, g in gens.items()
         )
         return {
             "db_healthy": db_ok,
@@ -5944,7 +6003,7 @@ class ControlPlane:
             runtime = probe_agent_runtime_unit(root=self.root)
             level = runtime.get("level") or "Unknown"
             detail = runtime.get("detail") or "unavailable"
-            if level == "Healthy":
+            if level == "Healthy" and runtime.get("runtime_required") is not False:
                 extra.append("Agent Runtime   : Healthy")
             else:
                 extra.append("Agent Runtime   : %s — %s" % (level, detail))
@@ -5956,7 +6015,9 @@ class ControlPlane:
                 identity = load_agent_identity(self.root) or {}
                 if detect_server_reachable(self, self.root):
                     from drlink_v24_runtime import _current_runtime_ready
-                    if level == 'Healthy' and _current_runtime_ready(self.root, '', {}):
+                    if level == 'Healthy' and runtime.get('runtime_required') is False:
+                        server_line = 'Management connected; no enabled relay services'
+                    elif level == 'Healthy' and _current_runtime_ready(self.root, '', {}):
                         server_line = 'Connected'
                     else:
                         server_line = 'Management reachable; Agent transport unverified'

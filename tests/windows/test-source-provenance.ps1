@@ -60,6 +60,20 @@ try {
     Assert-FrpTrue ($unverifiedOutput.Contains('FRP_WINDOWS_PROJECT_SRC') -and $unverifiedOutput.Contains('drlink system update product')) 'unknown Source HEAD names the supported update command and verified package selector'
     Assert-FrpTrue ($unverifiedOutput.Contains('keep release qualification on HOLD')) 'local package refresh must not falsely imply qualified provenance'
 
+    # An interrupted/incomplete install may have identity but no version file.
+    # Public provenance discovery must still explain UNKNOWN and recovery.
+    $versionBytes = [IO.File]::ReadAllBytes((Get-FrpVersionPath))
+    Remove-Item -LiteralPath (Get-FrpVersionPath)
+    try {
+        $missingOutput = & $exe -NoProfile -File (Join-Path (Get-FrpToolsDir) 'FrpClient.ps1') system version 2>&1 | Out-String
+        Assert-FrpEqual 0 $LASTEXITCODE 'missing metadata remains a read-only operator result'
+        Assert-FrpTrue ($missingOutput.Contains('Source HEAD: UNKNOWN')) 'missing version metadata explicitly reports unknown provenance'
+        Assert-FrpTrue ($missingOutput.Contains('Next action:') -and $missingOutput.Contains('drlink system update product')) 'missing metadata gives supported recovery'
+        Assert-FrpTrue (-not (Test-Path -LiteralPath (Get-FrpVersionPath))) 'version discovery does not synthesize install metadata'
+    } finally {
+        [IO.File]::WriteAllBytes((Get-FrpVersionPath), $versionBytes)
+    }
+
     # An altered outer payload cannot acquire the Server's qualified source.
     $env:FRP_WINDOWS_BOOTSTRAP_PATH = Join-Path (Get-FrpWindowsRoot) 'altered-bootstrap.ps1'
     Set-Content -LiteralPath $env:FRP_WINDOWS_BOOTSTRAP_PATH -Value 'altered bytes'

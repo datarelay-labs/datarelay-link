@@ -10,6 +10,7 @@ import socket
 import sys
 import tempfile
 import unittest
+from unittest import mock
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -113,14 +114,19 @@ class InternetRuntimeParityTests(unittest.TestCase):
 
         cache = GW.PolicyCache(cfg_path)
         gw = GW.GatewayState(cache, resolve_fn=resolve, connect_fn=connect_fn)
-        sock, decision = GW._authorize_and_connect(
-            gw,
-            source_ip=SRC,
-            hostname="api.example",
-            port=443,
-            method="CONNECT",
-            protocol="https",
-        )
+        # One authoritative authorization is sufficient; redundant gateway
+        # cache snapshots run full DB integrity checks on every CONNECT.
+        with mock.patch.object(
+            cache, "snapshot", side_effect=AssertionError("redundant policy snapshot")
+        ):
+            sock, decision = GW._authorize_and_connect(
+                gw,
+                source_ip=SRC,
+                hostname="api.example",
+                port=443,
+                method="CONNECT",
+                protocol="https",
+            )
         self.assertIsNone(sock)
         self.assertEqual(decision["decision"], EG.DECISION_DENY)
         self.assertEqual(decision["authorized_candidates"], [])
