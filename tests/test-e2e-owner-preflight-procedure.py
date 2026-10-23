@@ -59,7 +59,8 @@ class E2EProcedureGuard(unittest.TestCase):
         self.assertIn("Clean the prior test installation", self.canonical)
         self.assertIn("clean → install → test", self.canonical)
         self.assertIn("specific cleanup effect", self.canonical)
-        self.assertIn("do not disguise, reroute or retry", self.canonical)
+        self.assertIn("do not disguise, reroute or bypass that denied effect", self.canonical)
+        self.assertIn("Test-host disposability alone cannot override a security-tool denial.", self.canonical)
         self.assertIn("Owner's destructive test-host authorization", self.procedure)
         self.assertIn("disposable test machines", self.procedure)
         self.assertIn("Before the first product operation", self.procedure)
@@ -98,7 +99,7 @@ class E2EProcedureGuard(unittest.TestCase):
         required = (
             "FULL_USER_E2E_SCENARIOS.md",
             "116 scenario", "3,600-second soak",
-            "two same-HEAD PASS", "Codex runs directly",
+            "two same-HEAD PASS", "Selected runtime executes directly",
             "F001", "F004", "F005", "F006", "F007", "D001",
             "No new full E2E",
             "first AI answer", "AI_FIRST_ANSWERS.tsv",
@@ -124,7 +125,9 @@ class E2EProcedureGuard(unittest.TestCase):
         self.assertIn("two same-HEAD PASS", self.procedure)
         agents = (ROOT / "AGENTS.md").read_text(encoding="utf-8")
         self.assertIn("## Data Relay Link E2E fast path", agents)
-        self.assertIn("packet-lint/work-admission tooling is diagnostic here", agents)
+        self.assertIn("packet-lint", agents)
+        self.assertIn("work-admission", agents)
+        self.assertIn("are diagnostics, not permission switches", agents)
 
     def test_obsolete_fcs_actor_launcher_is_not_required(self):
         self.assertFalse((ROOT / "tools/codex_fcs_actor_dispatch.py").exists())
@@ -142,7 +145,7 @@ class E2EProcedureGuard(unittest.TestCase):
         self.assertNotIn("replace placeholders only after owner approval", protocol)
         self.assertNotIn("Fail-closed sanity check already performed", protocol)
 
-    def test_codex_owns_test_fix_retest_without_historical_launch_gates(self):
+    def test_owner_selected_runtime_owns_test_fix_retest_without_historical_launch_gates(self):
         fcs = (ROOT / "docs/CLI_FEATURE_SCENARIO_RECONCILIATION.md").read_text()
         cli = (ROOT / "docs/CLI_ONLY_E2E_SCENARIOS.md").read_text()
         agents = (ROOT / "AGENTS.md").read_text()
@@ -160,11 +163,10 @@ class E2EProcedureGuard(unittest.TestCase):
         self.assertNotIn("EXECUTOR=ChatGPT", self.canonical)
         self.assertNotIn("FINAL_AUDITOR=ChatGPT", self.canonical)
         self.assertNotIn("implemented/tested by ChatGPT", cli)
-        self.assertIn("Codex owns the complete test-and-fix loop", self.canonical)
-        self.assertIn("Codex owns the owner-selected CLI-only or Full User E2E scope",
-                      agents)
-        self.assertIn("real commands/exit codes/evidence", agents)
-        self.assertIn("Freeze test evidence before source changes", agents)
+        self.assertIn("The current owner-selected runtime owns the complete test-and-fix loop", self.canonical)
+        self.assertIn("current explicitly owner-selected implementer", agents)
+        self.assertIn("record commands/exit codes/effects", agents)
+        self.assertIn("freeze evidence -> fix -> focused regression", agents)
         self.assertIn("runtime non-destructive", fcs)
         self.assertIn("two complete same-HEAD", self.canonical)
 
@@ -528,18 +530,22 @@ class CodexDualRoleEvidenceContractTests(unittest.TestCase):
             report = self._check(dropped, root)
             self.assertIn("missing feature FEATURE-AI", report["ERRORS"])
 
-    def test_canonical_documents_select_codex_independent_roles(self):
+    def test_canonical_documents_preserve_owner_selected_independent_roles(self):
         fcs = (ROOT / "docs" / "CLI_FEATURE_SCENARIO_RECONCILIATION.md"
                ).read_text(encoding="utf-8")
         full = CANONICAL.read_text(encoding="utf-8")
         plan = (ROOT / "docs" / "CODEX_DUAL_ROLE_TEST_PROTOCOL.md"
                 ).read_text(encoding="utf-8")
         for text in (fcs, full, plan):
-            self.assertIn("CODEX", text.upper())
+            self.assertIn("owner-selected", text.lower())
         self.assertIn("docs/CODEX_DUAL_ROLE_TEST_PROTOCOL.md", fcs)
         self.assertIn("docs/CODEX_DUAL_ROLE_TEST_PROTOCOL.md", full)
-        self.assertIn("ISSUE_165_PRIMARY_PERSONA_EXECUTOR=CODEX", fcs)
-        self.assertIn("AI-assisted user role for the SAME feature", fcs)
+        self.assertIn("Current explicit owner instruction selects the implementer", fcs)
+        self.assertIn("FCS_CLI_ONLY", fcs)
+        self.assertIn("FCS_FULL", fcs)
+        self.assertIn("USER_E2E_EXECUTOR=OWNER_SELECTED_RUNTIME", full)
+        self.assertIn("same-scenario AI parity", fcs)
+        self.assertIn("All **15** with truly independent AI-supported role evidence", fcs)
         self.assertIn("same business goal", plan)
         self.assertIn("different fresh", plan.lower())
         self.assertIn("LAB_GO", plan)
