@@ -44,6 +44,21 @@ echo "=== test registration completeness ==="
 ./tests/test-orphan-suite-coverage.sh
 
 echo "=== tests ==="
+# E2E defect regressions must run in the full suite as well as focused PR checks.
+bash tests/test-agent-candidate-payload.sh
+python3 tests/test-cli-only-e2e-delta-triage.py
+python3 tests/test-cli-only-e2e-document-parity.py
+python3 tests/test-client-uninstall-arguments.py
+python3 tests/test-doctor-permission-guidance.py
+python3 tests/test-frpc-proxy-isolation.py
+python3 tests/test-frpctl-clear-nontty.py
+python3 tests/test-native-egress-library-and-enrollment-help.py
+python3 tests/test-v24-agent-bundle-synchronization-lock.py
+python3 tests/test-v24-agent-management-status-proof.py
+python3 tests/test-v24-e2e-readiness-targeted.py
+python3 tests/test-v24-network-object-remote-reference.py
+python3 tests/test-v24-reference-delete-serialization.py
+python3 tests/test-v24-selector-membership-impact.py
 ./tests/test-server-migration.sh
 ./tests/test-registry-init.sh
 python3 tests/test-allocator.py
