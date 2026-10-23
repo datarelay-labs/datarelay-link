@@ -4185,6 +4185,14 @@ def main(argv=None):
             skip_network=args.skip_network or bool(facts.get('skip_network')),
             scope=args.scope,
         )
+    except PermissionError:
+        sys.stderr.write(
+            'ERROR: diagnostics cannot read protected install state.\n'
+            'Run as the installation owner or administrator.\n'
+            'For a system install, retry with: sudo drlink system diagnostics\n'
+            'No changes were applied.\n'
+        )
+        return 1
     except Exception as exc:
         sys.stderr.write('ERROR: doctor internal error: %s\n' % redact(str(exc)))
         if args.verbose:

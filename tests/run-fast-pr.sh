@@ -28,6 +28,7 @@ python3 tests/test-cli-reconciliation-role-parser-regression.py
 python3 tests/test-permission-dependency-recovery.py
 python3 tests/test-internet-access-recovery-guidance.py
 python3 tests/test-doctor-egress-sqlite-authority.py
+python3 tests/test-doctor-permission-guidance.py
 python3 tests/test-agent-status-policy-generation.py
 python3 tests/test-enrollment-retention-recovery-guidance.py
 python3 tests/test-public-help-required-operands.py

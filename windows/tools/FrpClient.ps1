@@ -1282,25 +1282,25 @@ switch ($Command) {
     'info' { exit (Show-FrpClientInfo) }
     'version' {
         $verPath = Join-Path (Get-FrpWindowsRoot) 'version'
+        $values = @{}
         if (Test-Path -LiteralPath $verPath) {
             Get-Content -LiteralPath $verPath -ErrorAction SilentlyContinue | ForEach-Object { Write-Host $_ }
-            $values = @{}
             foreach ($line in Get-Content -LiteralPath $verPath) {
                 if ($line -match '^([^=]+)=(.*)$') { $values[$Matches[1]] = $Matches[2] }
             }
-            foreach ($pair in @(@('Role','ROLE'), @('Release Channel','RELEASE_CHANNEL'),
-                    @('Source HEAD','SOURCE_HEAD'), @('Content Source HEAD','CONTENT_SOURCE_HEAD'))) {
-                $value = [string]$values[$pair[1]]
-                if (-not $value) { $value = 'UNKNOWN' }
-                Write-Host ('{0}: {1}' -f $pair[0], $value)
-            }
-            if ([string]$values['SOURCE_HEAD'] -notmatch '^[0-9a-f]{40}$') {
-                Write-Host 'Source provenance is not verified. This Agent Host cannot qualify as an exact release candidate.'
-                Write-Host 'Next action: Obtain a verified immutable Windows source package and set FRP_WINDOWS_PROJECT_SRC to its windows/ directory. Run drlink system update product, then run drlink system version again. See docs/UPGRADE.md.'
-                Write-Host 'Do not rerun Zero-Touch, re-enroll, or edit provenance files. If Source HEAD remains UNKNOWN, keep release qualification on HOLD until source provenance is independently verified.'
-            }
         } else {
             Write-Host 'Data Relay Link Windows Agent Host'
+        }
+        foreach ($pair in @(@('Role','ROLE'), @('Release Channel','RELEASE_CHANNEL'),
+                @('Source HEAD','SOURCE_HEAD'), @('Content Source HEAD','CONTENT_SOURCE_HEAD'))) {
+            $value = [string]$values[$pair[1]]
+            if (-not $value) { $value = 'UNKNOWN' }
+            Write-Host ('{0}: {1}' -f $pair[0], $value)
+        }
+        if ([string]$values['SOURCE_HEAD'] -notmatch '^[0-9a-f]{40}$') {
+            Write-Host 'Source provenance is not verified. This Agent Host cannot qualify as an exact release candidate.'
+            Write-Host 'Next action: Obtain a verified immutable Windows source package and set FRP_WINDOWS_PROJECT_SRC to its windows/ directory. Run drlink system update product, then run drlink system version again. See docs/UPGRADE.md.'
+            Write-Host 'Do not rerun Zero-Touch, re-enroll, or edit provenance files. If Source HEAD remains UNKNOWN, keep release qualification on HOLD until source provenance is independently verified.'
         }
         exit 0
     }
