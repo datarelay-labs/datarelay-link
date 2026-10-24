@@ -55,6 +55,8 @@ The selected runtime performs implementation, deterministic testing, and termina
 
 ## Data Relay Link E2E fast path
 
+- **Required native E2E execution playbook:** for any CLI-only/Full User E2E start, resume, or runner-debug task, read `docs/OWNER_CODEX_E2E_EXECUTION_PLAYBOOK.md` after the two always-read governance files and the selected scenario contract. Preserve the owner's working interactive Codex/real public-CLI/116-row ledger method; execute directly with connected tools when `CHATGPT_CHAT` is selected. Do not repeat the historical `approval_policy=never` noninteractive runner error, generalize a denied operation into a global blocker, or substitute CI/harness evidence for native E2E. Observed `danger-full-access` flags are historical evidence, never default permission or a safety bypass.
+
 - **Execution rule:** The **current explicitly owner-selected implementer** owns authorized CLI-only and Full User E2E end to end; when not overridden, `.engineering/execution-profile.yaml` selects `CHATGPT_CHAT`. Historic Codex-only instructions and older Issue text never override the current owner request. Run available public CLI scenarios, record commands/exit codes/effects, then freeze evidence -> fix -> focused regression -> authorized candidate retest as appropriate. Reuse an existing live actor **only when that actor remains selected for its specific active lane**; never duplicate, repin, kill, mutate or steal its worktree/RUN_ID. Protect existing platform denials, legitimate production/credential/release boundaries and distinct full Direct/AI-role evidence. `packet-lint` and `work-admission` are diagnostics, not permission switches.
 
 ## Start work instead of processing paperwork
