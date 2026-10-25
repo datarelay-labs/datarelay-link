@@ -196,6 +196,15 @@ set internet-access github-https mode whitelist source ubuntu-prod destination g
 
 AI Access:
 
+On the first operator-approved OAuth AI Identity, after real PKCE verification,
+DataRelay Link creates the owner MCP access group and an explicit WHITELIST
+rule for signed/trusted enrolled Managed Hosts. This initial owner receives
+all seven MCP capabilities (including file operations, path scope `/*`);
+other authenticated identities remain default-DENY until separately granted.
+The owner rule is auditable as `mcp-owner-full-access`, with permission object
+`mcp-owner-all` and Network Group `mcp-owner-managed-hosts`.
+Revocation and endpoint trust checks remain effective.
+
 ```text
 set ai-access claude-prod mode whitelist source claude destination production-servers permission read-only enabled
 set ai-access allow-read mode whitelist source automation-ai destination ubuntu-prod permission read-only paths '/var/lib/vendor/**',/opt/app/** enabled
