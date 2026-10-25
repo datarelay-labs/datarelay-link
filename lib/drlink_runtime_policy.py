@@ -695,14 +695,41 @@ def sync_enrolled_client(
         remote_port = svc.get("remote_port")
         preset = str(svc.get("preset") or svc.get("service_type") or "tcp").lower()
         stype = preset if preset in ("ssh", "http", "https", "tcp") else "tcp"
-        mode = "self"
-        target_host = local_ip
-        # Routed targets are explicit non-loopback destinations when marked.
-        if str(svc.get("target_mode") or "").lower() == "routed":
-            mode = "routed"
-            target_host = str(svc.get("target_host") or local_ip)
+        target_host = str(svc.get("target_host") or local_ip)
         service_name = str(sid).strip().lower()
         import drlink_v24 as v24
+
+        # The Server owns the signed bootstrap ticket's service scope. A LAN
+        # destination cannot be represented as this-host: that describes
+        # 127.0.0.1 and otherwise makes Access Control deny every connection.
+        target_ref = v24.enrolled_target_object_name(target_host)
+        mode = "routed" if target_ref else "self"
+        destination_name = target_ref or "this-host"
+        destination_client_id = None if target_ref else client_id
+        if target_ref:
+            try:
+                parsed = ipaddress.ip_address(target_host)
+                object_type = "host"
+                normalized_target = str(parsed)
+            except ValueError:
+                object_type = "fqdn"
+                normalized_target = target_host.lower()
+            existing_target = plane.get_object(target_ref)
+            if existing_target is None:
+                plane.set_object_type(target_ref, object_type)
+                plane.set_object_value(target_ref, normalized_target)
+            else:
+                # Never overwrite another operator-owned object with a
+                # coincident name, even though the name embeds a digest.
+                existing_values = plane._object_values(existing_target["id"])
+                if (
+                    existing_target["origin"] == "managed"
+                    or existing_target["type"] != object_type
+                    or existing_values != [normalized_target]
+                ):
+                    raise ControlPlaneError(
+                        "Enrolled LAN target reference conflicts with existing Network Object"
+                    )
         service_object = v24.ensure_enrolled_service_object(
             plane, stype, local_port or (22 if stype == 'ssh' else 0))
         plane.set_published_service(
@@ -734,12 +761,13 @@ def sync_enrolled_client(
                     "INSERT INTO remote_service_meta"
                     "(service_id, status, pool_class, service_object_id, destination_name, destination_client_id, "
                     "pending_allocation, delete_pending, reason) "
-                    "VALUES (?, ?, 'normal', ?, 'this-host', ?, ?, 0, ?)",
+                    "VALUES (?, ?, 'normal', ?, ?, ?, ?, 0, ?)",
                     (
                         pub["id"],
                         "DISABLED" if not pub_enabled else "DEGRADED",
-                        service_object['id'],
-                        client_id,
+                        service_object["id"],
+                        destination_name,
+                        destination_client_id,
                         0 if pub["public_port"] is not None else 1,
                         "" if not pub_enabled else "Runtime activation pending.",
                     ),
