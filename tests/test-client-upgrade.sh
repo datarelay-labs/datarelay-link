@@ -509,4 +509,20 @@ grep -q 'UPGRADE_ROLLBACK=PASS' "$WORKDIR/client-unbound.out" "$WORKDIR/client-u
   fail "client unexpected rollback"
 pass "CLIENT_UPDATE_UNEXPECTED_FAILURE_ROLLBACK"
 
+LEGACY_CLI="$WORKDIR/legacy-cli-recovery"
+write_client_fixture "$LEGACY_CLI" 1 0
+write_old_tool "$LEGACY_CLI/usr/local/bin/frpctl" legacy-public-cli
+LEGACY_CLI_BEFORE="$(file_sha "$LEGACY_CLI/usr/local/bin/frpctl")"
+export FRP_CLIENT_TEST_ROOT="$LEGACY_CLI"
+export FRP_CLIENT_UPGRADE_HOOK_FAIL=version
+if "$ROOT/tools/frp-client" update --source "$ROOT" >"$WORKDIR/legacy-cli-fail.out" 2>"$WORKDIR/legacy-cli-fail.err"; then
+  fail "legacy CLI version-write fault should fail"
+fi
+unset FRP_CLIENT_UPGRADE_HOOK_FAIL
+grep -q 'UPGRADE_ROLLBACK=PASS' "$WORKDIR/legacy-cli-fail.out" || fail "legacy CLI rollback"
+[[ "$(file_sha "$LEGACY_CLI/usr/local/bin/frpctl")" == "$LEGACY_CLI_BEFORE" ]] || fail "rollback lost prior public CLI"
+"$ROOT/tools/frp-client" update --source "$ROOT" >"$WORKDIR/legacy-cli-retry.out" 2>"$WORKDIR/legacy-cli-retry.err"
+[[ -x "$LEGACY_CLI/usr/local/bin/drlink" && ! -e "$LEGACY_CLI/usr/local/bin/frpctl" ]] || fail "successful retry did not retire old CLI"
+pass "PRIOR_PUBLIC_CLI_REMAINS_USABLE_UNTIL_SUCCESSFUL_RETRY"
+
 echo "CLIENT_UPGRADE_TESTS=PASS"

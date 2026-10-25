@@ -568,7 +568,8 @@ def _pinned_or_stock_curl_line(url_var, dest_var, pin_private_ca):
     ) % (url_var, dest_var, stock)
 
 
-def render_short_url_bootstrap_script(allocator_url, ca_sha256, ticket, installer_url):
+def render_short_url_bootstrap_script(allocator_url, ca_sha256, ticket, installer_url,
+                                     qualified_provenance=None):
     """Return a small generic bootstrap script that reuses the zt1 installer path.
 
     Downloads installer + SHA256SUMS, verifies the exact expected hash, then
@@ -581,6 +582,30 @@ def render_short_url_bootstrap_script(allocator_url, ca_sha256, ticket, installe
     sums_url = sha256sums_url_for_installer(installer)
     expected_names = linux_installer_sum_names(installer)
     names_csv = ','.join(expected_names)
+    provenance_lines = []
+    if qualified_provenance is not None:
+        p = qualified_provenance
+        head = str(p.get('source_head') or '')
+        ref = str(p.get('immutable_source_ref') or p.get('git_ref') or head)
+        digest = str(p.get('sha256') or '')
+        channel = str(p.get('channel') or '')
+        if (not re.fullmatch(r'[0-9a-f]{40}', head)
+                or not re.fullmatch(r'[0-9a-f]{40}|v[0-9]+\.[0-9]+\.[0-9]+(?:-rc\.[0-9]+)?', ref)
+                or (re.fullmatch(r'[0-9a-f]{40}', ref) and ref != head)
+                or not re.fullmatch(r'[0-9a-f]{64}', digest)
+                or channel not in ('development', 'preview', 'stable')):
+            raise ValueError('invalid qualified bootstrap provenance')
+        provenance_lines = [
+            '# Bind public-hostname aliases to the serving Server candidate.',
+            'if [[ "$GOT" != %s ]]; then echo "ERROR: qualified installer digest mismatch" >&2; exit 1; fi' % shell_quote(digest),
+            'if [[ -n "${FRP_EXPECTED_SOURCE_HEAD:-}" && "$FRP_EXPECTED_SOURCE_HEAD" != %s ]]; then echo "ERROR: qualified bootstrap HEAD does not match request" >&2; exit 1; fi' % shell_quote(head),
+            'if [[ -n "${FRP_EXPECTED_SOURCE_REF:-}" && "$FRP_EXPECTED_SOURCE_REF" != %s ]]; then echo "ERROR: qualified bootstrap source does not match request" >&2; exit 1; fi' % shell_quote(ref),
+            'if [[ -n "${FRP_BUNDLE_SHA256:-}" && "$FRP_BUNDLE_SHA256" != %s ]]; then echo "ERROR: qualified bootstrap digest does not match request" >&2; exit 1; fi' % shell_quote(digest),
+            'requested_channel=${FRP_EXPECTED_RELEASE_CHANNEL:-${FRP_RELEASE_CHANNEL:-}}; if [[ "$requested_channel" == dev ]]; then requested_channel=development; fi',
+            'if [[ -n "$requested_channel" && "$requested_channel" != %s ]]; then echo "ERROR: qualified bootstrap channel does not match request" >&2; exit 1; fi' % shell_quote(channel),
+            'export FRP_EXPECTED_SOURCE_HEAD=%s FRP_EXPECTED_SOURCE_REF=%s FRP_BUNDLE_SHA256=%s FRP_RELEASE_CHANNEL=%s FRP_EXPECTED_RELEASE_CHANNEL=%s'
+            % tuple(shell_quote(v) for v in (head, ref, digest, channel, channel)),
+        ]
     lines = [
         '#!/bin/bash',
         '# Data Relay Link — Zero-Touch short URL bootstrap',
@@ -610,6 +635,7 @@ def render_short_url_bootstrap_script(allocator_url, ca_sha256, ticket, installe
         '  echo "ERROR: installer SHA256 mismatch (integrity check failed)" >&2',
         '  exit 1',
         'fi',
+        *provenance_lines,
         'chmod 0700 "$INSTALLER_FILE"',
         '# Same-origin artifacts use FRP_ALLOCATOR_CA_FILE when the fresh-client',
         '# command supplied it. A distinct public installer origin uses stock OS trust.',

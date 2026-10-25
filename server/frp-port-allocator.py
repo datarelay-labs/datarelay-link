@@ -2349,8 +2349,27 @@ class Allocator:
                 return ZT.render_short_url_windows_bootstrap_script(
                     allocator, ca_fp, credential, installer
                 )
+            provenance = None
+            # Public DNS aliases can differ from the allocator's pinned-IP
+            # origin. Carry the locally verified candidate identity in stage 1
+            # instead of falling back to the installer's older embedded HEAD.
+            if urlparse(installer).path == '/artifacts/agent/bootstrap-client.sh':
+                if QA is None:
+                    return None
+                artifact_root = QA.installed_root()
+                try:
+                    artifact = QA.lookup_installed(artifact_root, 'agent-installer', 'linux', 'any')
+                    manifest = QA.load_manifest(artifact_root)
+                    if manifest.get('qualification_status') != 'PASS':
+                        return None
+                    provenance = {**manifest, 'sha256': artifact['sha256']}
+                    if artifact.get('source_head') != manifest.get('source_head'):
+                        return None
+                except QA.ArtifactError:
+                    return None
             return ZT.render_short_url_bootstrap_script(
-                allocator, ca_fp, credential, installer
+                allocator, ca_fp, credential, installer,
+                qualified_provenance=provenance,
             )
         except ValueError:
             return None

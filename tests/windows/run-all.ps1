@@ -8,6 +8,7 @@ $passed = 0
 
 $tests = @(
     'test-crypto.ps1',
+    'test-legacy-upgrade-root.ps1',
     'test-token-decrypt.ps1',
     'test-canonical-sign.ps1',
     'test-config.ps1',

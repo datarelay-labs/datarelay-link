@@ -988,6 +988,18 @@ def _ordered_v24_changes(changes: Iterable[dict]) -> list[dict]:
     return delete_first + others
 
 
+def _refresh_agent_bundle_catalog(plane: ControlPlane) -> None:
+    import drlink_mgmt_sync as mgmt
+    if not mgmt.use_live_mgmt_path(plane.root) or not v24.detect_server_reachable(plane, plane.root):
+        return
+    try:
+        v24.sync_agent_catalog_from_server(plane, root=plane.root)
+    except mgmt.MgmtUnavailableError:
+        # Offline planning retains its existing strict dependency checks. A
+        # signature/integrity or other policy error is never swallowed here.
+        return
+
+
 def _validate_plan_applyability(
     plane: ControlPlane, changes: Iterable[dict], *, agent: bool = False
 ) -> None:
@@ -1012,6 +1024,8 @@ def _validate_plan_applyability(
             plane.conn.backup(scratch)
             scratch.execute("PRAGMA foreign_keys = ON")
             preview = ControlPlane(plane.root, conn=scratch)
+            if agent:
+                _refresh_agent_bundle_catalog(preview)
             scratch.execute("BEGIN IMMEDIATE")
             _validate_plan_applyability(preview, ordered, agent=agent)
         finally:
@@ -1820,6 +1834,11 @@ def apply_v24_plan(
     fresh: V24Plan = plan
     rev: Optional[int] = None
     try:
+        if is_agent:
+            # The preview refreshed only its in-memory catalog. Re-read the
+            # authenticated Server catalog under the Agent synchronization
+            # guard before the final locked validation of Apply.
+            _refresh_agent_bundle_catalog(plane)
         if (is_agent or compile_runtime) and plane._activation_should_run():
             checkpoint = plane._pre_activation_checkpoint()
 

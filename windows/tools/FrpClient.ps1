@@ -686,6 +686,13 @@ function Invoke-FrpClientUpdate {
         }
         if (-not (Enter-FrpClientLock)) { return 1 }
         try {
+            if ($env:FRP_WINDOWS_BOOTSTRAP_PATH) {
+                # Prior-stable bridge: verify the complete outer bootstrap
+                # against the existing Server/CA before updating management
+                # files or recording candidate source identity. No enrollment.
+                $existingState = Read-FrpClientState
+                Confirm-FrpWindowsSourceProvenance -AllocatorUrl ([string]$existingState.allocator_url)
+            }
             Install-FrpProjectManagementFiles -SrcRoot $src
             if (Test-FrpIsEnrolled) { Install-FrpLifecycleTask | Out-Null }
             Write-Host ("Project update complete from {0}" -f $src)

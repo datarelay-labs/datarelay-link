@@ -4780,6 +4780,19 @@ frp_client_capture_linux_unit_state() {
         fi
         printf '%s %s %s %s\n' "$unit" "$presence" "$enabled" "$active"
       done
+      live="$(frp_client_path /etc/systemd/system/frpc.service)"
+      if frp_legacy_client_unit_is_product_owned "$live"; then
+        install -m 0644 "$live" "${dest}/legacy-frpc.service"
+        enabled="disabled"; active="inactive"
+        if [[ "$mode" == "live" ]]; then
+          ctl="${FRP_SYSTEMCTL_BIN:-systemctl}"
+          enabled="$("$ctl" is-enabled frpc.service 2>/dev/null || true)"
+          active="$("$ctl" is-active frpc.service 2>/dev/null || true)"
+          [[ "$enabled" == "enabled" ]] || enabled="disabled"
+          [[ "$active" == "active" ]] || active="inactive"
+        fi
+        printf 'frpc present %s %s\n' "$enabled" "$active"
+      fi
     fi
   } >"${dest}/linux-systemd.state"
 }
@@ -4807,6 +4820,9 @@ frp_client_activate_linux_runtime_units() {
     return 0
   fi
   frp_client_systemctl daemon-reload || return 1
+  if [[ "$restart_client" == "1" ]]; then
+    frp_retire_legacy_client_unit || return 1
+  fi
   # Connectivity lifecycle is a required product signal and must not depend on
   # AI worker health. Start it first and fail closed if it cannot run.
   frp_client_activate_lifecycle_unit || return 1
@@ -4847,8 +4863,27 @@ frp_client_activate_lifecycle_unit() {
   return 0
 }
 
+frp_client_systemctl_query() {
+  frp_client_systemd_state_queryable || return 1
+  "${FRP_SYSTEMCTL_BIN:-systemctl}" "$@"
+}
+
 frp_client_restore_one_linux_unit() {
   local unit="$1" presence="$2" enabled="$3" active="$4"
+  if [[ "$presence" != "present" && "$(frp_client_systemctl_query show "$unit" -p LoadState --value 2>/dev/null)" == "not-found" ]]; then
+    # A snapshot-absent, unloaded unit already has its desired state. ENOENT
+    # from disable/stop is not failed rollback. A lingering process still
+    # requires a successful stop followed by an inactive-state observation.
+    local actual
+    actual="$(frp_client_systemctl_query is-active "$unit" 2>/dev/null || true)"
+    case "$actual" in
+      active|activating|deactivating|reloading)
+        frp_client_systemctl stop "$unit" || return 1
+        actual="$(frp_client_systemctl_query is-active "$unit" 2>/dev/null || true)"
+        ;;
+    esac
+    case "$actual" in inactive|failed|unknown) return 0 ;; *) return 1 ;; esac
+  fi
   if [[ "$presence" != "present" || "$enabled" != "enabled" ]]; then
     frp_client_systemctl disable "$unit" || return 1
   else
@@ -4888,7 +4923,11 @@ frp_client_restore_linux_unit_state() {
   [[ "$mode" == "skipped" ]] && return 0
   frp_client_systemctl daemon-reload || return 1
   while read -r unit presence enabled active; do
-    [[ "$unit" == "drlink-client" || "$unit" == "drlink-ai-agent" || "$unit" == "drlink-lifecycle" ]] || continue
+    if [[ "$unit" == "frpc" ]]; then
+      frp_legacy_client_unit_is_product_owned "${backup}/legacy-frpc.service" || return 1
+    else
+      [[ "$unit" == "drlink-client" || "$unit" == "drlink-ai-agent" || "$unit" == "drlink-lifecycle" ]] || continue
+    fi
     frp_client_restore_one_linux_unit "$unit" "$presence" "$enabled" "$active" || return 1
   done <"$state"
   return 0
@@ -5421,8 +5460,11 @@ frp_client_install_management_files() {
   fi
   install -m 0755 "${source}/tools/frp-support-bundle" "${bindir}/frp-support-bundle"
   install -m 0755 "${source}/tools/frp-update" "${bindir}/frp-update"
-  # Retire legacy PATH entry points from prior product identity.
-  rm -f "${bindir}/frpctl" "$(frp_client_path /usr/local/sbin/frpctl)" 2>/dev/null || true
+  # Keep the prior CLI until upgrade commits; rollback can remove a newly
+  # created canonical CLI that was absent in the prior installation.
+  if [[ "${_FRP_CLIENT_UPGRADE_MUTATION_STARTED:-0}" != "1" ]]; then
+    rm -f "${bindir}/frpctl" "$(frp_client_path /usr/local/sbin/frpctl)" 2>/dev/null || true
+  fi
   # Keep a stale /usr/local/sbin/frp-client from shadowing the updated binary.
   if [[ -e "$(frp_client_path /usr/local/sbin/frp-client)" ]]; then
     install -m 0755 "${source}/tools/frp-client" "$(frp_client_path /usr/local/sbin/frp-client)"
@@ -5533,6 +5575,55 @@ frp_client_legacy_single443_mgmt_origin_drift() {
   fi
   echo "ERROR: unexpected management-origin drift result: ${result}" >&2
   return 2
+}
+
+frp_client_upgrade_migrate_allocator_ca() {
+  local dest legacy state expected=""
+  dest="$(frp_allocator_ca_path)"
+  [[ -f "$dest" ]] && return 0
+  state="$(frp_client_state_path)"
+  if [[ -f "$state" ]]; then
+    expected="$(python3 - "$state" <<'PY'
+import json, sys
+print(json.load(open(sys.argv[1], encoding='utf-8')).get('allocator_ca_sha256') or '')
+PY
+)" || return 1
+  fi
+  for legacy in /etc/frp-auto-deploy/allocator-ca.crt /etc/frp/allocator-ca.crt; do
+    legacy="$(frp_client_path "$legacy")"
+    [[ -f "$legacy" ]] || continue
+    # Reuse the enrolled trust anchor verbatim; never fetch/reissue a CA or
+    # replace an existing canonical trust anchor during ordinary upgrade.
+    frp_atomic_install_allocator_ca "$legacy" "$expected" || return 1
+    echo "Allocator CA             : migrated existing enrolled trust"
+    return 0
+  done
+  return 0
+}
+
+frp_client_upgrade_project_enrolled_catalog() {
+  local libdir="${_FRP_CLIENT_CANDIDATE_PAYLOAD_LIBDIR:-${BASE_DIR:-}/lib}"
+  python3 - "$libdir" "$(frp_client_mgmt_origin_root)" <<'PY'
+import sys
+sys.path.insert(0, sys.argv[1])
+from drlink_control_plane import ControlPlane
+import drlink_v24 as v24
+root = sys.argv[2]
+plane = ControlPlane(root)
+try:
+    v24.ensure_v2_schema(plane.conn)
+    plane.conn.execute('BEGIN IMMEDIATE')
+    plane._batch_mode = True
+    try:
+        rows = v24.project_enrolled_services_into_agent_catalog(plane, root=root)
+        plane.conn.commit()
+    except Exception:
+        plane.conn.rollback()
+        raise
+    print('Enrolled catalog         : %s missing services projected' % len(rows))
+finally:
+    plane.close()
+PY
 }
 
 frp_client_upgrade_validate_existing() {
@@ -5695,6 +5786,12 @@ frp_client_upgrade_backup_tools() {
   fi
   frp_client_capture_ai_agent_service_state "$dest"
   frp_client_mgmt_origin_invoke snapshot "${dest}/mgmt-origin-state" || return 1
+  live="$(frp_allocator_ca_path)"
+  if [[ -f "$live" ]]; then
+    install -m 0644 "$live" "${dest}/allocator-ca.before"
+  else
+    touch "${dest}/allocator-ca.absent"
+  fi
   python3 - "$(frp_client_upgrade_backup_root)" "$FRP_CLIENT_UPGRADE_BACKUP_KEEP" <<'PY'
 import shutil, sys
 from pathlib import Path
@@ -5740,6 +5837,16 @@ frp_client_upgrade_restore_tools() {
     rm -f "$live"
   fi
   frp_client_mgmt_origin_invoke restore "${backup}/mgmt-origin-state" || return 1
+  if [[ -f "${backup}/legacy-frpc.service" ]]; then
+    frp_legacy_client_unit_is_product_owned "${backup}/legacy-frpc.service" || return 1
+    install -m 0644 "${backup}/legacy-frpc.service" "$(frp_client_path /etc/systemd/system/frpc.service)" || return 1
+  fi
+  live="$(frp_allocator_ca_path)"
+  if [[ -f "${backup}/allocator-ca.before" ]]; then
+    install -m 0644 "${backup}/allocator-ca.before" "$live" || return 1
+  elif [[ -f "${backup}/allocator-ca.absent" ]]; then
+    rm -f "$live" || return 1
+  fi
   return 0
 }
 
@@ -5778,6 +5885,12 @@ frp_client_upgrade_verify_restored() {
       return 1
       ;;
   esac
+  live="$(frp_allocator_ca_path)"
+  if [[ -f "${backup}/allocator-ca.before" ]]; then
+    [[ -f "$live" && "$(frp_client_digest "$live")" == "$(frp_client_digest "${backup}/allocator-ca.before")" ]] || return 1
+  elif [[ -f "${backup}/allocator-ca.absent" ]]; then
+    [[ ! -e "$live" ]] || return 1
+  fi
   frp_client_mgmt_origin_invoke verify "${backup}/mgmt-origin-state" || return 1
 }
 
@@ -5894,10 +6007,8 @@ frp_client_upgrade_verify() {
   [[ -x "$(frp_client_path /usr/local/bin/frp-client)" ]] || return 1
   [[ -x "$(frp_client_path /usr/local/bin/drlink)" ]] || return 1
   [[ -x "$(frp_client_path /usr/local/lib/drlink/frpctl)" ]] || return 1
-  # Legacy PATH CLI must not remain after upgrade.
-  if [[ -e "$(frp_client_path /usr/local/bin/frpctl)" || -e "$(frp_client_path /usr/local/sbin/frpctl)" ]]; then
-    rm -f "$(frp_client_path /usr/local/bin/frpctl)" "$(frp_client_path /usr/local/sbin/frpctl)" 2>/dev/null || true
-  fi
+  # The prior CLI remains usable through every failure point. Successful
+  # upgrade retires it only after version/state/catalog verification commits.
   frp_load_client_state "$(frp_client_state_path)" || return 1
   if [[ -f "$(frp_client_toml_path)" ]]; then
     frp_client_verify_config "$(frp_client_toml_path)" || return 1
@@ -6228,6 +6339,11 @@ PY
   _ai_agent_converged=0
   _lifecycle_converged=0
   _frp_client_relay_restarted=0
+  if ! frp_client_upgrade_migrate_allocator_ca; then
+    echo "ERROR: failed to migrate enrolled allocator trust; restoring management files." >&2
+    frp_client_upgrade_rollback "$backup" STATE_PRESERVATION_FAILED || return 2
+    return 1
+  fi
   if declare -F frp_is_darwin >/dev/null 2>&1 && frp_is_darwin; then
     if ! frp_client_converge_lifecycle_unit "$source"; then
       echo "ERROR: failed to converge macOS Agent lifecycle worker; restoring previous management files." >&2
@@ -6328,8 +6444,14 @@ PY
     return 1
   fi
 
+  if ! frp_client_upgrade_project_enrolled_catalog; then
+    echo "ERROR: enrolled services could not be projected into the Agent catalog." >&2
+    frp_client_upgrade_rollback "$backup" STATE_PRESERVATION_FAILED || return 2
+    return 1
+  fi
   ident_after="$(frp_identity_label)"
   frp_after="${FRP_VERSION}"
+  rm -f "$(frp_client_path /usr/local/bin/frpctl)" "$(frp_client_path /usr/local/sbin/frpctl)" 2>/dev/null || true
   _FRP_CLIENT_UPGRADE_MUTATION_STARTED=0
   trap - ERR
   if [[ "${_FRP_CLIENT_UPGRADE_SET_E:-0}" == "1" ]]; then

@@ -71,6 +71,33 @@ In an elevated PowerShell process, point the existing source selector at that
 package's `windows/` directory, then invoke the public command. Restore the prior
 process environment value afterward:
 
+For a prior-stable installation whose installed CLI does not yet support
+`system update product`, invoke the **verified candidate package's public
+`windows\tools\drlink.cmd`** for this first update. For example, replace the
+`drlink system update product` line below with:
+
+```powershell
+& 'C:\verified-drlink-source\windows\tools\drlink.cmd' system update product
+```
+
+The candidate discovers the existing enrolled `ProgramData\frp-auto-deploy`
+root and refreshes it in place. Do not override `FRP_WINDOWS_ROOT`, move identity
+files, uninstall, or enroll again. Two enrolled product roots are ambiguous and
+are rejected. Subsequent updates use the refreshed installed `drlink` command.
+
+For Server-qualified exact-candidate validation, download the Server's
+`/artifacts/agent/bootstrap-client.ps1` using the existing enrolled CA, verify
+its SHA256 against the qualified Server artifact manifest, then execute:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\bootstrap-client.ps1 -Upgrade
+if ($LASTEXITCODE -ne 0) { throw 'Agent software upgrade failed.' }
+```
+
+This path verifies the outer bootstrap with the existing Server before updating
+management files and records its qualified Source HEAD. It accepts no new
+Bootstrap Ticket and does not update `frpc.exe` or recreate identity.
+
 ```powershell
 $previousSource = $env:FRP_WINDOWS_PROJECT_SRC
 try {
@@ -134,6 +161,13 @@ The v2.4 target authoritative state is:
 ```
 
 Database evolution uses ordered migrations and integrity validation.
+
+The Server can validate and restore a checksum-verified v2.3.0 product backup
+after updating to v2.4.0. Validation migrates legacy paths, clients, endpoint
+reservations and supported restrictive policies into a canonical SQLite DB in
+private staging before live changes. Restore retains the installed v2.4.0
+software/source identity. Unsupported policy constructs, mixed legacy/current
+authority, corrupt archives and other cross-version restores remain rejected.
 
 Upgrade sequence conceptually follows:
 
