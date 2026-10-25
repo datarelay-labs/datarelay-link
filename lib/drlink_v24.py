@@ -7806,6 +7806,25 @@ def _bootstrap_seed_names(root: Optional[str], state: Optional[dict] = None) -> 
     return names
 
 
+def enrolled_target_object_name(target_host: str) -> Optional[str]:
+    """Stable Network Object for an operator-authorized Zero-Touch LAN target.
+
+    The bootstrap ticket already binds the exact destination. Distinguish it
+    from this-host rather than silently rewriting LAN traffic to loopback.
+    This helper only chooses a name; Server enrollment owns object issuance.
+    """
+    import hashlib
+
+    value = str(target_host or "127.0.0.1").strip()
+    if value.lower() in ("localhost", "127.0.0.1", "::1"):
+        return None
+    try:
+        value = str(ipaddress.ip_address(value))
+    except ValueError:
+        value = value.lower()
+    return "enrolled-target-" + hashlib.sha256(value.encode("utf-8")).hexdigest()[:20]
+
+
 def ensure_enrolled_service_object(plane_db, preset: str, port: int) -> dict:
     """Project a non-default enrolled target into canonical Service Objects.
 
@@ -7855,8 +7874,8 @@ def project_enrolled_services_into_agent_catalog(
         return []
     endpoint_host = str(data.get("public_hostname") or data.get("frp_server") or "").strip()
     identity = load_agent_identity(root)
-    destination = identity.get("hostname") or identity.get("label") or "this-host"
-    destination_client_id = str(identity.get("machine_id") or "").strip() or None
+    self_destination = identity.get("hostname") or identity.get("label") or "this-host"
+    self_client_id = str(identity.get("machine_id") or "").strip() or None
     results = []
     wrote = False
     now = utc_now_iso()
@@ -7891,6 +7910,12 @@ def project_enrolled_services_into_agent_catalog(
         default_ports = {'ssh': 22, 'http': 80, 'https': 443}
         enrolled_target_port = int(rec.get('local_port') or default_ports.get(service_obj) or 0)
         service_obj = ensure_enrolled_service_object(plane_db, service_obj, enrolled_target_port)['name']
+        # A non-loopback target is a LAN destination, never the Agent itself.
+        # Server enrollment must create the same named Network Object from
+        # the signed bootstrap scope before an Agent can publish this service.
+        lan_destination = enrolled_target_object_name(rec.get("local_ip"))
+        destination = lan_destination or self_destination
+        destination_client_id = None if lan_destination else self_client_id
         if enrolled_port is not None:
             endpoint_port = enrolled_port
             pending = 0
