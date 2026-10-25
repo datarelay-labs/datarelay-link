@@ -511,6 +511,8 @@ Markdown fences or explanatory prose inside the pasted input must fail safely ra
 
 ## 19. Export and secrets
 
+Legacy Access Rules may contain multiple source, destination, or Service selectors. Export preserves their union through ordinary Network Groups or Service Groups in the document. Generated `export-*-union-*` names avoid existing operator names; exporting does not create or change live resources. Importing the document preserves all selectors rather than keeping only the first.
+
 `system export configuration <FILE>` emits the canonical schema for the current CLI context:
 
 ```text

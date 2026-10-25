@@ -92,6 +92,24 @@ try {
     Assert-FrpTrue ($migrated.Out -match 'Service\s+: http') 'legacy preset mapped to Service Object'
     Assert-FrpTrue ($migrated.Out -match 'Endpoint\s+: fixture\.example\.test:6022') 'legacy endpoint preserved'
 
+    # Explicit bootstrap LAN targets retain their canonical Network Object.
+    $catalog.networkObjects = @(@{name='enrolled-target-fixture';type='host';values=@('198.51.100.42')})
+    $catalog | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (Join-Path $fixture 'catalog.json')
+    $lanState = Get-Content -LiteralPath $statePath -Raw | ConvertFrom-Json
+    $lanServices = [ordered]@{}
+    foreach ($prop in $lanState.services.PSObject.Properties) { $lanServices[$prop.Name] = $prop.Value }
+    $lanServices['legacy-lan'] = [ordered]@{
+        id='legacy-lan'; name='LAN HTTP'; preset='http'; protocol='tcp'
+        local_ip='198.51.100.42'; local_port=80; remote_port=6023; enabled=$true
+    }
+    $lanState.services = [pscustomobject]$lanServices
+    $lanState | ConvertTo-Json -Depth 12 | Set-Content -LiteralPath $statePath
+    $lanSync = Run-Cli @('system','synchronize')
+    Assert-FrpEqual 0 $lanSync.Rc 'legacy LAN synchronize exits 0'
+    $lan = Run-Cli @('show','remote-service','legacy-lan')
+    Assert-FrpTrue ($lan.Out -match 'Destination\s+: enrolled-target-fixture') 'bootstrap LAN canonical target retained'
+    Assert-FrpTrue ($lan.Out -match 'Endpoint\s+: fixture\.example\.test:6023') 'bootstrap LAN endpoint preserved'
+
     $export = Join-Path $tmp 'agent.yaml'
     $er = Run-Cli @('system','export','configuration',$export)
     Assert-FrpEqual 0 $er.Rc 'bundle export exit'

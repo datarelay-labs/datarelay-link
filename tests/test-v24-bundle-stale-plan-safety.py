@@ -302,6 +302,66 @@ class BundleStalePlanSafety(unittest.TestCase):
                     self.assertIn("No changes were applied", str(ctx.exception))
                     self.assertEqual(self.plane.current_revision(), before)
 
+    def test_export_restore_preserves_legacy_multiple_source_selectors(self, mode="whitelist"):
+        import yaml
+        for name, kind, value in [('any4', 'cidr', '0.0.0.0/0'),
+                                  ('any6', 'cidr', '::/0'),
+                                  ('dst', 'ip', '192.0.2.42'),
+                                  ('peer', 'ip', '192.0.2.43')]:
+            v24.set_network_object(self.plane, name, type=kind, value=value, oneshot=True)
+        v24.set_service_object(self.plane, 'ssh', type='tcp', port=22, oneshot=True)
+        v24.set_access_rule(self.plane, 'remote', 'dual-stack', mode=mode,
+                            source='any6', destination='dst', service='ssh',
+                            enabled=True, oneshot=True)
+        self.plane.set_rule_source('remote', 'dual-stack', 'any4')
+        v24.set_network_group(self.plane, 'peer-group', members=['peer'], oneshot=True)
+        self.plane.set_rule_destination('remote', 'dual-stack', 'peer-group')
+        v24.set_service_object(self.plane, 'http', type='tcp', port=80, oneshot=True)
+        v24.set_service_group(self.plane, 'http-group', members=['http'], oneshot=True)
+        rule = self.plane._get_rule('remote', 'dual-stack')
+        group = self.plane.conn.execute("SELECT id FROM service_groups WHERE name='http-group'").fetchone()
+        self.plane.conn.execute("INSERT INTO rule_service_refs(rule_id, ref_kind, ref_id) "
+                                "VALUES (?, 'service_group', ?)", (rule['id'], group['id']))
+        self.plane.conn.commit()
+        sources = ['198.51.100.111', '2001:db8::111']
+        cases = [(ip, dst, port) for ip in sources for dst in ('192.0.2.42', '192.0.2.43') for port in (22, 80)]
+        cases += [('198.51.100.111', '192.0.2.99', 22), ('198.51.100.111', '192.0.2.42', 443)]
+        before = [self.plane.evaluate_remote_access(ip, dst, 'tcp', port)['action'] for ip, dst, port in cases]
+        self.assertEqual(before, (['ALLOW'] * 8 + ['DENY', 'DENY']) if mode == 'whitelist'
+                         else (['DENY'] * 8 + ['ALLOW', 'ALLOW']))
+        revision = self.plane.current_revision()
+        exported = yaml.safe_load(export_configuration_v24(self.plane))
+        self.assertEqual(self.plane.current_revision(), revision)
+        # An operator name colliding with the document-only group is preserved.
+        union_name = exported['configurationBundle']['remoteAccess']['rules'][0]['source']
+        v24.set_network_object(self.plane, union_name, type='ip', value='203.0.113.99', oneshot=True)
+        exported = yaml.safe_load(export_configuration_v24(self.plane))
+        self.assertNotEqual(exported['configurationBundle']['remoteAccess']['rules'][0]['source'], union_name)
+        self.assertEqual(self.plane._object_values(self.plane.get_object(union_name)['id']), ['203.0.113.99'])
+        # A clean restore has its own revision; preserve the exported policy
+        # semantics while the ordinary exact-revision guard remains tested above.
+        exported['configurationBundle'].pop('sourceRevision', None)
+        with tempfile.TemporaryDirectory(prefix='drlink-export-restore-') as other:
+            _server_root(other)
+            restored = ControlPlane(other)
+            try:
+                plan = prepare_v24_plan(restored, yaml.safe_dump(exported), role='server')
+                apply_v24_plan(restored, plan, confirm=True)
+                after = [restored.evaluate_remote_access(ip, dst, 'tcp', port)['action'] for ip, dst, port in cases]
+                self.assertEqual(after, before)
+            finally:
+                restored.close()
+        # Applying the same portable document over an existing legacy rule
+        # must replace all refs with the union, then become idempotent.
+        raw = yaml.safe_dump(exported)
+        apply_v24_plan(self.plane, prepare_v24_plan(self.plane, raw, role='server'), confirm=True)
+        after = [self.plane.evaluate_remote_access(ip, dst, 'tcp', port)['action'] for ip, dst, port in cases]
+        self.assertEqual(after, before)
+        self.assertEqual(prepare_v24_plan(self.plane, raw, role='server').mutating_changes, [])
+
+    def test_export_restore_preserves_legacy_blacklist_selector_union(self):
+        self.test_export_restore_preserves_legacy_multiple_source_selectors(mode='blacklist')
+
     def test_stale_plan_cannot_bypass_last_blacklist_confirmation(self):
         v24.set_network_object(self.plane, "src", type="ip", value="198.51.100.1", oneshot=True)
         v24.set_network_object(self.plane, "dst", type="ip", value="198.51.100.2", oneshot=True)

@@ -55,6 +55,8 @@ python3 tests/test-v24-agent-bundle-absent-idempotency.py
 python3 tests/test-v24-server-bundle-absent-idempotency.py
 python3 tests/test-v24-remote-binding-uniqueness.py
 python3 tests/test-v24-bundle-preview-writer-isolation.py
+python3 tests/test-v24-bootstrap-catalog-convergence.py
+python3 tests/test-v24-bundle-stale-plan-safety.py
 python3 tests/test-zero-touch-command-exit.py
 bash tests/test-client-rollback-absent-unit.sh
 bash tests/test-client-upgrade-enrolled-state.sh

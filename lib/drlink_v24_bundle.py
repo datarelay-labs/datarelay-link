@@ -2235,6 +2235,61 @@ def build_v24_rollback_bundle(plane: ControlPlane, target_text: str) -> str:
     )
 
 
+def _export_selector_union(plane: ControlPlane, body: dict, names: list, *, service: bool = False) -> str:
+    """Represent legacy multi-selector OR semantics with a canonical Group.
+
+    Export is read-only. Synthetic groups exist in the exported document only,
+    use existing public fields, and cannot replace a conflicting operator name.
+    """
+    import hashlib
+
+    names = list(dict.fromkeys(names))
+    if len(names) <= 1:
+        return names[0] if names else '-'
+    members = set()
+    section = 'serviceGroups' if service else 'networkGroups'
+    for name in names:
+        if service:
+            obj = v24.get_service_object(plane, name)
+            if obj is not None:
+                members.add(obj['name'])
+                continue
+            group = plane.conn.execute('SELECT id FROM service_groups WHERE name=? COLLATE NOCASE', (name,)).fetchone()
+            if group is None:
+                raise BundleError('Cannot export missing Service selector: %s' % name)
+            members.update(row['name'] for row in plane.conn.execute(
+                'SELECT s.name FROM service_group_members m JOIN service_objects s '
+                'ON s.id=m.service_object_id WHERE m.group_id=?', (group['id'],)))
+        else:
+            obj = plane.get_object(name)
+            if obj is not None:
+                members.add(obj['name'])
+                continue
+            group = plane.get_object_group(name)
+            if group is None:
+                raise BundleError('Cannot export missing Network selector: %s' % name)
+            members.update(row['name'] for row in plane._expand_group_members(group['id'], set()))
+    ordered = sorted(members, key=str.lower)
+    if not ordered:
+        raise BundleError('Cannot export an empty selector union')
+    digest = hashlib.sha256(json.dumps(ordered, separators=(',', ':')).encode()).hexdigest()[:20]
+    base = 'export-%s-union-%s' % ('service' if service else 'network', digest)
+    groups = body.setdefault(section, [])
+    existing = {item['name'].lower(): item for item in groups}
+    suffix = 0
+    while True:
+        name = base + ('-%s' % suffix if suffix else '')
+        prior = existing.get(name.lower())
+        if prior is not None and sorted(prior['members'], key=str.lower) == ordered:
+            return prior['name']
+        collision = v24.get_service_object(plane, name) if service else plane.get_object(name)
+        if prior is None and collision is None:
+            groups.append({'name': name, 'members': ordered})
+            groups.sort(key=lambda item: item['name'].lower())
+            return name
+        suffix += 1
+
+
 def export_configuration_v24(plane: ControlPlane) -> str:
     role = v24.detect_cli_role(plane.root)
     if role == "agent":
@@ -2332,26 +2387,21 @@ def export_configuration_v24(plane: ControlPlane) -> str:
                 "SELECT * FROM policy_rules WHERE plane = ? ORDER BY name", (family,)
             ):
                 view = plane._rule_view(rule)
-                # Prefer service object name from rule_service_refs
-                svc = "-"
-                ref = plane.conn.execute(
-                    "SELECT ref_kind, ref_id FROM rule_service_refs WHERE rule_id = ?", (rule["id"],)
-                ).fetchone()
-                if ref and ref["ref_kind"] == "service_object":
-                    sobj = plane.conn.execute(
-                        "SELECT name FROM service_objects WHERE id = ?", (ref["ref_id"],)
-                    ).fetchone()
-                    svc = sobj["name"] if sobj else svc
-                elif ref and ref["ref_kind"] == "service_group":
-                    sgrp = plane.conn.execute(
-                        "SELECT name FROM service_groups WHERE id = ?", (ref["ref_id"],)
-                    ).fetchone()
-                    svc = sgrp["name"] if sgrp else svc
+                service_names = []
+                for ref in plane.conn.execute(
+                    "SELECT ref_kind, ref_id FROM rule_service_refs WHERE rule_id = ?", (rule['id'],)
+                ):
+                    table = 'service_objects' if ref['ref_kind'] == 'service_object' else 'service_groups'
+                    item = plane.conn.execute('SELECT name FROM %s WHERE id=?' % table, (ref['ref_id'],)).fetchone()
+                    if item is None:
+                        raise BundleError('Cannot export a missing Service reference')
+                    service_names.append(item['name'])
+                svc = _export_selector_union(plane, body, service_names, service=True)
                 rules.append(
                     {
                         "name": view["name"],
-                        "source": (view.get("sources") or ["-"])[0],
-                        "destination": (view.get("destinations") or ["-"])[0],
+                        "source": _export_selector_union(plane, body, view.get("sources") or []),
+                        "destination": _export_selector_union(plane, body, view.get("destinations") or []),
                         "service": svc,
                         "enabled": bool(view["enabled"]),
                     }

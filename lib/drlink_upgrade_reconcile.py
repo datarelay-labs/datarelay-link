@@ -1202,11 +1202,13 @@ def _import_legacy_service(plane: ControlPlane, client_id: str, sid: str, rec: d
     remote_port = rec.get("remote_port")
     preset = str(rec.get("preset") or rec.get("service_type") or "tcp").lower()
     stype = preset if preset in ("ssh", "http", "https", "tcp") else "tcp"
-    mode = "self"
-    target_host = local_ip
-    if str(rec.get("target_mode") or "").lower() == "routed":
-        mode = "routed"
-        target_host = str(rec.get("target_host") or local_ip)
+    from drlink_v24 import ensure_enrolled_destination_object
+
+    explicit_target = (rec.get("target_host")
+                       if str(rec.get("target_mode") or "").lower() == "routed"
+                       else None) or local_ip
+    target_host, target_object = ensure_enrolled_destination_object(plane, explicit_target)
+    mode = "routed" if target_object else "self"
     plane.set_published_service(
         client_id,
         str(sid).strip().lower(),

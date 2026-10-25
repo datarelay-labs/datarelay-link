@@ -487,7 +487,8 @@ def _agent_remote_service_mgmt_snapshot(
         else:
             obj = None
             try:
-                obj = plane_db.get_object(destination) if hasattr(plane_db, "get_object") else None
+                found = plane_db.get_object(destination) if hasattr(plane_db, "get_object") else None
+                obj = dict(found) if found is not None else None
             except Exception:
                 obj = None
             if obj and obj.get("type") in ("host", "fqdn"):
@@ -7834,6 +7835,61 @@ def ensure_enrolled_service_object(plane_db, preset: str, port: int) -> dict:
     return dict(get_service_object(plane_db, name))
 
 
+def ensure_enrolled_destination_object(plane_db, target: str) -> tuple[str, Optional[str]]:
+    """Keep an explicit bootstrap target as a canonical destination reference.
+
+    Self aliases use the existing self contract. Other targets get a stable,
+    validated Network Object on both sides; a name collision cannot rewrite
+    an operator definition. This does not verify connectivity or grant access.
+    """
+    import hashlib
+    from drlink_control_plane import normalize_object_value
+
+    target = str(target or '127.0.0.1').strip()
+    if target.lower() in ('127.0.0.1', 'localhost'):
+        return '127.0.0.1', None
+    try:
+        target = str(ipaddress.ip_address(target))
+        kind = 'ip'
+    except ValueError:
+        kind = 'fqdn'
+        target = normalize_object_value('fqdn', target)
+    name = 'enrolled-target-' + hashlib.sha256(target.encode()).hexdigest()[:24]
+    def validate_existing(row):
+        if (row['type'] != NETWORK_STORE[kind]
+                or plane_db._object_values(row['id']) != [target]):
+            raise ControlPlaneError(
+                'Enrolled Network Object %s conflicts with an existing definition. '
+                'No definition was overwritten.' % name)
+
+    existing = plane_db.get_object(name)
+    if existing is not None:
+        validate_existing(existing)
+        return target, name
+
+    def create_only():
+        # The public set operation also edits existing objects. Enrollment must
+        # never overwrite a concurrent operator definition or reject an equal
+        # target created by another simultaneously enrolling Agent.
+        current = plane_db.get_object(name)
+        if current is not None:
+            validate_existing(current)
+            return {'operation': 'noop', 'after': target}
+        assert_network_public_name_available(plane_db, name, creating='object')
+        oid, now = _new_id('obj'), utc_now_iso()
+        plane_db.conn.execute(
+            "INSERT INTO objects(id, name, type, origin, description, status, row_version, "
+            "created_at, updated_at) VALUES (?, ?, ?, 'static', 'Enrolled target', 'active', 1, ?, ?)",
+            (oid, name, NETWORK_STORE[kind], now, now))
+        plane_db.conn.execute(
+            'INSERT INTO object_values(object_id, value, normalized) VALUES (?, ?, ?)',
+            (oid, target, target))
+        return {'operation': 'create', 'entity': {'type': 'object', 'id': oid, 'name': name}, 'after': target}
+
+    plane_db._mutate('set network-object ' + name, 'project enrolled destination', create_only)
+    return target, name
+
+
 def project_enrolled_services_into_agent_catalog(
     plane_db,
     *,
@@ -7845,7 +7901,9 @@ def project_enrolled_services_into_agent_catalog(
     Enrollment ``client-state`` is migration input only. An existing
     ``agent_remote_services`` row is authoritative operator state and is
     left unchanged, including enablement, destination, service, and
-    public port. New rows keep the enrolled name and allocator port.
+    public port. Only an unedited enrollment seed with the known erroneous
+    self binding may repair its explicit LAN destination. New rows keep the
+    enrolled name and allocator port.
     """
     data = _load_enrolled_client_state(root, state)
     if not isinstance(data, dict):
@@ -7884,10 +7942,38 @@ def project_enrolled_services_into_agent_catalog(
         except (TypeError, ValueError):
             enrolled_port = None
         existing = plane_db.conn.execute(
-            "SELECT name FROM agent_remote_services WHERE name = ? COLLATE NOCASE", (name,)
+            "SELECT * FROM agent_remote_services WHERE name = ? COLLATE NOCASE", (name,)
         ).fetchone()
         if existing is not None:
+            own_names = {'this-host', 'this_host', 'self', str(destination).lower()}
+            if (not existing['enrollment_seed'] or existing['delete_pending']
+                    or str(existing['destination'] or '').lower() not in own_names
+                    or (existing['destination_client_id']
+                        and str(existing['destination_client_id']) != destination_client_id)):
+                continue
+            explicit_target = (rec.get('target_host') if rec.get('target_mode') == 'routed'
+                               else None) or rec.get('local_ip') or '127.0.0.1'
+            _target, target_object = ensure_enrolled_destination_object(plane_db, explicit_target)
+            if not target_object:
+                continue
+            status = 'DEGRADED' if existing['enabled'] else 'DISABLED'
+            reason = 'Runtime activation pending.' if existing['enabled'] else ''
+            plane_db.conn.execute(
+                "UPDATE agent_remote_services SET destination=?, destination_client_id=NULL, "
+                "runtime_verified=0, status=?, reason=?, updated_at=? WHERE name=? COLLATE NOCASE",
+                (target_object, status, reason, now, name))
+            wrote = True
+            results.append({'seeded': False, 'repaired': True, 'view': {
+                'name': name, 'destination': target_object, 'status': status, 'reason': reason,
+                'endpoint': '%s:%s' % (existing['endpoint_host'] or '', existing['endpoint_port']),
+                'endpoint_port': existing['endpoint_port'], 'service': existing['service_object'],
+                'enabled': bool(existing['enabled'])}})
             continue
+        explicit_target = (rec.get('target_host') if rec.get('target_mode') == 'routed'
+                           else None) or rec.get('local_ip') or '127.0.0.1'
+        _target, target_object = ensure_enrolled_destination_object(plane_db, explicit_target)
+        seed_destination = target_object or destination
+        seed_destination_client_id = None if target_object else destination_client_id
         default_ports = {'ssh': 22, 'http': 80, 'https': 443}
         enrolled_target_port = int(rec.get('local_port') or default_ports.get(service_obj) or 0)
         service_obj = ensure_enrolled_service_object(plane_db, service_obj, enrolled_target_port)['name']
@@ -7914,8 +8000,8 @@ def project_enrolled_services_into_agent_catalog(
             "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 'normal', ?, ?, 1)",
             (
                 name,
-                destination,
-                destination_client_id,
+                seed_destination,
+                seed_destination_client_id,
                 service_obj,
                 1 if enabled else 0,
                 status,
@@ -7943,7 +8029,7 @@ def project_enrolled_services_into_agent_catalog(
                     "endpoint_port": endpoint_port,
                     "service": service_obj,
                     "enabled": enabled,
-                    "destination": destination,
+                    "destination": seed_destination,
                 },
             }
         )

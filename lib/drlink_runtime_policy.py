@@ -695,14 +695,13 @@ def sync_enrolled_client(
         remote_port = svc.get("remote_port")
         preset = str(svc.get("preset") or svc.get("service_type") or "tcp").lower()
         stype = preset if preset in ("ssh", "http", "https", "tcp") else "tcp"
-        mode = "self"
-        target_host = local_ip
-        # Routed targets are explicit non-loopback destinations when marked.
-        if str(svc.get("target_mode") or "").lower() == "routed":
-            mode = "routed"
-            target_host = str(svc.get("target_host") or local_ip)
-        service_name = str(sid).strip().lower()
         import drlink_v24 as v24
+        explicit_target = (svc.get("target_host")
+                           if str(svc.get("target_mode") or "").lower() == "routed"
+                           else None) or local_ip
+        target_host, target_object = v24.ensure_enrolled_destination_object(plane, explicit_target)
+        mode = "routed" if target_object else "self"
+        service_name = str(sid).strip().lower()
         service_object = v24.ensure_enrolled_service_object(
             plane, stype, local_port or (22 if stype == 'ssh' else 0))
         plane.set_published_service(
@@ -725,7 +724,7 @@ def sync_enrolled_client(
         ).fetchone()
         if pub is not None:
             meta = plane.conn.execute(
-                "SELECT service_id FROM remote_service_meta WHERE service_id = ?",
+                "SELECT * FROM remote_service_meta WHERE service_id = ?",
                 (pub["id"],),
             ).fetchone()
             if meta is None:
@@ -734,16 +733,27 @@ def sync_enrolled_client(
                     "INSERT INTO remote_service_meta"
                     "(service_id, status, pool_class, service_object_id, destination_name, destination_client_id, "
                     "pending_allocation, delete_pending, reason) "
-                    "VALUES (?, ?, 'normal', ?, 'this-host', ?, ?, 0, ?)",
+                    "VALUES (?, ?, 'normal', ?, ?, ?, ?, 0, ?)",
                     (
                         pub["id"],
                         "DISABLED" if not pub_enabled else "DEGRADED",
                         service_object['id'],
-                        client_id,
+                        target_object or 'this-host',
+                        None if target_object else client_id,
                         0 if pub["public_port"] is not None else 1,
                         "" if not pub_enabled else "Runtime activation pending.",
                     ),
                 )
+                plane.commit_if_autonomous()
+            elif (target_object and str(meta["destination_name"] or "").lower() == "this-host"
+                  and str(meta["destination_client_id"] or "") == str(client_id)):
+                # Repair only the contradictory legacy bootstrap self binding.
+                # v2.4 operator projections were excluded above; retain ports.
+                plane.conn.execute(
+                    "UPDATE remote_service_meta SET destination_name=?, destination_client_id=NULL, "
+                    "runtime_verified=0, status=?, reason=? WHERE service_id=?",
+                    (target_object, "DEGRADED" if pub["enabled"] else "DISABLED",
+                     "Runtime activation pending." if pub["enabled"] else "", pub["id"]))
                 plane.commit_if_autonomous()
     return {"client_id": client_id, "services": len(services)}
 

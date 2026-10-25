@@ -187,6 +187,38 @@ function Resolve-FrpV24LegacyServiceName {
     ) -f $name, $port
 }
 
+function Resolve-FrpV24LegacyDestinationName {
+    param([Parameter(Mandatory=$true)]$Item, [Parameter(Mandatory=$true)]$Catalog)
+    $target = [string]$Item.local_ip
+    if ([string]$Item.target_mode -ieq 'routed' -and [string]$Item.target_host) {
+        $target = [string]$Item.target_host
+    }
+    $target = $target.Trim()
+    if (-not $target -or $target -ieq '127.0.0.1' -or $target -ieq 'localhost') { return 'this-host' }
+    $targetIp = $null
+    $isIp = [System.Net.IPAddress]::TryParse($target, [ref]$targetIp)
+    $targetObjects = @()
+    foreach ($obj in @($Catalog.networkObjects)) {
+        if ([string]$obj.type -notin @('host','ip','fqdn')) { continue }
+        $values = @($obj.values)
+        if ($values.Count -ne 1) { continue }
+        $same = $false
+        if ($isIp) {
+            $candidateIp = $null
+            if ([System.Net.IPAddress]::TryParse([string]$values[0], [ref]$candidateIp)) {
+                $same = $targetIp.Equals($candidateIp)
+            }
+        } else {
+            $same = ([string]$values[0]).TrimEnd('.') -ieq $target.TrimEnd('.')
+        }
+        if ($same) { $targetObjects += $obj }
+    }
+    $enrolledObjects = @($targetObjects | Where-Object { [string]$_.name -like 'enrolled-target-*' })
+    if ($enrolledObjects.Count -eq 1) { return [string]$enrolledObjects[0].name }
+    if ($targetObjects.Count -eq 1) { return [string]$targetObjects[0].name }
+    throw ('ERROR: bootstrap LAN target for service {0} requires one matching canonical Network Object. Inspect Server network-objects, then run: system synchronize' -f [string]$Item.id)
+}
+
 function ConvertTo-FrpV24RemoteMap {
     $state = Read-FrpClientState
     return (ConvertTo-FrpServiceMap -Services $state.services)
@@ -656,7 +688,7 @@ function Invoke-FrpV24Synchronize {
             $service = Resolve-FrpV24LegacyServiceName -Item $item -Catalog $catalog
             $setArgs = @{
                 Name = [string]$item.id
-                Destination = 'this-host'
+                Destination = (Resolve-FrpV24LegacyDestinationName -Item $item -Catalog $catalog)
                 Service = $service
                 Enabled = [bool]($item.enabled -ne $false)
                 SkipRuntime = $true
@@ -763,6 +795,7 @@ function Read-FrpV24AgentBundle {
     $items = New-Object System.Collections.ArrayList
     $current = $null
     $inRemote = $false
+    $sequenceIndent = $null
     foreach ($rawLine in ($text -split "[$([char]13)$([char]10)]+")) {
         $line = $rawLine
         if ([string]::IsNullOrWhiteSpace($line)) { continue }
@@ -781,14 +814,22 @@ function Read-FrpV24AgentBundle {
             continue
         }
         if ($inRemote -and $line -match '^[ ]{4}\[\][ ]*$') { continue }
-        if ($inRemote -and $line -match '^[ ]{4}-[ ]+name:[ ]*(.+?)[ ]*$') {
+        if ($inRemote -and $line -match '^(?<indent>[ ]{2}|[ ]{4})-[ ]+name:[ ]*(?<value>.+?)[ ]*$') {
+            $itemIndent = $Matches['indent'].Length
+            if ($null -ne $sequenceIndent -and $sequenceIndent -ne $itemIndent) {
+                throw 'ERROR: remoteServices sequence items must use the same indentation'
+            }
+            $sequenceIndent = $itemIndent
             if ($null -ne $current) { [void]$items.Add([pscustomobject]$current) }
-            $current = [ordered]@{ name = [string](ConvertFrom-FrpV24YamlScalar -Text $Matches[1]) }
+            $current = [ordered]@{ name = [string](ConvertFrom-FrpV24YamlScalar -Text $Matches['value']) }
             continue
         }
-        if ($inRemote -and $line -match '^[ ]{6}(destination|service|enabled|state):[ ]*(.*?)[ ]*$') {
+        if ($inRemote -and $line -match '^(?<indent>[ ]+)(?<field>destination|service|enabled|state):[ ]*(?<value>.*?)[ ]*$') {
             if ($null -eq $current) { throw 'ERROR: remoteServices item must start with name' }
-            $current[$Matches[1]] = ConvertFrom-FrpV24YamlScalar -Text $Matches[2]
+            if ($Matches['indent'].Length -ne ($sequenceIndent + 2)) {
+                throw 'ERROR: remoteServices fields must align with their item name'
+            }
+            $current[$Matches['field']] = ConvertFrom-FrpV24YamlScalar -Text $Matches['value']
             continue
         }
         throw ('ERROR: unsupported ConfigurationBundle YAML line: {0}' -f $line.Trim())
