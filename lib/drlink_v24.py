@@ -6123,6 +6123,9 @@ def _synchronize_agent_remote_services_locked(plane_db, *, root: Optional[str] =
     """Reconnect synchronization: allocate pending endpoints, apply deletes, revalidate deps."""
     # Enrollment projection is a lifecycle write. show/status must not do it.
     projected = project_enrolled_services_into_agent_catalog(plane_db, root=root)
+    # Older installations incorrectly marked non-loopback bootstrap targets as
+    # Agent self. Only provenance-marked untouched enrollment seeds qualify.
+    repaired_lan_seeds = repair_enrolled_lan_seed_destinations(plane_db, root=root)
     # Every bootstrap seed name is protected, not only rows created this pass.
     # Otherwise a later synchronize would reapply stale client-state through
     # v2.4 revalidation and undo an operator edit.
@@ -8152,6 +8155,64 @@ def project_enrolled_services_into_agent_catalog(
     if wrote:
         _commit_if_autonomous(plane_db)
     return results
+
+
+def repair_enrolled_lan_seed_destinations(
+    plane_db, *, root: Optional[str] = None, state: Optional[dict] = None
+) -> int:
+    """Migrate only untouched, self-bound bootstrap LAN seeds.
+
+    An operator edit sets enrollment_seed=0 and is never replayed or silently
+    overwritten. The Server must independently authorize the same signed
+    enrollment target; this local migration does not grant remote access.
+    """
+    data = _load_enrolled_client_state(root, state=state) or {}
+    services = data.get("services") if isinstance(data.get("services"), dict) else {}
+    identity = load_agent_identity(root)
+    own_id = str(identity.get("machine_id") or "")
+    own_name = str(identity.get("hostname") or identity.get("label") or "").lower()
+    changed = 0
+    for sid, rec in services.items():
+        if not isinstance(rec, dict) or rec.get("v24_remote_service"):
+            continue
+        name = str(rec.get("id") or sid).strip().lower()
+        target = enrolled_target_object_name(rec.get("local_ip"))
+        if not name or not target:
+            continue
+        row = plane_db.conn.execute(
+            "SELECT * FROM agent_remote_services WHERE name=? COLLATE NOCASE "
+            "AND enrollment_seed=1 AND delete_pending=0",
+            (name,),
+        ).fetchone()
+        if row is None:
+            continue
+        if str(row["destination_client_id"] or "") != own_id:
+            continue
+        if str(row["destination"] or "").lower() not in (
+            own_name, "this-host", "this_host", "self"
+        ):
+            continue
+        try:
+            if int(row["endpoint_port"] or 0) != int(rec.get("remote_port") or 0):
+                continue
+            # The signed target port is retained by the immutable Service Object.
+            expected_port = int(rec.get("local_port") or 0)
+            sobj = get_service_object(plane_db, row["service_object"])
+            if sobj is None or int(sobj["port"] or 0) != expected_port:
+                continue
+        except (TypeError, ValueError):
+            continue
+        plane_db.conn.execute(
+            "UPDATE agent_remote_services SET destination=?, destination_client_id=NULL, "
+            "status='DEGRADED', runtime_verified=0, reason=?, updated_at=? "
+            "WHERE name=? AND enrollment_seed=1",
+            (target, "Reverify routed bootstrap target against Server catalog.",
+             utc_now_iso(), name),
+        )
+        changed += 1
+    if changed:
+        _commit_if_autonomous(plane_db)
+    return changed
 
 
 def activate_enrolled_services_as_remote_services(
