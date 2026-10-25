@@ -115,8 +115,16 @@ fi
 pass "BOOTSTRAP_HOSTNAME_SET"
 
 python3 "$ROOT/tools/frp-server-set" bootstrap-hostname --unset >/dev/null
+# Standard Zero-Touch must never silently emit a 4,000-char private-CA command.
+if python3 "$ROOT/tools/frp-create-client" --one-line --client-name no-compact-host \
+  >"$WORKDIR/missing-compact.out" 2>"$WORKDIR/missing-compact.err"; then
+  fail "Default one-line unexpectedly emitted a long private-CA command"
+fi
+grep -q 'No enrollment ticket was issued' "$WORKDIR/missing-compact.err" \
+  || fail "Compact HTTPS prerequisite was not actionable"
+pass "DEFAULT_NO_SILENT_LONG_COMMAND"
 OUT_ZT1="$WORKDIR/zt1.out"
-python3 "$ROOT/tools/frp-create-client" --one-line --client-name mgmt-only --note 'n1' \
+python3 "$ROOT/tools/frp-create-client" --one-line --long-bootstrap --client-name mgmt-only --note 'n1' \
   >"$OUT_ZT1" || fail "one-line without bootstrap hostname"
 grep -q "curl -fsSL --proto =https --cacert" "$OUT_ZT1" \
   || { cat "$OUT_ZT1"; fail "zt1 fallback missing"; }
@@ -141,7 +149,7 @@ cfg['allocator_public_url'] = 'https://remote.xdr.ooo:%s/enroll' % (
 path.write_text(json.dumps(cfg, indent=2) + "\n")
 PY
 OUT_DOMAIN="$WORKDIR/domain-fallback.out"
-python3 "$ROOT/tools/frp-create-client" --one-line --client-name domain-fallback --note 'dns' \
+python3 "$ROOT/tools/frp-create-client" --one-line --long-bootstrap --client-name domain-fallback --note 'dns' \
   >"$OUT_DOMAIN" || fail "one-line with public_url_host domain"
 grep -q "curl -fsSL --proto =https --cacert" "$OUT_DOMAIN" \
   || { cat "$OUT_DOMAIN"; fail "domain public_url_host missing pinned-CA fallback"; }
@@ -154,7 +162,7 @@ fi
 pass "PUBLIC_URL_HOST_DOMAIN_ZT1_FALLBACK"
 
 OUT_DOMAIN_WINDOWS="$WORKDIR/domain-windows-fallback.out"
-python3 "$ROOT/tools/frp-create-client" --one-line --platform windows --rdp \
+python3 "$ROOT/tools/frp-create-client" --one-line --long-bootstrap --platform windows --rdp \
   --client-name domain-win-fallback --note 'dns-win' >"$OUT_DOMAIN_WINDOWS" \
   || fail "Windows one-line with public_url_host domain"
 # Windows now transports the hash-before-execute script as UTF-16LE
@@ -199,7 +207,7 @@ cfg['allocator_public_url'] = 'https://203.0.113.10:%s/enroll' % (
 path.write_text(json.dumps(cfg, indent=2) + "\n")
 PY
 OUT_IP_ID="$WORKDIR/ip-identity.out"
-python3 "$ROOT/tools/frp-create-client" --one-line --client-name ip-identity --note 'ip' \
+python3 "$ROOT/tools/frp-create-client" --one-line --long-bootstrap --client-name ip-identity --note 'ip' \
   >"$OUT_IP_ID" || fail "one-line with public_url_host IP"
 grep -q "curl -fsSL --proto =https --cacert" "$OUT_IP_ID" \
   || { cat "$OUT_IP_ID"; fail "IP identity should use pinned long command"; }
