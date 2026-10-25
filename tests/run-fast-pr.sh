@@ -24,6 +24,9 @@ python3 tests/test-public-cli-grammar-parity.py
 python3 tests/test-v24-managed-host-liveness.py
 python3 tests/test-cli-inventory-selection-journey.py
 python3 tests/test-enrolled-routed-target-parity.py
+python3 tests/test-mcp-owner-default-access.py
+python3 tests/test-zero-touch-operator-command-bound.py
+bash tests/test-zero-touch-short-url.sh
 python3 tests/test-cli-feature-scenario-remediation.py
 python3 tests/test-cli-only-e2e-delta-triage.py
 python3 tests/test-guided-configuration-input.py
