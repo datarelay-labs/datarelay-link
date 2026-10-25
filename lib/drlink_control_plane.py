@@ -4575,11 +4575,26 @@ class ControlPlane:
         now = utc_now_iso()
         if first_identity_approval:
             # Keep a one-use fingerprint of the explicit operator bootstrap.
-            # A normal OAuth wizard's pending principal is never implicitly
-            # verified by the token endpoint.
+            # Supersede the previous unfinished ceremony without leaving
+            # a dormant bearer token/code that might gain trust later.
+            bootstrap_key = "oauth_operator_bootstrap:%s" % principal_id
+            prior = self.conn.execute(
+                "SELECT value FROM system_meta WHERE key = ?", (bootstrap_key,)
+            ).fetchone()
+            if prior is not None and str(prior["value"]) != digest:
+                self.conn.execute(
+                    "DELETE FROM ai_oauth_codes WHERE code_hash = ? AND principal_id = ? "
+                    "AND used_at IS NULL",
+                    (str(prior["value"]), principal_id),
+                )
+                self.conn.execute(
+                    "UPDATE ai_oauth_pending SET status = 'denied', decision_at = ?, code_plain = '' "
+                    "WHERE principal_id = ? AND status = 'approved' AND consumed_at = ''",
+                    (now, principal_id),
+                )
             self.conn.execute(
                 "INSERT OR REPLACE INTO system_meta(key, value) VALUES (?, ?)",
-                ("oauth_operator_bootstrap:%s" % principal_id, digest),
+                (bootstrap_key, digest),
             )
         self.conn.execute(
             "INSERT INTO ai_oauth_codes(code_hash, principal_id, client_id, redirect_uri, code_challenge, resource, scope, expires_at, created_at) "
@@ -4819,6 +4834,10 @@ class ControlPlane:
             and marker is not None
             and str(marker["value"]) == digest
         )
+        if status == "pending" and marker is not None and not first_identity_proven:
+            # This code belongs to an older superseded first-identity
+            # consent, not the currently operator-approved one.
+            return None
         # Atomically claim the code, including across concurrent exchange
         # requests. Wrong PKCE/client/redirect/resource never reach this step.
         claimed = self.conn.execute(

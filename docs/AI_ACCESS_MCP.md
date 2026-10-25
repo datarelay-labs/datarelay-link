@@ -89,6 +89,9 @@ identity (that would make initial onboarding impossible).
    authorization-code exchange with matching client, redirect URI, resource
    and PKCE verifier transitions the new identity to VERIFIED. A wrong
    verifier, expired/replayed code or revoked identity cannot do so.
+   If the operator approves a newer request for this same still-PENDING
+   first identity, the superseded authorization code is invalidated and
+   cannot later acquire trusted access.
 4. The resulting MCP identity still has **no privileged AI Access rights**
    until a separate, narrowly scoped WHITELIST rule is configured. In the
    initial No Policy state, all privileged MCP operations remain DENY.

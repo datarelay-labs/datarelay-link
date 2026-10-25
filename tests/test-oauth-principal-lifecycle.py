@@ -229,10 +229,23 @@ class OAuthPrincipalLifecycleTests(unittest.TestCase):
         first = self.plane.approve_oauth_pending(first_id, "chatgpt", retain_for_browser=True)
         self.assertEqual(first["status"], "approved")
         self.assertEqual(self.plane.get_principal("chatgpt")["credential_status"], "pending")
+        first_complete = self.plane.complete_oauth_pending_browser(first["completion_token"])
+        first_code = first_complete["code"]  # isolated private test fixture only
         client_id, verifier, second_id = self._dcr_pending("owner-retry")
         second = self.plane.approve_oauth_pending(second_id, "chatgpt", retain_for_browser=True)
         self.assertEqual(second["status"], "approved")
         self.assertEqual(self.plane.get_principal("chatgpt")["credential_status"], "pending")
+        # The superseded, otherwise valid first code must not produce a
+        # dormant token that later becomes trusted after the second request.
+        self.assertIsNone(
+            self.plane.exchange_authorization_code(
+                code=first_code,
+                verifier=first_verifier,
+                redirect_uri=REDIRECT,
+                resource=self.resource,
+                client_id=first_client,
+            )
+        )
         complete = self.plane.complete_oauth_pending_browser(second["completion_token"])
         access = self.plane.exchange_authorization_code(
             code=complete["code"],
@@ -244,6 +257,12 @@ class OAuthPrincipalLifecycleTests(unittest.TestCase):
         self.assertIsNotNone(access)
         self.assertEqual(self.plane.get_principal("chatgpt")["credential_status"], "verified")
         self.assertIsNotNone(self.plane.authenticate_oauth_token(access["access_token"], resource=self.resource))
+        self.assertIsNone(
+            self.plane.exchange_authorization_code(
+                code=first_code, verifier=first_verifier, redirect_uri=REDIRECT,
+                resource=self.resource, client_id=first_client,
+            )
+        )
 
     def test_verified_approve_pkce_mcp_then_revoke_refresh_and_static_bearer(self):
         client_id, verifier, pending_id = self._dcr_pending("ok-verified")
