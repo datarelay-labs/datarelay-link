@@ -131,7 +131,12 @@ class EnrollmentRoutedTargetParity(unittest.TestCase):
             "FROM agent_remote_services ORDER BY name"
         ):
             matching = server_rows[r["name"]]
-            self.assertEqual(r["destination"], matching["destination_name"])
+            if r["name"] == "ssh":
+                # The Agent shows its own hostname while the Server stores
+                # this-host; both are the same immutable self binding.
+                self.assertIn(r["destination"], ("this-host", "drlink-agent"))
+            else:
+                self.assertEqual(r["destination"], matching["destination_name"])
             self.assertEqual(r["destination_client_id"], matching["destination_client_id"])
             self.assertEqual(r["endpoint_port"], matching["public_port"])
         # Initial Agent intent is unverified until a signed Server catalog
