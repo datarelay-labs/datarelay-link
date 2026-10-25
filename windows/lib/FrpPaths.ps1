@@ -30,9 +30,15 @@ function Get-FrpWindowsRoot {
     $enrolled = @()
     foreach ($candidate in @($canonical, $legacy)) {
         $complete = $true
-        foreach ($rel in @('state/client-state.json','config/frpc.toml','state/client-identity.pub','state/client-identity.key')) {
+        foreach ($rel in @('state/client-state.json','config/frpc.toml','state/client-identity.pub')) {
             if (-not (Test-Path -LiteralPath (Join-Path $candidate $rel) -PathType Leaf)) { $complete = $false; break }
         }
+        # Match Get-FrpIdentityKeyPath without recursing through root discovery:
+        # native Windows keeps the existing private key encrypted with DPAPI.
+        $dpapiKey = Join-Path $candidate 'state/client-identity.key.dpapi'
+        $plainKey = Join-Path $candidate 'state/client-identity.key'
+        if (-not ((Test-Path -LiteralPath $dpapiKey -PathType Leaf) -or
+                  (Test-Path -LiteralPath $plainKey -PathType Leaf))) { $complete = $false }
         if ($complete) { $enrolled += $candidate }
     }
     if ($enrolled.Count -gt 1) {
