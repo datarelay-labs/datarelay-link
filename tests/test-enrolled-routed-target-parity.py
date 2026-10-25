@@ -174,6 +174,96 @@ class EnrollmentRoutedTargetParity(unittest.TestCase):
             (remote,)
         ).fetchone()[0], 1)
 
+    def test_upgrade_repairs_only_exact_legacy_self_bound_lan_targets(self):
+        self._publish()
+        for name in ("aio-ssh", "https"):
+            self.server.conn.execute(
+                "UPDATE published_services SET target_mode='self' "
+                "WHERE name=? AND client_id=?", (name, CLIENT),
+            )
+            self.server.conn.execute(
+                "UPDATE remote_service_meta SET destination_name='this-host', "
+                "destination_client_id=?, status='DEGRADED', runtime_verified=0 "
+                "WHERE service_id=(SELECT id FROM published_services "
+                "WHERE name=? AND client_id=?)", (CLIENT, name, CLIENT),
+            )
+        registry = {"clients": {
+            CLIENT: {"hostname": "drlink-agent", "services": enrolled_services()}
+        }}
+        self.assertEqual(
+            len(ur.legacy_enrolled_lan_projection_repairs(self.server, registry)), 2
+        )
+        result = ur.apply_upgrade_reconciliation(self.server, registry)
+        self.assertTrue(result.get("ok"), result)
+        rows = self._server_rows()
+        self.assertEqual(len(rows), 3)
+        self.assertEqual([row["public_port"] for row in rows], [6000, 6001, 6002])
+        for row in rows[1:]:
+            self.assertEqual(row["target_mode"], "routed")
+            self.assertNotEqual(row["destination_name"], "this-host")
+            self.assertIsNone(row["destination_client_id"])
+            pub = self.server.conn.execute(
+                "SELECT * FROM published_services WHERE id=?",
+                (row["published_id"],),
+            ).fetchone()
+            meta = self.server.conn.execute(
+                "SELECT * FROM remote_service_meta WHERE service_id=?",
+                (row["published_id"],),
+            ).fetchone()
+            self.assertIsNone(
+                ur.server_target_projection_reason(self.server, pub, meta)
+            )
+        self.assertFalse(
+            ur.legacy_enrolled_lan_projection_repairs(self.server, registry)
+        )
+
+    def test_agent_sync_repairs_only_untouched_bootstrap_seeds(self):
+        self.agent = ControlPlane(self.agent_root)
+        self.addCleanup(self.agent.close)
+        v24.ensure_v2_schema(self.agent.conn)
+        v24.project_enrolled_services_into_agent_catalog(
+            self.agent, root=self.agent_root
+        )
+        for name in ("aio-ssh", "https"):
+            self.agent.conn.execute(
+                "UPDATE agent_remote_services SET destination='drlink-agent', "
+                "destination_client_id=?, status='DEGRADED', runtime_verified=0 "
+                "WHERE name=?", (CLIENT, name),
+            )
+        self.assertEqual(
+            v24.repair_enrolled_lan_seed_destinations(
+                self.agent, root=self.agent_root
+            ), 2,
+        )
+        self.assertEqual(
+            v24.repair_enrolled_lan_seed_destinations(
+                self.agent, root=self.agent_root
+            ), 0,
+        )
+        for name, port in (("aio-ssh", 6001), ("https", 6002)):
+            row = self.agent.conn.execute(
+                "SELECT * FROM agent_remote_services WHERE name=?", (name,)
+            ).fetchone()
+            self.assertEqual(row["destination"], v24.enrolled_target_object_name(LAN))
+            self.assertIsNone(row["destination_client_id"])
+            self.assertEqual(row["endpoint_port"], port)
+            self.assertEqual(row["enrollment_seed"], 1)
+        # Explicit operator changes invalidate seed provenance and never replay.
+        self.agent.conn.execute(
+            "UPDATE agent_remote_services SET enrollment_seed=0, destination='operator-target' "
+            "WHERE name='aio-ssh'"
+        )
+        self.assertEqual(
+            v24.repair_enrolled_lan_seed_destinations(
+                self.agent, root=self.agent_root
+            ), 0,
+        )
+        self.assertEqual(
+            self.agent.conn.execute(
+                "SELECT destination FROM agent_remote_services WHERE name='aio-ssh'"
+            ).fetchone()["destination"], "operator-target",
+        )
+
     def test_mismatched_publication_remains_fail_closed(self):
         self._publish()
         row = self._server_rows()[1]
