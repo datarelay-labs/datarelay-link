@@ -59,6 +59,32 @@ class CompactZeroTouchContract(unittest.TestCase):
         self.assertEqual(cli.short_url_host_for_cfg({"bootstrap_hostname": HOST}), HOST)
         self.assertEqual(zt.short_url_for_ticket(HOST, TICKET).count("/i/"), 1)
 
+    def test_public_https_probe_requires_real_allocator_fail_closed_signature(self):
+        import io
+        import urllib.error
+
+        class FakeOpener:
+            def __init__(self, content):
+                self.content = content
+            def open(self, url, timeout=0):
+                raise urllib.error.HTTPError(
+                    url, 404, "Not Found", {}, io.BytesIO(self.content)
+                )
+
+        with mock.patch.object(cli, "_test_root", return_value=""):
+            with mock.patch("urllib.request.build_opener", return_value=FakeOpener(
+                b"bootstrap unavailable\n"
+            )):
+                self.assertEqual(
+                    cli.short_url_host_for_cfg({"public_hostname": HOST}), HOST
+                )
+            with mock.patch("urllib.request.build_opener", return_value=FakeOpener(
+                b"<html>generic nginx 404</html>\n"
+            )):
+                self.assertEqual(
+                    cli.short_url_host_for_cfg({"public_hostname": HOST}), ""
+                )
+
     def test_long_private_ca_is_explicit_advanced_opt_in(self):
         self.assertFalse(cli.parse_args(["--one-line"]).long_bootstrap)
         self.assertTrue(
