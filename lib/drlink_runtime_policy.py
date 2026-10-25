@@ -746,7 +746,8 @@ def sync_enrolled_client(
         if not enabled:
             plane.set_published_service_enabled(client_id, service_name, False)
         pub = plane.conn.execute(
-            "SELECT id, enabled, public_port FROM published_services "
+            "SELECT id, enabled, public_port, target_host, target_port, target_mode "
+            "FROM published_services "
             "WHERE client_id = ? AND name = ? AND released = 0",
             (client_id, service_name),
         ).fetchone()
@@ -773,6 +774,39 @@ def sync_enrolled_client(
                     ),
                 )
                 plane.commit_if_autonomous()
+            elif target_ref:
+                # Existing v2.4 enrollment bug: the signed LAN address was
+                # persisted on the public service, but its metadata called it
+                # this-host. Repair only that contradictory bootstrap record;
+                # never overwrite a true operator-selected Network Object.
+                current = plane.conn.execute(
+                    "SELECT destination_name, destination_client_id FROM "
+                    "remote_service_meta WHERE service_id=?", (pub["id"],)
+                ).fetchone()
+                originally_self = (
+                    current is not None
+                    and str(current["destination_name"] or "").lower()
+                    in ("this-host", "this_host", "self", hostname.lower())
+                    and str(current["destination_client_id"] or "") == client_id
+                )
+                exact_signed_target = (
+                    str(pub["target_host"] or "") == target_host
+                    and int(pub["target_port"] or 0) == int(local_port)
+                )
+                if originally_self and exact_signed_target:
+                    plane.conn.execute(
+                        "UPDATE remote_service_meta SET destination_name=?, "
+                        "destination_client_id=NULL, status='DEGRADED', "
+                        "runtime_verified=0, reason=? WHERE service_id=?",
+                        (target_ref, "Reverify routed enrollment target after repair.",
+                         pub["id"]),
+                    )
+                    plane.conn.execute(
+                        "UPDATE published_services SET target_mode='routed', "
+                        "updated_at=? WHERE id=?",
+                        (utc_now_iso(), pub["id"]),
+                    )
+                    plane.commit_if_autonomous()
     # This hook is reached only after the allocator authenticated the
     # enrollment's management/ticket identity. An explicitly approved OAuth
     # owner may receive the newly enrolled trusted Agent; arbitrary OAuth
