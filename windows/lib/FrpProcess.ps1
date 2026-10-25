@@ -274,6 +274,7 @@ function Start-FrpClient {
 
     $frpc = Get-FrpFrpcPath
     $toml = Get-FrpTomlPath
+    $runtimeLogOffset = (Get-Item -LiteralPath (Get-FrpLogPath)).Length
     # Win32_Process.Create starts outside the OpenSSH/WinRM job object, so
     # frpc keeps running after the install/start session disconnects.
     # Start-Process from an SSH session is killed with that session.
@@ -287,6 +288,7 @@ function Start-FrpClient {
     }
     $procId = [int]$created.ProcessId
     Write-FrpPidFile -ProcessId $procId -ExePath $frpc
+    Save-FrpV24RuntimeBoundary -ProcessId $procId -LogOffset $runtimeLogOffset
     Start-Sleep -Milliseconds 400
     if (-not (Test-FrpProcessAlive -ProcessId $procId -ValidateOwnership -ExpectedExe $frpc)) {
         Clear-FrpPidFile

@@ -44,6 +44,15 @@ try {
     catch { $rejected = $_.Exception.Message -match 'integrity verification' }
     Assert-FrpTrue $rejected 'tampered Server response still rejected'
 
+    $script:WireResponse = $wire.Substring(0, $wire.Length - 1) + ',"response_hmac":"' + $vectorMac + '"}'
+    $lifecycle = Invoke-FrpAgentLifecycle -State connected
+    Assert-FrpEqual '2026-10-25T03:04:05+00:00' $lifecycle.syncedAt 'lifecycle signed timestamps stay strings'
+    $script:WireResponse = $script:WireResponse.Replace('03:04:05+00:00', '03:04:06+00:00')
+    $rejected = $false
+    try { Invoke-FrpAgentLifecycle -State connected | Out-Null }
+    catch { $rejected = $_.Exception.Message -match 'HMAC verification' }
+    Assert-FrpTrue $rejected 'tampered lifecycle response rejected'
+
     Write-FrpTestPass 'test-crypto'
 } finally {
     Remove-FrpWindowsTestRoot

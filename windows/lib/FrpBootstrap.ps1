@@ -215,7 +215,7 @@ function Invoke-FrpBootstrapRedeem {
     # Compact JSON (no spaces) matching Linux client
     $body = Get-FrpCanonicalJson -Object $payload
     $respText = Invoke-FrpHttpsJson -Method POST -Url $url -Body $body
-    $data = $respText | ConvertFrom-Json
+    $data = ConvertFrom-FrpJson -Json $respText
     if ($data.error) {
         $cls = [string]$data.error_class
         if (-not $cls) { $cls = 'BOOTSTRAP_REDEEM_FAILED' }
@@ -271,7 +271,7 @@ function Invoke-FrpEnroll {
         'X-Signature'     = $sig
     }
     $respText = Invoke-FrpHttpsJson -Method POST -Url $AllocatorUrl -Body $body -Headers $headers
-    $data = $respText | ConvertFrom-Json
+    $data = ConvertFrom-FrpJson -Json $respText
     if ($data.error) {
         throw ("ERROR: allocator rejected enrollment: {0}" -f [string]$data.error)
     }
@@ -538,7 +538,7 @@ function Invoke-FrpEnrollServices {
         'X-Mgmt-Signature' = $signature
     }
     $respText = Invoke-FrpHttpsJson -Method POST -Url $AllocatorUrl -Body $body -Headers $headers
-    $data = $respText | ConvertFrom-Json
+    $data = ConvertFrom-FrpJson -Json $respText
 
     if ($data.error) {
         $err = [string]$data.error
@@ -992,7 +992,7 @@ function Invoke-FrpReconcileReleasedServices {
 
     if ($env:FRP_CLIENT_RECONCILE_RESPONSE) {
         try {
-            $data = $env:FRP_CLIENT_RECONCILE_RESPONSE | ConvertFrom-Json
+            $data = ConvertFrom-FrpJson -Json $env:FRP_CLIENT_RECONCILE_RESPONSE
         } catch {
             Write-Host 'ERROR: allocator returned a malformed reconcile response'
             Write-Host 'FAILURE_CLASS=INVALID_RESPONSE'
@@ -1089,7 +1089,7 @@ function Invoke-FrpReconcileReleasedServices {
         }
         try {
             $respText = Invoke-FrpHttpsJson -Method POST -Url $allocatorUrl -Body $body -Headers $headers
-            $data = $respText | ConvertFrom-Json
+            $data = ConvertFrom-FrpJson -Json $respText
         } catch {
             Write-Host 'ERROR: allocator unreachable'
             Write-Host 'FAILURE_CLASS=ALLOCATOR_UNREACHABLE'
@@ -1227,7 +1227,7 @@ function Invoke-FrpAgentLifecycle {
         'X-Mgmt-Signature'  = $signature
     }
     $respText = Invoke-FrpHttpsJson -Method POST -Url $url -Body $body -Headers $headers
-    $data = $respText | ConvertFrom-Json
+    $data = ConvertFrom-FrpJson -Json $respText
     if ($data.error) { throw ("ERROR: lifecycle report rejected: {0}" -f [string]$data.error) }
     $received = [string]$data.response_hmac
     $copy = ConvertTo-FrpPlainObject $data

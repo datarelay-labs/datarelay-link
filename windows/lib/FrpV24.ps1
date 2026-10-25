@@ -213,6 +213,96 @@ function Save-FrpV24ServiceMap {
     }
     Save-FrpClientState @args | Out-Null
 }
+function Get-FrpRuntimeProcessIdentity {
+    param([int]$ProcessId)
+    if (-not (Test-FrpProcessAlive -ProcessId $ProcessId -ValidateOwnership -ExpectedExe (Get-FrpFrpcPath))) { return $null }
+    try { return (Get-Process -Id $ProcessId -ErrorAction Stop).StartTime.ToUniversalTime().Ticks }
+    catch { return $null }
+}
+function Save-FrpV24RuntimeBoundary {
+    param([int]$ProcessId, [int64]$LogOffset = -1)
+    $identity = Get-FrpRuntimeProcessIdentity -ProcessId $ProcessId
+    if ($null -eq $identity) { return }
+    $log = Get-Item -LiteralPath (Get-FrpLogPath) -ErrorAction Stop
+    $record = [ordered]@{
+        pid = $ProcessId; process_ticks = $identity
+        log_offset = $(if ($LogOffset -ge 0) { $LogOffset } else { $log.Length }); log_created_ticks = $log.CreationTimeUtc.Ticks
+        config_sha256 = (Get-FileHash -LiteralPath (Get-FrpTomlPath) -Algorithm SHA256).Hash
+    }
+    $path = Join-Path (Get-FrpStateDir) 'v24-runtime-boundary.json'
+    [System.IO.File]::WriteAllText($path, ($record | ConvertTo-Json -Compress))
+    Restrict-FrpFileAcl -Path $path
+}
+function Test-FrpV24RuntimeService {
+    param($Item, [string]$HostId)
+    try {
+        if ($Item.enabled -eq $false -or $Item.pending_allocation -or -not $Item.remote_port) { return $false }
+        $boundary = Get-Content -LiteralPath (Join-Path (Get-FrpStateDir) 'v24-runtime-boundary.json') -Raw | ConvertFrom-Json
+        $status = Get-FrpClientStatus
+        if (-not $status.Running -or [int]$status.Pid -ne [int]$boundary.pid) { return $false }
+        $identity = Get-FrpRuntimeProcessIdentity -ProcessId ([int]$status.Pid)
+        if ($null -eq $identity -or $identity -ne $boundary.process_ticks) { return $false }
+        if ((Get-FileHash -LiteralPath (Get-FrpTomlPath) -Algorithm SHA256).Hash -ne $boundary.config_sha256) { return $false }
+        $log = Get-Item -LiteralPath (Get-FrpLogPath)
+        if ($log.Length -lt $boundary.log_offset) { return $false }
+        # Windows creation time identifies the file across rotation; Unix .NET
+        # may expose ctime here, which changes on append in cross-platform tests.
+        if ((Test-FrpIsWindowsHost) -and $log.CreationTimeUtc.Ticks -ne $boundary.log_created_ticks) { return $false }
+        # Read only bounded evidence written after this process's launch boundary.
+        # Rotation/truncation or an oversized epoch cannot establish continuity.
+        $length = $log.Length - [int64]$boundary.log_offset
+        if ($length -gt 8388608) { return $false }
+        $stream = [System.IO.File]::Open($log.FullName, 'Open', 'Read', 'ReadWrite')
+        try {
+            [void]$stream.Seek([int64]$boundary.log_offset, 'Begin')
+            $reader = New-Object System.IO.StreamReader($stream)
+            try { $text = $reader.ReadToEnd() } finally { $reader.Dispose() }
+        } finally { $stream.Dispose() }
+        $connected = $false; $success = $false
+        $proxy = '[' + $HostId + '-' + [string]$Item.id + ']'
+        foreach ($line in ($text -split "`n")) {
+            if ($line -match 'login to server success') { $connected = $true; $success = $false }
+            elseif ($line -match 'login (to )?server failed|session closed|control worker is closed|try to reconnect|try to connect to server|connect to server error|read from control stream closed') { $connected = $false; $success = $false }
+            elseif ($connected -and $line.Contains($proxy) -and $line -match 'start proxy|stop proxy') { $success = $line -match 'start proxy success' }
+            elseif ($connected -and $line -match 'proxy removed:' -and $line.Contains($HostId + '-' + [string]$Item.id)) { $success = $false }
+        }
+        return ($connected -and $success)
+    } catch { return $false }
+}
+function Update-FrpV24RuntimeStatus {
+    $state = Read-FrpClientState
+    $map = ConvertTo-FrpV24RemoteMap
+    $claims = @(); $allAcknowledged = $true
+    foreach ($key in @($map.Keys)) {
+        $item = $map[$key]
+        if (-not $item.v24_remote_service) { continue }
+        $verified = Test-FrpV24RuntimeService -Item $item -HostId ([string]$state.host_id)
+        $status = if ($item.enabled -eq $false) { 'DISABLED' } elseif ($verified) { 'HEALTHY' } else { 'DEGRADED' }
+        # Demote before transport: an unavailable/tampered ACK cannot retain stale HEALTHY.
+        $item.status = $(if ($item.enabled -eq $false) { 'DISABLED' } else { 'DEGRADED' })
+        $item['runtime_verified'] = $false
+        $claims += [ordered]@{name=[string]$item.id;status=$status;runtime_verified=$verified;endpoint_port=$item.remote_port;reason=$(if ($status -eq 'DEGRADED') {'Current Agent runtime is not verified.'} else {''})}
+    }
+    if (-not $claims.Count) { return $false }
+    Save-FrpV24ServiceMap -Map $map
+    $ack = Invoke-FrpV24MgmtRequest -Method POST -Path '/v1/remote-services-status' -Body ([ordered]@{services=$claims})
+    foreach ($claim in $claims) {
+        $matches = @($ack.services | Where-Object { [string]$_.name -ieq $claim.name })
+        $item = $map[$claim.name.ToLowerInvariant()]
+        if ($matches.Count -ne 1 -or [int]$matches[0].endpoint_port -ne [int]$item.remote_port) { $allAcknowledged = $false; continue }
+        $result = $matches[0]
+        $item.status = $(if ($item.enabled -eq $false) { 'DISABLED' } elseif ($claim.runtime_verified -and $result.status -eq 'HEALTHY' -and $result.runtime_verified -eq $true -and -not $result.pending_allocation) { 'HEALTHY' } else { 'DEGRADED' })
+        $item['runtime_verified'] = ($item.status -eq 'HEALTHY')
+        $item.reason = [string]$result.reason
+        if ($item.enabled -ne $false -and $item.status -ne 'HEALTHY') { $allAcknowledged = $false }
+    }
+    Save-FrpV24ServiceMap -Map $map
+    return $allAcknowledged
+}
+function Invoke-FrpV24LifecycleSync {
+    if (Update-FrpV24RuntimeStatus) { return 0 }
+    return (Invoke-FrpV24Synchronize)
+}
 function Update-FrpV24Runtime {
     if (-not (Test-Path -LiteralPath (Get-FrpTomlPath))) {
         throw 'ERROR: frpc.toml is missing; cannot activate Remote Service runtime'
@@ -250,7 +340,9 @@ function Update-FrpV24Runtime {
     }
 
     # Lifecycle heartbeat remains present for active, pending, and management-only Agents.
-    Install-FrpLifecycleTask | Out-Null
+    # A running lifecycle worker can itself reconcile. Re-registering its
+    # healthy task here would terminate that worker in the middle of apply.
+    if (-not (Test-FrpLifecycleTaskHealthy)) { Install-FrpLifecycleTask | Out-Null }
     $running = (Get-FrpClientStatus).Running
     if ($runtimeEnabledAny) {
         Set-FrpInstallStatus -Status 'installed'
@@ -258,7 +350,14 @@ function Update-FrpV24Runtime {
             Install-FrpAutostartTask | Out-Null
         }
         if ($running) { Stop-FrpClient | Out-Null }
+        # Start-FrpClient records a boundary before spawning the new process;
+        # status uses only that process's connection/proxy events and signed ACK.
         Start-FrpClient -Force:$true | Out-Null
+        for ($attempt = 0; $attempt -lt 10; $attempt++) {
+            try { if (Update-FrpV24RuntimeStatus) { break } }
+            catch { if (-not (Test-FrpV24OfflineEligibleError -Message $_.Exception.Message)) { throw } }
+            Start-Sleep -Milliseconds 200
+        }
         return
     }
 
@@ -291,6 +390,10 @@ function Format-FrpV24RemoteRecord {
     if (-not $service) { $service = [string]$Item.preset }
     $status = [string]$Item.status
     if (-not $status) { $status = $(if ($Item.enabled -eq $false) { 'DISABLED' } else { 'DEGRADED' }) }
+    if ($status -eq 'HEALTHY' -and -not $env:FRP_WINDOWS_V24_FIXTURE_DIR) {
+        $state = Read-FrpClientState
+        if (-not $Item.runtime_verified -or -not (Test-FrpV24RuntimeService -Item $Item -HostId ([string]$state.host_id))) { $status = 'DEGRADED' }
+    }
     return @(
         ('Remote Service: {0}' -f [string]$Item.id)
         ('  Destination : {0}' -f $destination)
@@ -428,7 +531,7 @@ function Invoke-FrpV24SetRemoteService {
     # is obsolete and must not release the service on the next synchronize.
     Remove-FrpV24PendingDelete -Name $Name
     if (-not $SkipRuntime) { Update-FrpV24Runtime }
-    if (-not $Quiet) { Write-Host (Format-FrpV24RemoteRecord -Item $map[$key]) }
+    if (-not $Quiet) { Write-Host (Format-FrpV24RemoteRecord -Item (Get-FrpV24RemoteRecord -Name $Name)) }
     return 0
 }
 
