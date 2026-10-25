@@ -797,7 +797,17 @@ def handle_show(plane: ControlPlane, rest: list[str]) -> Optional[int]:
         elif row["reason"]:
             sys.stdout.write("Reason: %s\n" % row["reason"])
             reason = str(row["reason"]).strip().lower()
-            if (
+            if "authoritative destination reference" in reason or "authoritative_target_mismatch" in reason:
+                sys.stdout.write(
+                    "Next action:\n"
+                    "  On Server: define a Network Object for the actual LAN target.\n"
+                    "  On Agent: set remote-service %s destination <NETWORK-OBJECT> service %s enabled\n"
+                    "Then verify:\n"
+                    "  show remote-service %s\n"
+                    "  Test the public endpoint from another machine.\n"
+                    % (row["name"], row["service_object"], row["name"])
+                )
+            elif (
                 "synchron" in reason
                 or ("pending" in reason and ("runtime" in reason or "activation" in reason))
             ):
