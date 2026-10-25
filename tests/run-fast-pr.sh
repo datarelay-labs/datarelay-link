@@ -22,6 +22,7 @@ python3 tests/test-public-cli-grammar-parity.py
 # User-visible list -> immutable selector -> detail, plus Zero-Touch LAN authority.
 # These were previously absent from the PR gate despite being release-blocking.
 python3 tests/test-v24-managed-host-liveness.py
+python3 tests/test-cli-inventory-selection-journey.py
 python3 tests/test-enrolled-routed-target-parity.py
 python3 tests/test-cli-feature-scenario-remediation.py
 python3 tests/test-cli-only-e2e-delta-triage.py
