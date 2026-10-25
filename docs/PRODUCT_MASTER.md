@@ -324,6 +324,18 @@ A display name alone is never authentication.
 
 Authentication and AI Access authorization are separate.
 
+**First owner MCP onboarding (operator-approved exception):** a NEW OAuth AI
+Identity approved by the Server operator through the first-identity consent
+ceremony is not authorized merely by receiving the redirect. Only after the
+same client's genuine PKCE exchange verifies that identity does the Server
+create the scoped owner profile: all seven canonical MCP permissions, explicit
+file paths `/*`, and an audited WHITELIST rule to the enrolled/trusted
+Managed Host group. Subsequent signed Agent enrollments extend that existing
+owner group. Other OAuth identities remain unmatched/DENY; credential
+revocation, endpoint retirement, runtime availability, and existing filesystem
+safety restrictions still fail closed. Do not create an implicit global ALL
+policy or skip operator OAuth approval.
+
 **v2.4.0 scope decision (current owner, 2026-10-16):** The v2.4.0 target includes the current Managed Host/Network Object/Service Object/Permission Object model, Remote Access, Controlled Internet Access, Zero-Touch enrollment, guided/direct CLI, ConfigurationBundle, revision/audit, product/Relay Engine lifecycle, multi-platform Agent, **AI Identity/AI Access and server-side MCP Bridge**. The MCP/AI-only exclusions in `CLI_ONLY_E2E_SCENARIOS.md` narrow **that test run only**. They are not an MCP deferral to 2.5.0 and do not relax the full v2.4.0 release gates. Record real implementation/candidate bytes and exact Source HEAD; documentation is not proof of feature completion.
 
 For the v2.4.0 target, the server-side MCP Bridge is included as part of AI Access. MCP is an integration layer over this identity and permission model; it does not introduce a separate public `AI Principal` model.
