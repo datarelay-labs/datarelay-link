@@ -773,6 +773,13 @@ def sync_enrolled_client(
                     ),
                 )
                 plane.commit_if_autonomous()
+    # This hook is reached only after the allocator authenticated the
+    # enrollment's management/ticket identity. An explicitly approved OAuth
+    # owner may receive the newly enrolled trusted Agent; arbitrary OAuth
+    # identities still have no implicit rights.
+    from drlink_v24 import enroll_managed_host_in_owner_mcp_access
+
+    enroll_managed_host_in_owner_mcp_access(plane, client_id)
     return {"client_id": client_id, "services": len(services)}
 
 
