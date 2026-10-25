@@ -4506,6 +4506,7 @@ class ControlPlane:
             "SELECT * FROM ai_principals WHERE id = ?", (row["principal_id"],)
         ).fetchone()
         unbound = principal is not None and principal["name"] == OAUTH_UNBOUND_PRINCIPAL
+        first_identity_approval = False
         if unbound:
             if not principal_name:
                 raise ControlPlaneError(
@@ -4513,10 +4514,36 @@ class ControlPlane:
                     "system credential approve-oauth %s <PRINCIPAL>" % pending_id
                 )
             target = self.get_principal(principal_name)
-            if target is None or not int(target["enabled"] or 0):
+            if target is None:
+                # An operator-approved DCR/CIMD request is the first opportunity
+                # to name a new AI Identity. It is NOT authentication: the
+                # identity remains untrusted until the browser returns an
+                # authorization code and the client proves its PKCE verifier.
+                name = _validate_name(principal_name, "AI Identity name")
+                if name == OAUTH_UNBOUND_PRINCIPAL:
+                    raise ControlPlaneError("reserved AI Identity name")
+                now = utc_now_iso()
+                self.conn.execute(
+                    "INSERT INTO ai_principals(id, name, description, enabled, "
+                    "credential_status, auth_mode, row_version, created_at, updated_at) "
+                    "VALUES (?, ?, '', 1, 'pending', 'oauth', 1, ?, ?)",
+                    (_new_id("aipr"), name, now, now),
+                )
+                target = self.get_principal(name)
+                first_identity_approval = True
+            elif not int(target["enabled"] or 0):
                 raise ControlPlaneError("AI Identity not found or disabled: %s" % principal_name)
-            if str(target["credential_status"] or "").lower() not in ("verified", "active"):
-                raise self._oauth_approval_lifecycle_error(target["name"])
+            elif str(target["credential_status"] or "").lower() not in ("verified", "active"):
+                # Repeat an explicit operator consent for a first-time identity
+                # whose previous approved code has not verified it yet.
+                # A normal wizard-staged or revoked identity has no marker.
+                marker = self.conn.execute(
+                    "SELECT value FROM system_meta WHERE key = ?",
+                    ("oauth_operator_bootstrap:%s" % target["id"],),
+                ).fetchone()
+                if str(target["credential_status"] or "").lower() != "pending" or marker is None:
+                    raise self._oauth_approval_lifecycle_error(target["name"])
+                first_identity_approval = True
             # Bind DCR/CIMD client to the approved principal for future static lookups.
             now = utc_now_iso()
             dcr = self._lookup_dcr_client(row["client_id"])
@@ -4546,6 +4573,14 @@ class ControlPlane:
         code = "drc_" + secrets.token_urlsafe(24)
         digest = hashlib.sha256(code.encode("utf-8")).hexdigest()
         now = utc_now_iso()
+        if first_identity_approval:
+            # Keep a one-use fingerprint of the explicit operator bootstrap.
+            # A normal OAuth wizard's pending principal is never implicitly
+            # verified by the token endpoint.
+            self.conn.execute(
+                "INSERT OR REPLACE INTO system_meta(key, value) VALUES (?, ?)",
+                ("oauth_operator_bootstrap:%s" % principal_id, digest),
+            )
         self.conn.execute(
             "INSERT INTO ai_oauth_codes(code_hash, principal_id, client_id, redirect_uri, code_challenge, resource, scope, expires_at, created_at) "
             "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
@@ -4760,10 +4795,50 @@ class ControlPlane:
             return None
         if self._pkce_s256(verifier) != row["code_challenge"]:
             return None
-        self.conn.execute(
-            "UPDATE ai_oauth_codes SET used_at = ? WHERE code_hash = ?",
-            (utc_now_iso(), digest),
+        principal = self.conn.execute(
+            "SELECT name, enabled, credential_status, auth_mode "
+            "FROM ai_principals WHERE id = ?",
+            (row["principal_id"],),
+        ).fetchone()
+        if (
+            principal is None
+            or principal["name"] == OAUTH_UNBOUND_PRINCIPAL
+            or not int(principal["enabled"] or 0)
+        ):
+            return None
+        status = str(principal["credential_status"] or "").lower()
+        if status in ("revoked", "disabled"):
+            return None
+        bootstrap_key = "oauth_operator_bootstrap:%s" % row["principal_id"]
+        marker = self.conn.execute(
+            "SELECT value FROM system_meta WHERE key = ?", (bootstrap_key,)
+        ).fetchone()
+        first_identity_proven = (
+            status == "pending"
+            and str(principal["auth_mode"] or "").lower() == "oauth"
+            and marker is not None
+            and str(marker["value"]) == digest
         )
+        # Atomically claim the code, including across concurrent exchange
+        # requests. Wrong PKCE/client/redirect/resource never reach this step.
+        claimed = self.conn.execute(
+            "UPDATE ai_oauth_codes SET used_at = ? "
+            "WHERE code_hash = ? AND used_at IS NULL RETURNING code_hash",
+            (utc_now_iso(), digest),
+        ).fetchone()
+        if claimed is None:
+            return None
+        if first_identity_proven:
+            # Only this operator-approved NEW identity earns trust here.
+            # Normal wizard-pending identities keep their separate lifecycle.
+            self.conn.execute(
+                "UPDATE ai_principals SET credential_status = 'verified', "
+                "row_version = row_version + 1, updated_at = ? "
+                "WHERE id = ? AND enabled = 1 AND credential_status = 'pending' "
+                "AND auth_mode = 'oauth'",
+                (utc_now_iso(), row["principal_id"]),
+            )
+            self.conn.execute("DELETE FROM system_meta WHERE key = ?", (bootstrap_key,))
         return self.issue_oauth_access_token(
             principal_id=row["principal_id"],
             client_id=client_id,

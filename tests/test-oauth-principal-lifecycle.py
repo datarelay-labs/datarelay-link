@@ -159,6 +159,92 @@ class OAuthPrincipalLifecycleTests(unittest.TestCase):
             self.assertEqual(self._codes_for(name), 0)
             self.assertIsNone(self.plane.authenticate_oauth_token("drauth_not-issued"))
 
+    def test_operator_first_identity_bootstrap_waits_for_genuine_pkce_exchange(self):
+        """Explicit operator approval can start a NEW identity, not authenticate it."""
+        client_id, verifier, pending_id = self._dcr_pending("first-chatgpt")
+        self.assertIsNone(self.plane.get_principal("chatgpt"))
+        with self.assertRaises(ControlPlaneError):
+            self.plane.approve_oauth_pending(pending_id)
+        self.assertIsNone(self.plane.get_principal("chatgpt"))
+        approved = self.plane.approve_oauth_pending(
+            pending_id, "chatgpt", retain_for_browser=True
+        )
+        self.assertEqual(approved["status"], "approved")
+        self.assertNotIn("code", approved)
+        staged = self.plane.get_principal("chatgpt")
+        self.assertIsNotNone(staged)
+        self.assertEqual(staged["credential_status"], "pending")
+        self.assertEqual(staged["enabled"], 1)
+        self.assertEqual(staged["auth_mode"], "oauth")
+        completed = self.plane.complete_oauth_pending_browser(approved["completion_token"])
+        self.assertIsNone(
+            self.plane.exchange_authorization_code(
+                code=completed["code"],
+                verifier="INVALID-PKCE-VERIFIER",
+                redirect_uri=REDIRECT,
+                resource=self.resource,
+                client_id=client_id,
+            )
+        )
+        self.assertEqual(self.plane.get_principal("chatgpt")["credential_status"], "pending")
+        self.assertIsNone(
+            self.plane.exchange_authorization_code(
+                code=completed["code"],
+                verifier=verifier,
+                redirect_uri=REDIRECT + "-wrong",
+                resource=self.resource,
+                client_id=client_id,
+            )
+        )
+        self.assertEqual(self.plane.get_principal("chatgpt")["credential_status"], "pending")
+        issued = self.plane.exchange_authorization_code(
+            code=completed["code"],
+            verifier=verifier,
+            redirect_uri=REDIRECT,
+            resource=self.resource,
+            client_id=client_id,
+        )
+        self.assertTrue(issued and issued["access_token"].startswith("drauth_"))
+        self.assertEqual(self.plane.get_principal("chatgpt")["credential_status"], "verified")
+        authed = self.plane.authenticate_oauth_token(
+            issued["access_token"], resource=self.resource
+        )
+        self.assertIsNotNone(authed)
+        self.assertEqual(authed["name"], "chatgpt")
+        self.assertIsNone(
+            self.plane.exchange_authorization_code(
+                code=completed["code"],
+                verifier=verifier,
+                redirect_uri=REDIRECT,
+                resource=self.resource,
+                client_id=client_id,
+            )
+        )
+        status, _body = self._mcp(issued["access_token"])
+        self.assertEqual(status, 200)
+
+    def test_first_identity_operator_retry_never_trusts_before_pkce(self):
+        """A repeated approval may replace an unconsumed bootstrap request."""
+        first_client, first_verifier, first_id = self._dcr_pending("first-abandoned")
+        first = self.plane.approve_oauth_pending(first_id, "chatgpt", retain_for_browser=True)
+        self.assertEqual(first["status"], "approved")
+        self.assertEqual(self.plane.get_principal("chatgpt")["credential_status"], "pending")
+        client_id, verifier, second_id = self._dcr_pending("owner-retry")
+        second = self.plane.approve_oauth_pending(second_id, "chatgpt", retain_for_browser=True)
+        self.assertEqual(second["status"], "approved")
+        self.assertEqual(self.plane.get_principal("chatgpt")["credential_status"], "pending")
+        complete = self.plane.complete_oauth_pending_browser(second["completion_token"])
+        access = self.plane.exchange_authorization_code(
+            code=complete["code"],
+            verifier=verifier,
+            redirect_uri=REDIRECT,
+            resource=self.resource,
+            client_id=client_id,
+        )
+        self.assertIsNotNone(access)
+        self.assertEqual(self.plane.get_principal("chatgpt")["credential_status"], "verified")
+        self.assertIsNotNone(self.plane.authenticate_oauth_token(access["access_token"], resource=self.resource))
+
     def test_verified_approve_pkce_mcp_then_revoke_refresh_and_static_bearer(self):
         client_id, verifier, pending_id = self._dcr_pending("ok-verified")
         approved = self.plane.approve_oauth_pending(
