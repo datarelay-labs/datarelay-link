@@ -123,8 +123,14 @@ class InventoryJourney(unittest.TestCase):
              "(10.22.33.44 != 127.0.0.1).", "2026-01-01T00:00:00Z"))
         ap.conn.commit()
         output=io.StringIO()
-        with redirect_stdout(output):
-            self.assertEqual(cli.handle_show(ap,["remote-service","aio-ssh"]),0)
+        previous=os.environ.get("FRP_DEPLOY_TEST_ROOT")
+        os.environ["FRP_DEPLOY_TEST_ROOT"]=root
+        try:
+            with redirect_stdout(output):
+                self.assertEqual(cli.handle_show(ap,["remote-service","aio-ssh"]),0)
+        finally:
+            if previous is None: os.environ.pop("FRP_DEPLOY_TEST_ROOT",None)
+            else: os.environ["FRP_DEPLOY_TEST_ROOT"]=previous
         text=output.getvalue()
         self.assertIn("DEGRADED",text)
         self.assertIn("On Server: define a Network Object",text)
