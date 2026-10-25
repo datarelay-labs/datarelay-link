@@ -487,11 +487,19 @@ def short_url_host_for_cfg(cfg, bootstrap_hostname='', public_hostname=''):
         )
         try:
             with opener.open(url, timeout=4) as response:
-                return candidate if 200 <= response.status < 300 else ''
+                # A random nonexistent ticket cannot legitimately return
+                # installer bytes. A 200/default HTML page is not proof.
+                return ''
         except urllib.error.HTTPError as exc:
-            # A 404 from the short-URL endpoint is expected for a nonexistent
-            # handle. The HTTPS peer certificate has already been verified.
-            return candidate if exc.code == 404 else ''
+            # Only the DataRelay allocator's exact fail-closed signature
+            # proves the /i/ handler exists, after public TLS verification.
+            if exc.code != 404:
+                return ''
+            try:
+                body = exc.read(128).decode('utf-8', 'replace').strip()
+            except Exception:
+                return ''
+            return candidate if body == 'bootstrap unavailable' else ''
     except Exception:
         return ''
 
