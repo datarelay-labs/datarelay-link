@@ -145,7 +145,7 @@ class EnrollmentRoutedTargetParity(unittest.TestCase):
         for row in self._server_rows()[1:]:
             name = row["destination_name"]
             self.agent.conn.execute(
-                "INSERT OR REPLACE INTO agent_object_catalog(kind,name,payload,updated_at) "
+                "INSERT OR REPLACE INTO agent_object_catalog(kind,name,payload,synced_at) "
                 "VALUES('network-object', ?, ?, '2026-01-01T00:00:00Z')",
                 (name, json.dumps({"name": name, "type": "host", "values": [LAN]})),
             )
