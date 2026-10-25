@@ -100,5 +100,38 @@ class InventoryJourney(unittest.TestCase):
             cli.handle_show(self.plane,["managed-host"])
         self.assertIn("show managed-hosts",str(err.exception))
 
+    def test_agent_target_mismatch_gives_repair_commands(self):
+        """DEGRADED is actionable rather than just an unexplained status."""
+        agent_dir=tempfile.TemporaryDirectory(prefix="drlink-target-journey-")
+        self.addCleanup(agent_dir.cleanup)
+        root=agent_dir.name
+        (Path(root)/"etc/drlink").mkdir(parents=True)
+        (Path(root)/"etc/drlink/config.json").write_text('{"role":"agent"}\\n')
+        (Path(root)/"etc/frp").mkdir(parents=True)
+        (Path(root)/"etc/frp/client-state.json").write_text(
+            json.dumps({"hostname":"lab-agent", "machine_id":"a"*32, "services":{}})+"\\n")
+        ap=ControlPlane(root)
+        self.addCleanup(ap.close)
+        v24.ensure_v2_schema(ap.conn)
+        ap.conn.execute(
+            "INSERT INTO agent_remote_services "
+            "(name,destination,service_object,enabled,status,endpoint_host,"
+            "endpoint_port,pending_allocation,delete_pending,pool_class,reason,updated_at)"
+            " VALUES(?,?,?,1,'DEGRADED',?,6001,0,0,'normal',?,?)",
+            ("aio-ssh", "lab-agent", "ssh", "203.0.113.10",
+             "Published target_host diverges from authoritative destination reference "
+             "(10.22.33.44 != 127.0.0.1).", "2026-01-01T00:00:00Z"))
+        ap.conn.commit()
+        output=io.StringIO()
+        with redirect_stdout(output):
+            self.assertEqual(cli.handle_show(ap,["remote-service","aio-ssh"]),0)
+        text=output.getvalue()
+        self.assertIn("DEGRADED",text)
+        self.assertIn("On Server: define a Network Object",text)
+        self.assertIn(
+            "set remote-service aio-ssh destination <NETWORK-OBJECT> service ssh enabled",
+            text)
+        self.assertIn("Then verify:",text)
+
 if __name__=="__main__":
     unittest.main(verbosity=2)
