@@ -49,6 +49,11 @@ bash tests/test-macos-proxy-wait-cursor.sh
 python3 tests/test-enrollment-public-guidance.py
 python3 tests/test-no-legacy-current-surface.py
 python3 tests/test-canonical-runtime-policy.py
+python3 tests/test-runtime-generation-atomicity.py
+python3 tests/test-server-fixed-pool-migration.py
+python3 tests/test-v24-agent-bundle-absent-idempotency.py
+python3 tests/test-v24-bundle-preview-writer-isolation.py
+python3 tests/test-zero-touch-command-exit.py
 python3 tests/test-egress-runtime-no-list-permission.py
 python3 tests/test-v24-upgrade-reconcile.py
 python3 tests/test-doctor-proxy-identity.py

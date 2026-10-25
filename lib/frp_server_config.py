@@ -54,6 +54,87 @@ class ConfigError(ValueError):
     pass
 
 
+def ensure_frps_allowed_pool(text, start, end):
+    """Extend a generated legacy top-level allowPorts with the declared pool.
+
+    Preserve credentials, plugins and existing ranges verbatim. An absent/empty
+    allow-list already permits every port. Unsupported syntax fails the upgrade
+    rather than silently replacing an operator's restrictions.
+    """
+    if not (isinstance(start, int) and isinstance(end, int)
+            and 1 <= start <= end <= 65535):
+        raise ConfigError('invalid Fixed TCP pool')
+    # Generated allowPorts precedes TOML tables. Never edit a plugin/table key.
+    top = re.split(r'^\s*\[', text, maxsplit=1, flags=re.M)[0]
+    matches = list(re.finditer(r'^\s*allowPorts\s*=\s*\[', top, re.M))
+    if not matches:
+        return text
+    if len(matches) != 1:
+        raise ConfigError('duplicate FRPS allowPorts')
+    begin = matches[0].end()
+    close = begin
+    comment = False
+    while close < len(text):
+        char = text[close]
+        if char == '\n':
+            comment = False
+        elif not comment:
+            if char == '#':
+                comment = True
+            elif char == ']':
+                break
+        close += 1
+    if close == len(text):
+        raise ConfigError('unterminated FRPS allowPorts')
+    body = text[begin:close]
+    clean = re.sub(r'#[^\n]*', '', body).strip()
+    if not clean:
+        return text
+    entries = []
+    pos = 0
+    pattern = re.compile(r'\s*\{([^{}]*)\}\s*(,|$)')
+    while pos < len(clean):
+        match = pattern.match(clean, pos)
+        if not match:
+            raise ConfigError('unsupported FRPS allowPorts syntax')
+        fields = {}
+        for field in match[1].split(','):
+            part = re.fullmatch(r'\s*(start|end|single)\s*=\s*([0-9]+)\s*', field)
+            if not part or part[1] in fields:
+                raise ConfigError('invalid FRPS allowed port range')
+            fields[part[1]] = int(part[2])
+        if set(fields) == {'single'}:
+            low = high = fields['single']
+        elif set(fields) == {'start', 'end'}:
+            low, high = fields['start'], fields['end']
+        else:
+            raise ConfigError('invalid FRPS allowed port range')
+        if not 1 <= low <= high <= 65535:
+            raise ConfigError('invalid FRPS allowed port bounds')
+        entries.append((low, high))
+        pos = match.end()
+        if not clean[pos:].strip():
+            break
+    needed = start
+    for low, high in sorted(entries):
+        if low <= needed <= high:
+            needed = high + 1
+    if needed > end:
+        return text
+    # Insert before the closing bracket on its own line for multiline arrays;
+    # comments and a pre-existing trailing comma remain valid TOML.
+    addition = '{ start = %d, end = %d }' % (start, end)
+    separator = '' if clean.endswith(',') else ','
+    if '\n' in body:
+        # Place a missing comma before any trailing inline comment.
+        if separator:
+            tokens = list(re.finditer(r'\}', re.sub(r'#[^\n]*', lambda m: ' ' * len(m[0]), body)))
+            last = tokens[-1].end()
+            body = body[:last] + ',' + body[last:]
+        return text[:begin] + body + ' ' + addition + '\n' + text[close:]
+    return text[:close] + separator + ' ' + addition + text[close:]
+
+
 def _strip(value):
     if value is None:
         return ''

@@ -1180,6 +1180,45 @@ PY
   return 0
 }
 
+frp_server_upgrade_ensure_fixed_pool() {
+  # Legacy frps configs allow only the published-service pool. Migrate the
+  # declared Fixed TCP pool inside the normal snapshot/rollback transaction.
+  local modules="${BASE_DIR:-}/lib"
+  [[ -f "$modules/frp_server_config.py" ]] || modules="$(frp_server_fs /usr/local/lib/drlink)"
+  python3 - "$modules" "$(frp_server_config_path)" \
+    "$(frp_server_fs /etc/frp/frps.toml)" "$(frp_server_fs /usr/local/bin/frps)" <<'PY'
+import json, os, subprocess, sys, tempfile
+from pathlib import Path
+sys.path.insert(0, sys.argv[1])
+from frp_server_config import ensure_frps_allowed_pool, durable_replace
+from frp_infrastructure_ports import tcp_relay_port_range, assert_service_range_not_overlapping_tcp_relay_pool
+cfg = json.loads(Path(sys.argv[2]).read_text(encoding='utf-8'))
+assert_service_range_not_overlapping_tcp_relay_pool(cfg)
+path = Path(sys.argv[3])
+before = path.read_text(encoding='utf-8')
+after = ensure_frps_allowed_pool(before, *tcp_relay_port_range(cfg))
+if after == before:
+    print('FIXED_POOL_MIGRATION=unchanged')
+    raise SystemExit(0)
+st = path.stat()
+fd, tmp = tempfile.mkstemp(prefix='frps-pool-', suffix='.toml', dir=str(path.parent))
+try:
+    with os.fdopen(fd, 'w', encoding='utf-8') as stream:
+        stream.write(after)
+        stream.flush()
+        os.fsync(stream.fileno())
+    os.chmod(tmp, st.st_mode & 0o7777)
+    if os.geteuid() == 0:
+        os.chown(tmp, st.st_uid, st.st_gid)
+    subprocess.run([sys.argv[4], 'verify', '-c', tmp], check=True)
+    durable_replace(tmp, path)
+    print('FIXED_POOL_MIGRATION=changed')
+finally:
+    if os.path.exists(tmp):
+        os.unlink(tmp)
+PY
+}
+
 frp_server_upgrade_ensure_control_plane() {
   # Bootstrap SQLite control-plane authority on upgrades from pre-SQLite installs.
   # Fresh installs initialize drlink.db in install-server.sh; project-update must
@@ -1644,8 +1683,19 @@ frp_server_apply_project_upgrade() {
     restart_egress=1
     restart_tcp_egress=1
   fi
+  local fixed_pool_out=""
+  if ! fixed_pool_out="$(frp_server_upgrade_ensure_fixed_pool)"; then
+    frp_server_upgrade_rollback "$snapshot"
+    frp_emit_failure_class FILE_COMMIT_FAILED
+    return 1
+  fi
+  printf '%s\n' "$fixed_pool_out"
+  if printf '%s\n' "$fixed_pool_out" | grep -q 'FIXED_POOL_MIGRATION=changed'; then
+    restart_frps=1
+  fi
   # Controlled Egress / control-plane bootstrap may intentionally add keys to
   # config.json and create protected state (egress-control.json / drlink.db).
+  # The Fixed TCP migration extends only frps's declared allowed pool.
   # Re-baseline after those deliberate migration steps.
   if ! frp_server_upgrade_acquire_db_guard; then
     frp_server_upgrade_rollback "$snapshot"

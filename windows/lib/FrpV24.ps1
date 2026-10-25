@@ -100,7 +100,7 @@ function Invoke-FrpV24MgmtRequest {
     if ($Method -eq 'GET') { $wireBody = $null }
     $raw = Invoke-FrpHttpsJson -Method $Method -Url $url -Body $wireBody -Headers $headers
     if (-not $raw) { return [pscustomobject]@{} }
-    $data = $raw | ConvertFrom-Json
+    $data = ConvertFrom-FrpJson -Json $raw
     if ($data.error) { throw ('ERROR: Server management request failed: {0}' -f [string]$data.error) }
     $props = @($data.PSObject.Properties.Name)
     if ($props -contains 'response_hmac') {

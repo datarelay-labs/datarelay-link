@@ -32,7 +32,7 @@ from drlink_control_db import (
     runtime_dir,
     utc_now_iso,
 )
-from drlink_control_plane import ControlPlane
+from drlink_control_plane import ControlPlane, coherent_read
 
 DECISION_ALLOW = "ALLOW"
 DECISION_DENY = "DENY"
@@ -109,6 +109,7 @@ def open_plane(cfg: Optional[dict] = None, root: Optional[str] = None) -> Contro
     return ControlPlane(root or root_from_cfg(cfg))
 
 
+@coherent_read
 def generation_status(
     plane: ControlPlane, plane_name: str, *, validated_revision: Optional[int] = None
 ) -> dict:
@@ -153,6 +154,15 @@ def generation_status(
         "mismatch": mismatch,
         "error": gen.get("error") or ("generation mismatch" if mismatch else ""),
     }
+
+
+@coherent_read
+def cached_generation_status(plane: ControlPlane, plane_name: str, validated_revision: int) -> dict:
+    # Revalidate a new snapshot fully before adopting its revision. The strict
+    # generation_status fast path still rejects unvalidated/stale revisions.
+    if plane.current_revision() != int(validated_revision):
+        return generation_status(plane, plane_name)
+    return generation_status(plane, plane_name, validated_revision=validated_revision)
 
 
 def parse_remote_addr(remote_addr: str) -> str:
@@ -278,6 +288,7 @@ def _destination_for_service(plane: ControlPlane, mapped: dict) -> str:
     return ""
 
 
+@coherent_read
 def authorize_remote(
     plane: ControlPlane,
     *,
@@ -376,6 +387,7 @@ def authorize_remote(
     return result
 
 
+@coherent_read
 def authorize_internet(
     plane: ControlPlane,
     *,
@@ -477,6 +489,7 @@ def list_enabled_fixed_tcp(plane: ControlPlane) -> dict[str, dict]:
     return out
 
 
+@coherent_read
 def authorize_fixed_tcp(
     plane: ControlPlane,
     *,
@@ -758,6 +771,11 @@ class ControlPlaneCache:
         self.db_identity = None
 
     def _fingerprint(self, plane: ControlPlane) -> tuple:
+        return self._coherent_fingerprint(plane)
+
+    @staticmethod
+    @coherent_read
+    def _coherent_fingerprint(plane: ControlPlane) -> tuple:
         # This is only a change detector.  Calling status() here performs a
         # full SQLite integrity/foreign-key scan even when the database is
         # unchanged; NewUserConn authorization immediately performs its own
@@ -860,6 +878,16 @@ class ControlPlaneCache:
         try:
             plane = ControlPlane(root, read_only=True)
             conn = plane.conn
+            # Pin the request snapshot before checking its generation. A
+            # concurrent healthy commit is not an authorization failure merely
+            # because the shared cache validated the preceding revision.
+            conn.execute("BEGIN")
+            revision = plane.current_revision()
+            if self.fingerprint is None or revision != int(self.fingerprint[0]):
+                status = plane.status()
+                if not status.get("db_healthy") or status.get("mismatch"):
+                    raise ControlPlaneError("control DB unhealthy or runtime generation mismatch")
+            plane._validated_revision = revision
         except Exception as exc:
             if conn is not None:
                 try:

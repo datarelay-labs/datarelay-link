@@ -2068,7 +2068,26 @@ class Allocator:
                     if owner:
                         break
                 if owner and owner != (machine_id, sid):
-                    remote_port = None
+                    # First v2.4 edit of an enrolled service changes its engine
+                    # proxy key (ssh -> rs-ssh), not its public endpoint. Adopt
+                    # only the same authenticated client's same named legacy
+                    # service, inside this registry transaction. Other services
+                    # and other clients retain exclusive ownership.
+                    legacy_id = owner[1]
+                    legacy = services.get(legacy_id)
+                    if (
+                        owner[0] == machine_id
+                        and str(legacy_id).casefold() == str(service_name).casefold()
+                        and isinstance(legacy, dict)
+                        and not legacy.get('v24_remote_service')
+                        and sid not in services
+                        and start <= remote_port <= end
+                        and remote_port not in self.protected_ports()
+                    ):
+                        services.pop(legacy_id)
+                        owner = (machine_id, sid)
+                    else:
+                        remote_port = None
                 elif remote_port in self.protected_ports():
                     remote_port = None
                 elif remote_port < start or remote_port > end:

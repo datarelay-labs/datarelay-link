@@ -796,6 +796,36 @@ def case_disabled_fixed_reservation_uses_its_own_pool():
         env.cleanup()
 
 
+def case_bootstrap_remote_service_adopts_existing_port():
+    env = Env()
+    try:
+        code, response = env.enroll([svc('ssh', preset='ssh')])
+        if code != 200:
+            fail('bootstrap adoption setup', response)
+        port = ports_from_response(response)['ssh']
+        updated = env.allocator.reserve_remote_service_endpoint(
+            'machine-a', 'ssh', 'normal', local_port=4022, preserve_port=port,
+        )
+        if updated['remote_port'] != port:
+            fail('first bootstrap edit moved public endpoint', updated)
+        services = env.load_state()['clients']['machine-a']['services']
+        if 'ssh' in services or services[updated['proxy_id']]['local_port'] != 4022:
+            fail('legacy reservation was not adopted atomically', services)
+        again = env.allocator.reserve_remote_service_endpoint(
+            'machine-a', 'ssh', 'normal', local_port=22, preserve_port=port,
+        )
+        if again['remote_port'] != port:
+            fail('repeated bootstrap edit moved endpoint', again)
+        other = env.allocator.reserve_remote_service_endpoint(
+            'machine-a', 'unrelated', 'normal', preserve_port=port,
+        )
+        if other['remote_port'] == port:
+            fail('unrelated service stole bootstrap endpoint')
+        pass_('bootstrap adoption preserves endpoint on first and repeated target edits')
+    finally:
+        env.cleanup()
+
+
 def main():
     case_a_single_ssh()
     case_b_no_ssh()
@@ -821,6 +851,7 @@ def main():
     case_admin_metadata_and_source_ip()
     case_unreadable_host_version_fallback()
     case_disabled_fixed_reservation_uses_its_own_pool()
+    case_bootstrap_remote_service_adopts_existing_port()
     print()
     print('ALLOCATOR_GENERIC_TESTS=PASS')
 

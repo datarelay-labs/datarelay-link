@@ -20,6 +20,7 @@ import threading
 import time
 from datetime import datetime, timedelta, timezone
 from fnmatch import fnmatch
+from functools import wraps
 from pathlib import Path
 from typing import Any, Callable, Iterable, Optional
 
@@ -336,6 +337,21 @@ def membership_eligible(address: str) -> bool:
     return classify_address(address) in ("private", "public")
 
 
+def coherent_read(function):
+    """Read policy, revision and generation from one SQLite snapshot."""
+    @wraps(function)
+    def read(plane, *args, **kwargs):
+        owned = not plane.conn.in_transaction
+        if owned:
+            plane.conn.execute("BEGIN")
+        try:
+            return function(plane, *args, **kwargs)
+        finally:
+            if owned and plane.conn.in_transaction:
+                plane.conn.rollback()
+    return read
+
+
 class ControlPlane:
     def __init__(
         self,
@@ -537,6 +553,8 @@ class ControlPlane:
         return runtime_snap
 
     def _restore_runtime_activation_snapshot(self, runtime_snap: dict[str, bytes]) -> None:
+        if str(os.environ.get("DRLINK_FAULT_ROLLBACK") or "").strip().lower() in ("1", "yes", "y", "true"):
+            raise ControlPlaneError("simulated runtime rollback failure")
         self.runtime.mkdir(parents=True, exist_ok=True)
         wanted = set(runtime_snap)
         for path in list(self.runtime.iterdir()):
@@ -552,6 +570,17 @@ class ControlPlane:
                 os.chmod(target, 0o600)
             except OSError:
                 pass
+
+    def _rollback_precommit_runtime(self, runtime_snapshot: dict[str, bytes]) -> None:
+        try:
+            self._restore_runtime_activation_snapshot(runtime_snapshot)
+        except Exception:
+            self._mark_generation_failed("activation failed; runtime rollback incomplete")
+            raise ControlPlaneError(
+                "ERROR:\nApply failed and automatic rollback was not fully successful.\n\n"
+                "The current runtime state may require operator attention.\n\n"
+                "Run:\n  system diagnostics"
+            ) from None
 
     def _pre_activation_checkpoint(self) -> dict:
         """Snapshot authoritative DB + runtime artifacts before a mutating Apply."""
@@ -727,7 +756,7 @@ class ControlPlane:
         impact: Optional[dict] = None,
         confirm: Optional[bool] = None,
         compile_runtime: bool = True,
-        activate_before_commit: bool = False,
+        activate_before_commit: bool = True,
     ) -> Any:
         if impact and not _confirm_requested(confirm):
             needs_confirm = bool(
@@ -752,6 +781,9 @@ class ControlPlane:
             result = writer()
             self._batch_results.append(result)
             return result
+        # Publish policy and its active generation in the same SQLite commit.
+        # A commit followed by compilation exposes healthy updates as transient
+        # generation mismatches to live fail-closed authorization readers.
         checkpoint = None
         runtime_checkpoint = None
         if compile_runtime and self._activation_should_run():
@@ -826,25 +858,25 @@ class ControlPlane:
         except ConfirmationRequired:
             self._rollback_open_transaction()
             if runtime_checkpoint is not None:
-                self._restore_runtime_activation_snapshot(runtime_checkpoint)
+                self._rollback_precommit_runtime(runtime_checkpoint)
             self._cleanup_activation_checkpoint(checkpoint)
             raise
         except ConcurrencyError:
             self._rollback_open_transaction()
             if runtime_checkpoint is not None:
-                self._restore_runtime_activation_snapshot(runtime_checkpoint)
+                self._rollback_precommit_runtime(runtime_checkpoint)
             self._cleanup_activation_checkpoint(checkpoint)
             raise
         except ControlPlaneError:
             self._rollback_open_transaction()
             if runtime_checkpoint is not None:
-                self._restore_runtime_activation_snapshot(runtime_checkpoint)
+                self._rollback_precommit_runtime(runtime_checkpoint)
             self._cleanup_activation_checkpoint(checkpoint)
             raise
         except Exception as exc:
             self._rollback_open_transaction()
             if runtime_checkpoint is not None:
-                self._restore_runtime_activation_snapshot(runtime_checkpoint)
+                self._rollback_precommit_runtime(runtime_checkpoint)
             self._cleanup_activation_checkpoint(checkpoint)
             if isinstance(exc, sqlite3.IntegrityError) and 'unique constraint' in str(exc).lower():
                 raise ConcurrencyError(
@@ -5932,6 +5964,7 @@ class ControlPlane:
             (max(rev - 1, 0), plane),
         )
 
+    @coherent_read
     def status(self) -> dict:
         from drlink_v24 import detect_cli_role
 

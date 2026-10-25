@@ -343,7 +343,7 @@ import re, sys
 from pathlib import Path
 text = Path(sys.argv[1]).read_text()
 m = re.search(
-    r"^curl -fsSL (?:'https://[^']+/i/(?:bt1\.[0-9a-f]+\.[0-9a-f]+|[A-Za-z0-9_-]{22})' \| sudo bash|https://[^ ']+/i/(?:bt1\.[0-9a-f]+\.[0-9a-f]+|[A-Za-z0-9_-]{22})\|sudo bash)$",
+    r"^\(drlink_bootstrap=\$\(curl -fsSL https://[^ '\n]+/i/(?:bt1\.[0-9a-f]+\.[0-9a-f]+|[A-Za-z0-9_-]{22})\) && printf '[^'\n]+' \"\$drlink_bootstrap\" \| sudo bash\)$",
     text,
     re.M,
 )

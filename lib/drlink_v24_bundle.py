@@ -993,8 +993,9 @@ def _validate_plan_applyability(
 ) -> None:
     """Dry-run local dependencies using the same CRUD/order as real Apply.
 
-    Read-only callers validate on an in-memory snapshot. Writable Apply callers
-    already holding a transaction retain its state and use a savepoint.
+    Planning callers validate on an in-memory snapshot, including writable CLI
+    connections. Only Apply callers already holding a transaction validate on
+    that transaction and use a savepoint.
     Validation runs inside a SQLite savepoint with batch mode enabled, so the
     exact authoritative CRUD dependency checks execute but every mutation is
     rolled back and no revision/audit/runtime activation is produced. This
@@ -1004,13 +1005,14 @@ def _validate_plan_applyability(
     if not ordered:
         return
 
-    if getattr(plane, "_read_only", False):
+    if getattr(plane, "_read_only", False) or not plane.conn.in_transaction:
         scratch = sqlite3.connect(":memory:", isolation_level=None)
         scratch.row_factory = sqlite3.Row
         try:
             plane.conn.backup(scratch)
             scratch.execute("PRAGMA foreign_keys = ON")
             preview = ControlPlane(plane.root, conn=scratch)
+            scratch.execute("BEGIN IMMEDIATE")
             _validate_plan_applyability(preview, ordered, agent=agent)
         finally:
             scratch.close()
@@ -1607,7 +1609,19 @@ def prepare_v24_plan(plane: ControlPlane, raw_text: str, *, role: Optional[str] 
         for item in rss:
             name = item["name"]
             if item.get("state") == "absent":
-                changes.append({"op": "DELETE", "kind": "remote-service", "name": name, "item": item})
+                existing = plane.conn.execute(
+                    "SELECT delete_pending FROM agent_remote_services "
+                    "WHERE name = ? COLLATE NOCASE", (name,),
+                ).fetchone()
+                # Absence is desired state, unlike a direct unset command.
+                # An offline tombstone already expresses that intent and must
+                # survive unchanged until synchronization releases the Server
+                # publication. Reapplying must not delete/recreate the queue.
+                absent = existing is None or bool(existing["delete_pending"])
+                changes.append({
+                    "op": "NO_CHANGE" if absent else "DELETE",
+                    "kind": "remote-service", "name": name, "item": item,
+                })
                 continue
             existing = plane.conn.execute(
                 "SELECT * FROM agent_remote_services WHERE name = ? COLLATE NOCASE AND delete_pending = 0",

@@ -213,7 +213,7 @@ python3 "$ROOT/tools/frp-server-set" bootstrap-hostname bootstrap.example.com >/
 OUT_MGMT="$WORKDIR/mgmt.out"
 python3 "$ROOT/tools/frp-create-client" --one-line --client-name short-mgmt --note 'mgmt' \
   >"$OUT_MGMT" || fail "mgmt short url"
-grep -E -q "curl -fsSL https://bootstrap\\.example\\.com/i/[A-Za-z0-9_-]{22}\\|sudo bash$" \
+grep -E -q "curl -fsSL https://bootstrap\\.example\\.com/i/[A-Za-z0-9_-]{22}" \
   "$OUT_MGMT" || { cat "$OUT_MGMT"; fail "mgmt short URL shape"; }
 if grep -q 'zt1\.' "$OUT_MGMT"; then
   fail "mgmt short URL still printed zt1"
@@ -223,7 +223,7 @@ pass "MANAGEMENT_ONLY_SHORT_URL"
 OUT_SSH="$WORKDIR/ssh.out"
 python3 "$ROOT/tools/frp-create-client" --one-line --ssh --ssh-user aella \
   --client-name short-ssh --note 'ssh' >"$OUT_SSH" || fail "ssh short url"
-grep -E -q "curl -fsSL https://bootstrap\\.example\\.com/i/[A-Za-z0-9_-]{22}\\|sudo bash" "$OUT_SSH" \
+grep -E -q "curl -fsSL https://bootstrap\\.example\\.com/i/[A-Za-z0-9_-]{22}" "$OUT_SSH" \
   || { cat "$OUT_SSH"; fail "ssh short URL shape"; }
 pass "SSH_ONLY_SHORT_URL"
 
@@ -235,7 +235,7 @@ JSON
 OUT_MULTI="$WORKDIR/multi.out"
 python3 "$ROOT/tools/frp-create-client" --one-line --services-file "$SERVICES" \
   --client-name short-multi --note 'multi' >"$OUT_MULTI" || fail "multi short url"
-grep -E -q "curl -fsSL https://bootstrap\\.example\\.com/i/[A-Za-z0-9_-]{22}\\|sudo bash" "$OUT_MULTI" \
+grep -E -q "curl -fsSL https://bootstrap\\.example\\.com/i/[A-Za-z0-9_-]{22}" "$OUT_MULTI" \
   || { cat "$OUT_MULTI"; fail "multi short URL shape"; }
 pass "MULTI_SERVICE_SHORT_URL"
 

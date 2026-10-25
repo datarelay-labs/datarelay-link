@@ -255,8 +255,12 @@ switch -Regex ($cmdLower) {
                 $Command = 'update'
                 if ($Id -eq 'product') { $script:FrpUpdateMode = 'project' }
                 elseif ($Id -eq 'engine') { $script:FrpUpdateMode = 'engine' }
-                elseif ($Id -eq 'check-engine') { $script:FrpUpdateMode = 'engine'; $Check = $true }
-                else { Write-Host 'ERROR: use system update product | engine | check-engine'; exit 2 }
+                elseif ($Id -eq 'check-engine') {
+                    Write-Host 'ERROR: system update check-engine is available on the Server only.'
+                    Write-Host 'Run it on the Server. On this Agent, use system update engine -Check to check its Server-provided engine.'
+                    exit 2
+                }
+                else { Write-Host 'ERROR: use system update product | engine'; exit 2 }
                 $Id = $null
             }
             'export' {
@@ -376,7 +380,6 @@ system
   system synchronize
   system update product
   system update engine
-  system update check-engine
   system diagnostics
   system support-bundle
   system version

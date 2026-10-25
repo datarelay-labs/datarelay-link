@@ -147,7 +147,8 @@ class WindowsPinnedCaCommandTests(unittest.TestCase):
         self.assertIn("-fsSL", linux)
         self.assertIn("https://", linux)
         self.assertIn("/i/", linux)
-        self.assertTrue(linux.endswith("|sudo bash"))
+        self.assertTrue(linux.endswith("| sudo bash)"))
+        self.assertIn("drlink_bootstrap=$(curl", linux)
 
     def test_short_stage1_pins_private_allocator_before_download(self):
         allocator = "https://203.0.113.10:6099/enroll"

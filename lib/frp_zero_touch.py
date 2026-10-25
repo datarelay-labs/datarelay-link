@@ -128,8 +128,14 @@ def short_url_command(hostname, ticket):
         and accepted_bootstrap_credential(cred)
         and SHELL_UNSAFE_URL_RE.search(url) is None
     ):
-        return 'curl -fsSL %s|sudo bash' % url
-    return 'curl -fsSL %s | sudo bash' % shell_quote(url)
+        quoted_url = url
+    else:
+        quoted_url = shell_quote(url)
+    # A curl|bash pipeline returns bash's status in the user's default shell:
+    # DNS/HTTP failures would run an empty installer and report success. Fetch
+    # completely first, without starting a partial script or requiring pipefail.
+    return ('(drlink_bootstrap=$(curl -fsSL %s) && '
+            'printf \'%%s\\n\' "$drlink_bootstrap" | sudo bash)') % quoted_url
 
 
 def https_origin(url):
