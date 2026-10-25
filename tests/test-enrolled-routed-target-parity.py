@@ -25,9 +25,9 @@ import drlink_runtime_policy as rp  # noqa: E402
 import drlink_upgrade_reconcile as ur  # noqa: E402
 import drlink_v24_runtime as runtime  # noqa: E402
 
-CLIENT = "3a757a3e612b432fb44f7d75d87a38ae"
-PUBLIC = "129.225.184.60"
-LAN = "192.168.219.125"
+CLIENT = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+PUBLIC = "203.0.113.10"
+LAN = "10.22.33.44"
 
 
 def enrolled_services():
@@ -55,7 +55,7 @@ class EnrollmentRoutedTargetParity(unittest.TestCase):
             (p / "config.json").write_text(json.dumps({"role": role}) + "\n")
         state = {
             "schema_version": 1, "machine_id": CLIENT,
-            "hostname": "drlink-agent", "label": "ATSecu JumpHost",
+            "hostname": "drlink-agent", "label": "LAN Test Host",
             "frp_server": PUBLIC, "services": enrolled_services(),
         }
         p = Path(self.agent_root, "etc/frp")
@@ -79,7 +79,7 @@ class EnrollmentRoutedTargetParity(unittest.TestCase):
     def _publish(self):
         return rp.sync_enrolled_client(
             self.server, client_id=CLIENT, hostname="drlink-agent",
-            label="ATSecu JumpHost", services=enrolled_services(),
+            label="LAN Test Host", services=enrolled_services(),
             addresses=[{"address": "198.51.100.10", "active": True}],
         )
 
@@ -134,7 +134,18 @@ class EnrollmentRoutedTargetParity(unittest.TestCase):
             self.assertEqual(r["destination"], matching["destination_name"])
             self.assertEqual(r["destination_client_id"], matching["destination_client_id"])
             self.assertEqual(r["endpoint_port"], matching["public_port"])
-        # Desired FRP still routes to original authorized LAN IP, never loopback.
+        # Initial Agent intent is unverified until a signed Server catalog
+        # supplies the authoritative Network Object. Model that successful
+        # read without modifying either product's live state.
+        for row in self._server_rows()[1:]:
+            name = row["destination_name"]
+            self.agent.conn.execute(
+                "INSERT OR REPLACE INTO agent_object_catalog(kind,name,payload,updated_at) "
+                "VALUES('network-object', ?, ?, '2026-01-01T00:00:00Z')",
+                (name, json.dumps({"name": name, "type": "host", "values": [LAN]})),
+            )
+        self.agent.conn.commit()
+        # Desired FRP now routes to the exact Server-authorized LAN IP.
         desired = runtime.build_desired_runtime_services(
             self.agent,
             json.loads(Path(self.agent_root, "etc/frp/client-state.json").read_text()),
