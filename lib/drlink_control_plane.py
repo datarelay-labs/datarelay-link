@@ -4858,6 +4858,14 @@ class ControlPlane:
                 (utc_now_iso(), row["principal_id"]),
             )
             self.conn.execute("DELETE FROM system_meta WHERE key = ?", (bootstrap_key,))
+            # Only the operator-approved first-identity PKCE proof may claim
+            # the owner default profile. Other/OAuth-refresh logins cannot
+            # silently turn authentication into host authorization.
+            from drlink_v24 import ensure_operator_approved_mcp_owner_access
+
+            ensure_operator_approved_mcp_owner_access(
+                self, str(row["principal_id"])
+            )
         return self.issue_oauth_access_token(
             principal_id=row["principal_id"],
             client_id=client_id,
