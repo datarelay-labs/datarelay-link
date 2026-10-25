@@ -459,6 +459,35 @@ function Convert-FrpV24AckToRecord {
     if ($Ack.destination_client_id) { $rec['destination_client_id'] = [string]$Ack.destination_client_id }
     return $rec
 }
+function Get-FrpV24BindingKey {
+    param([string]$Destination, [string]$Service, $Catalog)
+    $target = Resolve-FrpV24DestinationTarget -Destination $Destination -Catalog $Catalog
+    $identity = [string]$target.ClientId
+    if ([string]$target.Mode -eq 'local') { $identity = [string](Read-FrpClientState).machine_id }
+    $selector = if ($identity) { 'client:' + $identity } else { 'object:' + $Destination.Trim() }
+    return ($selector.ToLowerInvariant() + '|' + $Service.ToLowerInvariant())
+}
+
+function Assert-FrpV24UniqueBinding {
+    param([string]$Name, [string]$Destination, [string]$Service, $Catalog, $Map, [switch]$CheckDesired)
+    $key = Get-FrpV24BindingKey -Destination $Destination -Service $Service -Catalog $Catalog
+    $current = $Map[$Name.ToLowerInvariant()]
+    if (-not $CheckDesired -and $current -and $current.v24_remote_service -and [string]$current.service_object) {
+        $currentKey = Get-FrpV24BindingKey -Destination ([string]$current.destination) -Service ([string]$current.service_object) -Catalog $Catalog
+        if ($currentKey -eq $key) { return }
+    }
+    foreach ($otherName in @($Map.Keys)) {
+        if ([string]$otherName -ieq $Name) { continue }
+        $other = $Map[$otherName]
+        if (-not $other.v24_remote_service -or -not [string]$other.service_object) { continue }
+        if ([string]$other.service_object -ine $Service) { continue }
+        $otherKey = Get-FrpV24BindingKey -Destination ([string]$other.destination) -Service ([string]$other.service_object) -Catalog $Catalog
+        if ($otherKey -eq $key) {
+            throw ('ERROR: Destination and Service binding already uses Remote Service {0}. No changes were applied.' -f $otherName)
+        }
+    }
+}
+
 function Invoke-FrpV24SetRemoteService {
     param(
         [Parameter(Mandatory=$true)][string]$Name,
@@ -483,6 +512,7 @@ function Invoke-FrpV24SetRemoteService {
     $catalog = Get-FrpV24Catalog
     $sobj = Get-FrpV24ServiceObject -Name $Service -Catalog $catalog
     $target = Resolve-FrpV24DestinationTarget -Destination $Destination -Catalog $catalog
+    Assert-FrpV24UniqueBinding -Name $Name -Destination $Destination -Service ([string]$sobj.name) -Catalog $catalog -Map (ConvertTo-FrpV24RemoteMap)
     $pool = $(if ([string]$sobj.type -eq 'fixed-tcp') { 'fixed-tcp' } else { 'normal' })
     $preserve = $null
     if ($null -ne $existing -and $existing.remote_port) { $preserve = [int]$existing.remote_port }
@@ -696,7 +726,16 @@ function ConvertTo-FrpV24YamlScalar {
 
 function Read-FrpV24AgentBundle {
     param([Parameter(Mandatory=$true)][string]$Path)
-    if ($Path -eq '-') { $text = [Console]::In.ReadToEnd() }
+    if ($Path -eq '-') {
+        # Match the public interactive contract while retaining EOF-terminated pipes.
+        if (-not [Console]::IsInputRedirected) { Write-Host 'Paste ConfigurationBundle; finish with :end on its own line.' }
+        $lines = New-Object System.Collections.Generic.List[string]
+        while ($null -ne ($line = [Console]::In.ReadLine())) {
+            if ($line -eq ':end') { break }
+            $lines.Add($line)
+        }
+        $text = $lines -join "`n"
+    }
     else { $text = Get-Content -LiteralPath $Path -Raw -ErrorAction Stop }
     if ([string]::IsNullOrWhiteSpace($text)) { throw 'ERROR: ConfigurationBundle is empty' }
     $trim = $text.TrimStart()
@@ -828,6 +867,23 @@ function Get-FrpV24BundlePlan {
         }
         [void]$changes.Add([pscustomobject]@{ op=$op; name=$name; item=$item; before=$existing })
     }
+    # Validate the complete desired map before confirmation or any mutation.
+    $desired = @{}
+    $currentMap = ConvertTo-FrpV24RemoteMap
+    foreach ($key in @($currentMap.Keys)) { $desired[([string]$key).ToLowerInvariant()] = $currentMap[$key] }
+    $names = @{}
+    foreach ($change in @($changes)) {
+        $key = ([string]$change.name).ToLowerInvariant()
+        if ($names.ContainsKey($key)) { throw ('ERROR: duplicate Remote Service name: {0}' -f $change.name) }
+        $names[$key] = $true
+        if ($change.op -eq 'DELETE' -or [string]$change.item.state -eq 'absent') { $desired.Remove($key) | Out-Null }
+        else {
+            $desired[$key] = [pscustomobject]@{destination=[string]$change.item.destination;service_object=[string]$change.item.service;v24_remote_service=$true}
+        }
+    }
+    foreach ($change in @($changes | Where-Object { $_.op -in @('CREATE','UPDATE') })) {
+        Assert-FrpV24UniqueBinding -Name ([string]$change.name) -Destination ([string]$change.item.destination) -Service ([string]$change.item.service) -Catalog $catalog -Map $desired -CheckDesired
+    }
     return ,$changes.ToArray()
 }
 function Write-FrpV24BundlePlan {
@@ -918,7 +974,7 @@ function Invoke-FrpV24AgentBundleApply {
     }
     $applied = New-Object System.Collections.ArrayList
     try {
-        foreach ($c in $mutating) {
+        foreach ($c in @($mutating | Where-Object { $_.op -eq 'DELETE' }) + @($mutating | Where-Object { $_.op -ne 'DELETE' })) {
             if ($c.op -eq 'DELETE') {
                 Invoke-FrpV24UnsetRemoteService -Name ([string]$c.name) -NoConfirm -SkipRuntime -Quiet | Out-Null
             } else {
@@ -1000,11 +1056,11 @@ function Resolve-FrpV24DestinationTarget {
             return [pscustomobject]@{ Host=[string]$values[0]; Mode='host'; ClientId=$obj.client_id }
         }
     }
-    foreach ($host in @($Catalog.managedHosts)) {
-        if ([string]$host.name -ine $dest -and [string]$host.hostname -ine $dest) { continue }
-        $addresses = @($host.addresses)
+    foreach ($managedHost in @($Catalog.managedHosts)) {
+        if ([string]$managedHost.name -ine $dest -and [string]$managedHost.hostname -ine $dest) { continue }
+        $addresses = @($managedHost.addresses)
         if ($addresses.Count -gt 0 -and [string]$addresses[0]) {
-            return [pscustomobject]@{ Host=[string]$addresses[0]; Mode='host'; ClientId=$host.id }
+            return [pscustomobject]@{ Host=[string]$addresses[0]; Mode='host'; ClientId=$managedHost.id }
         }
     }
     throw ('ERROR: Destination Network Object or Managed Host not found in synchronized catalog: {0}' -f $Destination)

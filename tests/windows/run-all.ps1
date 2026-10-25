@@ -41,6 +41,9 @@ $tests = @(
     'test-installed-cli-persistence.ps1',
     'test-project-version.ps1',
     'test-source-provenance.ps1',
+    'test-support-source-provenance.ps1',
+    'test-bundle-stdin-reader.ps1',
+    'test-v24-binding-uniqueness.ps1',
     'test-draft-crud.ps1',
     'test-enroll-list-mapping.ps1',
     'test-apply-identity-auth.ps1',
@@ -58,6 +61,8 @@ $tests = @(
     'test-client-lock.ps1',
     'test-dpapi-localmachine.ps1'
 )
+
+if ($env:OS -eq 'Windows_NT') { $tests += @('test-cli-stdin-transport.ps1', 'test-cli-bundle-stdin.ps1') }
 
 function Get-FrpTestHostExe {
     try {

@@ -52,6 +52,8 @@ python3 tests/test-canonical-runtime-policy.py
 python3 tests/test-runtime-generation-atomicity.py
 python3 tests/test-server-fixed-pool-migration.py
 python3 tests/test-v24-agent-bundle-absent-idempotency.py
+python3 tests/test-v24-server-bundle-absent-idempotency.py
+python3 tests/test-v24-remote-binding-uniqueness.py
 python3 tests/test-v24-bundle-preview-writer-isolation.py
 python3 tests/test-zero-touch-command-exit.py
 bash tests/test-client-rollback-absent-unit.sh

@@ -608,10 +608,11 @@ class MgmtApiAuthTests(unittest.TestCase):
             target_host="127.0.0.1", target_port=22, target_mode="self",
         )
         original_port = int(created["endpoint_port"])
+        v24.set_service_object(self.server, "other-ssh", type="tcp", port=2222, oneshot=True)
         another = mgmt.upsert_remote_service_on_server(
             root=self.agent_tmp, name="second-ssh", destination="this-host",
-            service="ssh", enabled=True, pool_class="normal",
-            target_host="127.0.0.1", target_port=22, target_mode="self",
+            service="other-ssh", enabled=True, pool_class="normal",
+            target_host="127.0.0.1", target_port=2222, target_mode="self",
         )
         other_port = int(another["endpoint_port"])
         self.assertNotEqual(original_port, other_port)

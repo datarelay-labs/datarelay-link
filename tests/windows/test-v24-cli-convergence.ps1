@@ -23,6 +23,8 @@ $state | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (Join-Path $tmp 'sta
 $catalog = [ordered]@{
     serviceObjects=@(
         @{name='ssh';type='tcp';port=22},
+        @{name='http';type='tcp';port=80},
+        @{name='https';type='tcp';port=443},
         @{name='license';type='fixed-tcp';port=27000},
         @{name='dns';type='udp';port=53}
     )
@@ -77,17 +79,17 @@ try {
     $legacyState = Get-Content -LiteralPath $statePath -Raw | ConvertFrom-Json
     $legacyServices = [ordered]@{}
     foreach ($prop in $legacyState.services.PSObject.Properties) { $legacyServices[$prop.Name] = $prop.Value }
-    $legacyServices['legacy-ssh'] = [ordered]@{
-        id='legacy-ssh'; name='Legacy SSH'; preset='ssh'; protocol='tcp'
-        local_ip='127.0.0.1'; local_port=22; remote_port=6022; enabled=$true
+    $legacyServices['legacy-http'] = [ordered]@{
+        id='legacy-http'; name='Legacy HTTP'; preset='http'; protocol='tcp'
+        local_ip='127.0.0.1'; local_port=80; remote_port=6022; enabled=$true
     }
     $legacyState.services = [pscustomobject]$legacyServices
     $legacyState | ConvertTo-Json -Depth 12 | Set-Content -LiteralPath $statePath
     $migrate = Run-Cli @('system','synchronize')
     Assert-FrpEqual 0 $migrate.Rc 'legacy service synchronize exits 0'
-    $migrated = Run-Cli @('show','remote-service','legacy-ssh')
+    $migrated = Run-Cli @('show','remote-service','legacy-http')
     Assert-FrpEqual 0 $migrated.Rc 'migrated Remote Service visible'
-    Assert-FrpTrue ($migrated.Out -match 'Service\s+: ssh') 'legacy preset mapped to Service Object'
+    Assert-FrpTrue ($migrated.Out -match 'Service\s+: http') 'legacy preset mapped to Service Object'
     Assert-FrpTrue ($migrated.Out -match 'Endpoint\s+: fixture\.example\.test:6022') 'legacy endpoint preserved'
 
     $export = Join-Path $tmp 'agent.yaml'
@@ -131,7 +133,7 @@ configurationBundle:
     # Server-unreachable semantics: cached catalog allows desired-state work,
     # while endpoint allocation/deletion stays explicitly pending until sync.
     $env:FRP_WINDOWS_V24_FIXTURE_OFFLINE = '1'
-    $offlineSet = Run-Cli @('set','remote-service','offline-web','destination','this-host','service','ssh','enabled')
+    $offlineSet = Run-Cli @('set','remote-service','offline-web','destination','this-host','service','https','enabled')
     Assert-FrpEqual 0 $offlineSet.Rc 'offline Remote Service desired state saved'
     Assert-FrpTrue ($offlineSet.Out -match 'DEGRADED') 'offline create is degraded'
     Assert-FrpTrue ($offlineSet.Out -match 'Pending allocation') 'offline create reports pending allocation'

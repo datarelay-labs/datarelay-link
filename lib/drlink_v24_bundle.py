@@ -1379,7 +1379,7 @@ def prepare_v24_plan(plane: ControlPlane, raw_text: str, *, role: Optional[str] 
         for item in nos:
             name = item["name"]
             if item.get("state") == "absent":
-                changes.append({"op": "DELETE", "kind": "network-object", "name": name, "item": item})
+                changes.append({"op": "DELETE" if plane.get_object(name) else "NO_CHANGE", "kind": "network-object", "name": name, "item": item})
                 continue
             existing = plane.get_object(name)
             store_type = v24.NETWORK_STORE.get(str(item.get("type") or "").lower())
@@ -1402,7 +1402,7 @@ def prepare_v24_plan(plane: ControlPlane, raw_text: str, *, role: Optional[str] 
         for item in ngs:
             name = item["name"]
             if item.get("state") == "absent":
-                changes.append({"op": "DELETE", "kind": "network-group", "name": name, "item": item})
+                changes.append({"op": "DELETE" if plane.get_object_group(name) else "NO_CHANGE", "kind": "network-group", "name": name, "item": item})
                 continue
             existing = plane.get_object_group(name)
             if existing:
@@ -1415,7 +1415,7 @@ def prepare_v24_plan(plane: ControlPlane, raw_text: str, *, role: Optional[str] 
             name = item["name"]
             existing = v24.get_service_object(plane, name)
             if item.get("state") == "absent":
-                changes.append({"op": "DELETE", "kind": "service-object", "name": name, "item": item})
+                changes.append({"op": "DELETE" if v24.get_service_object(plane, name) else "NO_CHANGE", "kind": "service-object", "name": name, "item": item})
             elif (
                 existing
                 and existing["type"] == str(item.get("type") or "").lower()
@@ -1434,7 +1434,7 @@ def prepare_v24_plan(plane: ControlPlane, raw_text: str, *, role: Optional[str] 
         for item in sgs:
             name = item["name"]
             if item.get("state") == "absent":
-                changes.append({"op": "DELETE", "kind": "service-group", "name": name, "item": item})
+                changes.append({"op": "DELETE" if v24.get_service_group(plane, name) else "NO_CHANGE", "kind": "service-group", "name": name, "item": item})
                 continue
             existing = v24.get_service_group(plane, name)
             if existing:
@@ -1452,7 +1452,7 @@ def prepare_v24_plan(plane: ControlPlane, raw_text: str, *, role: Optional[str] 
         for item in pos:
             name = item["name"]
             if item.get("state") == "absent":
-                changes.append({"op": "DELETE", "kind": "permission-object", "name": name, "item": item})
+                changes.append({"op": "DELETE" if v24.get_permission_object(plane, name) else "NO_CHANGE", "kind": "permission-object", "name": name, "item": item})
                 continue
             existing = v24.get_permission_object(plane, name)
             if existing:
@@ -1470,7 +1470,7 @@ def prepare_v24_plan(plane: ControlPlane, raw_text: str, *, role: Optional[str] 
         for item in pgs:
             name = item["name"]
             if item.get("state") == "absent":
-                changes.append({"op": "DELETE", "kind": "permission-group", "name": name, "item": item})
+                changes.append({"op": "DELETE" if v24.get_permission_group(plane, name) else "NO_CHANGE", "kind": "permission-group", "name": name, "item": item})
                 continue
             existing = v24.get_permission_group(plane, name)
             if existing:

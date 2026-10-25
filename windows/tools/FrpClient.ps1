@@ -948,15 +948,46 @@ function Invoke-FrpClientSupportBundle {
     New-Item -ItemType Directory -Force -Path $stage | Out-Null
     $sections = New-Object System.Collections.Generic.List[string]
     try {
+        # Read only published install identity fields. Copying the raw version
+        # file would also copy any unrelated/secret fields added to that file.
+        $provenance = [ordered]@{
+            project_version = $null
+            relay_engine_version = $null
+            release_channel = $null
+            source_head = $null
+            content_source_head = $null
+            relay_engine_sha256 = $null
+        }
+        $published = @{
+            PROJECT_VERSION = 'project_version'; FRP_VERSION = 'relay_engine_version'
+            RELEASE_CHANNEL = 'release_channel'; SOURCE_HEAD = 'source_head'
+            CONTENT_SOURCE_HEAD = 'content_source_head'; FRP_SHA256_WINDOWS_AMD64 = 'relay_engine_sha256'
+        }
+        $versionPath = Get-FrpVersionPath
+        if (Test-Path -LiteralPath $versionPath) {
+            foreach ($line in Get-Content -LiteralPath $versionPath) {
+                if ($line -notmatch '^([^=]+)=(.*)$') { continue }
+                $key = $Matches[1]; $value = $Matches[2].Trim()
+                if (-not $published.ContainsKey($key)) { continue }
+                $field = $published[$key]
+                if ($field -in @('source_head','content_source_head') -and $value -notmatch '^[a-fA-F0-9]{40}$') { continue }
+                if ($field -eq 'relay_engine_sha256' -and $value -notmatch '^[a-fA-F0-9]{64}$') { continue }
+                if ($value -and $value -ne 'UNKNOWN') { $provenance[$field] = $value }
+            }
+        }
+        $missingProvenance = @($provenance.Keys | Where-Object { -not $provenance[$_] })
         $meta = @{
             format = 'data-relay-link-support-bundle-windows'
             created_at = (Get-Date).ToUniversalTime().ToString('o')
             hostname = $hostName
-            role = 'client'
+            role = 'AgentHost'
             root = $root
             read_only = $true
             secrets_policy = 'private keys, tokens, and DPAPI secrets omitted'
-        } | ConvertTo-Json -Depth 4
+            provenance = $provenance
+            provenance_status = $(if ($missingProvenance.Count) { 'incomplete' } else { 'complete' })
+            missing_provenance_fields = $missingProvenance
+        } | ConvertTo-Json -Depth 5
         Set-Content -LiteralPath (Join-Path $stage 'meta.json') -Value $meta -Encoding UTF8
         [void]$sections.Add('meta')
 

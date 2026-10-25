@@ -1343,6 +1343,27 @@ def server_upsert_remote_service(plane, auth: MgmtAuthContext, body: dict) -> di
                 "Remote Service dependency changed during publication. "
                 "Synchronize the catalog and retry. No changes were applied."
             )
+        # Check the effective binding under the publication write lock, before
+        # allocator calls. Aliases of a Managed Host share its immutable ID.
+        # Keep unchanged legacy publications operable; reject new duplicates
+        # and rebindings without deleting existing user assets.
+        bindings = list(plane.conn.execute(
+            "SELECT s.name FROM published_services s "
+            "JOIN remote_service_meta m ON m.service_id=s.id "
+            "WHERE s.client_id=? AND s.released=0 AND m.delete_pending=0 "
+            "AND m.service_object_id=? AND "
+            "((? IS NOT NULL AND m.destination_client_id=?) OR "
+            "(? IS NULL AND m.destination_client_id IS NULL "
+            "AND m.destination_name=? COLLATE NOCASE))",
+            (client["id"], sobj["id"], destination_client_id,
+             destination_client_id, destination_client_id, destination),
+        ))
+        if not any(str(row["name"]).casefold() == name.casefold() for row in bindings):
+            if bindings:
+                raise MgmtSyncError(
+                    "Destination and Service binding already uses Remote Service "
+                    f"{bindings[0]['name']}. No changes were applied."
+                )
         # Serialize publication and local allocator bookkeeping together. No
         # Agent network I/O runs while this Server write transaction is held.
         existing = plane.conn.execute(
