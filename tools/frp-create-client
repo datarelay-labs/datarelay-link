@@ -1013,21 +1013,18 @@ def print_client_configuration(name, note, services=None, ssh_user='', ssh_port=
         print(title)
         print('  Target   : %s:%s' % (host, port))
         user = str(svc.get('ssh_user') or '').strip()
-        if preset == 'ssh' or str(svc.get('id') or '').lower() == 'ssh':
-            if user:
-                print('  SSH user : %s (connection-example metadata; not validated)' % user)
-            else:
-                print('  SSH user : <username> (optional connection-example metadata)')
+        # SSH authentication belongs to the eventual SSH client, not to
+        # DataRelay Link tunnel setup. Only show an explicitly supplied hint.
+        if user and (preset == 'ssh' or str(svc.get('id') or '').lower() == 'ssh'):
+            print('  Optional SSH login hint : %s (not validated)' % user)
         print()
 
 
 def resolve_zero_touch_ssh(ssh_user, ssh_port, port_explicit, user_explicit=False):
-    ssh_user = normalize_ssh_user(ssh_user)
-    if user_explicit or ssh_user or not is_interactive_stdin():
-        # An explicit --ssh-user, including blank, was already collected.
-        # Non-interactive empty ssh_user stays optional (<username> examples).
-        return ssh_user, ssh_port
-    return prompt_zero_touch_ssh('', ssh_port, port_explicit)
+    # The tunnel only needs IP:port. SSH login is a downstream example and
+    # must never interrupt Zero-Touch with a mandatory username prompt.
+    # Preserve an explicitly supplied example for operators who want it.
+    return normalize_ssh_user(ssh_user), ssh_port
 
 
 def print_manual(cfg, record, ttl, public_host, control_public, allocator, ca_fp, installer):
