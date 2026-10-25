@@ -296,6 +296,14 @@ class LegacyReintroductionGate(unittest.TestCase):
             self.assertEqual(question.get("status"), "error", (tokens, question))
             self.assertEqual(question.get("exit_code"), 2, (tokens, question))
 
+    def test_update_option_correction_does_not_teach_a_positional_option_value(self):
+        for target in ('product', 'engine'):
+            result = grammar.match(['system', 'update', target, '--source', '/tmp/verified-candidate'], role='server')
+            self.assertEqual(result.get('status'), 'error')
+            self.assertIn('Run:\n  system update %s\n' % target, result['message'])
+            self.assertNotIn('/tmp/verified-candidate', result['message'])
+            self.assertEqual(grammar.match(['system','update',target], role='server')['status'], 'ok')
+
     def test_canonical_control_plane_still_routes(self):
         for tokens in (
             ["show", "remote-access"],

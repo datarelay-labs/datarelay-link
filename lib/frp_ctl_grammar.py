@@ -2161,6 +2161,12 @@ def _machine_allowed_flags(tokens):
 
 
 def _option_rejection_message(tok, focus):
+    parts = str(focus).split()
+    if parts[:2] == ['system', 'update'] and len(parts) >= 3 and parts[2] in ('product', 'engine', 'check-engine'):
+        # An unsupported option's value is not a positional update argument.
+        # Teach the valid public command rather than forwarding a local source
+        # path (or other option value) to the updater as an unexpected argument.
+        focus = ' '.join(parts[:3])
     return {
         "status": "error",
         "exit_code": 2,
