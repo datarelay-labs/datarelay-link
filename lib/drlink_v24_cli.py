@@ -478,20 +478,33 @@ def handle_show(plane: ControlPlane, rest: list[str]) -> Optional[int]:
         if not rows:
             sys.stdout.write("No Managed Hosts enrolled.\n")
             return 0
+        sys.stdout.write(
+            "%-32s  %-24s  %-24s  %s\n"
+            % ("HOST ID", "NAME", "HOSTNAME", "STATUS")
+        )
         for row in rows:
             sys.stdout.write(
-                "%s %s %s\n"
+                "%-32s  %-24s  %-24s  %s\n"
                 % (
+                    row["id"],
                     row["label"] or row["hostname"] or row["id"][:8],
                     row["hostname"] or "-",
                     plane.managed_host_connectivity(row),
                 )
             )
+        sys.stdout.write(
+            "\nNext: show managed-host <HOST-ID>\n"
+            "      show managed-host <HOST-ID> remote-services\n"
+        )
         return 0
     if res == "managed-host":
         _require_server(plane, "Managed Hosts")
         if len(rest) < 2:
-            raise ControlPlaneError("Usage: show managed-host <HOST>")
+            raise ControlPlaneError(
+                "Usage: show managed-host <HOST>\n"
+                "Find a HOST ID: show managed-hosts\n"
+                "Inspect services: show managed-host <HOST> remote-services"
+            )
         syntax = "  show managed-host <HOST> [remote-services|agent|addresses]"
         if len(rest) > 3:
             raise ControlPlaneError(v24.cli_error(
@@ -610,13 +623,19 @@ def handle_show(plane: ControlPlane, rest: list[str]) -> Optional[int]:
             return 0
         connectivity = plane.managed_host_connectivity(client)
         sys.stdout.write(
-            "Managed Host: %s\nHostname: %s\nStatus: %s\nAgent: %s\nAI executor: %s\n"
+            "Managed Host: %s\nHost ID: %s\nHostname: %s\nStatus: %s\n"
+            "Agent: %s\nAI executor: %s\n\n"
+            "Next: show managed-host %s remote-services\n"
+            "      show managed-host %s addresses\n"
             % (
                 client["label"] or client["hostname"] or client["id"][:8],
+                client["id"],
                 client["hostname"] or "-",
                 connectivity,
                 _presence_word(connectivity),
                 plane.ai_executor_status(client),
+                client["id"],
+                client["id"],
             )
         )
         return 0
