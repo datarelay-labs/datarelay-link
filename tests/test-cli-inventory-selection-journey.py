@@ -105,8 +105,8 @@ class InventoryJourney(unittest.TestCase):
         agent_dir=tempfile.TemporaryDirectory(prefix="drlink-target-journey-")
         self.addCleanup(agent_dir.cleanup)
         root=agent_dir.name
-        (Path(root)/"etc/drlink").mkdir(parents=True)
-        (Path(root)/"etc/drlink/config.json").write_text('{"role":"agent"}\\n')
+        # The canonical role probe checks for a server config file first.
+        # A real Agent has client-state.json and no Server config.json.
         (Path(root)/"etc/frp").mkdir(parents=True)
         (Path(root)/"etc/frp/client-state.json").write_text(
             json.dumps({"hostname":"lab-agent", "machine_id":"a"*32, "services":{}})+"\\n")
