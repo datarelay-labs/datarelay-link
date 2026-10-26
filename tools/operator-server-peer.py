@@ -11,6 +11,7 @@ import argparse
 import io
 import os
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import sys
@@ -28,8 +29,15 @@ def command(argv, *, check=True):
     return subprocess.run(argv, check=check, capture_output=True, text=True)
 
 
+def _git(*args):
+    # The operator runs this script as root against an explicitly selected
+    # developer-owned worktree. Trust only this exact root; never '*' or a
+    # mutable, unrelated repository.
+    return ["git", "-c", f"safe.directory={SOURCE}", "-C", str(SOURCE), *args]
+
+
 def source_head():
-    return command(["git", "-C", str(SOURCE), "rev-parse", "HEAD"]).stdout.strip()
+    return command(_git("rev-parse", "HEAD")).stdout.strip()
 
 
 def code_matches_head(sha):
@@ -37,10 +45,11 @@ def code_matches_head(sha):
     if len(sha) != 40 or sha != actual:
         raise RuntimeError(f"Server Peer source HEAD mismatch: actual {actual}, wanted {sha}")
     files = ("lib/drlink_server_peer.py", "lib/drlink_server_peer_enroll.py",
-             "lib/drlink_mcp_server_executor.py")
+             "lib/drlink_mcp_server_executor.py", "tools/operator-server-peer.py",
+             "tools/operator-server-peer-join.py")
     for file in files:
         local = (SOURCE / file).read_bytes()
-        expected = subprocess.check_output(["git", "-C", str(SOURCE), "show", sha + ":" + file])
+        expected = subprocess.check_output(_git("show", sha + ":" + file))
         if local != expected:
             raise RuntimeError(f"Uncommitted Server Peer code: {file}")
     return files
@@ -66,8 +75,8 @@ def snapshot(sha):
     if dst.exists() or dst.is_symlink():
         raise RuntimeError("Pinned Server Peer snapshot exists; refusing to overwrite")
     RELEASES.mkdir(parents=True, exist_ok=True)
-    archive = subprocess.check_output(["git", "-C", str(SOURCE), "archive",
-                                       "--format=tar", sha, "lib", "VERSION"])
+    archive = subprocess.check_output(_git(
+        "archive", "--format=tar", sha, "lib", "VERSION"))
     with tempfile.TemporaryDirectory(prefix=".stage-", dir=str(RELEASES)) as stage:
         out = Path(stage)
         with tarfile.open(fileobj=io.BytesIO(archive), mode="r:") as tf:
@@ -143,18 +152,50 @@ def apply(sha):
     print("SERVER_PEER_LOCAL_EXEC=DISABLED")
 
 
+def _root_owned(path: Path, *, directory: bool = False) -> bool:
+    return (not path.is_symlink() and
+            (path.is_dir() if directory else path.is_file()) and
+            path.stat().st_uid == 0)
+
+
+def installed_release() -> Path:
+    """Bind validation to immutable installed SHA, not a later Git worktree HEAD."""
+    if not _root_owned(UNIT):
+        raise RuntimeError("Managed root-owned Server Peer unit missing")
+    target = UNIT.read_text(encoding="utf-8")
+    matches = [line for line in target.splitlines() if line.startswith("ExecStart=")]
+    pattern = re.compile(
+        r"ExecStart=/usr/bin/python3 " + re.escape(str(RELEASES)) +
+        r"/([0-9a-f]{40})/lib/drlink_server_peer\.py --root " + re.escape(str(ROOT))
+    )
+    if len(matches) != 1:
+        raise RuntimeError("Server Peer unit must contain one pinned ExecStart")
+    match = pattern.fullmatch(matches[0])
+    if match is None:
+        raise RuntimeError("Server Peer unit ExecStart does not match pinned release contract")
+    dst = RELEASES / match.group(1)
+    if not _root_owned(dst, directory=True):
+        raise RuntimeError("Root-owned Server Peer release snapshot missing")
+    if target != unit_text(dst):
+        raise RuntimeError("Server Peer unit differs from trusted managed template")
+    for filename in ("lib/drlink_server_peer.py",
+                     "lib/drlink_server_peer_enroll.py",
+                     "lib/drlink_mcp_server_executor.py"):
+        actual = dst / filename
+        if not actual.is_file() or actual.is_symlink():
+            raise RuntimeError("Server Peer release file missing")
+        expected = subprocess.check_output(_git("show", match.group(1) + ":" + filename))
+        if actual.read_bytes() != expected:
+            raise RuntimeError("Server Peer installed file differs from immutable Git commit")
+    return dst
+
+
 def verify():
     if os.geteuid() != 0:
         raise RuntimeError("Server Peer verify requires root operator")
     check_identity()
     command(["systemctl", "is-active", "--quiet", SERVICE])
-    if not UNIT.is_file() or "Managed by operator-server-peer.py" not in UNIT.read_text():
-        raise RuntimeError("Managed Server Peer unit missing")
-    target = UNIT.read_text()
-    head = source_head()
-    dst = RELEASES / head
-    if target != unit_text(dst):
-        raise RuntimeError("Server Peer unit differs from committed source")
+    dst = installed_release()
     remote_probe(dst)
     print("SERVER_PEER_VERIFY=PASS")
     print("SERVER_PEER_CENTRAL_AUTH=PASS")

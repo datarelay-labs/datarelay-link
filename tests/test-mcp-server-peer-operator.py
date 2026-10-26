@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib.util
 from pathlib import Path
+import subprocess
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -52,6 +53,56 @@ class PeerOperatorTests(unittest.TestCase):
                  patch.object(operator, "UNIT", unit):
                 with self.assertRaisesRegex(RuntimeError, "unmanaged"):
                     operator.rollback()
+
+    def test_root_install_git_scope_matches_exact_worktree(self):
+        with patch.object(operator, "command",
+                          return_value=subprocess.CompletedProcess(
+                              args=[], returncode=0, stdout="f" * 40 + "\n"
+                          )) as run:
+            self.assertEqual(operator.source_head(), "f" * 40)
+        run.assert_called_once_with(
+            ["git", "-c", f"safe.directory={ROOT}", "-C", str(ROOT),
+             "rev-parse", "HEAD"]
+        )
+
+    def test_verify_binds_to_installed_sha_not_moving_source_head(self):
+        with tempfile.TemporaryDirectory(prefix="drlink-peer-unit-") as tmp:
+            releases = Path(tmp) / "releases"
+            unit = Path(tmp) / "peer.service"
+            with patch.object(operator, "RELEASES", releases):
+                installed_sha = operator.source_head()
+                installed = operator.snapshot(installed_sha)
+                unit.write_text(operator.unit_text(installed), encoding="utf-8")
+                with (
+                    patch.object(operator, "UNIT", unit),
+                    patch.object(operator, "check_identity"),
+                    patch.object(operator, "_root_owned", return_value=True),
+                    patch.object(operator.os, "geteuid", return_value=0),
+                    patch.object(operator, "source_head", return_value="f" * 40) as moved,
+                    patch.object(operator, "remote_probe") as probe,
+                    patch.object(operator, "command", return_value=subprocess.CompletedProcess(
+                        args=[], returncode=0, stdout=""
+                    )),
+                ):
+                    operator.verify()
+                    moved.assert_not_called()
+                    probe.assert_called_once_with(installed)
+
+    def test_verify_rejects_modified_immutable_snapshot(self):
+        with tempfile.TemporaryDirectory(prefix="drlink-peer-snapshot-") as tmp:
+            releases = Path(tmp) / "releases"
+            unit = Path(tmp) / "peer.service"
+            with patch.object(operator, "RELEASES", releases):
+                installed_sha = operator.source_head()
+                installed = operator.snapshot(installed_sha)
+                unit.write_text(operator.unit_text(installed), encoding="utf-8")
+                (installed / "lib/drlink_server_peer.py").write_text("tampered\n")
+                with (
+                    patch.object(operator, "UNIT", unit),
+                    patch.object(operator, "_root_owned", return_value=True),
+                ):
+                    with self.assertRaisesRegex(RuntimeError, "installed file differs"):
+                        operator.installed_release()
 
     def test_package_contains_server_peer(self):
         manifest = (ROOT / "lib/server-project-files.manifest").read_text()

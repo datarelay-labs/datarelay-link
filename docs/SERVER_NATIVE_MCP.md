@@ -117,28 +117,38 @@ committed to Git. Unlike Agent installation, the Server Peer enrolls through
 `/var/lib/drlink-server-peer` tree. Its state, ECDSA P-256 key and signed
 management identity are separate from both `/etc/frp` and `/etc/drlink`.
 
-An authorized operator stores the display-once manual `id.secret` in a
-root-owned mode 0600 file on dev-drlink and then performs:
+After the central DRLink operator issues a **manual management-only**
+Enrollment Code, use the following on **dev-drlink only**:
 
 ```bash
 cd /home/aella/datarelay-link-worktrees/feat-v240-server-native-mcp-20261026
 HEAD_SHA="$(git rev-parse HEAD)"
-# The Code file MUST already exist and be chmod 0600, owned by root.
-sudo /usr/bin/python3 lib/drlink_server_peer_enroll.py \
-  --root /var/lib/drlink-server-peer \
-  --central https://remote.xdr.ooo \
-  --label "dev-drlink Server" \
-  --code-file /root/drlink-server-peer-enrollment-code
-# Securely erase the consumed Code file after successful enrollment.
-sudo /usr/bin/python3 lib/drlink_server_peer.py \
-  --root /var/lib/drlink-server-peer --probe-central
-# Install a separate, opt-in Server Peer systemd service; existing DRLink
-# Server/Agent/MCP units are preserved.
 python3 tools/operator-server-peer.py --preflight --expected-head "$HEAD_SHA"
-sudo /usr/bin/python3 tools/operator-server-peer.py \
-  --apply --expected-head "$HEAD_SHA"
+sudo /usr/bin/python3 tools/operator-server-peer-join.py --expected-head "$HEAD_SHA"
+```
+
+The root-only join helper reads the one-use Code interactively using hidden
+TTY input (not command-line arguments, logs or ChatGPT), writes it to a
+temporary 0600 file under /root, enrolls through the existing signed
+DRLink management APIs, verifies the central signed catalog, installs
+the separate Server Peer service and verifies the pinned deployment.
+The temporary Code file is removed at the end of the run; if an ambiguous
+enrollment response occurs, re-enter only **the same original Code**, never
+generate a new identity or reuse a different Code for that pending operation.
+Existing authenticated Server-peer state is reused on retries.
+
+For troubleshooting (non-secret results only):
+
+```bash
+sudo systemctl status drlink-server-peer.service --no-pager
+sudo journalctl -u drlink-server-peer.service -n 40 --no-pager
 sudo /usr/bin/python3 tools/operator-server-peer.py --verify
 ```
+
+**Do not execute `set enrollment manual` on `access.xdr.ooo`**.
+The Code must be issued by the central `remote.xdr.ooo` DRLink
+administrator; it authorizes one additional Managed Host identity there.
+Never copy the Enrollment Code or private management key into this chat.
 
 The dedicated peer service defaults to **Server info only**. Arbitrary
 `exec`, process listing, upload, write/delete and even file reading are
