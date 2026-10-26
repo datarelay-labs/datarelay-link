@@ -34,6 +34,20 @@ class ZeroTouchDocContract(unittest.TestCase):
         self.assertIn('before', short.lower())
         self.assertIn('--long-bootstrap', short)
 
+    def test_help_and_real_e2e_cannot_reassert_automatic_long_fallback(self):
+        # These public surfaces previously contradicted the compact-default
+        # contract while the focused short-URL test was already green.
+        help_text = self.read('lib/frp_ctl_grammar.py').lower()
+        catalog = self.read('lib/frp_cli_final_commands.json').lower()
+        config = self.read('lib/frp_server_config.py').lower()
+        real_e2e = self.read('tests/run-short-url-e2e.sh')
+        self.assertNotIn('bootstrap-hostname falls back to zt1', help_text)
+        self.assertNotIn('bootstrap-hostname falls back to zt1', catalog)
+        self.assertNotIn('short url mode is opt-in.', config)
+        self.assertNotIn('callers must use the pinned-ca zt1 fallback', config)
+        self.assertIn('DEFAULT_NO_SILENT_LONG_AFTER_UNSET', real_e2e)
+        self.assertNotIn('ZT1_FALLBACK_AFTER_CERT_PATH', real_e2e)
+
     def test_operator_and_real_user_contract_is_quantitative(self):
         short = self.read('docs/ZERO_TOUCH_REGRESSION_CONTROL.md')
         user = self.read('docs/FULL_USER_E2E_SCENARIOS.md')
