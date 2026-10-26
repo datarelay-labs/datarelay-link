@@ -4815,8 +4815,16 @@ def evaluate_ai_access_v24(
     for row in plane_db.conn.execute("SELECT * FROM ai_policy_rules WHERE enabled = 1 ORDER BY name"):
         if row["source_identity_id"] != principal["id"]:
             continue
-        if not _ref_name_match(plane_db, row["destination_ref_kind"], row["destination_ref_id"], destination):
-            continue
+        if destination == SERVER_SELF_TARGET:
+            # Imported/legacy Network Objects sharing this reserved name must
+            # never confer privileges on the local DRLink Server.
+            if row["destination_ref_kind"] != "server" or row["destination_ref_id"] != SERVER_SELF_REF_ID:
+                continue
+        else:
+            if row["destination_ref_kind"] == "server" or not _ref_name_match(
+                plane_db, row["destination_ref_kind"], row["destination_ref_id"], destination
+            ):
+                continue
         if row["permission_ref_kind"] == "permission_object":
             perms = {
                 r["permission"]

@@ -29,6 +29,7 @@ from drlink_control_db import ControlPlaneError, resolve_root
 from drlink_control_plane import (
     AI_CAPABILITIES,
     ControlPlane,
+    path_allowed,
     MCP_AUTH_MODEL,
     OAuthPendingCapacityError,
     OAuthScopeError,
@@ -810,6 +811,14 @@ class MCPBridge:
                     result = "ALLOW"
                 elif os.environ.get("DRLINK_MCP_SERVER_LOCAL_EXEC_ENABLED") != "1":
                     reason = "Server-local executor is disabled"
+                elif name == "server_git" and not path_allowed(
+                    os.path.join(operand, ".drlink-mcp-git-scope"),
+                    list(decision.get("patterns") or []),
+                ):
+                    # For Server-local git, command-exec permission alone is
+                    # insufficient: the selected worktree needs an explicit
+                    # AI Access path scope just like file operations.
+                    reason = "Server-local Git cwd is outside AI Access path scopes"
                 else:
                     action = local_actions[name][1]
                     request = {"action": action}

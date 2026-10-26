@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import shutil
 import subprocess
+from types import SimpleNamespace
 import sys
 import tempfile
 import unittest
@@ -87,9 +88,24 @@ class ServerLocalWorkerTests(unittest.TestCase):
         with patch.dict(os.environ, {"DRLINK_MCP_SERVER_EXEC_USER": "root"}):
             with self.assertRaises(ExecutorDenied):
                 execute_as_unprivileged_user({"action": "read_file", "path": str(self.path / "a")})
+        with patch.dict(os.environ, {"DRLINK_MCP_SERVER_EXEC_USER": "isolated-worker"}):
+            with patch("drlink_mcp_server_executor.pwd.getpwnam",
+                       return_value=SimpleNamespace(pw_uid=7001, pw_gid=7002)):
+                with patch("drlink_mcp_server_executor.grp.getgrgid",
+                           return_value=SimpleNamespace(gr_name="docker")):
+                    with self.assertRaisesRegex(ExecutorDenied, "primary group"):
+                        execute_as_unprivileged_user({"action": "read_file", "path": str(self.path / "a")})
         with patch.dict(os.environ, {"DRLINK_MCP_SERVER_ALLOWED_ROOTS": ""}):
             with self.assertRaises(ExecutorDenied):
                 _allowed_roots()
+
+    def test_release_manifest_includes_worker(self):
+        manifest = (ROOT / "lib" / "server-project-files.manifest").read_text()
+        self.assertIn("lib/drlink_mcp_server_executor.py python", manifest)
+        installer = (ROOT / "install-server.sh").read_text()
+        self.assertIn('"$BASE_DIR/lib/drlink_mcp_server_executor.py"', installer)
+        updater = (ROOT / "lib" / "frp-server-upgrade.sh").read_text()
+        self.assertIn("  drlink_mcp_server_executor.py", updater)
 
     def test_unknown_operations_denied(self):
         for action in ("exec", "bash", "sudo", "shell", "run_python", "run_test"):

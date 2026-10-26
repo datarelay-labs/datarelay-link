@@ -27,6 +27,7 @@ FRP_ALLOCATOR_RUNTIME_HELPERS=(
 # drlink_upgrade_reconcile.
 FRP_MCP_BRIDGE_RUNTIME_HELPERS=(
   drlink_mcp_bridge.py
+  drlink_mcp_server_executor.py
   drlink-mcp-bridge.py
   drlink_ai_agent.py
   drlink_control_db.py

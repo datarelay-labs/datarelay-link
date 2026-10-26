@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import os
+import grp
 from pathlib import Path
 import pwd
 import secrets
@@ -250,6 +251,10 @@ def execute_as_unprivileged_user(request: dict) -> dict:
         raise ExecutorDenied("Server-local executor account does not exist") from None
     if entry.pw_uid == 0 or entry.pw_gid == 0:
         raise ExecutorDenied("Privileged executor account is forbidden")
+    if grp.getgrgid(entry.pw_gid).gr_name in {
+        "root", "sudo", "wheel", "docker", "lxd", "disk", "shadow",
+    }:
+        raise ExecutorDenied("Privileged executor primary group is forbidden")
     sanitized = {
         "PATH": "/usr/bin:/bin", "LANG": "C.UTF-8", "HOME": "/nonexistent",
         "DRLINK_MCP_SERVER_ALLOWED_ROOTS": os.environ["DRLINK_MCP_SERVER_ALLOWED_ROOTS"],

@@ -128,6 +128,12 @@ class ServerSelfMCPTest(unittest.TestCase):
                     {"cwd": self.root, "argv": ["git", "status", "--short"]}).get("isError"))
                 worker.assert_called_once_with(
                     {"action": "run_git", "cwd": self.root, "argv": ["git", "status", "--short"]})
+                worker.reset_mock()
+                v24.set_ai_policy_path_scopes(self.plane, "self-dev-policy", [])
+                self.assertTrue(self.bridge.call_tool(
+                    self.principal, "server_git",
+                    {"cwd": self.root, "argv": ["git", "status", "--short"]}).get("isError"))
+                worker.assert_not_called()
         with patch.dict(os.environ, {"DRLINK_MCP_SERVER_SELF_ENABLED": "1",
                                      "DRLINK_MCP_SERVER_LOCAL_EXEC_ENABLED": "1"}):
             with patch("drlink_mcp_bridge.execute_as_unprivileged_user") as worker:
@@ -135,6 +141,25 @@ class ServerSelfMCPTest(unittest.TestCase):
                     self.principal, "exec", {"endpoint": "server:self", "command": "id"}
                 ).get("isError"))
                 worker.assert_not_called()
+
+    def test_legacy_network_object_cannot_authorize_server_self(self):
+        # An imported/legacy object using a reserved Server selector must
+        # never confer server-local privileges through name matching.
+        self.plane.set_object_type("old-server-alias", "host")
+        self.cli("system", "credential", "rotate", "ai-identity", self.principal["name"])
+        self.cli("set", "permission-object", "old-host-info", "permissions", "host-info")
+        self.cli("set", "ai-access", "old-object-rule",
+                 "mode", "whitelist", "source", self.principal["name"],
+                 "destination", "old-server-alias", "permission", "old-host-info", "enabled")
+        self.plane.conn.execute("UPDATE objects SET name = ? WHERE name = ?",
+                                ("server:self", "old-server-alias"))
+        self.plane.conn.commit()
+        actual = v24.authorize_ai_capability_v24(
+            self.plane, identity=self.principal["name"],
+            destination="server:self", capability="get_system_info")
+        self.assertEqual(actual["action"], "DENY")
+        with patch.dict(os.environ, {"DRLINK_MCP_SERVER_SELF_ENABLED": "1"}):
+            self.assertTrue(self.bridge.call_tool(self.principal, "get_server", {}).get("isError"))
 
     def test_server_self_persists_as_distinct_policy_ref(self):
         self.authorize_host_info()
