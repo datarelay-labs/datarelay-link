@@ -826,6 +826,45 @@ def case_bootstrap_remote_service_adopts_existing_port():
         env.cleanup()
 
 
+def case_recovery_enrollment_preserves_promoted_endpoint():
+    env = Env()
+    try:
+        service = svc('http', local_ip='192.0.2.24', local_port=18080, preset='http')
+        code, response = env.enroll([service])
+        if code != 200:
+            fail('recovery setup', response)
+        port = ports_from_response(response)['http']
+        promoted = env.allocator.reserve_remote_service_endpoint(
+            'machine-a', 'http', 'normal', local_ip='192.0.2.24',
+            local_port=18080, preserve_port=port,
+        )
+        assert promoted['remote_port'] == port
+        for index in range(3):
+            enrollment_id, secret = env.add_enrollment('%016x' % (100 + index))
+            code, response = env.enroll(
+                [service], enrollment_id=enrollment_id, secret=secret,
+            )
+            if code != 200 or ports_from_response(response)['http'] != port:
+                fail('recovery enrollment moved promoted endpoint', response)
+            services = env.load_state()['clients']['machine-a']['services']
+            if len(services) != 1:
+                fail('recovery left duplicate reservation keys', services)
+            env.allocator.reserve_remote_service_endpoint(
+                'machine-a', 'http', 'normal', local_ip='192.0.2.24',
+                local_port=18080, preserve_port=port,
+            )
+        enrollment_id, secret = env.add_enrollment('bbccddeeff001123')
+        code, response = env.enroll(
+            [service], machine_id='machine-b',
+            enrollment_id=enrollment_id, secret=secret,
+        )
+        if code != 200 or ports_from_response(response)['http'] == port:
+            fail('another machine claimed promoted endpoint', response)
+        pass_('recovery enrollment preserves promoted endpoint')
+    finally:
+        env.cleanup()
+
+
 def main():
     case_a_single_ssh()
     case_b_no_ssh()
@@ -852,6 +891,7 @@ def main():
     case_unreadable_host_version_fallback()
     case_disabled_fixed_reservation_uses_its_own_pool()
     case_bootstrap_remote_service_adopts_existing_port()
+    case_recovery_enrollment_preserves_promoted_endpoint()
     print()
     print('ALLOCATOR_GENERIC_TESTS=PASS')
 

@@ -176,6 +176,31 @@ def _open_control_plane(cfg):
         return None
 
 
+def enrollment_service_projection(existing_services, requested):
+    """Match a client's promoted proxy keys back to its enrollment Service IDs.
+
+    Promotion changes the engine key, not the user's endpoint ownership. Only
+    adopt the exact derived key with the same public name from this client's
+    existing inventory; arbitrary same-name records cannot claim a reservation.
+    """
+    from drlink_v24_runtime import remote_service_proxy_id
+
+    services = dict(existing_services or {})
+    for spec in requested:
+        sid = spec['id']
+        if sid in services:
+            continue
+        proxy_id = remote_service_proxy_id(sid)
+        previous = services.get(proxy_id)
+        if (
+            isinstance(previous, dict)
+            and previous.get('v24_remote_service') is True
+            and str(previous.get('name') or '').casefold() == sid.casefold()
+        ):
+            services[sid] = services.pop(proxy_id)
+    return services
+
+
 def sync_enrollment_to_control_plane(cfg, client, machine_id):
     """Persist enrolled client inventory into SQLite (authoritative).
 
@@ -3163,7 +3188,9 @@ class Allocator:
                             label=(record or {}).get('label'),
                             note=(record or {}).get('note'),
                         )
-                        existing_services = dict(client.get('services') or {})
+                        existing_services = enrollment_service_projection(
+                            client.get('services'), requested,
+                        )
                         used = self.used_ports(state)
                         updated = {}
                         requested_ids = {svc['id'] for svc in requested}
@@ -3296,7 +3323,9 @@ class Allocator:
                         if ident_error:
                             return 400, api_error(ident_error, 'AUTH_FAILED')
 
-                        existing_services = dict(client.get('services') or {})
+                        existing_services = enrollment_service_projection(
+                            client.get('services'), requested,
+                        )
                         used = self.used_ports(state)
                         updated = {}
                         requested_ids = {svc['id'] for svc in requested}
