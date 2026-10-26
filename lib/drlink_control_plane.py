@@ -2400,6 +2400,19 @@ class ControlPlane:
                     "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, 1, ?, ?)",
                     (sid, client["id"], name, stype, mode, host, port, rport, int(bool(en)), preset, now, now),
                 )
+            # Enrollment and signed reconciliation share this authoritative
+            # setter. Retire obsolete claims for this exact publication when
+            # its endpoint moves, and heal claims left by older installations.
+            # Never free a slot still used by any live publication.
+            self.conn.execute(
+                "UPDATE port_reservations SET released=1 "
+                "WHERE client_id=? AND service_id=? AND released=0 "
+                "AND public_port<>? AND NOT EXISTS ("
+                "SELECT 1 FROM published_services owner "
+                "WHERE owner.public_port=port_reservations.public_port "
+                "AND owner.released=0)",
+                (client["id"], sid, rport),
+            )
             return {"entity": {"type": "published-service", "id": sid, "name": name}, "operation": "set"}
 
         return self._mutate("set published-service %s" % name, "set published service", write)
