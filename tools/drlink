@@ -30,6 +30,24 @@ elif [[ -f '/Library/Application Support/drlink/lib/frpctl' ]]; then
   _BACKEND='/Library/Application Support/drlink/lib/frpctl'
 fi
 
+if [[ "$EUID" -ne 0 ]]; then
+  _PROTECTED_BACKEND=0
+  if [[ -n "${_BACKEND}" && ! -r "${_BACKEND}" ]]; then
+    _PROTECTED_BACKEND=1
+  fi
+  if [[ -z "${_BACKEND}" ]]; then
+    for _DIR in "${_ROOT}/usr/local/lib/drlink" /usr/local/lib/drlink \
+      '/Library/Application Support/drlink' '/Library/Application Support/drlink/lib'; do
+      if [[ -d "${_DIR}" && ! -x "${_DIR}" ]]; then _PROTECTED_BACKEND=1; fi
+    done
+  fi
+  if [[ "${_PROTECTED_BACKEND}" -eq 1 ]]; then
+    echo 'ERROR: administrator privileges are required to access the protected Data Relay Link CLI installation.' >&2
+    echo 'Run: sudo drlink' >&2
+    exit 1
+  fi
+fi
+
 if [[ -z "${_BACKEND}" ]]; then
   echo "ERROR: Data Relay Link CLI backend is missing (expected frpctl under lib/drlink)." >&2
   exit 1

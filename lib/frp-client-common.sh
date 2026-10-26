@@ -1372,12 +1372,24 @@ frp_prompt_target_host() {
 
 frp_prompt_target_port() {
   local preset="$1" default="${2:-}" out_var="$3"
+  local _frp_port_input
   frp_ux_target_port_help "$preset"
-  if [[ -n "$default" ]]; then
-    printf -v "$out_var" '%s' "$(read_tty "Target port [${default}]: " "$default")"
-  else
-    printf -v "$out_var" '%s' "$(read_tty "Target port: " "")"
-  fi
+  while true; do
+    if [[ -n "$default" ]]; then
+      _frp_port_input="$(read_tty "Target port [${default}]: " "$default")"
+    else
+      _frp_port_input="$(read_tty "Target port: " "")"
+    fi
+    # Validate before returning to the service collector. A later payload error
+    # would discard this draft and send the operator back to the service menu.
+    if [[ "$_frp_port_input" =~ ^[0-9]+$ ]] &&
+       [[ ${#_frp_port_input} -le 5 ]] &&
+       (( 10#${_frp_port_input} >= 1 && 10#${_frp_port_input} <= 65535 )); then
+      printf -v "$out_var" '%s' "$_frp_port_input"
+      return 0
+    fi
+    echo 'ERROR: Target port must be an integer 1-65535. Stay on this step.'
+  done
 }
 
 frp_prompt_ssh_user() {

@@ -1344,20 +1344,52 @@ def server_upsert_remote_service(plane, auth: MgmtAuthContext, body: dict) -> di
                 "Synchronize the catalog and retry. No changes were applied."
             )
         # Check the effective binding under the publication write lock, before
-        # allocator calls. Aliases of a Managed Host share its immutable ID.
+        # allocator calls. Managed Host aliases share its immutable ID; IP/FQDN
+        # objects share the normalized authoritative address, not their labels.
         # Keep unchanged legacy publications operable; reject new duplicates
         # and rebindings without deleting existing user assets.
-        bindings = list(plane.conn.execute(
-            "SELECT s.name FROM published_services s "
+        candidates = plane.conn.execute(
+            "SELECT s.name, m.destination_name, m.destination_client_id "
+            "FROM published_services s "
             "JOIN remote_service_meta m ON m.service_id=s.id "
             "WHERE s.client_id=? AND s.released=0 AND m.delete_pending=0 "
-            "AND m.service_object_id=? AND "
-            "((? IS NOT NULL AND m.destination_client_id=?) OR "
-            "(? IS NULL AND m.destination_client_id IS NULL "
-            "AND m.destination_name=? COLLATE NOCASE))",
-            (client["id"], sobj["id"], destination_client_id,
-             destination_client_id, destination_client_id, destination),
-        ))
+            "AND m.service_object_id=?",
+            (client["id"], sobj["id"]),
+        ).fetchall()
+        from drlink_upgrade_reconcile import _normalize_target_host
+
+        def binding_key(target):
+            bound = target.get('destination_client_id')
+            host = _normalize_target_host(target['target_host'])
+            if bound:
+                return ('client', str(bound))
+            if host == '127.0.0.1':
+                return ('client', str(client['id']))
+            return ('address', target['target_mode'], host)
+
+        wanted_binding = binding_key(authoritative)
+        bindings = []
+        for candidate in candidates:
+            bound = candidate["destination_client_id"] or None
+            if bound:
+                if wanted_binding == ('client', str(bound)):
+                    bindings.append(candidate)
+                continue
+            prior_destination = str(candidate["destination_name"] or "")
+            if prior_destination.casefold() == destination.casefold():
+                bindings.append(candidate)
+                continue
+            try:
+                prior_target = resolve_authoritative_remote_target(
+                    plane, destination=prior_destination,
+                    owner_client_id=client["id"], service_name=service,
+                )
+            except ControlPlaneError:
+                # An invalid old dependency has no effective address. Do not
+                # infer one from stale runtime fields or mutate that publication.
+                continue
+            if binding_key(prior_target) == wanted_binding:
+                bindings.append(candidate)
         if not any(str(row["name"]).casefold() == name.casefold() for row in bindings):
             if bindings:
                 raise MgmtSyncError(

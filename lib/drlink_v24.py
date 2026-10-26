@@ -5404,8 +5404,8 @@ def _managed_host_client_id_from_name(plane_db, name: str) -> Optional[str]:
     if not token:
         return None
     obj = plane_db.get_object(token) if hasattr(plane_db, "get_object") else None
-    if obj and obj.get("type") == "managed_endpoint":
-        cid = obj.get("client_id")
+    if obj and _row_get(obj, "type") == "managed_endpoint":
+        cid = _row_get(obj, "client_id")
         if cid:
             return str(cid)
         try:
@@ -5578,7 +5578,7 @@ def _destination_dependency_status(
                 "Required Network Object / Managed Host destination '%s' has no address values after reconnect."
                 % dest
             )
-    if obj is not None and obj.get("type") == "network":
+    if obj is not None and _row_get(obj, "type") == "network":
         return (
             "Required destination '%s' is a CIDR Network Object and is not a valid single target after reconnect."
             % dest
@@ -7835,13 +7835,8 @@ def ensure_enrolled_service_object(plane_db, preset: str, port: int) -> dict:
     return dict(get_service_object(plane_db, name))
 
 
-def ensure_enrolled_destination_object(plane_db, target: str) -> tuple[str, Optional[str]]:
-    """Keep an explicit bootstrap target as a canonical destination reference.
-
-    Self aliases use the existing self contract. Other targets get a stable,
-    validated Network Object on both sides; a name collision cannot rewrite
-    an operator definition. This does not verify connectivity or grant access.
-    """
+def enrolled_destination_reference(target: str) -> tuple[str, Optional[str]]:
+    """Compute the validated bootstrap reference without creating any state."""
     import hashlib
     from drlink_control_plane import normalize_object_value
 
@@ -7850,11 +7845,27 @@ def ensure_enrolled_destination_object(plane_db, target: str) -> tuple[str, Opti
         return '127.0.0.1', None
     try:
         target = str(ipaddress.ip_address(target))
+    except ValueError:
+        target = normalize_object_value('fqdn', target)
+    name = 'enrolled-target-' + hashlib.sha256(target.encode()).hexdigest()[:24]
+    return target, name
+
+
+def ensure_enrolled_destination_object(plane_db, target: str) -> tuple[str, Optional[str]]:
+    """Keep an explicit bootstrap target as a canonical destination reference.
+
+    Self aliases use the existing self contract. Other targets get a stable,
+    validated Network Object on both sides; a name collision cannot rewrite
+    an operator definition. This does not verify connectivity or grant access.
+    """
+    target, name = enrolled_destination_reference(target)
+    if name is None:
+        return target, None
+    try:
+        ipaddress.ip_address(target)
         kind = 'ip'
     except ValueError:
         kind = 'fqdn'
-        target = normalize_object_value('fqdn', target)
-    name = 'enrolled-target-' + hashlib.sha256(target.encode()).hexdigest()[:24]
     def validate_existing(row):
         if (row['type'] != NETWORK_STORE[kind]
                 or plane_db._object_values(row['id']) != [target]):

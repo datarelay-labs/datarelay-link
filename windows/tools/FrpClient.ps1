@@ -1254,6 +1254,7 @@ switch ($Command) {
         $autoOn = Test-FrpAutostartTaskExists
         $lifecycleOn = Test-FrpAutostartTaskExists -TaskName (Get-FrpLifecycleTaskName)
         if ($st.Running -and $autoOn -and $lifecycleOn) {
+            Set-FrpClientRuntimeIntent -Intent active
             Write-Host 'Agent Host is already active.'
             Write-Host 'Runtime    : active'
             Write-Host 'Autostart  : enabled'
@@ -1279,6 +1280,7 @@ switch ($Command) {
         $autoOn = Test-FrpAutostartTaskExists
         $lifecycleOn = Test-FrpAutostartTaskExists -TaskName (Get-FrpLifecycleTaskName)
         if (-not $st.Running -and -not $autoOn -and -not $lifecycleOn) {
+            Set-FrpClientRuntimeIntent -Intent paused
             Write-Host 'Agent Host is already paused.'
             Write-Host 'Runtime is stopped and autostart is disabled.'
             exit 0
@@ -1292,6 +1294,7 @@ switch ($Command) {
             Write-Host $_.Exception.Message
             exit 1
         }
+        Set-FrpClientRuntimeIntent -Intent paused
         Write-Host 'Agent Host paused.'
         Write-Host 'Runtime    : stopped'
         Write-Host 'Autostart  : disabled'
@@ -1315,6 +1318,10 @@ switch ($Command) {
         $st = Get-FrpClientStatus
         Write-Host ("enrolled={0}" -f $st.Enrolled)
         Write-Host ("running={0}" -f $st.Running)
+        Write-Host ("Runtime       : {0}" -f $st.RuntimeState)
+        Write-Host ("Runtime intent: {0}" -f $st.RuntimeIntent)
+        Write-Host ("Autostart     : {0}" -f $(if ($st.AutostartEnabled) { 'enabled' } else { 'disabled' }))
+        Write-Host ("Lifecycle task: {0}" -f $(if ($st.LifecycleEnabled) { 'enabled' } else { 'disabled' }))
         if ($null -ne $st.Pid) { Write-Host ("pid={0}" -f $st.Pid) }
         if ($st.Server) { Write-Host ("server={0}" -f $st.Server) }
         if ($st.Transport) { Write-Host ("transport={0}" -f $st.Transport) }

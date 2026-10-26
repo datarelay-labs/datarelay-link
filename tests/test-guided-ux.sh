@@ -94,6 +94,16 @@ assert p['preset']=='https'
 assert p['local_ip']=='127.0.0.1'
 assert int(p['local_port'])==443
 PY
+run_preset $'3\nretry-https\n192.0.2.25\n65536\n0\ninvalid\n443\n' "$WORKDIR/https-retry.json"
+python3 - "$WORKDIR/https-retry.json" <<'PY' || fail "invalid port preserves service draft"
+import json,sys
+p=json.loads(open(sys.argv[1]).read())
+assert p['id']=='retry-https', p
+assert p['local_ip']=='192.0.2.25', p
+assert int(p['local_port'])==443, p
+PY
+need "$WORKDIR/preset.out" 'Stay on this step' 'invalid port retries its own step'
+pass "Invalid target port retries without losing service ID or host"
 pass "HTTPS defaults accepted by Enter"
 
 run_preset $'4\ngrafana\nGrafana\n\n3000\n' "$WORKDIR/custom.json"

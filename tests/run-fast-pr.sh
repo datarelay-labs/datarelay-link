@@ -43,6 +43,8 @@ python3 tests/test-v24-agent-bundle-synchronization-lock.py
 python3 tests/test-frpc-proxy-isolation.py
 bash tests/test-agent-candidate-payload.sh
 bash tests/test-status-surface-parity.sh
+bash tests/test-cli-protected-backend-guidance.sh
+bash tests/test-guided-ux.sh
 bash tests/test-proxy-readiness-session-causality.sh
 bash tests/test-client-proxy-health-wait.sh
 bash tests/test-macos-proxy-wait-cursor.sh
@@ -54,6 +56,8 @@ python3 tests/test-server-fixed-pool-migration.py
 python3 tests/test-v24-agent-bundle-absent-idempotency.py
 python3 tests/test-v24-server-bundle-absent-idempotency.py
 python3 tests/test-v24-remote-binding-uniqueness.py
+python3 tests/test-v24-sqlite-row-dependencies.py
+python3 tests/test-v24-upgrade-policy-preservation.py
 python3 tests/test-v24-bundle-preview-writer-isolation.py
 python3 tests/test-v24-bootstrap-catalog-convergence.py
 python3 tests/test-v24-bundle-stale-plan-safety.py

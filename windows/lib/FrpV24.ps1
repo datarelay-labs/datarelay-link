@@ -496,7 +496,12 @@ function Get-FrpV24BindingKey {
     $target = Resolve-FrpV24DestinationTarget -Destination $Destination -Catalog $Catalog
     $identity = [string]$target.ClientId
     if ([string]$target.Mode -eq 'local') { $identity = [string](Read-FrpClientState).machine_id }
-    $selector = if ($identity) { 'client:' + $identity } else { 'object:' + $Destination.Trim() }
+    $address = ([string]$target.Host).Trim()
+    $parsed = $null
+    if ([System.Net.IPAddress]::TryParse($address, [ref]$parsed)) { $address = $parsed.ToString() }
+    else { $address = $address.TrimEnd('.').ToLowerInvariant() }
+    if (-not $identity -and $address -eq '127.0.0.1') { $identity = [string](Read-FrpClientState).machine_id }
+    $selector = if ($identity) { 'client:' + $identity } else { 'address:' + $address }
     return ($selector.ToLowerInvariant() + '|' + $Service.ToLowerInvariant())
 }
 
@@ -756,6 +761,53 @@ function ConvertTo-FrpV24YamlScalar {
     return "'" + $v.Replace("'", "''") + "'"
 }
 
+function ConvertTo-FrpV24ValidatedAgentBundle {
+    param($Body)
+    if ($null -eq $Body -or $Body -isnot [pscustomobject]) { throw 'ERROR: configurationBundle must be a mapping' }
+    if ([string]$Body.context -ne 'agent') { throw 'ERROR: ConfigurationBundle context must be agent on a Windows Agent Host' }
+    foreach ($field in @($Body.PSObject.Properties.Name)) {
+        if ($field -cnotin @('context','sourceRevision','remoteServices')) { throw ('ERROR: unknown Agent Bundle section: {0}' -f $field) }
+    }
+    $items = @()
+    if ($null -ne $Body.remoteServices) {
+        if ($Body.remoteServices -isnot [array]) { throw 'ERROR: remoteServices must be a list' }
+        $items = @($Body.remoteServices)
+    }
+    foreach ($item in $items) {
+        if ($null -eq $item -or $item -isnot [pscustomobject]) { throw 'ERROR: remoteServices entry must be a mapping' }
+        $fields = @($item.PSObject.Properties.Name)
+        foreach ($field in $fields) {
+            if ($field -cnotin @('name','destination','service','enabled','state')) { throw ('ERROR: unknown Remote Service field: {0}' -f $field) }
+        }
+        if ($item.name -isnot [string] -or [string]::IsNullOrWhiteSpace($item.name)) { throw 'ERROR: Remote Service name is required' }
+        $item.name = $item.name.Trim()
+        if ('state' -cin $fields) {
+            if ($item.state -isnot [string] -or $item.state.Trim().ToLowerInvariant() -ne 'absent') { throw 'ERROR: Remote Service state must be absent when supplied' }
+            if (@($fields | Where-Object { $_ -cnotin @('name','state') }).Count) { throw 'ERROR: absent Remote Service cannot contain present-state fields' }
+            $item.state = 'absent'
+            continue
+        }
+        foreach ($field in @('destination','service')) {
+            if ($field -cin $fields) {
+                if ($item.$field -isnot [string] -or [string]::IsNullOrWhiteSpace($item.$field)) { throw ('ERROR: Remote Service {0} {1} must be a nonempty name' -f $item.name,$field) }
+                $item.$field = $item.$field.Trim()
+            }
+        }
+        if ('enabled' -cin $fields) {
+            $value = $item.enabled
+            if ($value -is [bool]) { continue }
+            if (($value -is [int] -or $value -is [long]) -and $value -in @(0,1)) { $item.enabled = [bool]$value; continue }
+            if ($value -is [string]) {
+                $token = $value.Trim().ToLowerInvariant()
+                if ($token -in @('true','yes','1','enabled')) { $item.enabled = $true; continue }
+                if ($token -in @('false','no','0','disabled')) { $item.enabled = $false; continue }
+            }
+            throw 'ERROR: invalid enabled value; expected true or false'
+        }
+    }
+    return [pscustomobject]@{context='agent';remoteServices=$items}
+}
+
 function Read-FrpV24AgentBundle {
     param([Parameter(Mandatory=$true)][string]$Path)
     if ($Path -eq '-') {
@@ -775,21 +827,7 @@ function Read-FrpV24AgentBundle {
         $doc = $text | ConvertFrom-Json
         $body = $doc.configurationBundle
         if ($null -eq $body) { throw 'ERROR: configurationBundle root is required' }
-        if ([string]$body.context -ne 'agent') {
-            throw 'ERROR: ConfigurationBundle context must be agent on a Windows Agent Host'
-        }
-        $items = @($body.remoteServices)
-        foreach ($item in $items) {
-            if (-not [string]$item.name) { throw 'ERROR: Remote Service name is required' }
-            $state = ([string]$item.state).Trim().ToLowerInvariant()
-            if ($state -and $state -ne 'absent') { throw 'ERROR: Remote Service state must be absent when supplied' }
-            if ($state -ne 'absent') {
-                if (-not [string]$item.destination) { throw ('ERROR: Remote Service {0} destination is required' -f $item.name) }
-                if (-not [string]$item.service) { throw ('ERROR: Remote Service {0} service is required' -f $item.name) }
-                if ($null -eq $item.enabled) { $item | Add-Member -NotePropertyName enabled -NotePropertyValue $true -Force }
-            }
-        }
-        return [pscustomobject]@{ context = 'agent'; remoteServices = $items }
+        return ConvertTo-FrpV24ValidatedAgentBundle -Body $body
     }
     $context = $null
     $items = New-Object System.Collections.ArrayList
@@ -835,18 +873,7 @@ function Read-FrpV24AgentBundle {
         throw ('ERROR: unsupported ConfigurationBundle YAML line: {0}' -f $line.Trim())
     }
     if ($null -ne $current) { [void]$items.Add([pscustomobject]$current) }
-    if ([string]$context -ne 'agent') { throw 'ERROR: ConfigurationBundle context must be agent on a Windows Agent Host' }
-    foreach ($item in @($items)) {
-        if (-not [string]$item.name) { throw 'ERROR: Remote Service name is required' }
-        $state = ([string]$item.state).Trim().ToLowerInvariant()
-        if ($state -and $state -ne 'absent') { throw 'ERROR: Remote Service state must be absent when supplied' }
-        if ($state -ne 'absent') {
-            if (-not [string]$item.destination) { throw ('ERROR: Remote Service {0} destination is required' -f $item.name) }
-            if (-not [string]$item.service) { throw ('ERROR: Remote Service {0} service is required' -f $item.name) }
-            if ($null -eq $item.enabled) { $item | Add-Member -NotePropertyName enabled -NotePropertyValue $true -Force }
-        }
-    }
-    return [pscustomobject]@{ context = 'agent'; remoteServices = @($items) }
+    return ConvertTo-FrpV24ValidatedAgentBundle -Body ([pscustomobject]@{context=$context;remoteServices=@($items)})
 }
 function Export-FrpV24AgentBundleText {
     $lines = New-Object System.Collections.ArrayList
@@ -894,6 +921,17 @@ function Get-FrpV24BundlePlan {
             $op = $(if ($null -eq $existing) { 'NO_CHANGE' } else { 'DELETE' })
             [void]$changes.Add([pscustomobject]@{ op=$op; name=$name; item=$item; before=$existing })
             continue
+        }
+        # A Bundle patches existing desired state. Omitted selectors and enabled
+        # preserve existing values; only new resources require both selectors.
+        foreach ($field in @('destination','service','enabled')) {
+            if (Test-FrpObjectHasProperty -Object $item -Name $field) { continue }
+            $value = $null
+            if ($null -ne $existing) {
+                $value = if ($field -eq 'service') { $existing.service_object } else { $existing.$field }
+            } elseif ($field -eq 'enabled') { $value = $true }
+            if ($null -eq $value -or ($field -ne 'enabled' -and -not [string]$value)) { throw ('ERROR: new Remote Service {0} requires destination and service' -f $name) }
+            $item | Add-Member -NotePropertyName $field -NotePropertyValue $value -Force
         }
         Get-FrpV24ServiceObject -Name ([string]$item.service) -Catalog $catalog | Out-Null
         $op = 'CREATE'

@@ -45,6 +45,8 @@ $tests = @(
     'test-bundle-stdin-reader.ps1',
     'test-v24-binding-uniqueness.ps1',
     'test-v24-bundle-yaml-indentation.ps1',
+    'test-v24-bundle-schema-parity.ps1',
+    'test-lifecycle-status-intent.ps1',
     'test-draft-crud.ps1',
     'test-enroll-list-mapping.ps1',
     'test-apply-identity-auth.ps1',

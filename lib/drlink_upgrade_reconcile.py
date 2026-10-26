@@ -1421,6 +1421,7 @@ def _plan_legacy_policy(plane: ControlPlane, registry: dict) -> dict:
     clients = registry.get("clients") if isinstance(registry.get("clients"), dict) else {}
     remote_rules = []
     remote_restrictive = False
+    routed_access_signatures = {}
     if access is not None:
         lists = access.get("access_lists") or {}
         bindings = access.get("service_access") or {}
@@ -1484,6 +1485,23 @@ def _plan_legacy_policy(plane: ControlPlane, registry: dict) -> dict:
                     if cidrs is None and sid_s != sid_raw:
                         cidrs = restricted.get((cid_s, sid_s))
                     public = cidrs is None
+                    from drlink_v24 import enrolled_destination_reference
+
+                    explicit_target = (
+                        svc.get('target_host') if str(svc.get('target_mode') or '').lower() == 'routed'
+                        else None
+                    ) or svc.get('local_ip') or '127.0.0.1'
+                    _target, target_object = enrolled_destination_reference(explicit_target)
+                    service_destination = target_object or dest
+                    if target_object:
+                        key = (service_destination, port)
+                        signature = None if public else tuple(sorted(set(cidrs)))
+                        if key in routed_access_signatures and routed_access_signatures[key] != signature:
+                            raise _legacy_policy_error(
+                                'LAN services sharing destination/port have different legacy access policies; '
+                                'the canonical policy cannot represent them without changing access.'
+                            )
+                        routed_access_signatures[key] = signature
                     if not public and not cidrs:
                         continue
                     sources = ["v23any4", "v23any6"] if public else [_cidr_object_name(c) for c in cidrs]
@@ -1493,7 +1511,8 @@ def _plan_legacy_policy(plane: ControlPlane, registry: dict) -> dict:
                             "name": _remote_rule_name(cid_s, sid_raw, public=public),
                             "sources": sources,
                             "source_values": ["0.0.0.0/0", "::/0"] if public else list(cidrs),
-                            "destination": dest,
+                            "destination": service_destination,
+                            "legacy_destination": dest,
                             "service": _service_object_name(port),
                             "port": port,
                         }
@@ -1769,6 +1788,19 @@ def _apply_legacy_policy(plane: ControlPlane, registry: dict) -> None:
         plane, "internet", plan["internet_rules"], restrictive=plan["internet_restrictive"]
     ):
         return
+    remote_rules = plan['remote_rules']
+    if any(rule['destination'] != rule.get('legacy_destination', rule['destination']) for rule in remote_rules):
+        historical = [dict(rule, destination=rule.get('legacy_destination', rule['destination']))
+                      for rule in remote_rules]
+        import drlink_v24 as v24
+        remote = v24.get_access_policy(plane, 'remote')
+        if (remote.get('mode') is not None
+                and not _projection_satisfied(plane, 'remote', remote_rules, restrictive=plan['remote_restrictive'])
+                and not _projection_satisfied(plane, 'remote', historical, restrictive=plan['remote_restrictive'])):
+            raise _legacy_policy_error(
+                'Existing Remote Access policy differs from both the canonical and historical migration '
+                'projection. Operator modifications were preserved; review the policy before reconciliation.'
+            )
     _apply_rule_set(plane, "remote", plan["remote_rules"], restrictive=plan["remote_restrictive"])
     _apply_rule_set(plane, "internet", plan["internet_rules"], restrictive=plan["internet_restrictive"])
 

@@ -174,6 +174,60 @@ class UpgradePolicyPreservationTests(unittest.TestCase):
         ).fetchone()
         self.assertIsNotNone(reserved)
 
+    def test_lan_allowlist_targets_actual_service_destination(self):
+        self.registry['clients'][CLIENT]['services']['web'] = {
+            'id': 'web', 'preset': 'http', 'local_ip': '192.0.2.25',
+            'local_port': 18080, 'remote_port': 6001, 'enabled': True,
+        }
+        access = _access(allow=True)
+        access['service_access'][CLIENT]['web'] = dict(access['service_access'][CLIENT]['ssh'])
+        self._seed(access, None)
+        self._apply()
+        self.assertEqual('ALLOW', self.plane.evaluate_remote_access('198.51.100.10', '192.0.2.25', 'tcp', 18080)['action'])
+        self.assertEqual('DENY', self.plane.evaluate_remote_access('203.0.113.99', '192.0.2.25', 'tcp', 18080)['action'])
+        self.assertEqual('ALLOW', self.plane.evaluate_remote_access('198.51.100.10', LABEL, 'tcp', 22)['action'])
+        self.assertEqual('DENY', self.plane.evaluate_remote_access('198.51.100.10', LABEL, 'tcp', 18080)['action'])
+        row = self.plane.conn.execute("SELECT public_port FROM published_services WHERE name='web'").fetchone()
+        self.assertEqual(6001, row['public_port'])
+        before = list(self.plane.conn.iterdump())
+        UR._plan_legacy_policy(self.plane, self.registry)
+        self.assertEqual(before, list(self.plane.conn.iterdump()), 'policy preview must remain read-only')
+        self.assertFalse(self._apply()['applied'], 'second reconciliation is idempotent')
+
+    def test_lan_projection_preserves_operator_modified_migration_rule(self):
+        self.registry['clients'][CLIENT]['services']['web'] = {
+            'id': 'web', 'preset': 'http', 'local_ip': '192.0.2.25',
+            'local_port': 18080, 'remote_port': 6001, 'enabled': True,
+        }
+        access = _access(allow=True)
+        access['service_access'][CLIENT]['web'] = dict(access['service_access'][CLIENT]['ssh'])
+        self._seed(access, None)
+        self._apply()
+        v24.set_network_object(self.plane, 'operator-source', type='cidr', value='203.0.113.0/24', oneshot=True)
+        v24.set_access_rule(
+            self.plane, 'remote', UR._remote_rule_name(CLIENT, 'web', public=False),
+            source='operator-source', destination=LABEL,
+            service=UR._service_object_name(18080), enabled=True, oneshot=True,
+        )
+        before = list(self.plane.conn.iterdump())
+        with self.assertRaisesRegex(ControlPlaneError, 'Operator modifications were preserved'):
+            self._apply()
+        self.assertEqual(before, list(self.plane.conn.iterdump()))
+
+    def test_shared_lan_destination_with_different_acl_fails_closed(self):
+        for name, port in (('restricted', 6001), ('public', 6002)):
+            self.registry['clients'][CLIENT]['services'][name] = {
+                'id': name, 'preset': 'http', 'local_ip': '192.0.2.25',
+                'local_port': 18080, 'remote_port': port, 'enabled': True,
+            }
+        access = _access(allow=True)
+        access['service_access'][CLIENT]['restricted'] = dict(access['service_access'][CLIENT]['ssh'])
+        self._seed(access, None)
+        before = list(self.plane.conn.iterdump())
+        with self.assertRaisesRegex(ControlPlaneError, 'LAN services sharing destination/port'):
+            self._apply()
+        self.assertEqual(before, list(self.plane.conn.iterdump()))
+
     def test_internet_enabled_profile_preserved(self):
         self._seed(_access(allow=False), _egress(enabled=True))
         self._apply()

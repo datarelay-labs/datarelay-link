@@ -1831,6 +1831,7 @@ def apply_v24_plan(
     compile_runtime = not is_agent
     plane._agent_mgmt_side_effects = []
     checkpoint = None
+    runtime_checkpoint = None
     fresh: V24Plan = plan
     rev: Optional[int] = None
     try:
@@ -1839,7 +1840,7 @@ def apply_v24_plan(
             # authenticated Server catalog under the Agent synchronization
             # guard before the final locked validation of Apply.
             _refresh_agent_bundle_catalog(plane)
-        if (is_agent or compile_runtime) and plane._activation_should_run():
+        if is_agent and plane._activation_should_run():
             checkpoint = plane._pre_activation_checkpoint()
 
         plane.conn.execute("BEGIN IMMEDIATE")
@@ -1853,6 +1854,11 @@ def apply_v24_plan(
             if _plan_security_impact(fresh)["requires_confirmation"] and not confirmed:
                 plane._rollback_open_transaction()
                 _raise_plan_confirmation(fresh)
+
+            if compile_runtime and plane._activation_should_run():
+                # Capture under the write lock so rollback cannot restore
+                # artifacts from before another writer's successful commit.
+                runtime_checkpoint = plane._runtime_activation_snapshot()
 
             prev_batch = plane._batch_mode
             plane._batch_mode = True
@@ -1888,18 +1894,39 @@ def apply_v24_plan(
                     sort_keys=True,
                 )[:2000],
             )
+            if compile_runtime and plane._activation_should_run():
+                try:
+                    if plane._forced_activation_failure():
+                        raise ControlPlaneError("simulated activation failure")
+                    plane.compile_runtime()
+                except Exception:
+                    raise ControlPlaneError(
+                        "ERROR:\nRuntime activation failed.\n\n"
+                        "Previous configuration was restored.\n"
+                        "No configuration changes remain active."
+                    ) from None
+            # A live authorization reader must see either the preceding valid
+            # revision or the complete new revision and its active generation.
             plane._commit_open_transaction()
         except ConfirmationRequired:
             plane._rollback_open_transaction()
+            if runtime_checkpoint is not None:
+                plane._rollback_precommit_runtime(runtime_checkpoint)
             raise
         except ConcurrencyError:
             plane._rollback_open_transaction()
+            if runtime_checkpoint is not None:
+                plane._rollback_precommit_runtime(runtime_checkpoint)
             raise
         except ControlPlaneError:
             plane._rollback_open_transaction()
+            if runtime_checkpoint is not None:
+                plane._rollback_precommit_runtime(runtime_checkpoint)
             raise
         except Exception as exc:
             plane._rollback_open_transaction()
+            if runtime_checkpoint is not None:
+                plane._rollback_precommit_runtime(runtime_checkpoint)
             if isinstance(exc, sqlite3.IntegrityError) and "foreign key" in str(exc).lower():
                 raise ControlPlaneError(
                     "ERROR:\nCannot apply this change because a referenced dependency still exists.\n\n"
@@ -1908,31 +1935,6 @@ def apply_v24_plan(
                     "ConfigurationBundle with dependency-aware delete ordering."
                 ) from exc
             raise ControlPlaneError("No changes were applied. %s" % exc) from exc
-
-        if compile_runtime and plane._activation_should_run():
-            try:
-                if plane._forced_activation_failure():
-                    raise ControlPlaneError("simulated activation failure")
-                plane.compile_runtime()
-            except Exception:
-                try:
-                    plane._rollback_activation(checkpoint or {})
-                except Exception:
-                    plane._mark_generation_failed("activation failed; rollback incomplete")
-                    plane._cleanup_activation_checkpoint(checkpoint)
-                    raise ControlPlaneError(
-                        "ERROR:\nApply failed and automatic rollback was not fully successful.\n\n"
-                        "The current runtime state may require operator attention.\n\n"
-                        "Run:\n  system diagnostics"
-                    ) from None
-                plane._cleanup_activation_checkpoint(checkpoint)
-                raise ControlPlaneError(
-                    "ERROR:\nRuntime activation failed.\n\n"
-                    "Previous configuration was restored.\n"
-                    "No configuration changes remain active."
-                ) from None
-            plane._cleanup_activation_checkpoint(checkpoint)
-            checkpoint = None
 
         if is_agent:
             _finalize_agent_bundle_runtime(plane, fresh, checkpoint)

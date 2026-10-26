@@ -12,9 +12,66 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'lib'))
 from drlink_control_plane import ControlPlane
 import drlink_v24 as v24
 import drlink_runtime_policy as policy
+from drlink_v24_bundle import prepare_v24_plan, apply_v24_plan
 
 
 class GenerationAtomicity(unittest.TestCase):
+    def test_failed_bundle_compile_restores_runtime_without_publishing_revision(self):
+        with tempfile.TemporaryDirectory() as root, patch.dict(os.environ, {'DRLINK_SKIP_ACTIVATION': '0'}):
+            plane = ControlPlane(root)
+            observer = ControlPlane(root, read_only=True)
+            try:
+                plane.compile_runtime()
+                revision = plane.current_revision()
+                artifacts = plane._runtime_activation_snapshot()
+                plan = prepare_v24_plan(plane, '''configurationBundle:
+  context: server
+  networkObjects:
+    - name: failed-bundle-object
+      type: ip
+      value: 192.0.2.81
+''')
+                def fail_after_partial_artifact():
+                    self.assertFalse(observer.status()['mismatch'])
+                    (plane.runtime / 'remote-access.json').write_bytes(b'partial failed compile')
+                    raise RuntimeError('controlled compile failure')
+                with patch.object(plane, 'compile_runtime', side_effect=fail_after_partial_artifact):
+                    with self.assertRaisesRegex(Exception, 'Previous configuration was restored'):
+                        apply_v24_plan(plane, plan, confirm=True)
+                self.assertEqual(revision, plane.current_revision())
+                self.assertIsNone(plane.get_object('failed-bundle-object'))
+                self.assertEqual(artifacts, plane._runtime_activation_snapshot())
+                self.assertFalse(observer.status()['mismatch'])
+            finally:
+                observer.close()
+                plane.close()
+
+    def test_bundle_commit_keeps_generation_coherent_for_live_readers(self):
+        with tempfile.TemporaryDirectory() as root, patch.dict(os.environ, {'DRLINK_SKIP_ACTIVATION': '0'}):
+            plane = ControlPlane(root)
+            observer = ControlPlane(root, read_only=True)
+            try:
+                plane.compile_runtime()
+                plan = prepare_v24_plan(plane, '''configurationBundle:
+  context: server
+  networkObjects:
+    - name: unrelated-catalog-object
+      type: ip
+      value: 192.0.2.80
+''')
+                states = []
+                original = plane._commit_open_transaction
+                def observe_commit():
+                    original()
+                    states.append(observer.status())
+                plane._commit_open_transaction = observe_commit
+                apply_v24_plan(plane, plan, confirm=True)
+                self.assertTrue(states)
+                self.assertTrue(all(s['db_healthy'] and not s['mismatch'] for s in states), states)
+            finally:
+                observer.close()
+                plane.close()
+
     def test_status_is_pinned_across_a_concurrent_healthy_commit(self):
         with tempfile.TemporaryDirectory() as root:
             writer = ControlPlane(root)
