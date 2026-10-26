@@ -59,6 +59,22 @@ Managed Host enrollment, new Agent or OpenAI Tunnel.
 The new path is not publicly installed until BOTH of these operator steps
 succeed. Exact frontend state, backup and rollback are mandatory.
 
+For the assigned development owner, the two privileged procedures below
+are orchestrated by one interactive script, without exposing secrets or
+installing an Agent:
+
+```bash
+cd /home/aella/datarelay-link-worktrees/feat-v240-server-native-mcp-20261026
+bash tools/activate-native-mcp.sh --check
+bash tools/activate-native-mcp.sh --apply
+```
+
+The human operator must type APPLY to approve opening the scoped public
+route. The script performs a local pinned upgrade, then uses the already
+trusted SSH connection to the public relay and runs its root-validated
+Nginx-scoped update, then checks public TLS/OAuth/401. Neither remote root
+operation may be silently performed or bypass an actual platform denial.
+
 1. **On access.xdr.ooo as the authenticated SSH owner**, from the assigned
    isolated feature worktree, upgrade the currently running, older Native
    Preview to the tested exact source HEAD. This keeps local port 16106,
