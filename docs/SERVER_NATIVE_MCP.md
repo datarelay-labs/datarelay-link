@@ -3,8 +3,8 @@
 > Workstream: [Issue #223](https://github.com/datarelay-labs/datarelay-link/issues/223)
 >
 > Candidate status: Native Server MCP Preview is live on dev-drlink at **loopback 127.0.0.1:16106**,
-> pinned to an older v2.4 candidate. Direct ChatGPT/public HTTPS is **not connected or qualified**.
-> Current feature development remains isolated in Draft PR #224; running Preview is not the current HEAD.
+> pinned to immutable v2.4 candidate 73fce8e3. Direct Cloudflare HTTPS and actual ChatGPT OAuth are **not yet connected**.
+> The dedicated mcp.link.xdr.ooo connector service is staged but disabled until owner-provided Cloudflare token and DNS hostname routing.
 
 ## Current owner scope: direct ChatGPT-to-access.xdr.ooo MCP
 
@@ -41,100 +41,103 @@ OAuth resource/issuer, explicit AI Access rules, user-accessible full-write
 MCP entitlement, real allow/deny E2E through ChatGPT, and recoverable
 rollout. Until then keep Desktop Commander connected.
 
-## Direct public access rollout: mcp.xdr.ooo/access/mcp
+## Direct ChatGPT access: mcp.link.xdr.ooo (owner-selected)
 
-The direct ChatGPT-native MCP endpoint is:
+**Endpoint:** `https://mcp.link.xdr.ooo/mcp`. OAuth issuer:
+`https://mcp.link.xdr.ooo`. Server executing these tools:
+**access.xdr.ooo / dev-drlink**, loopback `127.0.0.1:16106`.
 
-```
-https://mcp.xdr.ooo/access/mcp
-```
+As checked on 2026-10-26, Cloudflare authoritative NS for `xdr.ooo`
+are `nancy.ns.cloudflare.com` and `armando.ns.cloudflare.com`, but the
+existing `mcp.link.xdr.ooo` **A record** still points at dev-drlink's
+`221.139.249.111`. Its public TCP/443 is the existing Direct-mode FRP
+listener with a self-signed leaf certificate, **not** an HTTPS MCP endpoint.
+TCP/80 is not currently serving. Switching the DRLink Server from Direct
+to single443 would disconnect Agent Hosts, so **do not do this merely to
+activate ChatGPT**.
 
-This name ALREADY has publicly trusted Let's Encrypt TLS and OAuth support.
-It is a **separate path** from the existing `https://mcp.xdr.ooo/mcp`.
-A dedicated user-owned (non-root) SSH reverse tunnel connects the public
-relay's `127.0.0.1:16107` directly to **access.xdr.ooo
-127.0.0.1:16106**. It is a network relay, not a DRLink Server Peer,
-Managed Host enrollment, new Agent or OpenAI Tunnel.
+### Non-disruptive Cloudflare Tunnel
 
-The new path is not publicly installed until BOTH of these operator steps
-succeed. Exact frontend state, backup and rollback are mandatory.
+The existing binary `/usr/local/bin/cloudflared` (2026.8.3) and
+outbound Cloudflare TCP/7844 are available on dev-drlink. This is a
+Cloudflare network connector only: **not** an OpenAI Tunnel, a new DRLink
+Agent, a central DRLink Server-peer enrollment or another user VM.
+Cloudflare provides public HTTPS with a trusted certificate for
+`mcp.link.xdr.ooo` while routing to the local Native MCP over HTTP on
+`127.0.0.1:16106`. DRLink's own OAuth and AI Access still enforce auth.
 
-For the assigned development owner, the two privileged procedures below
-are orchestrated by one interactive script, without exposing secrets or
-installing an Agent:
+The user-owned systemd service
+`drlink-native-mcp-cloudflare.service` is pre-staged but **disabled**
+until the Cloudflare account owner configures its tunnel token and
+hostname. Existing root DRLink Server/MCP/FRP services are preserved.
+
+**Cloudflare account owner's required action** (the ChatGPT session has
+no Cloudflare dashboard credentials/authorized DNS-write connector):
+
+1. In Cloudflare Dashboard → Networking → Tunnels, create a remotely
+   managed tunnel named `drlink-access-native-mcp`.
+2. Create its public application hostname `mcp.link.xdr.ooo` using
+   **HTTP** service URL `http://127.0.0.1:16106`.
+   Remove the pre-existing `mcp.link.xdr.ooo` **A record** in Cloudflare
+   DNS first if Cloudflare reports a conflicting record. The Dashboard
+   creates a tunnel CNAME to `<TUNNEL-UUID>.cfargotunnel.com`.
+   The Cloudflare edge IP may appear in DNS afterward; the actual
+   DRLink Native MCP still runs exclusively on **access.xdr.ooo**.
+3. Copy the **connector token** from the Tunnel's Add a replica / Linux
+   instructions. NEVER paste it in ChatGPT or Git; enter it only at the
+   masked prompt on dev-drlink below. Do not add a Cloudflare Access
+   login requirement that would preempt DRLink's OAuth flow.
+
+On dev-drlink over direct SSH:
 
 ```bash
 cd /home/aella/datarelay-link-worktrees/feat-v240-server-native-mcp-20261026
-bash tools/activate-native-mcp.sh --check
-bash tools/activate-native-mcp.sh --apply
+
+# Read-only verification; no sudo needed.
+python3 tools/operator-native-mcp-domain.py --check
+python3 tools/operator-native-mcp-cloudflare.py --check
+
+# Set canonical OAuth resource/issuer to the NEW public hostname.
+# This edits ONLY the isolated Native MCP Preview systemd unit, and keeps
+# the Server-local developer executor disabled. Root backup/rollback included.
+sudo /usr/bin/python3 tools/operator-native-mcp-domain.py --preflight
+sudo /usr/bin/python3 tools/operator-native-mcp-domain.py --apply
+sudo /usr/bin/python3 tools/operator-native-mcp-domain.py --verify
+
+# Start the pre-staged, separate, unprivileged Cloudflare connector.
+# This prompts privately for the Cloudflare connector token.
+python3 tools/operator-native-mcp-cloudflare.py --activate
+
+# Actual public TLS, OAuth metadata and anonymous 401 verification.
+python3 tools/operator-native-mcp-cloudflare.py --verify
 ```
 
-The human operator must type APPLY to approve opening the scoped public
-route. The script performs a local pinned upgrade, then uses the already
-trusted SSH connection to the public relay and runs its root-validated
-Nginx-scoped update, then checks public TLS/OAuth/401. Neither remote root
-operation may be silently performed or bypass an actual platform denial.
+`NATIVE_MCP_DOMAIN_VERIFY=PASS` verifies the local service OAuth issuer.
+`NATIVE_MCP_PUBLIC_TLS=PASS`,
+`NATIVE_MCP_PUBLIC_OAUTH=PASS`,
+`NATIVE_MCP_ANONYMOUS_DENY=PASS` prove the Cloudflare HTTPS route works
+before adding it to ChatGPT. OAuth identity authorization/consent and
+`tools/call` are separate live acceptance tests.
 
-1. **On access.xdr.ooo as the authenticated SSH owner**, from the assigned
-   isolated feature worktree, upgrade the currently running, older Native
-   Preview to the tested exact source HEAD. This keeps local port 16106,
-   adds the canonical OAuth public resource/issuer and retains local
-   development execution OFF by default.
+After those pass, in the user's ChatGPT custom MCP/app setup register
+`https://mcp.link.xdr.ooo/mcp` with OAuth. The dev DRLink operator must
+enable a verified AI Identity and a *separate, least-privilege* AI Access
+WHITELIST for `server:self`. Neither anonymous access nor a previous
+central Server Peer/Agent identity is sufficient. Developer file/test/Git
+permissions additionally require explicit allowed worktree paths and the
+non-root executor gates.
+
+**Rollback only the new hostname and Tunnel:**
 
 ```bash
-cd /home/aella/datarelay-link-worktrees/feat-v240-server-native-mcp-20261026
-HEAD_SHA="$(git rev-parse HEAD)"
-sudo /usr/bin/python3 tools/operator-native-mcp-upgrade.py --preflight --expected-head "$HEAD_SHA"
-sudo /usr/bin/python3 tools/operator-native-mcp-upgrade.py --apply --expected-head "$HEAD_SHA"
-sudo /usr/bin/python3 tools/operator-native-mcp-upgrade.py --verify
+python3 tools/operator-native-mcp-cloudflare.py --stop
+sudo /usr/bin/python3 tools/operator-native-mcp-domain.py --rollback
 ```
 
-2. **On the existing public mcp.xdr.ooo DRLink relay**, use the staged
-   `/home/aella/operator-native-mcp-relay.py` script. It adds only exact
-   /access/mcp and /access/oauth/* proxy locations within the existing
-   public TLS SNI virtual host. It does not change the existing /mcp OAuth
-   or allocator, and verifies Nginx before reloading:
-
-```bash
-sudo /usr/bin/python3 /home/aella/operator-native-mcp-relay.py --preflight
-sudo /usr/bin/python3 /home/aella/operator-native-mcp-relay.py --apply
-sudo /usr/bin/python3 /home/aella/operator-native-mcp-relay.py --verify
-```
-
-3. **Back on access.xdr.ooo**, verify the full public path with real
-   HTTPS certificate validation and authentication separation:
-
-```bash
-python3 tools/check-native-mcp-public.py
-```
-
-The smoke MUST report: `NATIVE_PUBLIC_TLS=PASS`,
-`NATIVE_RESOURCE_METADATA=PASS`, `NATIVE_OAUTH_ISSUER=PASS`,
-`NATIVE_ANONYMOUS_DENY=PASS`, `PRIMARY_MCP_RESOURCE_PRESERVED=PASS`.
-A public GET /mcp yielding 404 is not evidence of failure: the MCP tool
-transport is authenticated POST /mcp. The correct unauthenticated response is
-HTTP 401, not an opened tools list.
-
-Only after these checks, in ChatGPT Plugins use **Add custom MCP server**,
-enter the URL above, select OAuth, authenticate with an explicitly authorized
-development AI Identity and confirm tools are discovered. On the Server,
-centralized privilege expansion is not permitted: create a distinct
-`server:self` AI Access WHITELIST Rule for the chosen identity and only the
-required host-info/file/Git operations with approved workspace paths.
-Automatic code execution remains OFF until the OS execution isolation,
-owner's precise file paths and high-risk user acceptance are demonstrated.
-
-**Rollback independently**: on access.xdr.ooo run
-`sudo /usr/bin/python3 tools/operator-native-mcp-upgrade.py --rollback`;
-on the public relay run
-`sudo /usr/bin/python3 /home/aella/operator-native-mcp-relay.py --rollback`.
-The legacy public /mcp and dev-drlink Server remain intact; neither script
-removes a DRLink Agent or the existing Native Preview database.
-
-This live endpoint must be retested after public DRLink TLS certificate
-renewal or frontend regeneration, because that regeneration can replace a
-custom Nginx include. Do not claim Desktop Commander replacement until
-ChatGPT performs direct file, test, Git and deployment E2E, including denies.
+Remove/revoke the Tunnel from the Cloudflare account to invalidate its
+connector token. Do not remove Desktop Commander until actual ChatGPT
+read/write/test/Git/deploy E2E and deny-case tests succeed. Do not expose
+FRP 443 directly to ChatGPT or bypass TLS certificate validation.
 
 ## Purpose and version
 
@@ -223,60 +226,29 @@ PKI, credentials, SSH material or live production content among allowed roots.
 11. Direct ChatGPT HTTPS/OAuth MCP discovery, scoped workspace writes, bounded dev test execution, Git/test/deploy integration and complete ALLOW/DENY user E2E.
 12. Exact HEAD full v2.4 product gates, twice where required, before stable.
 
-## Development Server operator rollout (independent direct preview)
+## Existing Native MCP Preview — preserve installed services
 
-Use the opt-in operator-only `tools/operator-native-mcp-preview.py` for an
-isolated DRLink Server Native MCP preview on `dev-drlink`/`access.xdr.ooo`.
-It installs **only a separate loopback service** on TCP `127.0.0.1:16106`,
-preserving existing DRLink Server, Agent, public 443 and MCP services. The
-installer makes a consistent root-only SQLite backup before activation and
-includes verification and rollback. Exact Git SHA is mandatory.
+The independent `drlink-mcp-native-preview.service` is already installed,
+active, root-owned and listening exclusively on `127.0.0.1:16106`.
+The latest *observed installed immutable snapshot* is
+`73fce8e3922abbf3f3b6167ace5aa77e7a1642ba`. The primary DRLink
+Server, ordinary MCP Bridge, Agent state and public FRP TCP/443 remain
+unchanged.
 
-```bash
-cd /home/aella/datarelay-link-worktrees/feat-v240-server-native-mcp-20261026
-HEAD_SHA="$(git rev-parse HEAD)"
-python3 tools/operator-native-mcp-preview.py --preflight --expected-head "$HEAD_SHA"
-sudo /usr/bin/python3 tools/operator-native-mcp-preview.py --apply --expected-head "$HEAD_SHA"
-python3 tools/operator-native-mcp-preview.py --verify
-```
+Do **not** run the original `operator-native-mcp-preview.py --apply`
+or legacy `operator-native-mcp-upgrade.py --apply` again on an already
+installed Preview. Those scripts preserve historical installation/rollback
+logic, not this domain change. Use the new, separately audited
+`operator-native-mcp-domain.py` for changing the OAuth public hostname.
+It takes an exact backup of the existing root-owned unit and explicitly
+supports `--rollback`.
 
-If the first install created the root-owned snapshot and DB backup but
-stopped immediately with `Connection refused` on port 16106, **do not
-rerun `--apply`**. In that case, the `Type=simple` service may not have
-bound its listener before the first probe. Update only the operator script
-and use `--resume` with the **original installed snapshot commit**:
-
-```bash
-cd /home/aella/datarelay-link-worktrees/feat-v240-server-native-mcp-20261026
-git pull --ff-only origin feat/v240-server-native-mcp-20261026
-sudo /usr/bin/python3 tools/operator-native-mcp-preview.py --resume \
-  --expected-head 446f372c979e1cfbec7a3ffade3b32912dda0499
-python3 tools/operator-native-mcp-preview.py --verify
-```
-
-`--resume` checks the exact root-owned service definition and immutable
-snapshot against Git before starting the existing unit. It does not
-modify the primary Server, recreate the backup, or install another Agent.
-The listener readiness check retries only connection/transport errors,
-with a finite timeout; OAuth or MCP validation failures are not treated as
-startup latency.
-
-If it still fails, inspect the Preview journal and **do not retry full
-installation**. Roll back only the Preview unit if necessary:
-
-```bash
-journalctl -u drlink-mcp-native-preview.service -n 80 --no-pager
-sudo /usr/bin/python3 tools/operator-native-mcp-preview.py --rollback
-```
-
-Preview defaults: `server:self` discovery capability ON but **AI Access
-authorization still requires an explicit verified AI Identity and Rule**.
-The Server-local developer file/Git executor remains OFF. **Direct MCP mode**
-(using `access.xdr.ooo/mcp` itself as a separate ChatGPT connector) is not
-ready without a trusted public TLS certificate and external OAuth routing.
-Until a publicly trusted HTTPS route and OAuth authorization are actually
-verified, this Preview cannot be used as a ChatGPT remote MCP endpoint.
-Never skip TLS verification or overwrite the existing public 443 listener.
+Before a real ChatGPT OAuth connection the Server still requires the
+chosen, authenticated AI Identity and explicit `server:self` WHITELIST.
+The OS-level developer executor gate remains OFF until separately
+qualified. This is **connectivity and authentication preparation**, not
+permission to run an unrestricted root shell or a completed replacement
+of Desktop Commander.
 
 ## Deployment state
 

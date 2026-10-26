@@ -78,18 +78,20 @@ class ServerSelfMCPTest(unittest.TestCase):
                           self.bridge.www_authenticate_value())
             self.assertEqual(self.plane.mcp_public_url(), "Not configured")
         with patch.dict(os.environ, {
-            "DRLINK_MCP_NATIVE_PUBLIC_URL": "https://mcp.xdr.ooo/access/mcp",
+            "DRLINK_MCP_NATIVE_PUBLIC_URL": "https://mcp.link.xdr.ooo/mcp",
             "DRLINK_MCP_SERVER_SELF_ENABLED": "1",
         }):
             self.assertEqual(self.bridge.canonical_resource(),
-                             "https://mcp.xdr.ooo/access/mcp")
+                             "https://mcp.link.xdr.ooo/mcp")
             self.assertEqual(self.bridge.canonical_public_base(),
-                             "https://mcp.xdr.ooo/access")
+                             "https://mcp.link.xdr.ooo")
             self.assertEqual(self.bridge.oauth_metadata()["resource"],
-                             "https://mcp.xdr.ooo/access/mcp")
+                             "https://mcp.link.xdr.ooo/mcp")
             self.assertEqual(self.bridge.as_metadata()["issuer"],
-                             "https://mcp.xdr.ooo/access")
-            self.assertIn("https://mcp.xdr.ooo/access/.well-known/oauth-protected-resource",
+                             "https://mcp.link.xdr.ooo")
+            self.assertEqual(self.bridge.as_metadata()["authorization_endpoint"],
+                             "https://mcp.link.xdr.ooo/oauth/authorize")
+            self.assertIn("https://mcp.link.xdr.ooo/.well-known/oauth-protected-resource",
                           self.bridge.www_authenticate_value())
         for bad_url in (
             "http://native.xdr.ooo/mcp",
