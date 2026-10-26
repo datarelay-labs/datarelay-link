@@ -51,8 +51,6 @@ for f in \
   "$BASE_DIR/lib/drlink_ai_agent.py" \
   "$BASE_DIR/lib/drlink_mcp_bridge.py" \
   "$BASE_DIR/lib/drlink_mcp_server_executor.py" \
-  "$BASE_DIR/lib/drlink_server_peer.py" \
-  "$BASE_DIR/lib/drlink_server_peer_enroll.py" \
   "$BASE_DIR/lib/drlink_mcp_tls.py" \
   "$BASE_DIR/lib/drlink_mcp_tls_renew.py" \
   "$BASE_DIR/server/drlink-mcp-bridge.py" \

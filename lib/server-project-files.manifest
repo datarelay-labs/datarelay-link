@@ -55,8 +55,6 @@ project usr/local/lib/drlink/drlink_upgrade_reconcile.py 0644 lib/drlink_upgrade
 project usr/local/lib/drlink/drlink_ai_agent.py 0644 lib/drlink_ai_agent.py python
 project usr/local/lib/drlink/drlink_mcp_bridge.py 0644 lib/drlink_mcp_bridge.py python
 project usr/local/lib/drlink/drlink_mcp_server_executor.py 0644 lib/drlink_mcp_server_executor.py python
-project usr/local/lib/drlink/drlink_server_peer.py 0644 lib/drlink_server_peer.py python
-project usr/local/lib/drlink/drlink_server_peer_enroll.py 0644 lib/drlink_server_peer_enroll.py python
 project usr/local/lib/drlink/drlink_mcp_tls.py 0644 lib/drlink_mcp_tls.py python
 project usr/local/lib/drlink/drlink_mcp_tls_renew.py 0755 lib/drlink_mcp_tls_renew.py python
 project usr/local/lib/drlink/drlink-mcp-bridge.py 0755 server/drlink-mcp-bridge.py python
