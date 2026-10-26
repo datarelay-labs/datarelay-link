@@ -3,8 +3,8 @@
 > Workstream: [Issue #223](https://github.com/datarelay-labs/datarelay-link/issues/223)
 >
 > Candidate status: Native Server MCP Preview is live on dev-drlink at **loopback 127.0.0.1:16106**,
-> pinned to immutable v2.4 candidate 73fce8e3. Direct Cloudflare HTTPS and actual ChatGPT OAuth are **not yet connected**.
-> The dedicated mcp.link.xdr.ooo connector service is staged but disabled until owner-provided Cloudflare token and DNS hostname routing.
+> pinned to immutable v2.4 candidate 73fce8e3. Native Let's Encrypt HTTPS and actual ChatGPT OAuth are **not yet connected**.
+> The existing public FRP Direct-mode TCP/443 must be reconciled with the supported DRLink single443 frontend before the public MCP URL is available.
 
 ## Current owner scope: direct ChatGPT-to-access.xdr.ooo MCP
 
@@ -29,11 +29,11 @@ ChatGPT custom MCP connection
   -> unprivileged developer executor (no root shell)
   -> approved source, test and Git operations
 ```
-The HTTPS entry point **may use a reverse proxy or existing trusted relay**
-while retaining request handling, OAuth authorization and tool execution on
-access.xdr.ooo. Do not confuse a TLS relay with central Managed-Host
-enrollment. Existing FRP TCP/443 must not be replaced without a qualified
-cutover and rollback.
+The native DRLink HTTPS frontend, certificate issuance/renewal, MCP Bridge
+and OAuth authorization must run on **access.xdr.ooo itself**. Cloudflare is
+not a transport component, and no second machine or central Managed Host
+enrollment is involved. FRP TCP/443 may change mode only after a qualified
+maintenance cutover and rollback plan.
 
 **Hard requirements before removing Desktop Commander:** full MCP tool
 coverage required for development, publicly trusted TLS and correct canonical
@@ -41,127 +41,126 @@ OAuth resource/issuer, explicit AI Access rules, user-accessible full-write
 MCP entitlement, real allow/deny E2E through ChatGPT, and recoverable
 rollout. Until then keep Desktop Commander connected.
 
-## Direct ChatGPT access: mcp.link.xdr.ooo (owner-selected)
+## Direct HTTPS MCP on this host, with Let's Encrypt (owner-selected)
 
-**Endpoint:** `https://mcp.link.xdr.ooo/mcp`. OAuth issuer:
-`https://mcp.link.xdr.ooo`. Server executing these tools:
-**access.xdr.ooo / dev-drlink**, loopback `127.0.0.1:16106`.
+**Canonical endpoint:** `https://mcp.link.xdr.ooo/mcp`.
+**Actual Server:** dev-drlink / access.xdr.ooo (`221.139.249.111`).
+**Public Native MCP backend after supported single443 reinstall:** the installed
+DRLink Bridge at `127.0.0.1:6103`. The older isolated v2.4 Native Preview at
+`127.0.0.1:16106` remains separate and does not serve public traffic.
+OAuth issuer must be `https://mcp.link.xdr.ooo`.
 
-As checked on 2026-10-26, Cloudflare authoritative NS for `xdr.ooo`
-are `nancy.ns.cloudflare.com` and `armando.ns.cloudflare.com`, but the
-existing `mcp.link.xdr.ooo` **A record** still points at dev-drlink's
-`221.139.249.111`. Its public TCP/443 is the existing Direct-mode FRP
-listener with a self-signed leaf certificate, **not** an HTTPS MCP endpoint.
-TCP/80 is not currently serving. Switching the DRLink Server from Direct
-to single443 would disconnect Agent Hosts, so **do not do this merely to
-activate ChatGPT**.
+**Explicit operator decision (2026-10-26):** Use a real Let's Encrypt
+certificate issued and renewed **on this development Server** and the
+native DRLink MCP/HTTPS stack. No Cloudflare Tunnel, OpenAI Tunnel,
+additional Server Peer, Agent, or second host. DNS is already correct.
+No private-CA or insecure TLS bypass is an acceptance result.
 
-### Non-disruptive Cloudflare Tunnel
+### Confirmed live constraints
 
-The existing binary `/usr/local/bin/cloudflared` (2026.8.3) and
-outbound Cloudflare TCP/7844 are available on dev-drlink. This is a
-Cloudflare network connector only: **not** an OpenAI Tunnel, a new DRLink
-Agent, a central DRLink Server-peer enrollment or another user VM.
-Cloudflare can provide public HTTPS while routing to the local
-Native MCP over HTTP on `127.0.0.1:16106`, **but only after the edge
-certificate covers the requested public hostname**. The nested hostname
-`mcp.link.xdr.ooo` is **not covered by the default Universal SSL
-certificate for the `xdr.ooo` full-setup zone**. Check Cloudflare SSL/TLS →
-Edge Certificates; provision **Total TLS, an Advanced Certificate, or a
-trusted custom certificate** covering exactly `mcp.link.xdr.ooo`.
-The `activate-native-mcp-link.sh --apply` script checks real trusted TLS
-and refuses to change the Native MCP service until it passes.
-DRLink's own OAuth and AI Access still enforce authentication.
+- DNS A `mcp.link.xdr.ooo → 221.139.249.111` is correct.
+- Existing FRP Direct listener owns TCP/443; its self-signed certificate
+  is not a ChatGPT-trusted web certificate.
+- TCP/80 has no listener and a remote TCP/80 attempt returned connection
+  refused. The public firewall must permit port 80 while the ACME HTTP-01
+  challenge listener is active; refusal without a listener is not enough
+  to distinguish firewall policy from a closed service.
+- Ubuntu 24.04 packaged `python3-acme` is present (version 2.9.0).
+  DRLink has a native `AUTO_ACME` issuer and controlled TLS renewal flow,
+  based on ACME HTTP-01.
+- The product intentionally denies public MCP TLS configuration when
+  deployed in `direct` mode. The **supported product architecture**
+  serves public HTTPS MCP in `single443` mode, with an nginx SNI frontend
+  separating FRP from MCP. A Direct→single443 mode cutover is **not
+  zero-downtime** for existing Agents and requires a maintenance window and
+  explicit `SWITCH` confirmation. Merely installing a certificate is
+  NOT sufficient to make TCP/443 route to the MCP HTTP service.
 
-The user-owned systemd service
-`drlink-native-mcp-cloudflare.service` is pre-staged but **disabled**
-until the Cloudflare account owner configures its tunnel token and
-hostname. Existing root DRLink Server/MCP/FRP services are preserved.
-
-**Cloudflare account owner's required action** (the ChatGPT session has
-no Cloudflare dashboard credentials/authorized DNS-write connector):
-
-1. In Cloudflare Dashboard → Networking → Tunnels, create a remotely
-   managed tunnel named `drlink-access-native-mcp`.
-2. Create its public application hostname `mcp.link.xdr.ooo` using
-   **HTTP** service URL `http://127.0.0.1:16106`.
-   Remove the pre-existing `mcp.link.xdr.ooo` **A record** in Cloudflare
-   DNS first if Cloudflare reports a conflicting record. The Dashboard
-   creates a tunnel CNAME to `<TUNNEL-UUID>.cfargotunnel.com`.
-   The Cloudflare edge IP may appear in DNS afterward; the actual
-   DRLink Native MCP still runs exclusively on **access.xdr.ooo**.
-3. Copy the **connector token** from the Tunnel's Add a replica / Linux
-   instructions. NEVER paste it in ChatGPT or Git; enter it only at the
-   masked prompt on dev-drlink below. Do not add a Cloudflare Access
-   login requirement that would preempt DRLink's OAuth flow.
-
-On dev-drlink over direct SSH, after the Cloudflare Dashboard route
-is created, use the single activation command:
+### Read-only readiness check
 
 ```bash
 cd /home/aella/datarelay-link-worktrees/feat-v240-server-native-mcp-20261026
-bash tools/activate-native-mcp-link.sh --check
-bash tools/activate-native-mcp-link.sh --apply
+python3 tools/native-mcp-letsencrypt-preflight.py
 ```
 
-The second command requires a typed ACTIVATE confirmation, asks for sudo
-only to update the existing isolated Native MCP Preview service, privately
-prompts for the Cloudflare connector token, and tests the real external
-HTTPS/OAuth/401. It refuses to proceed if DNS is still the old Direct-mode
-A record; no FRP :443 cutover is performed. Re-running the command after a
-partial failure preserves the already-retargeted service instead of
-overwriting its root-only backup.
+No Cloudflare, DNS, Agent, or FRP changes are made by this probe.
 
-Equivalent operator steps (for diagnosis or manual recovery):
+### Development Server activation (explicitly approved on 2026-10-27)
+
+The owner confirmed there are no existing Agent deployments to preserve on
+this development Server and authorized reinstall or mode conversion. Use
+the **current exact, clean and pushed v2.4 development candidate source**:
+the installed earlier v2.4 development build (release manifest source
+`4a5d526a…`) lacks the newer `drlink_mcp_server_executor.py` and
+therefore would not implement the requested Native Server MCP operations.
+
+A guarded operator script implements the entire supported product sequence.
+It retains root-only DRLink configuration/SQLite/PKI backup and validates
+restore readability before modifying a service. The distro nginx service is
+stopped and disabled only after verifying that both `sites-enabled` and
+`conf.d` are empty; the installer then owns its separate
+`drlink-frontend.service` and rebinds FRP through supported single443 mode.
 
 ```bash
 cd /home/aella/datarelay-link-worktrees/feat-v240-server-native-mcp-20261026
-
-# Read-only verification; no sudo needed.
-python3 tools/operator-native-mcp-domain.py --check
-python3 tools/operator-native-mcp-cloudflare.py --check
-
-# Set canonical OAuth resource/issuer to the NEW public hostname.
-# This edits ONLY the isolated Native MCP Preview systemd unit, and keeps
-# the Server-local developer executor disabled. Root backup/rollback included.
-sudo /usr/bin/python3 tools/operator-native-mcp-domain.py --preflight
-sudo /usr/bin/python3 tools/operator-native-mcp-domain.py --apply
-sudo /usr/bin/python3 tools/operator-native-mcp-domain.py --verify
-
-# Start the pre-staged, separate, unprivileged Cloudflare connector.
-# This prompts privately for the Cloudflare connector token.
-python3 tools/operator-native-mcp-cloudflare.py --activate
-
-# Actual public TLS, OAuth metadata and anonymous 401 verification.
-python3 tools/operator-native-mcp-cloudflare.py --verify
+bash tools/operator-native-mcp-single443.sh --check
+# In direct owner SSH, the supported privileged deployment:
+sudo bash tools/operator-native-mcp-single443.sh --apply
 ```
 
-`NATIVE_MCP_DOMAIN_VERIFY=PASS` verifies the local service OAuth issuer.
-`NATIVE_MCP_PUBLIC_TLS=PASS`,
-`NATIVE_MCP_PUBLIC_OAUTH=PASS`,
-`NATIVE_MCP_ANONYMOUS_DENY=PASS` prove the Cloudflare HTTPS route works
-before adding it to ChatGPT. OAuth identity authorization/consent and
-`tools/call` are separate live acceptance tests.
+The operator must type `SWITCH` at the SSH TTY. The script performs the
+same supported native installer action with
+`FRP_DEPLOYMENT_MODE=single443`, verifies DRLink services, configures
+the built-in AUTO_ACME client, issues and activates the certificate, and
+verifies trusted public HTTPS + MCP anonymous 401 + OAuth issuer/resource.
+It does **not** disable certificate verification or configure an unrelated
+Cloudflare ingress. The Server-self metadata tool is independently enabled,
+while the developer executor remains disabled until explicit AI Access and
+OS isolation gates are accepted.
 
-After those pass, in the user's ChatGPT custom MCP/app setup register
-`https://mcp.link.xdr.ooo/mcp` with OAuth. The dev DRLink operator must
-enable a verified AI Identity and a *separate, least-privilege* AI Access
-WHITELIST for `server:self`. Neither anonymous access nor a previous
-central Server Peer/Agent identity is sufficient. Developer file/test/Git
-permissions additionally require explicit allowed worktree paths and the
-non-root executor gates.
-
-**Rollback only the new hostname and Tunnel:**
+If the mode switch succeeds but Let's Encrypt fails because inbound TCP/80
+cannot reach the temporary HTTP-01 challenge route, open TCP/80 for the
+issuance/renewal flow, then run:
 
 ```bash
-python3 tools/operator-native-mcp-cloudflare.py --stop
-sudo /usr/bin/python3 tools/operator-native-mcp-domain.py --rollback
+sudo bash tools/operator-native-mcp-single443.sh --issue
 ```
 
-Remove/revoke the Tunnel from the Cloudflare account to invalidate its
-connector token. Do not remove Desktop Commander until actual ChatGPT
-read/write/test/Git/deploy E2E and deny-case tests succeed. Do not expose
-FRP 443 directly to ChatGPT or bypass TLS certificate validation.
+Read-only public validation at any time:
+
+```bash
+bash tools/operator-native-mcp-single443.sh --verify
+```
+
+Native DRLink CLI operations performed by `--issue` are:
+
+```text
+set mcp-tls hostname mcp.link.xdr.ooo
+set mcp-tls mode auto-acme
+system certificate preflight
+system certificate issue
+system certificate status
+```
+
+4. Verify a real publicly trusted TLS chain on
+   `https://mcp.link.xdr.ooo/mcp`, OAuth protected-resource metadata,
+   authorization-server issuer, real anonymous HTTP 401, correct
+   authentication, and an explicit `server:self` AI Access rule.
+   The actual ChatGPT user must then connect the custom MCP endpoint and
+   demonstrate allowed and denied tool calls.
+5. The independently installed Native MCP Preview is a development
+   candidate and is NOT a replacement for the installed public DRLink
+   Bridge until the source and public listener are reconciled. Do not
+   remove Desktop Commander until the real user file/test/Git/deploy
+   E2E proves parity. Keep the rollback to the previous FRP deployment
+   and certificate/config backups before switching.
+
+**Execution evidence:** the direct root installer call is not yet made
+from this ChatGPT session because the connected Remote Desktop Commander
+tool returned `Command not allowed` for direct `sudo -n id -u`. Owner
+authorization does not bypass that tool-level denial; root changes must
+run from the owner's authenticated SSH terminal. As of this note, no
+mode switch or real public Let's Encrypt certificate has been verified.
 
 ## Purpose and version
 
