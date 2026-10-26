@@ -2078,6 +2078,7 @@ class Allocator:
                     used.add(port)
 
             previous = services.get(sid) if isinstance(services.get(sid), dict) else {}
+            displaced_port = None
             remote_port = coerce_port(preserve_port)
             if remote_port is None:
                 remote_port = coerce_port(previous.get('remote_port'))
@@ -2105,10 +2106,23 @@ class Allocator:
                         and str(legacy_id).casefold() == str(service_name).casefold()
                         and isinstance(legacy, dict)
                         and not legacy.get('v24_remote_service')
-                        and sid not in services
+                        and (
+                            sid not in services
+                            or (
+                                sid == remote_service_proxy_id(service_name)
+                                and previous.get('v24_remote_service') is True
+                                and previous.get('enabled') is False
+                                and str(previous.get('name') or '').casefold()
+                                == str(service_name).casefold()
+                            )
+                        )
                         and start <= remote_port <= end
                         and remote_port not in self.protected_ports()
                     ):
+                        # Recovery can leave an older disabled projection beside
+                        # the current legacy reservation. The explicit Server
+                        # port wins over that same-service inactive projection.
+                        displaced_port = coerce_port(previous.get('remote_port'))
                         services.pop(legacy_id)
                         owner = (machine_id, sid)
                     else:
@@ -2144,6 +2158,16 @@ class Allocator:
             services[sid] = stored
             # Keep reserved[] in sync for bookkeeping consumers.
             reserved = list(state.get('reserved') or [])
+            if displaced_port is not None and displaced_port != int(remote_port):
+                still_owned = any(
+                    coerce_port((record or {}).get('remote_port')) == displaced_port
+                    for other in clients.values()
+                    for record in (other.get('services') or {}).values()
+                )
+                if not still_owned:
+                    reserved = [item for item in reserved
+                                if coerce_port(item) != displaced_port]
+                    state['reserved'] = reserved
             if int(remote_port) not in [coerce_port(x) for x in reserved]:
                 reserved.append(int(remote_port))
                 state['reserved'] = reserved

@@ -865,6 +865,60 @@ def case_recovery_enrollment_preserves_promoted_endpoint():
         env.cleanup()
 
 
+
+def case_legacy_authority_replaces_stale_disabled_projection():
+    for index in range(3):
+        env = Env()
+        try:
+            code, response = env.enroll([svc('http', local_port=18080, preset='http')])
+            assert code == 200
+            stale_port = ports_from_response(response)['http']
+            prior = env.allocator.reserve_remote_service_endpoint(
+                'machine-a', 'http', 'normal', local_port=18080, preserve_port=stale_port)
+            state = env.load_state()
+            services = state['clients']['machine-a']['services']
+            services[prior['proxy_id']]['enabled'] = False
+            held_port = stale_port + index + 1
+            services['http'] = dict(services[prior['proxy_id']], name='HTTP',
+                                   remote_port=held_port, v24_remote_service=False,
+                                   enabled=False)
+            env.allocator.save_registry(state)
+            recovered = env.allocator.reserve_remote_service_endpoint(
+                'machine-a', 'http', 'normal', local_port=18080,
+                preserve_port=held_port)
+            if recovered['remote_port'] != held_port:
+                fail('inactive projection displaced authoritative legacy endpoint', recovered)
+            state = env.load_state()
+            assert 'http' not in state['clients']['machine-a']['services']
+            assert stale_port not in state['reserved']
+            assert state['clients']['machine-a']['services'][prior['proxy_id']]['remote_port'] == held_port
+            unrelated = env.allocator.reserve_remote_service_endpoint(
+                'machine-a', 'unrelated', 'normal', preserve_port=held_port)
+            assert unrelated['remote_port'] != held_port
+            enrollment_id, secret = env.add_enrollment('%016x' % (500 + index))
+            code, response = env.enroll(
+                [svc('ssh', preset='ssh')], machine_id='machine-b', hostname='other-host',
+                enrollment_id=enrollment_id, secret=secret)
+            assert code == 200
+            other = env.allocator.reserve_remote_service_endpoint(
+                'machine-b', 'http', 'normal', preserve_port=held_port)
+            assert other['remote_port'] != held_port
+            # An active projection cannot be discarded as stale, even when a
+            # caller supplies another same-client legacy reservation's port.
+            state = env.load_state()
+            services = state['clients']['machine-a']['services']
+            services['http'] = dict(services[prior['proxy_id']],
+                                   remote_port=18020, v24_remote_service=False)
+            env.allocator.save_registry(state)
+            active = env.allocator.reserve_remote_service_endpoint(
+                'machine-a', 'http', 'normal', preserve_port=18020)
+            assert active['remote_port'] == held_port
+            assert 'http' in env.load_state()['clients']['machine-a']['services']
+        finally:
+            env.cleanup()
+    pass_('three authoritative legacy recoveries replace stale disabled projections without leaking reservations')
+
+
 def main():
     case_a_single_ssh()
     case_b_no_ssh()
@@ -892,6 +946,7 @@ def main():
     case_disabled_fixed_reservation_uses_its_own_pool()
     case_bootstrap_remote_service_adopts_existing_port()
     case_recovery_enrollment_preserves_promoted_endpoint()
+    case_legacy_authority_replaces_stale_disabled_projection()
     print()
     print('ALLOCATOR_GENERIC_TESTS=PASS')
 
