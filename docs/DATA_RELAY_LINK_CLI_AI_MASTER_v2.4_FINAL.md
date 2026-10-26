@@ -3883,17 +3883,32 @@ Server:
 set enrollment zero-touch
 ```
 
-Enrollment HTTPS may use the configured public URL hostname (public IP may
-still be shown as fallback), but that hostname does **not** by itself enable a
-Zero-Touch short URL on port 443. Short URL mode requires an explicit
-`bootstrap_hostname` that the operator provides with publicly trusted HTTPS.
-Without it, Linux/macOS and Windows Zero-Touch commands use the pinned-CA
-`zt1` bootstrap path so the allocator CA fingerprint is verified before
-private-CA downloads. With `bootstrap_hostname`, the operator-facing command
-may use the short HTTPS launcher
-(`curl … https://<bootstrap-host>/i/<ticket> | sudo bash` or equivalent).
-The operator is responsible for making that explicitly configured bootstrap
-hostname resolve to a publicly trusted HTTPS edge as documented.
+**ZT-P0-CONTRACT-20261026 (normative):** Zero-Touch defaults to a short,
+copyable bootstrap command, not an automatic multi-kilobyte pinned-CA dump.
+An explicit operator `bootstrap_hostname` declares the intended public
+HTTPS edge; the installed Agent still verifies the public certificate.
+When unset, the generator may qualify configured public DNS
+`public_hostname`/`public_url_host` only after a real stock-CA HTTPS probe
+against `/i/invalid-qualification-probe` and DRLink's exact invalid-handle
+`404 bootstrap unavailable` response. A generic 404, unrelated webpage,
+redirect, invalid TLS certificate or IP literal is not a trust proof.
+
+If no trusted short URL can be qualified, the default must fail *before
+issuing a ticket*, tell the operator how to configure DNS/TLS/443 and the
+short-URL edge, and must never silently print a 4,000-character `zt1` line.
+The pinned private-CA `zt1` flow is available only via the explicitly
+selected advanced backend `frp-create-client --one-line --long-bootstrap`;
+it keeps strict fingerprint/installer verification and is not a public
+`drlink` grammar. At the `remote.xdr.ooo` reference hostname, automated
+copy-paste bounds are Linux/macOS <= 200 characters and Windows <= 500
+characters (Windows checks stage-1 SHA-256 before execution).
+
+Zero-Touch signed LAN targets must not be rewritten as `this-host`: use
+the same canonical Network Object/destination across Server and Agent.
+Service identity and reserved public endpoint must remain stable across
+new enrollment and provenance-guarded upgrades. See
+`docs/ZERO_TOUCH_REGRESSION_CONTROL.md` for regression causes,
+qualified/negative test oracles, and exact-HEAD installed acceptance.
 
 SSH connection-example username is optional metadata for the hint only; it is
 not required for Agent install/enrollment. Prefer a verified local account, or

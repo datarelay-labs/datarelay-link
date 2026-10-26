@@ -228,6 +228,24 @@ When destination is another host, the current Agent Host is the Relay Host.
 
 A policy Rule never creates connectivity.
 
+### Zero-Touch default and regression-prevention gate
+
+**ZT-P0-CONTRACT-20261026.** A first-time operator must receive a short,
+copyable public-HTTPS bootstrap command by default when trusted short URL
+delivery is qualified. A missing/unqualified public TLS route must return an
+actionable error **before ticket issuance**, not silently turn into a long
+private-CA `zt1` command. The advanced pinned-CA launcher remains explicit
+opt-in, never a disguised beginner default. SSH login metadata is optional.
+
+Linux/macOS and Windows must share this behavior, while Windows checks the
+downloaded stage-1 hash before running it. Signed Zero-Touch LAN destinations
+must not be projected as Agent `this-host`; Server/Agent destination and
+public endpoint must remain authoritative and stable. Unit/CI PASS alone
+cannot qualify the installed product: see
+`docs/ZERO_TOUCH_REGRESSION_CONTROL.md` for causes, negative tests, and
+the real external operator/Agent E2E gates.
+
+
 ## 12. Remote Service state and endpoint stability
 
 States:

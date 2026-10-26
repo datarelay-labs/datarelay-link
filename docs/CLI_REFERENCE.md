@@ -152,6 +152,17 @@ set mcp-tls acme-environment <production|staging>
 set mcp-tls acme-directory <URL>
 ```
 
+**Zero-Touch beginner default (`ZT-P0-CONTRACT-20261026`):**
+`set enrollment zero-touch` produces one compact HTTPS launcher when the
+operator's `bootstrap_hostname` is configured or trusted public DNS and
+the DRLink `/i/` handler are qualified. Otherwise it returns an actionable
+prerequisite error without issuing a ticket; it must not silently output
+the long private-CA `zt1` launcher. A deliberate backend advanced option,
+`frp-create-client --one-line --long-bootstrap`, exists for private-CA
+installations but is not another public `drlink` grammar. Optional SSH
+username is only a connection hint; blank is valid. See
+`docs/ZERO_TOUCH_REGRESSION_CONTROL.md` for security/length/E2E gates.
+
 Bare named `set` enters Guided Create/Edit. A complete one-shot form skips the Wizard. Server settings remain action-first under `set server ...` / `unset server ...`; the guided menu places the same settings under System → Server Settings.
 
 Examples:

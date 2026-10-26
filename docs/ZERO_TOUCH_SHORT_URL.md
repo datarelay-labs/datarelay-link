@@ -1,40 +1,27 @@
-# Zero-Touch Short URL (Option B)
+# Zero-Touch Bootstrap: v2.4 current UX and Short URL internals
 
-Additive Zero-Touch UX after v2.1.2. When an operator configures a publicly
-trusted bootstrap hostname and reverse proxy, enrollment can use:
+> **Current contract:** `ZT-P0-CONTRACT-20261026`, [regression causes and release gates](ZERO_TOUCH_REGRESSION_CONTROL.md).
+> **Status:** normative for v2.4 development; real installed-product acceptance is still required. This page retains historical v2.1.3 internals for compatibility, not current default behavior.
+
+## Current beginner-facing behavior
+
+The standard `set enrollment zero-touch` journey **defaults to a short, copyable HTTPS launcher** when a real publicly trusted bootstrap endpoint can be qualified. An explicit `bootstrap_hostname` represents operator intent to serve that endpoint; stock-client certificate verification still applies. Without an explicit bootstrap host, a candidate DNS `public_hostname` or `public_url_host` is usable only after stock TLS verification and a test request to `/i/invalid-qualification-probe` returns DRLink's exact `404` body `bootstrap unavailable`. Generic HTTPS websites, certificate errors, redirects and plain-IP identities are not proof of a valid short URL handler.
+
+Example Linux/macOS command **shape** (not a real ticket; the product supplies the handle):
 
 ```bash
-curl -fsSL https://bootstrap.example.com/i/<22-char-token>|sudo bash
+(drlink_bootstrap=$(curl -fsSL https://bootstrap.example.com/i/<opaque22charhandle>) && printf '%s\n' "$drlink_bootstrap" | sudo bash)
 ```
 
-The value in `/i/<22-char-token>` is a short-URL lookup handle only. Issuance
-still creates the internal `bt1.<id>.<secret>` credential (256-bit secret,
-hashed at rest). `GET /i/<handle>` serves a stage-1 script that carries that
-internal `bt1`. Direct `/bootstrap/redeem` accepts `bt1` only. The raw `bt1` is
-not stored in plaintext. The server keeps an OpenSSL AES-256-CBC copy
-with a PBKDF2/HMAC encrypt-then-MAC, recovered from the server token or, when
-no token is configured, from mode-0600 `bootstrap/bt1-wrap.key`. Existing
-`bt1` links remain accepted until they expire.
-The command omits shell quotes only when the hostname and credential are
-limited to shell-safe URL characters. `-fsSL`, HTTPS, `/i/`, and `sudo bash`
-stay in the command. On `remote.xdr.ooo` that form is 68 characters.
+Windows downloads `/i/<handle>?platform=windows` and checks its expected stage-1 SHA-256 before PowerShell execution. For the verified `remote.xdr.ooo` benchmark with a 22-character handle, generated commands measured **192 characters Linux/macOS** and **483 characters Windows**; the regression bounds are respectively **<=200** and **<=500**. The lengths vary with DNS name; these are reference-host benchmarks, not a universal ceiling.
 
-The Windows one-line is a direct elevated PowerShell command. It downloads
-`/i/<handle>?platform=windows` with explicit `curl.exe`, checks the exact
-stage-1 SHA256, then runs `powershell.exe -File`. It does not use `irm | iex`.
-On `remote.xdr.ooo` that launcher is 420 characters. The expected digest is
-frozen with the non-secret renderer inputs at issuance.
+**No silent long-command fallback:** when a trusted short URL cannot be qualified, the beginner command fails *before creating any ticket*, explains the DNS/TLS/443/edge-route prerequisite, and does not emit several thousand characters of `zt1`. The advanced backend `frp-create-client --one-line --long-bootstrap` remains available only when the operator explicitly selects the private-CA workflow; it retains CA fingerprint and installer integrity checks. Do not present that internal flag as a separate public `drlink` command.
 
-Short URL mode is **opt-in** through `bootstrap_hostname`. When it is unset,
-Data Relay Link does not assume that `public_url_host` or `public_hostname`
-terminates publicly trusted HTTPS on port 443. The generated Linux/macOS and
-Windows Zero-Touch commands instead use the `zt1` / pinned-CA bootstrap path:
-the allocator CA is fingerprint-checked first and every subsequent private-CA
-download is verified against that pinned certificate.
+The `/i/<opaque22charhandle>` handle resolves the internal `bt1.<id>.<secret>` credential. The 256-bit bootstrap secret is hashed at rest; the server retains only the encrypted wrap necessary to emit the stage-1 script (server token, or mode-0600 `bootstrap/bt1-wrap.key` when no token is configured). GET does not bind/consume; successful enrollment consumes atomically. The handle and `bt1` are short-lived credentials: never copy them into unredacted logs.
 
-This fallback applies to both DNS and IP public identities. A configured
-`bootstrap_hostname` remains the explicitly operator-owned, publicly trusted
-HTTPS edge that enables the stock short URL above.
+**SSH usernames are optional connection-hint metadata, not tunnel/enrollment prerequisites.** A guided prompt may be skipped; the backend must not demand or invent a username. For a routed LAN service, the Server and Agent must preserve the signed destination (for example `192.168.219.125:22`) and stable public port, instead of representing that LAN target as Agent `this-host`/127.0.0.1.
+
+See [Zero-Touch regression control](ZERO_TOUCH_REGRESSION_CONTROL.md) for the root-cause table, explicit advanced/private-CA behavior, test matrix, existing-install migration and exact-HEAD live acceptance rules. Historical v2.1.3 `bootstrap_hostname` opt-in and automatic long `zt1` fallback tests do **not** define the v2.4 beginner default.
 
 ## Trust boundary
 
@@ -97,8 +84,8 @@ ports, configure NAT, invoke ACME, or restart FRP services.
 2. Validate tickets without consuming them on GET
 3. Keep Enrollment Profile server-side
 4. Preserve Private CA redeem/enroll flow
-5. Prefer short URL command generation when configured
-6. Keep `zt1` / legacy env / manual enrollment working
+5. Prefer short URL generation by default when publicly trusted HTTPS is qualified; otherwise return an actionable no-ticket error
+6. Keep explicit advanced `--long-bootstrap` pinned-CA `zt1`, legacy env and manual enrollment working
 
 ## Minimum public proxy allowlist
 
@@ -252,7 +239,7 @@ Reinstall/recovery never reuses a consumed ticket; use the supported recovery/re
 
 YAML fields, hidden CLI flags, or APIs cannot raise these server-side ceilings.
 
-## v2.1.3 Real E2E evidence
+## Archived v2.1.3 Real E2E evidence (historical only)
 
 Recorded Short URL Real E2E (public TLS via operator edge / cloudflared) against
 production-equivalent tree `091f9a99b5e8d648099da97457781bcd24980142`. Candidate
@@ -303,4 +290,4 @@ If the bootstrap public certificate is invalid/expired/untrusted:
 - no Managed Host is created
 - ticket is not completed
 - management plane is unaffected
-- `zt1` fallback still works
+- explicit advanced `--long-bootstrap` with pinned-CA `zt1` still works; the default must not silently select it

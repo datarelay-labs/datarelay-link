@@ -132,9 +132,9 @@ grep -q 'zt1\.' "$OUT_ZT1" || { cat "$OUT_ZT1"; fail "zt1 package missing"; }
 if grep -q '/i/' "$OUT_ZT1"; then
   fail "short URL unexpectedly printed without bootstrap_hostname"
 fi
-pass "ZT1_FALLBACK_ABSENT_HOSTNAME"
+pass "ZT1_EXPLICIT_ADVANCED_LONG_MODE"
 
-# DNS public_url_host alone must stay on the pinned-CA zt1 fallback.
+# Explicit advanced --long-bootstrap must retain pinned-CA integrity; plain DNS alone does not bypass trust qualification.
 python3 - "$TREE/etc/drlink/config.json" <<'PY' || fail "set public_url_host domain"
 import json, sys
 from pathlib import Path
@@ -159,7 +159,7 @@ if grep -q '/i/' "$OUT_DOMAIN"; then
   cat "$OUT_DOMAIN"
   fail "public_url_host incorrectly enabled short URL without bootstrap_hostname"
 fi
-pass "PUBLIC_URL_HOST_DOMAIN_ZT1_FALLBACK"
+pass "PUBLIC_URL_HOST_DOMAIN_EXPLICIT_LONG_MODE"
 
 OUT_DOMAIN_WINDOWS="$WORKDIR/domain-windows-fallback.out"
 python3 "$ROOT/tools/frp-create-client" --one-line --long-bootstrap --platform windows --rdp \
@@ -190,7 +190,7 @@ if grep -q '/i/' "$OUT_DOMAIN_WINDOWS"; then
   cat "$OUT_DOMAIN_WINDOWS"
   fail "Windows public_url_host incorrectly enabled short URL without bootstrap_hostname"
 fi
-pass "WINDOWS_PUBLIC_URL_HOST_PINNED_CA_FALLBACK"
+pass "WINDOWS_EXPLICIT_LONG_MODE_PINNED_CA"
 
 # IP-selected public_url_host must not invent short URL from public_hostname.
 python3 - "$TREE/etc/drlink/config.json" <<'PY' || fail "set public_url_host IP"
@@ -214,7 +214,7 @@ grep -q "curl -fsSL --proto =https --cacert" "$OUT_IP_ID" \
 if grep -q '/i/' "$OUT_IP_ID"; then
   fail "IP public_url_host unexpectedly printed short URL"
 fi
-pass "PUBLIC_URL_HOST_IP_NO_SHORT_URL"
+pass "PUBLIC_URL_HOST_IP_ADVANCED_ONLY"
 
 python3 "$ROOT/tools/frp-server-set" bootstrap-hostname bootstrap.example.com >/dev/null
 
@@ -679,7 +679,7 @@ pass "REDACT_HELPER"
 
 # Real short-URL E2E mutates Server bootstrap_hostname and installer-url while
 # exercising fallback behavior. It must restore both before reporting PASS so
-# later Zero-Touch commands cannot silently expand back to pinned-CA fallback
+# later Zero-Touch commands cannot silently regress from compact HTTPS to long pinned-CA output
 # or advertise a stale installer source.
 RUNNER="$ROOT/tests/run-short-url-e2e.sh"
 grep -q '^snapshot_server_settings()' "$RUNNER" || fail "real E2E missing Server settings snapshot"
