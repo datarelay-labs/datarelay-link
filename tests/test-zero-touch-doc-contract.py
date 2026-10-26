@@ -43,8 +43,12 @@ class ZeroTouchDocContract(unittest.TestCase):
                       'signed', 'installed Source HEAD', 'no ticket'):
             with self.subTest(required=token):
                 self.assertIn(token.lower(), short.lower())
-        for token in ('U-009', 'O-002', 'A-018', 'short', 'long-bootstrap'):
-            self.assertIn(token, user)
+        for token in ('U-009', 'O-002', 'A-018', 'short'):
+            self.assertTrue(token in user, 'missing Full User scenario: ' + token)
+        # Older 116-ID E2E and its generated 100-ID profile intentionally
+        # retain scenario IDs and checksum parity; this focused policy lives
+        # in the new normative regression contract until next full gate revision.
+        self.assertIn('long-bootstrap', short)
         self.assertIn(ID, cli)
         self.assertIn('no ticket', cli.lower())
 
