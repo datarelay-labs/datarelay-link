@@ -21,7 +21,7 @@ import time
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from socketserver import ThreadingMixIn
 from typing import Any, Optional
-from urllib.parse import parse_qs, urlencode, urlparse
+from urllib.parse import parse_qs, urlencode, urlparse, urlsplit
 
 from drlink_ai_agent import AgentLoop, execute_local
 from drlink_mcp_server_executor import ExecutorDenied, execute_as_unprivileged_user
@@ -356,14 +356,63 @@ class MCPBridge:
         # auto_agents is a hermetic test seam only (see refresh_local_agents).
         self.auto_agents = auto_agents
 
+    def _native_public_url(self) -> Optional[str]:
+        """Opt-in public identity for the separately deployed Native Server MCP.
+
+        A direct-mode FRP Server cannot advertise MCP on its FRP TCP/443
+        listener. This *only* selects the authority of an independently
+        routed HTTPS Native MCP preview. The default product URL logic and
+        Direct-mode fail-closed guard are never changed.
+        """
+        if os.environ.get("DRLINK_MCP_SERVER_SELF_ENABLED") != "1":
+            return None
+        raw = str(os.environ.get("DRLINK_MCP_NATIVE_PUBLIC_URL") or "").strip()
+        if not raw:
+            return None
+        try:
+            u = urlsplit(raw)
+            name = u.hostname or ""
+            port = u.port
+            import ipaddress
+            if (u.scheme != "https" or u.username or u.password or
+                    not name or "." not in name or u.path not in ("/mcp", "/access/mcp") or
+                    u.query or u.fragment or u.netloc.endswith("@") or
+                    name in ("localhost", "localhost.localdomain")):
+                raise ValueError("invalid HTTPS MCP authority")
+            try:
+                ipaddress.ip_address(name)
+            except ValueError:
+                pass
+            else:
+                raise ValueError("public MCP authority cannot be an IP address")
+            if (port is not None and port < 1):
+                raise ValueError("invalid public HTTPS port")
+            canonical_host = name.encode("idna").decode("ascii").lower()
+            if not all(
+                len(label) in range(1, 64) and label[0].isalnum() and
+                label[-1].isalnum() and all(c.isalnum() or c == "-" for c in label)
+                for label in canonical_host.split(".")
+            ):
+                raise ValueError("invalid public hostname")
+        except (ValueError, UnicodeError):
+            raise ControlPlaneError("Invalid configured Native Server MCP HTTPS URL") from None
+        suffix = (":%s" % port) if port and port != 443 else ""
+        return "https://" + canonical_host + suffix + u.path
+
     def canonical_public_base(self) -> str:
         """Issuer/resource base from configured control identity, never request Host."""
+        native = self._native_public_url()
+        if native:
+            return native[:-4]
         url = self.plane.mcp_public_url()
         if url and url != "Not configured":
             return url[:-4] if url.endswith("/mcp") else url.rstrip("/")
         return "http://%s:%s" % (self.listen_host, self.listen_port)
 
     def canonical_resource(self) -> str:
+        native = self._native_public_url()
+        if native:
+            return native
         url = self.plane.mcp_public_url()
         if url and url != "Not configured":
             return url

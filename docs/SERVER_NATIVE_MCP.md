@@ -41,6 +41,85 @@ OAuth resource/issuer, explicit AI Access rules, user-accessible full-write
 MCP entitlement, real allow/deny E2E through ChatGPT, and recoverable
 rollout. Until then keep Desktop Commander connected.
 
+## Direct public access rollout: mcp.xdr.ooo/access/mcp
+
+The direct ChatGPT-native MCP endpoint is:
+
+```
+https://mcp.xdr.ooo/access/mcp
+```
+
+This name ALREADY has publicly trusted Let's Encrypt TLS and OAuth support.
+It is a **separate path** from the existing `https://mcp.xdr.ooo/mcp`.
+A dedicated user-owned (non-root) SSH reverse tunnel connects the public
+relay's `127.0.0.1:16107` directly to **access.xdr.ooo
+127.0.0.1:16106**. It is a network relay, not a DRLink Server Peer,
+Managed Host enrollment, new Agent or OpenAI Tunnel.
+
+The new path is not publicly installed until BOTH of these operator steps
+succeed. Exact frontend state, backup and rollback are mandatory.
+
+1. **On access.xdr.ooo as the authenticated SSH owner**, from the assigned
+   isolated feature worktree, upgrade the currently running, older Native
+   Preview to the tested exact source HEAD. This keeps local port 16106,
+   adds the canonical OAuth public resource/issuer and retains local
+   development execution OFF by default.
+
+```bash
+cd /home/aella/datarelay-link-worktrees/feat-v240-server-native-mcp-20261026
+HEAD_SHA="$(git rev-parse HEAD)"
+sudo /usr/bin/python3 tools/operator-native-mcp-upgrade.py --preflight --expected-head "$HEAD_SHA"
+sudo /usr/bin/python3 tools/operator-native-mcp-upgrade.py --apply --expected-head "$HEAD_SHA"
+sudo /usr/bin/python3 tools/operator-native-mcp-upgrade.py --verify
+```
+
+2. **On the existing public mcp.xdr.ooo DRLink relay**, use the staged
+   `/home/aella/operator-native-mcp-relay.py` script. It adds only exact
+   /access/mcp and /access/oauth/* proxy locations within the existing
+   public TLS SNI virtual host. It does not change the existing /mcp OAuth
+   or allocator, and verifies Nginx before reloading:
+
+```bash
+sudo /usr/bin/python3 /home/aella/operator-native-mcp-relay.py --preflight
+sudo /usr/bin/python3 /home/aella/operator-native-mcp-relay.py --apply
+sudo /usr/bin/python3 /home/aella/operator-native-mcp-relay.py --verify
+```
+
+3. **Back on access.xdr.ooo**, verify the full public path with real
+   HTTPS certificate validation and authentication separation:
+
+```bash
+python3 tools/check-native-mcp-public.py
+```
+
+The smoke MUST report: `NATIVE_PUBLIC_TLS=PASS`,
+`NATIVE_RESOURCE_METADATA=PASS`, `NATIVE_OAUTH_ISSUER=PASS`,
+`NATIVE_ANONYMOUS_DENY=PASS`, `PRIMARY_MCP_RESOURCE_PRESERVED=PASS`.
+A public GET /mcp yielding 404 is not evidence of failure: the MCP tool
+transport is authenticated POST /mcp. The correct unauthenticated response is
+HTTP 401, not an opened tools list.
+
+Only after these checks, in ChatGPT Plugins use **Add custom MCP server**,
+enter the URL above, select OAuth, authenticate with an explicitly authorized
+development AI Identity and confirm tools are discovered. On the Server,
+centralized privilege expansion is not permitted: create a distinct
+`server:self` AI Access WHITELIST Rule for the chosen identity and only the
+required host-info/file/Git operations with approved workspace paths.
+Automatic code execution remains OFF until the OS execution isolation,
+owner's precise file paths and high-risk user acceptance are demonstrated.
+
+**Rollback independently**: on access.xdr.ooo run
+`sudo /usr/bin/python3 tools/operator-native-mcp-upgrade.py --rollback`;
+on the public relay run
+`sudo /usr/bin/python3 /home/aella/operator-native-mcp-relay.py --rollback`.
+The legacy public /mcp and dev-drlink Server remain intact; neither script
+removes a DRLink Agent or the existing Native Preview database.
+
+This live endpoint must be retested after public DRLink TLS certificate
+renewal or frontend regeneration, because that regeneration can replace a
+custom Nginx include. Do not claim Desktop Commander replacement until
+ChatGPT performs direct file, test, Git and deployment E2E, including denies.
+
 ## Purpose and version
 
 The unreleased v2.4.0 candidate includes MCP according to the repository's

@@ -50,6 +50,65 @@ class ServerSelfMCPTest(unittest.TestCase):
                  "mode", "whitelist", "source", self.principal["name"],
                  "destination", "server:self", "permission", "server-host-info", "enabled")
 
+    def test_native_public_https_identity_is_separate_from_frp_direct_mode(self):
+        from drlink_control_db import ControlPlaneError
+        self.assertNotIn("https://native.xdr.ooo/mcp", self.bridge.canonical_resource())
+        self.assertEqual(self.plane.mcp_public_url(), "Not configured")
+        with patch.dict(os.environ, {
+            "DRLINK_MCP_NATIVE_PUBLIC_URL": "https://native.xdr.ooo/mcp",
+            "DRLINK_MCP_SERVER_SELF_ENABLED": "0",
+        }):
+            self.assertNotEqual(self.bridge.canonical_resource(),
+                                "https://native.xdr.ooo/mcp")
+        with patch.dict(os.environ, {
+            "DRLINK_MCP_NATIVE_PUBLIC_URL": "https://NATIVE.XDR.OOO/mcp",
+            "DRLINK_MCP_SERVER_SELF_ENABLED": "1",
+        }):
+            self.assertEqual(self.bridge.canonical_resource(),
+                             "https://native.xdr.ooo/mcp")
+            self.assertEqual(self.bridge.canonical_public_base(),
+                             "https://native.xdr.ooo")
+            self.assertEqual(self.bridge.oauth_metadata()["resource"],
+                             "https://native.xdr.ooo/mcp")
+            self.assertEqual(self.bridge.as_metadata()["issuer"],
+                             "https://native.xdr.ooo")
+            self.assertEqual(self.bridge.as_metadata()["authorization_endpoint"],
+                             "https://native.xdr.ooo/oauth/authorize")
+            self.assertIn("https://native.xdr.ooo/.well-known/oauth-protected-resource",
+                          self.bridge.www_authenticate_value())
+            self.assertEqual(self.plane.mcp_public_url(), "Not configured")
+        with patch.dict(os.environ, {
+            "DRLINK_MCP_NATIVE_PUBLIC_URL": "https://mcp.xdr.ooo/access/mcp",
+            "DRLINK_MCP_SERVER_SELF_ENABLED": "1",
+        }):
+            self.assertEqual(self.bridge.canonical_resource(),
+                             "https://mcp.xdr.ooo/access/mcp")
+            self.assertEqual(self.bridge.canonical_public_base(),
+                             "https://mcp.xdr.ooo/access")
+            self.assertEqual(self.bridge.oauth_metadata()["resource"],
+                             "https://mcp.xdr.ooo/access/mcp")
+            self.assertEqual(self.bridge.as_metadata()["issuer"],
+                             "https://mcp.xdr.ooo/access")
+            self.assertIn("https://mcp.xdr.ooo/access/.well-known/oauth-protected-resource",
+                          self.bridge.www_authenticate_value())
+        for bad_url in (
+            "http://native.xdr.ooo/mcp",
+            "https://native.xdr.ooo/",
+            "https://native.xdr.ooo/mcp?override=1",
+            "https://native.xdr.ooo/mcp#private",
+            "https://root:pass@native.xdr.ooo/mcp",
+            "https://127.0.0.1/mcp",
+            "https://localhost/mcp",
+            "https://native.xdr.ooo:abc/mcp",
+            "https://evil.example/mcp/../mcp",
+        ):
+            with patch.dict(os.environ, {
+                "DRLINK_MCP_NATIVE_PUBLIC_URL": bad_url,
+                "DRLINK_MCP_SERVER_SELF_ENABLED": "1",
+            }):
+                with self.assertRaises(ControlPlaneError, msg=bad_url):
+                    self.bridge.canonical_resource()
+
     def test_self_is_not_a_managed_host_or_network_object(self):
         self.assertIsNone(self.plane.get_object(v24.SERVER_SELF_TARGET))
         self.assertFalse(any(x["name"] == v24.SERVER_SELF_TARGET for x in self.plane.list_objects()))
