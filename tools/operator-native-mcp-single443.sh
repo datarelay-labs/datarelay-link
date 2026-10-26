@@ -7,7 +7,6 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 DOMAIN=mcp.link.xdr.ooo
-EXPECTED_IP=221.139.249.111
 BRANCH=feat/v240-server-native-mcp-20261026
 BACKUP_DIR=/var/backups/drlink-native-mcp-single443
 CONFIG=/etc/drlink/config.json
@@ -27,13 +26,14 @@ PY
 }
 
 check_dns() {
-  local ip
-  ip="$(getent ahostsv4 "$DOMAIN" | awk 'NR == 1 {print $1}')"
-  if [[ "$ip" != "$EXPECTED_IP" ]]; then
-    echo "ERROR: public DNS does not point to dev-drlink $EXPECTED_IP (actual: ${ip:-UNKNOWN})" >&2
+  local address
+  address="$(getent ahostsv4 "$DOMAIN" | awk 'NR == 1 {print $1}')"
+  if [[ -z "$address" ]] ||
+     ! ip -o -4 addr show scope global | awk '{split($4, a, "/"); print a[1]}' | grep -Fxq "$address"; then
+    echo "ERROR: $DOMAIN DNS does not match any IPv4 assigned to this dev Server" >&2
     return 1
   fi
-  echo "MCP_HOSTNAME_DNS=PASS"
+  echo "MCP_HOSTNAME_DNS_LOCAL_INTERFACE=PASS"
 }
 
 check_nginx_sites() {

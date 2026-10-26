@@ -20,7 +20,8 @@ SPEC.loader.exec_module(pre)
 class NativeLetsEncryptPreflightTests(unittest.TestCase):
     def scenario(self, *, cert: str, public: bool, resource: str):
         with (
-            patch.object(pre, "resolved_ipv4", return_value={pre.EXPECTED_IP}),
+            patch.object(pre, "resolved_ipv4", return_value={"203.0.113.10"}),
+            patch.object(pre, "local_global_ipv4", return_value={"203.0.113.10"}),
             patch.object(pre, "listening_ports", return_value={443, 16106}),
             patch.object(pre.drlink_mcp_tls, "acme_runtime_status",
                          return_value={"ok": True, "implementation": "python3-acme"}),
@@ -69,9 +70,10 @@ class NativeLetsEncryptPreflightTests(unittest.TestCase):
             (True, "PASS", True, "PASS"),
         )
         for dns, cert, tool, result in scenarios:
-            addresses = {pre.EXPECTED_IP} if dns else {"203.0.113.10"}
+            addresses = {"203.0.113.10"} if dns else {"198.51.100.20"}
             with (
                 patch.object(pre, "resolved_ipv4", return_value=addresses),
+                patch.object(pre, "local_global_ipv4", return_value={"203.0.113.10"}),
                 patch.object(pre, "public_certificate_status", return_value=cert),
                 patch.object(pre, "public_mcp_status", return_value=tool) as actual,
             ):
@@ -103,6 +105,20 @@ class NativeLetsEncryptPreflightTests(unittest.TestCase):
         self.assertNotIn("cloudflared", script)
         self.assertNotIn("curl -k", script)
         self.assertNotIn("certbot --standalone", script)
+
+    def test_local_global_ip_from_kernel_interfaces(self):
+        fake = subprocess.CompletedProcess(
+            [], 0, stdout=(
+                "2: eth0 inet 203.0.113.10/24 brd 203.0.113.255 scope global eth0\n"
+                "3: eth1 inet 198.51.100.30/25 brd 198.51.100.127 scope global eth1\n"
+            )
+        )
+        with patch.object(pre.subprocess, "run", return_value=fake) as called:
+            self.assertEqual(pre.local_global_ipv4(),
+                             {"203.0.113.10", "198.51.100.30"})
+            called.assert_called_once()
+            self.assertEqual(called.call_args.args[0],
+                             ["ip", "-o", "-4", "addr", "show", "scope", "global"])
 
     def test_ss_port_parser_no_mutations(self):
         fake = subprocess.CompletedProcess(

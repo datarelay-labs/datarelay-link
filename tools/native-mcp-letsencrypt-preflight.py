@@ -22,13 +22,26 @@ sys.path.insert(0, str(ROOT / "lib"))
 import drlink_mcp_tls
 
 DOMAIN = "mcp.link.xdr.ooo"
-EXPECTED_IP = "221.139.249.111"
 LOCAL_MCP = "http://127.0.0.1:16106"
 
 
 def resolved_ipv4() -> set[str]:
     return {item[4][0] for item in socket.getaddrinfo(
         DOMAIN, None, family=socket.AF_INET, type=socket.SOCK_STREAM)}
+
+
+def local_global_ipv4() -> set[str]:
+    """Compare DNS against addresses assigned to THIS Server, not a hardcoded lab IP."""
+    result = subprocess.run(
+        ["ip", "-o", "-4", "addr", "show", "scope", "global"],
+        check=True, capture_output=True, text=True, timeout=5,
+    )
+    addresses = set()
+    for line in result.stdout.splitlines():
+        parts = line.split()
+        if len(parts) > 3 and "/" in parts[3]:
+            addresses.add(parts[3].split("/", 1)[0])
+    return addresses
 
 
 def listening_ports() -> set[int]:
@@ -117,7 +130,8 @@ def public_mcp_status() -> bool:
 
 def preflight() -> int:
     ip = resolved_ipv4()
-    valid_dns = EXPECTED_IP in ip
+    interfaces = local_global_ipv4()
+    valid_dns = bool(ip & interfaces)
     ports = listening_ports()
     acme = drlink_mcp_tls.acme_runtime_status()
     cert = public_certificate_status()
@@ -148,7 +162,7 @@ def verify_public() -> int:
     """Verify actual public HTTPS, MCP 401, and OAuth without root or TLS bypass."""
     try:
         resolved = resolved_ipv4()
-        good_dns = EXPECTED_IP in resolved
+        good_dns = bool(resolved & local_global_ipv4())
         good_cert = public_certificate_status() == "PASS"
         good_mcp = public_mcp_status() if good_dns and good_cert else False
     except OSError as exc:

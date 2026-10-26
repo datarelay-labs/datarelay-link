@@ -44,7 +44,7 @@ rollout. Until then keep Desktop Commander connected.
 ## Direct HTTPS MCP on this host, with Let's Encrypt (owner-selected)
 
 **Canonical endpoint:** `https://mcp.link.xdr.ooo/mcp`.
-**Actual Server:** dev-drlink / access.xdr.ooo (`221.139.249.111`).
+**Actual Server:** dev-drlink / access.xdr.ooo (public DNS verified to match this host's IPv4 interface).
 **Public Native MCP backend after supported single443 reinstall:** the installed
 DRLink Bridge at `127.0.0.1:6103`. The older isolated v2.4 Native Preview at
 `127.0.0.1:16106` remains separate and does not serve public traffic.
@@ -58,7 +58,7 @@ No private-CA or insecure TLS bypass is an acceptance result.
 
 ### Confirmed live constraints
 
-- DNS A `mcp.link.xdr.ooo → 221.139.249.111` is correct.
+- DNS A for `mcp.link.xdr.ooo` resolves to the same public IPv4 currently assigned to this development Server. Verify the match dynamically before changing services.
 - Existing FRP Direct listener owns TCP/443; its self-signed certificate
   is not a ChatGPT-trusted web certificate.
 - TCP/80 has no listener and a remote TCP/80 attempt returned connection
