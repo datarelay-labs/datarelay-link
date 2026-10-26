@@ -12,7 +12,7 @@ SSH=(ssh -o BatchMode=yes -o ConnectTimeout=8 -o StrictHostKeyChecking=yes
   -o UserKnownHostsFile=/home/aella/.ssh/known_hosts
   -i /home/aella/.ssh/mcp_link_ed25519)
 
-if [[ -n "$(git status --porcelain --untracked-files=no)" ]]; then
+if [[ "${1:---check}" == "--apply" ]] && [[ -n "$(git status --porcelain --untracked-files=no)" ]]; then
   echo "ERROR: Candidate worktree has uncommitted changes. No deployment." >&2
   exit 1
 fi
@@ -30,7 +30,15 @@ echo "Developer local execution: remains disabled"
 echo
 
 if [[ "${1:---check}" == "--check" ]]; then
-  python3 tools/operator-native-mcp-upgrade.py --preflight --expected-head "$SHA"
+  # The root-owned upgrade ledger is intentionally not readable by aella.
+  # Inspect only the public local listener; privileged upgrade preflight is
+  # performed separately by sudo inside --apply.
+  systemctl is-active --quiet drlink-mcp-native-preview.service
+  response="$(curl -sS --max-time 6 -X POST -H 'Content-Type: application/json' -d '{"jsonrpc":"2.0","method":"tools/list","id":1}' -o /dev/null -w '%{http_code}' http://127.0.0.1:16106/mcp)"
+  if [[ "$response" != "401" ]]; then
+    echo "ERROR: Native MCP local authentication boundary is not 401 (got $response)" >&2
+    exit 1
+  fi
   "${SSH[@]}" "$RELAY_USER" "test -f '$RELAY_TOOL' && ss -lnt | grep -q '127.0.0.1:16107'"
   echo "DIRECT_NATIVE_MCP_NONROOT_CHECK=PASS"
   echo "Run: bash tools/activate-native-mcp.sh --apply"
