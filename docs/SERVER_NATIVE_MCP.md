@@ -62,9 +62,16 @@ The existing binary `/usr/local/bin/cloudflared` (2026.8.3) and
 outbound Cloudflare TCP/7844 are available on dev-drlink. This is a
 Cloudflare network connector only: **not** an OpenAI Tunnel, a new DRLink
 Agent, a central DRLink Server-peer enrollment or another user VM.
-Cloudflare provides public HTTPS with a trusted certificate for
-`mcp.link.xdr.ooo` while routing to the local Native MCP over HTTP on
-`127.0.0.1:16106`. DRLink's own OAuth and AI Access still enforce auth.
+Cloudflare can provide public HTTPS while routing to the local
+Native MCP over HTTP on `127.0.0.1:16106`, **but only after the edge
+certificate covers the requested public hostname**. The nested hostname
+`mcp.link.xdr.ooo` is **not covered by the default Universal SSL
+certificate for the `xdr.ooo` full-setup zone**. Check Cloudflare SSL/TLS →
+Edge Certificates; provision **Total TLS, an Advanced Certificate, or a
+trusted custom certificate** covering exactly `mcp.link.xdr.ooo`.
+The `activate-native-mcp-link.sh --apply` script checks real trusted TLS
+and refuses to change the Native MCP service until it passes.
+DRLink's own OAuth and AI Access still enforce authentication.
 
 The user-owned systemd service
 `drlink-native-mcp-cloudflare.service` is pre-staged but **disabled**
@@ -88,7 +95,24 @@ no Cloudflare dashboard credentials/authorized DNS-write connector):
    masked prompt on dev-drlink below. Do not add a Cloudflare Access
    login requirement that would preempt DRLink's OAuth flow.
 
-On dev-drlink over direct SSH:
+On dev-drlink over direct SSH, after the Cloudflare Dashboard route
+is created, use the single activation command:
+
+```bash
+cd /home/aella/datarelay-link-worktrees/feat-v240-server-native-mcp-20261026
+bash tools/activate-native-mcp-link.sh --check
+bash tools/activate-native-mcp-link.sh --apply
+```
+
+The second command requires a typed ACTIVATE confirmation, asks for sudo
+only to update the existing isolated Native MCP Preview service, privately
+prompts for the Cloudflare connector token, and tests the real external
+HTTPS/OAuth/401. It refuses to proceed if DNS is still the old Direct-mode
+A record; no FRP :443 cutover is performed. Re-running the command after a
+partial failure preserves the already-retargeted service instead of
+overwriting its root-only backup.
+
+Equivalent operator steps (for diagnosis or manual recovery):
 
 ```bash
 cd /home/aella/datarelay-link-worktrees/feat-v240-server-native-mcp-20261026

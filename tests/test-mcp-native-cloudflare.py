@@ -62,6 +62,17 @@ class NativeCloudflareTests(unittest.TestCase):
             self.assertEqual(f.read_bytes(), b"fake-private-token\n")
             self.assertEqual(f.stat().st_mode & 0o777, 0o600)
 
+    def test_activation_requires_real_ca_trusted_nested_host_cert_first(self):
+        script = (ROOT / "tools/activate-native-mcp-link.sh").read_text()
+        self.assertIn("ssl.create_default_context().wrap_socket", script)
+        self.assertIn("CLOUDFLARE_EDGE_TLS=NOT_READY", script)
+        self.assertIn("Total TLS", script)
+        self.assertLess(
+            script.index("edge_tls_check\n\necho \"Activate"),
+            script.index("sudo /usr/bin/python3 tools/operator-native-mcp-domain.py --preflight"),
+        )
+        self.assertIn("FRP_443_UNCHANGED=PASS", script)
+
     def test_privileged_user_is_denied(self):
         with patch.object(cf.os, "getuid", return_value=0), \
              patch.object(cf.os, "geteuid", return_value=0):
