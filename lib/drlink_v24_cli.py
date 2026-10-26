@@ -958,6 +958,8 @@ def _show_ai_policy(plane: ControlPlane, rest: list[str]) -> int:
             "SELECT name FROM object_groups WHERE id = ?", (row["destination_ref_id"],)
         ).fetchone()
         dest_label = dest["name"] if dest else "-"
+    elif row["destination_ref_kind"] == "server" and row["destination_ref_id"] == v24.SERVER_SELF_REF_ID:
+        dest_label = v24.SERVER_SELF_TARGET
     perm_label = "-"
     if row["permission_ref_kind"] == "permission_object" and row["permission_ref_id"]:
         perm = plane.conn.execute(

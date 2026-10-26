@@ -43,6 +43,7 @@ External copies, Project/chat attachments, exported snapshots, and same-named do
 | Upgrade / release channels | `UPGRADE.md` |
 | Remote Service + Remote Access operation | `REMOTE_ACCESS.md` |
 | AI Identity / AI Access / MCP | `AI_ACCESS_MCP.md` |
+| Native Server-self MCP (v2.4, optional/unqualified candidate) | `SERVER_NATIVE_MCP.md` |
 | Troubleshooting | `TROUBLESHOOTING.md` |
 | Deployment topology | `DEPLOYMENT_MODES.md` |
 | Windows Agent details | `WINDOWS_CLIENT.md` |

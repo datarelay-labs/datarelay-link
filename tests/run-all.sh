@@ -124,6 +124,8 @@ python3 tests/test-restore-readiness.py
 ./tests/test-cli-information-architecture.sh
 python3 tests/test-chatgpt-owner-acceptance.py
 python3 tests/test-ai-access-mcp-e2e.py
+python3 tests/test-mcp-server-self.py
+python3 tests/test-mcp-server-local-executor.py
 python3 tests/test-mcp-public-endpoint-e2e.py
 python3 tests/test-mcp-public-tls-lifecycle.py
 python3 tests/test-mcp-remote-connector-interop.py

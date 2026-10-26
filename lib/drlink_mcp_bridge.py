@@ -24,6 +24,7 @@ from typing import Any, Optional
 from urllib.parse import parse_qs, urlencode, urlparse
 
 from drlink_ai_agent import AgentLoop, execute_local
+from drlink_mcp_server_executor import ExecutorDenied, execute_as_unprivileged_user
 from drlink_control_db import ControlPlaneError, resolve_root
 from drlink_control_plane import (
     AI_CAPABILITIES,
@@ -44,9 +45,10 @@ MCP_SERVER_NAME = "data-relay-link"
 MCP_SERVER_VERSION = "2.4.0"
 MCP_SERVER_TITLE = "Data Relay Link"
 MCP_INSTRUCTIONS = (
-    "Data Relay Link MCP Bridge. Tools operate on Managed Hosts authorized by "
-    "AI Access policy. Authenticated does not mean authorized. Every tool requires "
-    "OAuth; DRLink re-evaluates AI Identity and AI Access on each tools/call."
+    "Data Relay Link MCP Bridge. Tools operate on authorized Managed Hosts; "
+    "the Server-self target is optional and separately authorized by AI Access. "
+    "OAuth authenticates the AI Identity but never grants permissions. "
+    "DRLink re-evaluates AI Identity and AI Access on each tools/call."
 )
 SERVER_INFO_META = "io.modelcontextprotocol/serverInfo"
 WWW_AUTHENTICATE_META = "mcp/www_authenticate"
@@ -95,6 +97,41 @@ def public_rate_source(peer: str, headers) -> str:
 
 # name, title, description, props, annotations
 TOOL_DEFS = (
+    (
+        "get_server",
+        "Get Local DRLink Server",
+        "Discover this DRLink Server only when Server-self MCP is enabled and host-info is explicitly authorized",
+        {},
+        {"readOnlyHint": True, "destructiveHint": False, "openWorldHint": False, "idempotentHint": True},
+    ),
+    (
+        "server_read_file",
+        "Read Server-local file",
+        "Read a scoped development file through the separate unprivileged Server executor",
+        {"path": "string"},
+        {"readOnlyHint": True, "destructiveHint": False, "openWorldHint": False, "idempotentHint": True},
+    ),
+    (
+        "server_write_file",
+        "Write Server-local file",
+        "Write a scoped development file; requires file-write AI Access and Server executor opt-in",
+        {"path": "string", "content": "string"},
+        {"readOnlyHint": False, "destructiveHint": True, "openWorldHint": False},
+    ),
+    (
+        "server_delete_file",
+        "Delete Server-local file",
+        "Delete a scoped development file; requires file-write AI Access and Server executor opt-in",
+        {"path": "string"},
+        {"readOnlyHint": False, "destructiveHint": True, "openWorldHint": False},
+    ),
+    (
+        "server_git",
+        "Read Server Git state",
+        "Run only allowlisted read-only Git commands using argv and cwd in an approved worktree",
+        {"cwd": "string", "argv": "array"},
+        {"readOnlyHint": True, "destructiveHint": False, "openWorldHint": False, "idempotentHint": True},
+    ),
     (
         "list_hosts",
         "List Managed Hosts",
@@ -231,7 +268,8 @@ def _structured_result(data, *, text: Optional[str] = None, is_error: bool = Fal
 
 
 def _tool_descriptor(name: str, title: str, desc: str, props: dict, annotations: dict) -> dict:
-    schema_props = {k: {"type": v} for k, v in props.items()}
+    schema_props = {k: ({"type": "array", "items": {"type": "string"}} if v == "array" else {"type": v})
+                    for k, v in props.items()}
     required = list(props.keys())
     input_schema = {"type": "object", "properties": schema_props}
     if required:
@@ -737,7 +775,74 @@ class MCPBridge:
             return winner.get("name")
         return None
 
+    def _call_server_self(self, principal, name: str, arguments: dict) -> dict:
+        """Server-target policy is independent of enrolled Managed Host identity."""
+        target = v24.SERVER_SELF_TARGET
+        start = time.monotonic()
+        local_actions = {
+            "server_read_file": ("read_file", "read_file"),
+            "server_write_file": ("write_file", "write_file"),
+            "server_delete_file": ("delete_file", "delete_file"),
+            "server_git": ("exec", "run_git"),
+        }
+        canonical = "get_system_info" if name in ("get_server", "get_system_info") else (
+            local_actions[name][0] if name in local_actions else None
+        )
+        operand = (str(arguments.get("path") or "") if name != "server_git" else
+                   str(arguments.get("cwd") or ""))
+        decision = None
+        reason = "Server-self MCP disabled or AI Access implicit DENY"
+        result = "DENY"
+        payload = None
+
+        # A caller cannot impersonate a Server by providing a managed endpoint name.
+        if os.environ.get("DRLINK_MCP_SERVER_SELF_ENABLED") == "1" and canonical:
+            decision = self._authorize(principal, target, canonical, operand or None)
+            if decision["action"] == "ALLOW":
+                if name in ("get_server", "get_system_info"):
+                    uname = os.uname()
+                    if name == "get_server":
+                        payload = {"target": target, "type": "server",
+                                   "status": "available", "nodename": uname.nodename}
+                    else:
+                        payload = {"sysname": uname.sysname, "nodename": uname.nodename,
+                                   "release": uname.release, "machine": uname.machine}
+                    result = "ALLOW"
+                elif os.environ.get("DRLINK_MCP_SERVER_LOCAL_EXEC_ENABLED") != "1":
+                    reason = "Server-local executor is disabled"
+                else:
+                    action = local_actions[name][1]
+                    request = {"action": action}
+                    if name == "server_git":
+                        request.update({"cwd": arguments.get("cwd"), "argv": arguments.get("argv")})
+                    else:
+                        request["path"] = arguments.get("path")
+                        if name == "server_write_file":
+                            request["content"] = arguments.get("content")
+                    try:
+                        payload = execute_as_unprivileged_user(request)
+                        result = "ALLOW"
+                    except (ExecutorDenied, OSError, ValueError, TypeError):
+                        reason = "Server-local executor denied or could not complete operation"
+            else:
+                reason = "AI Access implicit DENY"
+        self.plane.record_ai_activity(
+            principal=principal["name"],
+            endpoint=target,
+            capability=name,
+            result=result,
+            rule=self._rule_name(decision),
+            operand=operand or None,
+            duration_ms=int((time.monotonic() - start) * 1000),
+        )
+        if result != "ALLOW":
+            return _text_result("DENY: " + reason, is_error=True)
+        return _structured_result(payload)
+
     def call_tool(self, principal, name: str, arguments: dict) -> dict:
+        if name in ("get_server", "server_read_file", "server_write_file",
+                    "server_delete_file", "server_git"):
+            return self._call_server_self(principal, name, arguments)
         if name not in AI_CAPABILITIES:
             self.plane.record_ai_activity(
                 principal=principal["name"],
@@ -783,6 +888,8 @@ class MCPBridge:
             )
             return _structured_result({"hosts": hosts}, text=json.dumps(hosts, indent=2))
         endpoint = str(arguments.get("endpoint") or arguments.get("host") or "")
+        if endpoint == v24.SERVER_SELF_TARGET:
+            return self._call_server_self(principal, name, arguments)
         if not endpoint:
             raise ControlPlaneError("endpoint is required")
         operand = arguments.get("path") or arguments.get("command") or arguments.get("operand")
