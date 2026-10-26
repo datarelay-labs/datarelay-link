@@ -3812,12 +3812,22 @@ def _resolve_network_selector(plane_db, token: str, *, plane: str, field: str):
     ok, bad = plane_db.group_valid_for(ref, plane, field)
     if not ok:
         if plane == "internet" and field == "destination":
-            raise ControlPlaneError(
-                "ERROR:\nNetwork Group '%s' contains Managed Host '%s'.\n\n"
-                "Managed Hosts are valid Internet Access sources,\n"
-                "but cannot be used as Internet Access destinations.\n\n"
-                "No changes were applied." % (ref["name"], bad)
-            )
+            member = plane_db.get_object(bad)
+            if member is not None and member["type"] == "managed_endpoint":
+                raise ControlPlaneError(
+                    "ERROR:\nNetwork Group '%s' contains Managed Host '%s'.\n\n"
+                    "Managed Hosts are valid Internet Access sources,\n"
+                    "but cannot be used as Internet Access destinations.\n\n"
+                    "No changes were applied." % (ref["name"], bad)
+                )
+            if member is not None and member["type"] in ("host", "network"):
+                kind_label = "IP" if member["type"] == "host" else "CIDR"
+                raise ControlPlaneError(
+                    "ERROR:\nNetwork Group '%s' contains non-public %s Network Object '%s'.\n\n"
+                    "Internet Access destinations require public IP or CIDR Network Objects,\n"
+                    "or FQDN Network Objects. Inspect the listed member and choose a public destination.\n\n"
+                    "No changes were applied." % (ref["name"], kind_label, bad)
+                )
         raise ControlPlaneError(
             cli_error(
                 "Network Group is not valid for %s Access %s (invalid member: %s)."

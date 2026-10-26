@@ -16,6 +16,76 @@ sys.dont_write_bytecode = True
 sys.path.insert(0, str(ROOT / "lib"))
 import frp_doctor as doctor
 import frp_ctl_grammar as grammar
+from drlink_control_plane import ControlPlane, ControlPlaneError
+import drlink_v24 as v24
+
+
+class InternetDestinationGroupGuidanceTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory(prefix="drlink-destination-guidance-")
+        root = Path(self.tmp.name)
+        (root / "etc/drlink").mkdir(parents=True)
+        (root / "etc/drlink/config.json").write_text('{"role":"server"}\n')
+        self.env = patch.dict(os.environ, {"FRP_DEPLOY_TEST_ROOT": self.tmp.name,
+                                           "FRP_SKIP_SYSTEMD": "1", "DRLINK_CONFIRM": "yes"})
+        self.env.start()
+        self.plane = ControlPlane(self.tmp.name)
+        v24.ensure_v2_schema(self.plane.conn)
+        v24.set_network_object(self.plane, "office", type="ip", value="10.20.30.40", oneshot=True)
+        v24.set_service_object(self.plane, "web", type="tcp", port=443, oneshot=True)
+
+    def tearDown(self):
+        self.plane.close()
+        self.env.stop()
+        self.tmp.cleanup()
+
+    def _rejected(self, destination):
+        before = "\n".join(self.plane.conn.iterdump())
+        with self.assertRaises(ControlPlaneError) as caught:
+            v24.set_access_rule(self.plane, "internet", "blocked", mode="whitelist",
+                                source="office", destination=destination, service="web",
+                                enabled=False, oneshot=True)
+        self.assertEqual(before, "\n".join(self.plane.conn.iterdump()))
+        return str(caught.exception)
+
+    def test_nonpublic_ip_group_names_actual_kind_and_preserves_denial(self):
+        for index, address in enumerate(("10.20.30.41", "192.0.2.41", "fd00::41")):
+            with self.subTest(address=address):
+                name = "ip-%d" % index
+                v24.set_network_object(self.plane, name, type="ip", value=address, oneshot=True)
+                v24.set_network_group(self.plane, "group-" + name, members=[name], oneshot=True)
+                text = self._rejected("group-" + name)
+                self.assertIn("non-public IP Network Object '%s'" % name, text)
+                self.assertNotIn("contains Managed Host", text)
+                self.assertIn("public IP", text)
+
+    def test_nonpublic_cidr_group_names_actual_leaf_and_preserves_denial(self):
+        for index, address in enumerate(("10.0.0.0/8", "192.0.2.0/24", "fd00::/64")):
+            with self.subTest(address=address):
+                name = "cidr-%d" % index
+                v24.set_network_object(self.plane, name, type="cidr", value=address, oneshot=True)
+                v24.set_network_group(self.plane, "group-" + name, members=[name], oneshot=True)
+                text = self._rejected("group-" + name)
+                self.assertIn("non-public CIDR Network Object '%s'" % name, text)
+                self.assertIn("group-" + name, text)
+                self.assertNotIn("contains Managed Host", text)
+
+    def test_real_managed_host_group_remains_explicitly_rejected(self):
+        self.plane.upsert_client("managed-client", label="managed", hostname="managed",
+                                 addresses=[{"address": "8.8.8.8", "active": True}])
+        v24.set_network_group(self.plane, "managed-group", members=["managed"], oneshot=True)
+        text = self._rejected("managed-group")
+        self.assertIn("contains Managed Host 'managed'", text)
+
+    def test_public_ip_and_cidr_groups_remain_valid_destinations(self):
+        for index, (kind, address) in enumerate((("ip", "8.8.8.8"), ("cidr", "8.8.8.0/24"))):
+            name = "public-%d" % index
+            v24.set_network_object(self.plane, name, type=kind, value=address, oneshot=True)
+            v24.set_network_group(self.plane, "group-" + name, members=[name], oneshot=True)
+            v24.set_access_rule(self.plane, "internet", "allowed-%d" % index,
+                                mode="whitelist", source="office", destination="group-" + name,
+                                service="web", enabled=False, oneshot=True)
+            self.assertIsNotNone(self.plane._get_rule("internet", "allowed-%d" % index))
 
 
 class InternetAccessRecoveryGuidanceTests(unittest.TestCase):
