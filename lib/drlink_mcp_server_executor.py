@@ -132,21 +132,45 @@ def _write(path: str, content: str) -> dict:
     parent = _parent_fd(root, parts)
     tmp = ".drlink-server-mcp-" + secrets.token_hex(12)
     try:
+        mode = 0o600
+        previous = None
         try:
             old_fd = _regular_fd(parent, parts[-1])
         except FileNotFoundError:
             pass
         else:
-            os.close(old_fd)
+            try:
+                previous = os.fstat(old_fd)
+                # Replacing another account's file changes its owner; deny.
+                if (previous.st_uid != os.geteuid() or previous.st_gid != os.getegid()
+                        or previous.st_nlink != 1):
+                    raise ExecutorDenied("File ownership or hard-link safety check failed")
+                mode = stat.S_IMODE(previous.st_mode)
+                if mode & 0o6000:
+                    raise ExecutorDenied("Privileged file mode is not editable")
+            finally:
+                os.close(old_fd)
         fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
                      0o600, dir_fd=parent)
         try:
+            os.fchmod(fd, mode)
             offset = 0
             while offset < len(data):
                 offset += os.write(fd, data[offset:])
             os.fsync(fd)
         finally:
             os.close(fd)
+        if previous is not None:
+            current = os.stat(parts[-1], dir_fd=parent, follow_symlinks=False)
+            if (current.st_dev, current.st_ino) != (previous.st_dev, previous.st_ino):
+                raise ExecutorDenied("File changed while validating replacement")
+        else:
+            try:
+                os.stat(parts[-1], dir_fd=parent, follow_symlinks=False)
+            except FileNotFoundError:
+                pass
+            else:
+                raise ExecutorDenied("File appeared before creation")
         os.replace(tmp, parts[-1], src_dir_fd=parent, dst_dir_fd=parent)
         os.fsync(parent)
     finally:

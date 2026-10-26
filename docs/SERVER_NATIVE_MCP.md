@@ -86,6 +86,37 @@ PKI, credentials, SSH material or live production content among allowed roots.
 11. Server-peer mutual-auth identity/revocation/delegation/E2E for SMCP-08.
 12. Exact HEAD full v2.4 product gates, twice where required, before stable.
 
+## Development Server operator rollout
+
+Use the opt-in operator-only `tools/operator-native-mcp-preview.py` for an
+isolated DRLink Server Native MCP preview on `dev-drlink`/`access.xdr.ooo`.
+It installs **only a separate loopback service** on TCP `127.0.0.1:16106`,
+preserving existing DRLink Server, Agent, public 443 and MCP services. The
+installer makes a consistent root-only SQLite backup before activation and
+includes verification and rollback. Exact Git SHA is mandatory.
+
+```bash
+cd /home/aella/datarelay-link-worktrees/feat-v240-server-native-mcp-20261026
+HEAD_SHA="$(git rev-parse HEAD)"
+python3 tools/operator-native-mcp-preview.py --preflight --expected-head "$HEAD_SHA"
+sudo /usr/bin/python3 tools/operator-native-mcp-preview.py --apply --expected-head "$HEAD_SHA"
+python3 tools/operator-native-mcp-preview.py --verify
+```
+
+If the preview service fails, preserve system logs and run only its own rollback:
+
+```bash
+sudo /usr/bin/python3 tools/operator-native-mcp-preview.py --rollback
+```
+
+Preview defaults: `server:self` discovery capability ON but **AI Access
+authorization still requires an explicit verified AI Identity and Rule**.
+The Server-local developer file/Git executor remains OFF. Public ChatGPT
+connection is **not yet ready** until `access.xdr.ooo/mcp` has a publicly
+trusted TLS certificate, correct OAuth discovery and explicit routing to this
+preview port. Current public `access.xdr.ooo` TLS is self-signed. Do not
+skip TLS checks or overwrite the existing public 443 listener.
+
 ## Deployment state
 
 Feature flags are OFF. No Agent should be installed on a DRLink Server merely

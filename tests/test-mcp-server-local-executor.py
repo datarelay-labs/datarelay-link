@@ -44,6 +44,29 @@ class ServerLocalWorkerTests(unittest.TestCase):
         self.assertTrue(self.run_worker("delete_file", path=str(path))["deleted"])
         self.assertFalse(path.exists())
 
+    def test_existing_file_mode_preserved_and_unsafe_replacements_denied(self):
+        path = self.path / "editable.py"
+        path.write_text("old")
+        path.chmod(0o755)
+        initial = path.stat()
+        self.run_worker("write_file", path=str(path), content="new")
+        final = path.stat()
+        self.assertEqual(final.st_mode & 0o777, 0o755)
+        self.assertEqual((final.st_uid, final.st_gid), (initial.st_uid, initial.st_gid))
+        self.assertEqual(path.read_text(), "new")
+
+        other = self.path / "another-name.py"
+        os.link(path, other)
+        with self.assertRaisesRegex(ExecutorDenied, "hard-link"):
+            self.run_worker("write_file", path=str(path), content="bad")
+        self.assertEqual(path.read_text(), "new")
+
+        other.unlink()
+        with patch("drlink_mcp_server_executor.os.geteuid", return_value=initial.st_uid + 1):
+            with self.assertRaisesRegex(ExecutorDenied, "ownership"):
+                self.run_worker("write_file", path=str(path), content="bad")
+        self.assertEqual(path.read_text(), "new")
+
     def test_fail_closed_paths_symlink_special_and_secrets(self):
         (self.path / "good.txt").write_text("good")
         (self.path / "redirect").symlink_to(self.path)
