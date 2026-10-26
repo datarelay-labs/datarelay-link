@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import importlib.util
 import os
+import subprocess
+import urllib.error
 from pathlib import Path
 import shutil
 import tempfile
@@ -62,6 +64,94 @@ class NativePreviewRolloutTests(unittest.TestCase):
             ):
                 rollout.preflight("0" * 40)
             plane.close()
+
+    def test_preview_startup_waits_for_local_listener(self):
+        transient = urllib.error.URLError(ConnectionRefusedError(111, "Connection refused"))
+        with (
+            patch.object(rollout, "local_probe", side_effect=[transient, transient, None]) as probe,
+            patch.object(rollout.time, "sleep") as pause,
+        ):
+            rollout.wait_ready(timeout_seconds=2)
+        self.assertEqual(probe.call_count, 3)
+        self.assertEqual(pause.call_count, 2)
+
+    def test_preview_startup_does_not_retry_auth_or_metadata_failures(self):
+        with patch.object(rollout, "local_probe",
+                          side_effect=RuntimeError("Unexpected MCP status: 200")) as probe:
+            with self.assertRaisesRegex(RuntimeError, "Unexpected MCP status"):
+                rollout.wait_ready(timeout_seconds=2)
+        probe.assert_called_once()
+
+    def test_preview_timeout_reports_transport_failure(self):
+        with (
+            patch.object(rollout, "local_probe",
+                         side_effect=urllib.error.URLError("connection refused")),
+            patch.object(rollout.time, "monotonic", side_effect=[0.0, 2.0]),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "listener did not become ready"):
+                rollout.wait_ready(timeout_seconds=1)
+
+    def test_resume_requires_root_and_cannot_reinstall(self):
+        with patch.object(rollout.os, "geteuid", return_value=1000):
+            with self.assertRaisesRegex(RuntimeError, "--resume requires direct operator root"):
+                rollout.resume(rollout.source_head())
+
+    def test_resume_reuses_verified_snapshot_without_reinstalling(self):
+        with tempfile.TemporaryDirectory(prefix="drlink-preview-resume-") as directory:
+            releases = Path(directory) / "releases"
+            releases.mkdir()
+            with patch.object(rollout, "ROOT_INSTALL", releases):
+                pinned = rollout.source_head()
+                snapshot = rollout.immutable_snapshot(pinned)
+                unit = Path(directory) / "preview.service"
+                unit.write_text(rollout.unit_content(snapshot), encoding="utf-8")
+                calls = []
+
+                def fake_command(argv, *, check=True, capture=True):
+                    calls.append(list(argv))
+                    if argv == ["systemctl", "is-active", "--quiet", rollout.SERVICE]:
+                        active = sum(
+                            c == ["systemctl", "is-active", "--quiet", rollout.SERVICE]
+                            for c in calls
+                        )
+                        return subprocess.CompletedProcess(argv, 3 if active == 1 else 0)
+                    return subprocess.CompletedProcess(argv, 0)
+
+                with (
+                    patch.object(rollout, "UNIT", unit),
+                    patch.object(rollout.os, "geteuid", return_value=0),
+                    patch.object(rollout, "root_owned", return_value=True),
+                    patch.object(rollout, "command", side_effect=fake_command),
+                    patch.object(rollout, "port_available", return_value=True),
+                    patch.object(rollout, "wait_ready") as ready,
+                    patch.object(rollout, "backup_db") as backup,
+                    patch.object(rollout, "immutable_snapshot") as reinstall,
+                ):
+                    rollout.resume(pinned)
+                    ready.assert_called_once()
+                    backup.assert_not_called()
+                    reinstall.assert_not_called()
+                self.assertIn(["systemctl", "start", rollout.SERVICE], calls)
+
+    def test_resume_rejects_changed_snapshot(self):
+        with tempfile.TemporaryDirectory(prefix="drlink-preview-tamper-") as directory:
+            releases = Path(directory) / "releases"
+            releases.mkdir()
+            with patch.object(rollout, "ROOT_INSTALL", releases):
+                pinned = rollout.source_head()
+                snapshot = rollout.immutable_snapshot(pinned)
+                unit = Path(directory) / "preview.service"
+                unit.write_text(rollout.unit_content(snapshot), encoding="utf-8")
+                (snapshot / "lib/drlink_mcp_bridge.py").write_text("tampered\n")
+                with (
+                    patch.object(rollout, "UNIT", unit),
+                    patch.object(rollout.os, "geteuid", return_value=0),
+                    patch.object(rollout, "root_owned", return_value=True),
+                    patch.object(rollout, "command") as command,
+                ):
+                    with self.assertRaisesRegex(RuntimeError, "snapshot mismatch"):
+                        rollout.resume(pinned)
+                    command.assert_not_called()
 
     def test_public_port_is_not_used_by_local_preview(self):
         self.assertEqual(rollout.PORT, 16106)

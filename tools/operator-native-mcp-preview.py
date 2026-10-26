@@ -221,6 +221,29 @@ def local_probe():
     print("LOCAL_OAUTH_METADATA=PASS")
 
 
+def wait_ready(timeout_seconds: float = 15.0):
+    """Wait for the newly started service to bind its loopback MCP port.
+
+    systemd Type=simple considers ExecStart successful before Python finishes
+    importing modules, initializing SQLite and binding the HTTP listener.
+    Only connection failures are retried; authentication/metadata errors fail.
+    """
+    deadline = time.monotonic() + timeout_seconds
+    last_error = None
+    while True:
+        try:
+            local_probe()
+            return
+        except (urllib.error.URLError, ConnectionError, TimeoutError) as exc:
+            last_error = type(exc).__name__
+            if time.monotonic() >= deadline:
+                raise RuntimeError(
+                    f"MCP preview listener did not become ready within {timeout_seconds:g}s "
+                    f"(last network error: {last_error}); inspect service journal"
+                ) from None
+            time.sleep(min(0.25, max(0.0, deadline - time.monotonic())))
+
+
 def apply(expected: str):
     if os.geteuid() != 0:
         raise RuntimeError("--apply requires direct operator root execution")
@@ -234,7 +257,7 @@ def apply(expected: str):
     command(["systemctl", "daemon-reload"])
     command(["systemctl", "start", SERVICE])
     try:
-        local_probe()
+        wait_ready()
         command(["systemctl", "is-active", "--quiet", SERVICE])
     except Exception:
         command(["systemctl", "stop", SERVICE], check=False)
@@ -244,10 +267,53 @@ def apply(expected: str):
     print("AI_ACCESS_SERVER_SELF_RULE=NOT_CONFIGURED")
 
 
+def root_owned(path: Path, *, directory: bool = False) -> bool:
+    return (not path.is_symlink() and (path.is_dir() if directory else path.is_file())
+            and path.stat().st_uid == 0)
+
+
+def resume(expected: str):
+    """Restart the exact failed preview, without reinstalling or another backup.
+
+    Preserve the already created root-owned snapshot, Server DB and service
+    definition. Refuse units or snapshot files that no longer match Git.
+    """
+    if os.geteuid() != 0:
+        raise RuntimeError("--resume requires direct operator root execution")
+    if not root_owned(UNIT):
+        raise RuntimeError("Managed root-owned preview unit is missing")
+    snapshot = ROOT_INSTALL / expected
+    if not root_owned(snapshot, directory=True):
+        raise RuntimeError("Expected root-owned immutable preview snapshot is missing")
+    if UNIT.read_text(encoding="utf-8") != unit_content(snapshot):
+        raise RuntimeError("Preview unit differs from the verified managed definition")
+    for relative in ("lib/drlink_mcp_bridge.py", "lib/drlink_mcp_server_executor.py",
+                     "lib/drlink_control_plane.py", "lib/drlink_v24.py", "VERSION"):
+        source_bytes = subprocess.check_output(
+            ["git", "-c", f"safe.directory={SOURCE}", "-C", str(SOURCE),
+             "show", f"{expected}:{relative}"]
+        )
+        dest = snapshot / relative
+        if not dest.is_file() or dest.is_symlink() or dest.read_bytes() != source_bytes:
+            raise RuntimeError(f"Preview immutable snapshot mismatch: {relative}")
+    command(["systemctl", "is-active", "--quiet", "drlink-server.service"])
+    active = command(["systemctl", "is-active", "--quiet", SERVICE], check=False)
+    if active.returncode != 0:
+        if not port_available():
+            raise RuntimeError(f"Port {PORT} occupied by a different process")
+        command(["systemctl", "start", SERVICE])
+    wait_ready()
+    command(["systemctl", "is-active", "--quiet", SERVICE])
+    print(f"RESUMED_PREVIEW_HEAD={expected}")
+    print("PREVIEW_RESUME=PASS")
+    print("ORIGINAL_SERVER_AND_DB_BACKUP=PRESERVED")
+    print("SERVER_LOCAL_EXEC_ENABLED=0")
+    print("PUBLIC_TLS_AND_CHATGPT_OAUTH=NOT_VALIDATED")
+
+
 def verify():
-    if os.geteuid() == 0:
-        command(["systemctl", "is-active", "--quiet", SERVICE])
-    local_probe()
+    command(["systemctl", "is-active", "--quiet", SERVICE])
+    wait_ready(timeout_seconds=5)
     print(f"PUBLIC_TLS_STATUS={public_tls_status()}")
     print("PREVIEW_VERIFY=PASS")
 
@@ -270,15 +336,19 @@ def main():
     mode = parser.add_mutually_exclusive_group(required=True)
     mode.add_argument("--preflight", action="store_true")
     mode.add_argument("--apply", action="store_true")
+    mode.add_argument("--resume", action="store_true")
     mode.add_argument("--verify", action="store_true")
     mode.add_argument("--rollback", action="store_true")
     parser.add_argument("--expected-head", default="")
     args = parser.parse_args()
     try:
-        if args.preflight or args.apply:
+        if args.preflight or args.apply or args.resume:
             if len(args.expected_head) != 40:
                 raise RuntimeError("--expected-head requires a full 40-character source commit")
-            (apply if args.apply else preflight)(args.expected_head)
+            if args.resume:
+                resume(args.expected_head)
+            else:
+                (apply if args.apply else preflight)(args.expected_head)
         elif args.verify:
             verify()
         else:

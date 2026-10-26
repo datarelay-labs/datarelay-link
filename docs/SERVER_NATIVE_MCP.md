@@ -103,9 +103,32 @@ sudo /usr/bin/python3 tools/operator-native-mcp-preview.py --apply --expected-he
 python3 tools/operator-native-mcp-preview.py --verify
 ```
 
-If the preview service fails, preserve system logs and run only its own rollback:
+If the first install created the root-owned snapshot and DB backup but
+stopped immediately with `Connection refused` on port 16106, **do not
+rerun `--apply`**. In that case, the `Type=simple` service may not have
+bound its listener before the first probe. Update only the operator script
+and use `--resume` with the **original installed snapshot commit**:
 
 ```bash
+cd /home/aella/datarelay-link-worktrees/feat-v240-server-native-mcp-20261026
+git pull --ff-only origin feat/v240-server-native-mcp-20261026
+sudo /usr/bin/python3 tools/operator-native-mcp-preview.py --resume \
+  --expected-head 446f372c979e1cfbec7a3ffade3b32912dda0499
+python3 tools/operator-native-mcp-preview.py --verify
+```
+
+`--resume` checks the exact root-owned service definition and immutable
+snapshot against Git before starting the existing unit. It does not
+modify the primary Server, recreate the backup, or install another Agent.
+The listener readiness check retries only connection/transport errors,
+with a finite timeout; OAuth or MCP validation failures are not treated as
+startup latency.
+
+If it still fails, inspect the Preview journal and **do not retry full
+installation**. Roll back only the Preview unit if necessary:
+
+```bash
+journalctl -u drlink-mcp-native-preview.service -n 80 --no-pager
 sudo /usr/bin/python3 tools/operator-native-mcp-preview.py --rollback
 ```
 
