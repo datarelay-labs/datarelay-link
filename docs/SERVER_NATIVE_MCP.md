@@ -86,7 +86,86 @@ PKI, credentials, SSH material or live production content among allowed roots.
 11. Server-peer mutual-auth identity/revocation/delegation/E2E for SMCP-08.
 12. Exact HEAD full v2.4 product gates, twice where required, before stable.
 
-## Development Server operator rollout
+## Preferred: existing central DRLink MCP manages an enrolled Server
+
+**Owner decision (2026-10-26):** Use the existing MCP/OAuth endpoint
+`https://remote.xdr.ooo/mcp` as the single ChatGPT entry. The local
+DRLink Server at `access.xdr.ooo` connects outward as a **Server Peer**,
+reusing DRLink's signed Agent management transport and central AI jobs without
+installing any DRLink Agent or OpenAI Tunnel.
+
+```
+ChatGPT
+  -> remote.xdr.ooo/mcp (existing verified OAuth + AI Access)
+  -> central Managed Host "dev-drlink Server" (distinct Server-peer identity)
+  -> signed POST /v1/ai-jobs/claim and /complete over HTTPS
+  -> dev-drlink Server Peer worker (separate state, not Agent)
+  -> explicit local allowlist / unprivileged executor
+```
+
+Central management API compatibility has been probed: unauthenticated
+`/enroll/preflight`, `/enroll` and `/v1/ai-jobs/claim` all return
+**HTTP 403 with validated TLS**. This confirms protected route presence,
+**not successful enrollment or authorized ChatGPT calls**.
+
+**Central operator step (must occur on the central DRLink Server, not
+dev-drlink):** run the v2.4 public CLI `set enrollment manual`, creating
+an independent management-only Enrollment Code (zero published services) for
+the Server. Display-once credentials are never to be copied into ChatGPT or
+committed to Git. Unlike Agent installation, the Server Peer enrolls through
+`lib/drlink_server_peer_enroll.py` into its private
+`/var/lib/drlink-server-peer` tree. Its state, ECDSA P-256 key and signed
+management identity are separate from both `/etc/frp` and `/etc/drlink`.
+
+An authorized operator stores the display-once manual `id.secret` in a
+root-owned mode 0600 file on dev-drlink and then performs:
+
+```bash
+cd /home/aella/datarelay-link-worktrees/feat-v240-server-native-mcp-20261026
+HEAD_SHA="$(git rev-parse HEAD)"
+# The Code file MUST already exist and be chmod 0600, owned by root.
+sudo /usr/bin/python3 lib/drlink_server_peer_enroll.py \
+  --root /var/lib/drlink-server-peer \
+  --central https://remote.xdr.ooo \
+  --label "dev-drlink Server" \
+  --code-file /root/drlink-server-peer-enrollment-code
+# Securely erase the consumed Code file after successful enrollment.
+sudo /usr/bin/python3 lib/drlink_server_peer.py \
+  --root /var/lib/drlink-server-peer --probe-central
+# Install a separate, opt-in Server Peer systemd service; existing DRLink
+# Server/Agent/MCP units are preserved.
+python3 tools/operator-server-peer.py --preflight --expected-head "$HEAD_SHA"
+sudo /usr/bin/python3 tools/operator-server-peer.py \
+  --apply --expected-head "$HEAD_SHA"
+sudo /usr/bin/python3 tools/operator-server-peer.py --verify
+```
+
+The dedicated peer service defaults to **Server info only**. Arbitrary
+`exec`, process listing, upload, write/delete and even file reading are
+DENY unless explicitly developed/qualified and opted in. The server peer
+is not a trusted shell just because it was enrolled. Central AI Access must
+independently permit the requesting AI Identity to access **only this newly
+enrolled Managed Host** and the `host-info` Permission Object. The central
+operator tests this before use:
+
+```text
+set permission-object server-info-only permissions host-info
+set ai-access drlink-server-read mode whitelist source <VERIFIED-AI-IDENTITY> destination <ENROLLED-SERVER-PEER-NAME> permission server-info-only enabled
+test ai-access source <VERIFIED-AI-IDENTITY> destination <ENROLLED-SERVER-PEER-NAME> permission host-info
+```
+
+Those CLI commands mutate the **central** Server's authoritative AI Access
+state and must be applied only to the exact verified identity and target; do
+not widen an unrelated Rule. A central operator must create the Enrollment
+Code and explicitly authorize the AI Identity. The ChatGPT MCP connection
+should then discover the Server Peer in `list_hosts` and return system info
+for the precise enrolled target; a different target/permission must DENY.
+
+No public TLS certificate is required on `access.xdr.ooo` for this
+outbound Peer architecture: the central `remote.xdr.ooo` TLS and OAuth
+issuer remain authoritative. Existing FRP port 443 must not be repurposed.
+
+## Development Server operator rollout (independent direct preview)
 
 Use the opt-in operator-only `tools/operator-native-mcp-preview.py` for an
 isolated DRLink Server Native MCP preview on `dev-drlink`/`access.xdr.ooo`.
@@ -134,11 +213,12 @@ sudo /usr/bin/python3 tools/operator-native-mcp-preview.py --rollback
 
 Preview defaults: `server:self` discovery capability ON but **AI Access
 authorization still requires an explicit verified AI Identity and Rule**.
-The Server-local developer file/Git executor remains OFF. Public ChatGPT
-connection is **not yet ready** until `access.xdr.ooo/mcp` has a publicly
-trusted TLS certificate, correct OAuth discovery and explicit routing to this
-preview port. Current public `access.xdr.ooo` TLS is self-signed. Do not
-skip TLS checks or overwrite the existing public 443 listener.
+The Server-local developer file/Git executor remains OFF. **Direct MCP mode**
+(using `access.xdr.ooo/mcp` itself as a separate ChatGPT connector) is not
+ready without a trusted public TLS certificate and external OAuth routing.
+The preferred **central Server Peer mode above** avoids that requirement
+entirely by reusing `remote.xdr.ooo/mcp`. Never skip TLS verification or
+overwrite the existing public 443 listener.
 
 ## Deployment state
 

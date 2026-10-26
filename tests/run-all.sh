@@ -126,6 +126,9 @@ python3 tests/test-chatgpt-owner-acceptance.py
 python3 tests/test-ai-access-mcp-e2e.py
 python3 tests/test-mcp-server-self.py
 python3 tests/test-mcp-server-local-executor.py
+python3 tests/test-mcp-server-peer.py
+python3 tests/test-mcp-server-peer-enroll.py
+python3 tests/test-mcp-server-peer-operator.py
 python3 tests/test-mcp-operator-rollout.py
 python3 tests/test-mcp-public-endpoint-e2e.py
 python3 tests/test-mcp-public-tls-lifecycle.py
