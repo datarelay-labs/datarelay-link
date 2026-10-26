@@ -142,6 +142,46 @@ class ServerSelfMCPTest(unittest.TestCase):
                 ).get("isError"))
                 worker.assert_not_called()
 
+    def test_scoped_server_run_requires_exec_permission_and_local_flags(self):
+        self.assertTrue(any(tool[0] == "server_run" and tool[4]["destructiveHint"]
+                            for tool in TOOL_DEFS))
+        self.cli("system", "credential", "rotate", "ai-identity", self.principal["name"])
+        self.cli("set", "permission-object", "server-test-command", "permissions", "command-exec")
+        self.cli("set", "ai-access", "server-test-runner", "mode", "whitelist",
+                 "source", self.principal["name"], "destination", "server:self",
+                 "permission", "server-test-command", "enabled")
+        v24.set_ai_policy_path_scopes(self.plane, "server-test-runner", [self.root + "/**"])
+        args = {"cwd": self.root, "argv": ["python3", "tests/test-example.py"]}
+        with patch("drlink_mcp_bridge.execute_as_unprivileged_user",
+                   return_value={"exit_status": 0, "stdout": "ok"}) as worker:
+            with patch.dict(os.environ, {
+                "DRLINK_MCP_SERVER_SELF_ENABLED": "1",
+                "DRLINK_MCP_SERVER_LOCAL_EXEC_ENABLED": "0",
+            }):
+                self.assertTrue(self.bridge.call_tool(
+                    self.principal, "server_run", args).get("isError"))
+                worker.assert_not_called()
+            with patch.dict(os.environ, {
+                "DRLINK_MCP_SERVER_SELF_ENABLED": "1",
+                "DRLINK_MCP_SERVER_LOCAL_EXEC_ENABLED": "1",
+            }):
+                result = self.bridge.call_tool(self.principal, "server_run", args)
+                self.assertFalse(result.get("isError"), result)
+                worker.assert_called_once_with({
+                    "action": "run_dev_test", "cwd": self.root,
+                    "argv": ["python3", "tests/test-example.py"],
+                })
+                worker.reset_mock()
+                result = self.bridge.call_tool(
+                    self.principal, "server_run",
+                    {"cwd": "/tmp/outside-worktree", "argv": args["argv"]})
+                self.assertTrue(result.get("isError"), result)
+                worker.assert_not_called()
+                v24.set_ai_policy_path_scopes(self.plane, "server-test-runner", [])
+                self.assertTrue(self.bridge.call_tool(
+                    self.principal, "server_run", args).get("isError"))
+                worker.assert_not_called()
+
     def test_legacy_network_object_cannot_authorize_server_self(self):
         # An imported/legacy object using a reserved Server selector must
         # never confer server-local privileges through name matching.

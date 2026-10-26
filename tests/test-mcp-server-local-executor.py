@@ -104,6 +104,38 @@ class ServerLocalWorkerTests(unittest.TestCase):
             with self.assertRaises((ExecutorDenied, OSError), msg=str(argv)):
                 self.run_worker("run_git", argv=argv, cwd=self.base)
 
+    def test_developer_test_run_explicit_opt_in_and_argv_boundary(self):
+        tests = self.path / "tests"
+        tests.mkdir()
+        example = tests / "test-example.py"
+        example.write_text("print('DRLINK_MCP_DEV_TEST_OK')\\n".replace("\\n", "\n"))
+        arg = {"cwd": self.base, "argv": ["python3", "tests/test-example.py"]}
+        with patch.dict(os.environ, {"DRLINK_MCP_SERVER_DEV_TEST_ENABLED": "0"}):
+            with self.assertRaisesRegex(ExecutorDenied, "disabled"):
+                self.run_worker("run_dev_test", **arg)
+        with patch.dict(os.environ, {"DRLINK_MCP_SERVER_DEV_TEST_ENABLED": "1"}):
+            result = self.run_worker("run_dev_test", **arg)
+            self.assertEqual(result["exit_status"], 0, result)
+            self.assertIn("DRLINK_MCP_DEV_TEST_OK", result["stdout"])
+            for blocked in (
+                ["bash", "-c", "id"],
+                ["python3", "-c", "print('no')"],
+                ["git", "push", "origin", "main"],
+                ["python3", "../test-example.py"],
+                ["bash", "tests/../../tmp/evil.sh"],
+                ["python3", "tests/test-example.py", "--random"],
+                ["python3", "-m", "pip", "install", "requests"],
+            ):
+                with self.assertRaises((ExecutorDenied, OSError), msg=str(blocked)):
+                    self.run_worker("run_dev_test", cwd=self.base, argv=blocked)
+            symlink = tests / "test-symlink.py"
+            symlink.symlink_to(example)
+            with self.assertRaises((ExecutorDenied, OSError)):
+                self.run_worker("run_dev_test", cwd=self.base,
+                                argv=["python3", "tests/test-symlink.py"])
+            with self.assertRaises((ExecutorDenied, OSError)):
+                self.run_worker("run_dev_test", cwd="/etc", argv=["python3", "tests/test-shadow.py"])
+
     def test_external_unprivileged_executor_fail_closed(self):
         with patch.dict(os.environ, {"DRLINK_MCP_SERVER_EXEC_USER": ""}):
             with self.assertRaises(ExecutorDenied):

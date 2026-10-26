@@ -134,6 +134,15 @@ TOOL_DEFS = (
         {"readOnlyHint": True, "destructiveHint": False, "openWorldHint": False, "idempotentHint": True},
     ),
     (
+        "server_run",
+        "Run scoped Server developer test",
+        "Execute only approved Python or Bash tests from an explicit development worktree, "
+        "as a separate non-root OS user; no arbitrary shell. Requires command-exec "
+        "AI Access path scope and a separately enabled operator flag.",
+        {"cwd": "string", "argv": "array"},
+        {"readOnlyHint": False, "destructiveHint": True, "openWorldHint": False},
+    ),
+    (
         "list_hosts",
         "List Managed Hosts",
         "List Managed Hosts this identity may target",
@@ -785,12 +794,14 @@ class MCPBridge:
             "server_write_file": ("write_file", "write_file"),
             "server_delete_file": ("delete_file", "delete_file"),
             "server_git": ("exec", "run_git"),
+            "server_run": ("exec", "run_dev_test"),
         }
         canonical = "get_system_info" if name in ("get_server", "get_system_info") else (
             local_actions[name][0] if name in local_actions else None
         )
-        operand = (str(arguments.get("path") or "") if name != "server_git" else
-                   str(arguments.get("cwd") or ""))
+        operand = (str(arguments.get("cwd") or "")
+                   if name in ("server_git", "server_run")
+                   else str(arguments.get("path") or ""))
         decision = None
         reason = "Server-self MCP disabled or AI Access implicit DENY"
         result = "DENY"
@@ -811,18 +822,19 @@ class MCPBridge:
                     result = "ALLOW"
                 elif os.environ.get("DRLINK_MCP_SERVER_LOCAL_EXEC_ENABLED") != "1":
                     reason = "Server-local executor is disabled"
-                elif name == "server_git" and not path_allowed(
-                    os.path.join(operand, ".drlink-mcp-git-scope"),
+                elif name in ("server_git", "server_run") and not path_allowed(
+                    os.path.join(operand, ".drlink-mcp-git-scope"
+                                 if name == "server_git" else ".drlink-mcp-dev-command-scope"),
                     list(decision.get("patterns") or []),
                 ):
                     # For Server-local git, command-exec permission alone is
                     # insufficient: the selected worktree needs an explicit
                     # AI Access path scope just like file operations.
-                    reason = "Server-local Git cwd is outside AI Access path scopes"
+                    reason = "Server-local cwd is outside AI Access path scopes"
                 else:
                     action = local_actions[name][1]
                     request = {"action": action}
-                    if name == "server_git":
+                    if name in ("server_git", "server_run"):
                         request.update({"cwd": arguments.get("cwd"), "argv": arguments.get("argv")})
                     else:
                         request["path"] = arguments.get("path")
@@ -850,7 +862,7 @@ class MCPBridge:
 
     def call_tool(self, principal, name: str, arguments: dict) -> dict:
         if name in ("get_server", "server_read_file", "server_write_file",
-                    "server_delete_file", "server_git"):
+                    "server_delete_file", "server_git", "server_run"):
             return self._call_server_self(principal, name, arguments)
         if name not in AI_CAPABILITIES:
             self.plane.record_ai_activity(

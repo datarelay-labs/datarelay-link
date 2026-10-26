@@ -251,6 +251,88 @@ def _git(argv: object, cwd: str) -> dict:
         os.close(dirfd)
 
 
+def _run_dev_test(argv: object, cwd: str) -> dict:
+    """Bounded developer test execution, not a general-purpose shell.
+
+    The MCP Bridge must separately require per-identity command-exec and an
+    explicit scoped worktree path. This worker independently checks the
+    operator-configured workspace roots and a non-root OS identity.
+    """
+    if os.environ.get("DRLINK_MCP_SERVER_DEV_TEST_ENABLED") != "1":
+        raise ExecutorDenied("Development test execution is disabled")
+    if not isinstance(argv, list) or not all(isinstance(x, str) for x in argv):
+        raise ExecutorDenied("Developer command requires an argv array")
+    if not argv or any(
+        not arg or len(arg) > 256 or "\x00" in arg or "\n" in arg or "\r" in arg
+        for arg in argv
+    ):
+        raise ExecutorDenied("Invalid developer command argument")
+    if not isinstance(cwd, str) or not cwd:
+        raise ExecutorDenied("Developer command requires a working directory")
+    # The synthetic leaf is solely for checking the cwd and opens no files.
+    root, parts = _locate(cwd.rstrip("/") + "/.drlink-mcp-dev-command-scope")
+    dirfd = _parent_fd(root, parts)
+    try:
+        # Only one exact standalone test script or a bounded pytest suite;
+        # no bash -c, Python -c, pip install, sudo, Git writes or custom flags.
+        executable = ""
+        if (len(argv) == 2 and argv[0] in ("python3", "bash")
+                and argv[1].startswith("tests/test-")
+                and argv[1].endswith(".py" if argv[0] == "python3" else ".sh")):
+            script = argv[1]
+            executable = argv[0]
+            child_argv = [script]
+        elif (3 <= len(argv) <= 5 and argv[:3] == ["python3", "-m", "pytest"]
+              and (len(argv) == 3 or argv[3] == "-q")
+              and (len(argv) < 5 or (argv[4].startswith("tests/test-")
+                  and argv[4].endswith(".py")))):
+            executable = "python3"
+            child_argv = argv[1:]
+        else:
+            raise ExecutorDenied("Developer command outside approved test argv")
+        if len(argv) == 2 or len(argv) == 5:
+            file_arg = argv[1] if len(argv) == 2 else argv[4]
+            segments = Path(file_arg).parts
+            if len(segments) != 2 or segments[0] != "tests" or segments[1] in (".", ".."):
+                raise ExecutorDenied("Unsafe test script path")
+            # Both parent and leaf are opened without following symlinks.
+            test_dir = os.open("tests", os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
+                               dir_fd=dirfd)
+            try:
+                test_fd = _regular_fd(test_dir, segments[1])
+                os.close(test_fd)
+            finally:
+                os.close(test_dir)
+        binary = shutil.which(executable, path="/usr/bin:/bin")
+        if not binary:
+            raise ExecutorDenied("Developer test interpreter not found")
+        env = {
+            "PATH": "/usr/bin:/bin", "HOME": "/nonexistent", "LANG": "C.UTF-8",
+            "PYTHONNOUSERSITE": "1", "PYTHONDONTWRITEBYTECODE": "1",
+            "PYTEST_DISABLE_PLUGIN_AUTOLOAD": "1",
+        }
+        proc = subprocess.Popen([binary, *child_argv],
+                                cwd="/proc/self/fd/%d" % dirfd, env=env,
+                                stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                                stderr=subprocess.PIPE, start_new_session=True,
+                                pass_fds=(dirfd,), close_fds=True)
+        try:
+            stdout, stderr = proc.communicate(timeout=120)
+        except subprocess.TimeoutExpired:
+            os.killpg(proc.pid, signal.SIGKILL)
+            proc.communicate()
+            raise ExecutorDenied("Developer test command timed out")
+        return {
+            "exit_status": proc.returncode,
+            "stdout": stdout[:MAX_OUTPUT].decode("utf-8", "replace"),
+            "stderr": stderr[:MAX_OUTPUT].decode("utf-8", "replace"),
+            "stdout_truncated": len(stdout) > MAX_OUTPUT,
+            "stderr_truncated": len(stderr) > MAX_OUTPUT,
+        }
+    finally:
+        os.close(dirfd)
+
+
 def worker_dispatch(request: dict) -> dict:
     action = str(request.get("action") or "")
     if action == "read_file":
@@ -261,6 +343,8 @@ def worker_dispatch(request: dict) -> dict:
         return _delete(request.get("path") or "")
     if action == "run_git":
         return _git(request.get("argv"), request.get("cwd") or "")
+    if action == "run_dev_test":
+        return _run_dev_test(request.get("argv"), request.get("cwd") or "")
     raise ExecutorDenied("Unsupported Server-local operation")
 
 
@@ -282,6 +366,8 @@ def execute_as_unprivileged_user(request: dict) -> dict:
     sanitized = {
         "PATH": "/usr/bin:/bin", "LANG": "C.UTF-8", "HOME": "/nonexistent",
         "DRLINK_MCP_SERVER_ALLOWED_ROOTS": os.environ["DRLINK_MCP_SERVER_ALLOWED_ROOTS"],
+        "DRLINK_MCP_SERVER_DEV_TEST_ENABLED":
+            "1" if os.environ.get("DRLINK_MCP_SERVER_DEV_TEST_ENABLED") == "1" else "0",
     }
     proc = subprocess.Popen(
         [sys.executable, "-I", str(Path(__file__).resolve()), "--worker"],
@@ -289,8 +375,9 @@ def execute_as_unprivileged_user(request: dict) -> dict:
         cwd="/", env=sanitized, user=entry.pw_uid, group=entry.pw_gid,
         extra_groups=[], close_fds=True, start_new_session=True,
     )
+    wait_limit = 125 if request.get("action") == "run_dev_test" else MAX_TIMEOUT + 3
     try:
-        out, _ = proc.communicate(json.dumps(request).encode("utf-8"), timeout=MAX_TIMEOUT + 3)
+        out, _ = proc.communicate(json.dumps(request).encode("utf-8"), timeout=wait_limit)
     except subprocess.TimeoutExpired:
         os.killpg(proc.pid, signal.SIGKILL)
         proc.communicate()

@@ -2,8 +2,44 @@
 
 > Workstream: [Issue #223](https://github.com/datarelay-labs/datarelay-link/issues/223)
 >
-> Candidate status: partial implementation on an isolated feature branch. **Not live-deployed or release-qualified.**
-> This document is a security/runbook specification, not evidence of a production deployment.
+> Candidate status: Native Server MCP Preview is live on dev-drlink at **loopback 127.0.0.1:16106**,
+> pinned to an older v2.4 candidate. Direct ChatGPT/public HTTPS is **not connected or qualified**.
+> Current feature development remains isolated in Draft PR #224; running Preview is not the current HEAD.
+
+## Current owner scope: direct ChatGPT-to-access.xdr.ooo MCP
+
+**Owner correction, 2026-10-26:** Direct control of the DRLink development
+Server is the goal. ChatGPT must connect to the **Native MCP implementation
+running on access.xdr.ooo** and eventually replace Desktop Commander for
+development operations (file read/write/delete, tests, Git, deployments),
+after acceptance on the actual ChatGPT tool surface.
+
+An outbound peer enrolled as a Managed Host on `remote.xdr.ooo`, an
+Enrollment Code, and installation of a DRLink Agent are **not prerequisites**.
+The previously implemented Server-peer option is separate, not the accepted
+solution to this objective. Likewise, merely reporting `get_server` metadata
+is not a substitute for development command and file workflows.
+
+Preferred direct integration:
+```
+ChatGPT custom MCP connection
+  -> public, CA-trusted HTTPS MCP URL dedicated to access.xdr.ooo
+  -> authenticated Native Server MCP Bridge on access.xdr.ooo
+  -> per-AI-Identity AI Access WHITEList and worktree-specific path scopes
+  -> unprivileged developer executor (no root shell)
+  -> approved source, test and Git operations
+```
+The HTTPS entry point **may use a reverse proxy or existing trusted relay**
+while retaining request handling, OAuth authorization and tool execution on
+access.xdr.ooo. Do not confuse a TLS relay with central Managed-Host
+enrollment. Existing FRP TCP/443 must not be replaced without a qualified
+cutover and rollback.
+
+**Hard requirements before removing Desktop Commander:** full MCP tool
+coverage required for development, publicly trusted TLS and correct canonical
+OAuth resource/issuer, explicit AI Access rules, user-accessible full-write
+MCP entitlement, real allow/deny E2E through ChatGPT, and recoverable
+rollout. Until then keep Desktop Commander connected.
 
 ## Purpose and version
 
@@ -54,6 +90,7 @@ running MCP traffic are not changed.
 | server_write_file | file-write + explicit paths | unprivileged worker; atomic regular-file replace |
 | server_delete_file | file-write + explicit paths | unprivileged worker; regular file only |
 | server_git | command-exec | unprivileged worker; narrowly allowlisted read-only argv |
+| server_run | command-exec + explicit paths | separately opted-in developer Python/Bash test scripts, non-root, argv-only |
 | exec(endpoint=server:self) | NEVER | denied (no arbitrary root shell) |
 | Existing Managed Host tools | existing permissions | unchanged Agent RPC |
 
@@ -63,6 +100,13 @@ strings, Git hooks, credential exchange or push. The independently opted-in
 executor is launched as a child with its own UID/GID, no supplementary groups,
 a scrubbed environment, bounded I/O/time and a fixed implementation script.
 The root MCP Bridge never invokes a caller-provided command as root.
+`server_run` requires both general Server-local executor opt-in and
+`DRLINK_MCP_SERVER_DEV_TEST_ENABLED=1` at the Server service. Only selected
+`python3 tests/test-*.py`, `bash tests/test-*.sh` and bounded
+`python3 -m pytest` forms are admitted without a shell. Git remains
+**read-only**; commit/push, arbitrary shell commands and unrestricted package
+install/deploy are not yet implemented. The future Desktop Commander
+replacement must cover those separately with scoped developer permissions.
 
 File tools reject path traversal, symlinks, nonregular files, protected file
 names and secret formats; the worker anchors file operations through directory
@@ -86,11 +130,11 @@ PKI, credentials, SSH material or live production content among allowed roots.
 11. Server-peer mutual-auth identity/revocation/delegation/E2E for SMCP-08.
 12. Exact HEAD full v2.4 product gates, twice where required, before stable.
 
-## Preferred: existing central DRLink MCP manages an enrolled Server
+## Alternative only: central Managed-Host Server Peer (not the owner-selected solution)
 
-**Owner decision (2026-10-26):** Use the existing MCP/OAuth endpoint
-`https://remote.xdr.ooo/mcp` as the single ChatGPT entry. The local
-DRLink Server at `access.xdr.ooo` connects outward as a **Server Peer**,
+**Retired alternative:** Earlier work incorrectly treated the existing
+`https://remote.xdr.ooo/mcp` as the required single ChatGPT entry. It made the
+local DRLink Server at `access.xdr.ooo` an enrolled **Server Peer**,
 reusing DRLink's signed Agent management transport and central AI jobs without
 installing any DRLink Agent or OpenAI Tunnel.
 
