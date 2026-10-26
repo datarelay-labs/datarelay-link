@@ -67,6 +67,28 @@ class ZeroTouchDocContract(unittest.TestCase):
         )
         self.assertEqual(run.returncode, 0, run.stdout + run.stderr)
 
+    def test_release_manifest_runs_zero_touch_gate_as_a_product_contract(self):
+        native = self.read('.engineering/tests.yaml')
+        self.assertIn('DRLINK-ZERO-TOUCH-UX-CONTRACT-001', native)
+        section = native.split(
+            '  - id: DRLINK-ZERO-TOUCH-UX-CONTRACT-001', 1
+        )[1].split('\n  - id: ', 1)[0]
+        for test in (
+            'test-zero-touch-doc-contract.py',
+            'test-zero-touch-operator-command-bound.py',
+            'test-enrolled-routed-target-parity.py',
+            'test-zero-touch-short-url.sh',
+        ):
+            self.assertIn(test, section)
+        for required in (
+            'release_gate: true',
+            'ZT-P0-CONTRACT-20261026',
+            'U-009, O-002, A-018',
+            'multi-kilobyte zt1',
+            'same exact installed Source HEAD',
+        ):
+            self.assertIn(required, section)
+
     def test_fast_pr_does_not_hide_the_user_facing_oracle(self):
         fast = self.read('tests/run-fast-pr.sh')
         public_tests = self.read('tests/test-zero-touch-short-url.sh')
