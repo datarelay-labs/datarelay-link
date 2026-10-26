@@ -22,8 +22,12 @@ _BACKEND=""
 
 if [[ -f "${_HERE}/frpctl" ]]; then
   _BACKEND="${_HERE}/frpctl"
-elif [[ -n "${_ROOT}" && -f "${_ROOT}/usr/local/lib/drlink/frpctl" ]]; then
-  _BACKEND="${_ROOT}/usr/local/lib/drlink/frpctl"
+elif [[ -n "${_ROOT}" ]]; then
+  # A selected installation root is an authority boundary. Missing or
+  # inaccessible files there must not fall through to another installation.
+  if [[ -f "${_ROOT}/usr/local/lib/drlink/frpctl" ]]; then
+    _BACKEND="${_ROOT}/usr/local/lib/drlink/frpctl"
+  fi
 elif [[ -f /usr/local/lib/drlink/frpctl ]]; then
   _BACKEND=/usr/local/lib/drlink/frpctl
 elif [[ -f '/Library/Application Support/drlink/lib/frpctl' ]]; then
@@ -36,8 +40,12 @@ if [[ "$EUID" -ne 0 ]]; then
     _PROTECTED_BACKEND=1
   fi
   if [[ -z "${_BACKEND}" ]]; then
-    for _DIR in "${_ROOT}/usr/local/lib/drlink" /usr/local/lib/drlink \
-      '/Library/Application Support/drlink' '/Library/Application Support/drlink/lib'; do
+    if [[ -n "${_ROOT}" ]]; then
+      _BACKEND_DIRS=("${_ROOT}/usr/local/lib/drlink")
+    else
+      _BACKEND_DIRS=(/usr/local/lib/drlink '/Library/Application Support/drlink' '/Library/Application Support/drlink/lib')
+    fi
+    for _DIR in "${_BACKEND_DIRS[@]}"; do
       if [[ -d "${_DIR}" && ! -x "${_DIR}" ]]; then _PROTECTED_BACKEND=1; fi
     done
   fi
