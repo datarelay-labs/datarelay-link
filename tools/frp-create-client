@@ -1108,7 +1108,7 @@ def print_one_line_windows(
     ticket, ttl, note, public_host, control_public, allocator, ca_fp,
     installer, rdp_port=None, client_name='', management_only=False,
     ticket_id='', bootstrap_hostname='', public_hostname='', cfg=None,
-    short_handle='', stage1_sha256=''
+    short_handle='', stage1_sha256='', require_compact=False
 ):
     zt = _zt()
     command = ''
@@ -1122,6 +1122,14 @@ def print_one_line_windows(
             )
         except ValueError:
             command = ''
+
+    if require_compact and (not command or len(command) > 500):
+        fail(
+            'Compact Windows Zero-Touch command could not be generated within '
+            '500 characters. No installation command was printed; an issued '
+            'ticket may remain pending. Review/revoke it before retrying. '
+            'Check the public HTTPS bootstrap endpoint and stage-1 SHA256.'
+        )
 
     if not command:
         sums_url = derive_sha256sums_url(installer)
@@ -1223,7 +1231,7 @@ def print_one_line_windows(
     print()
 
 
-def print_one_line(ticket, ttl, note, public_host, control_public, allocator, ca_fp, installer, ssh_user, ssh_port, client_name='', management_only=False, ticket_id='', legacy_env=False, bootstrap_hostname='', public_hostname='', cfg=None, short_handle=''):
+def print_one_line(ticket, ttl, note, public_host, control_public, allocator, ca_fp, installer, ssh_user, ssh_port, client_name='', management_only=False, ticket_id='', legacy_env=False, bootstrap_hostname='', public_hostname='', cfg=None, short_handle='', require_compact=False):
     tracking_id = str(ticket_id or '').strip()
     if not tracking_id and ticket:
         zt_id = _zt()
@@ -1237,7 +1245,7 @@ def print_one_line(ticket, ttl, note, public_host, control_public, allocator, ca
     bootstrap_host = short_url_host_for_cfg(
         cfg, bootstrap_hostname=bootstrap_hostname, public_hostname=public_hostname
     )
-    if bootstrap_host and not legacy_env:
+    if bootstrap_host and not legacy_env and (short_handle or not require_compact):
         try:
             zt = _zt()
             if zt is None:
@@ -1245,6 +1253,14 @@ def print_one_line(ticket, ttl, note, public_host, control_public, allocator, ca
             command = zt.short_url_command(bootstrap_host, short_handle or ticket)
         except ValueError:
             command = ''
+
+    if require_compact and (not command or len(command) > 200):
+        fail(
+            'Compact Linux/macOS Zero-Touch command could not be generated '
+            'within 200 characters. No installation command was printed; '
+            'an issued ticket may remain pending. Review/revoke it before '
+            'retrying. Check the public HTTPS bootstrap endpoint.'
+        )
 
     if not command:
         try:
@@ -1555,6 +1571,7 @@ def main(argv=None):
             cfg=render_cfg,
             short_handle=short_handle,
             stage1_sha256=stage1_sha256,
+            require_compact=not a.long_bootstrap,
         )
     else:
         print_one_line(
@@ -1575,6 +1592,7 @@ def main(argv=None):
             public_hostname=public_hostname,
             cfg=render_cfg,
             short_handle=short_handle,
+            require_compact=not a.long_bootstrap,
         )
     try:
         here = Path(__file__).resolve()

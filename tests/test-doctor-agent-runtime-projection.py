@@ -20,7 +20,9 @@ import frp_doctor as doctor
 
 class AgentProjectionDiagnostics(unittest.TestCase):
     def _checks(self, *, healthy=True, rendered=False, matching_port=True,
-                legacy_seed=False, old_schema=False, verified=None, enabled=True):
+                legacy_seed=False, old_schema=False, verified=None, enabled=True,
+                state_local_ip="127.0.0.1", rendered_local_ip=None,
+                rendered_local_port=None):
         with tempfile.TemporaryDirectory(prefix="drlink-doctor-runtime-") as temp:
             base = Path(temp, "etc/frp")
             base.mkdir(parents=True)
@@ -29,7 +31,7 @@ class AgentProjectionDiagnostics(unittest.TestCase):
                 sid = "ssh" if legacy_seed else "rs-ssh"
                 services[sid] = {
                     "id": sid, "name": "SSH" if legacy_seed else "ssh",
-                    "local_ip": "127.0.0.1", "local_port": 22,
+                    "local_ip": state_local_ip, "local_port": 22,
                     "remote_port": 6001 if matching_port else 6088,
                     "enabled": True, "v24_remote_service": not legacy_seed,
                 }
@@ -41,13 +43,21 @@ class AgentProjectionDiagnostics(unittest.TestCase):
                 "services": services,
             }
             (base / "client-state.json").write_text(json.dumps(data))
-            (base / "frpc.toml").write_text(
-                runtime.render_frpc_toml_text(
-                    server="203.0.113.10", server_port=443,
-                    token="fixture-only", host_id="fixture-host",
-                    services=services,
-                )
+            rendered_text = runtime.render_frpc_toml_text(
+                server="203.0.113.10", server_port=443,
+                token="fixture-only", host_id="fixture-host",
+                services=services,
             )
+            if rendered_local_ip is not None:
+                rendered_text = rendered_text.replace(
+                    'localIP = "%s"' % state_local_ip,
+                    'localIP = "%s"' % rendered_local_ip
+                )
+            if rendered_local_port is not None:
+                rendered_text = rendered_text.replace(
+                    "localPort = 22", "localPort = %d" % rendered_local_port
+                )
+            (base / "frpc.toml").write_text(rendered_text)
             if old_schema:
                 import sqlite3
                 db = Path(temp, "var/lib/drlink/drlink.db")
@@ -92,6 +102,21 @@ class AgentProjectionDiagnostics(unittest.TestCase):
     def test_healthy_rendered_proxy_produces_no_new_diagnostic(self):
         checks = self._checks(healthy=True, rendered=True)
         self.assertNotIn("agent_runtime_projection", checks)
+
+    def test_false_healthy_lan_target_redirected_to_self_is_rejected(self):
+        checks = self._checks(
+            healthy=True, rendered=True, legacy_seed=True,
+            state_local_ip="192.168.219.125", rendered_local_ip="127.0.0.1",
+        )
+        self.assertEqual(checks["frpc_config"]["status"], doctor.FAIL)
+        self.assertIn("target", checks["frpc_config"]["detail"])
+
+    def test_false_healthy_target_port_drift_is_rejected(self):
+        checks = self._checks(
+            healthy=True, rendered=True, rendered_local_port=2222,
+        )
+        self.assertEqual(checks["frpc_config"]["status"], doctor.FAIL)
+        self.assertIn("target", checks["frpc_config"]["detail"])
 
     def test_degraded_missing_dependency_does_not_claim_false_healthy(self):
         checks = self._checks(healthy=False, rendered=False)

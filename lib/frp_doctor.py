@@ -3645,6 +3645,7 @@ def check_client(report, paths, facts, skip_network):
                 host_id = '%s-%s' % (state.get('hostname') or 'host', machine_id[:8] or 'local')
             missing_proxy = []
             port_mismatch = []
+            target_mismatch = []
             extra_enabled = []
             for sid, rec in services.items():
                 if not isinstance(rec, dict):
@@ -3663,15 +3664,28 @@ def check_client(report, paths, facts, skip_network):
                     missing_proxy.append(sid_s)
                     continue
                 want = coerce_port(rec.get('remote_port'))
+                # A matching public endpoint is insufficient: an old runtime
+                # configuration can silently send LAN services to loopback.
+                # Compare the actual local destination as well as the port.
+                want_local_ip = str(rec.get('local_ip') or '127.0.0.1').strip()
+                want_local_port = coerce_port(rec.get('local_port'))
                 for proxy in matching:
                     if want is not None and coerce_port(proxy.get('remotePort')) != want:
                         port_mismatch.append(sid_s)
-            if missing_proxy or port_mismatch:
+                    if (str(proxy.get('localIP') or '').strip() != want_local_ip
+                            or coerce_port(proxy.get('localPort')) != want_local_port):
+                        target_mismatch.append(sid_s)
+            if missing_proxy or port_mismatch or target_mismatch:
                 report.add(
                     'frpc_config', FAIL,
                     'frpc.toml has drifted from client-state.json',
-                    'missing proxies=%s port mismatches=%s' % (','.join(missing_proxy) or 'none', ','.join(port_mismatch) or 'none'),
-                    'sudo drlink system synchronize',
+                    'missing proxies=%s port mismatches=%s target mismatches=%s'
+                    % (','.join(missing_proxy) or 'none',
+                       ','.join(port_mismatch) or 'none',
+                       ','.join(target_mismatch) or 'none'),
+                    'Review the local destination of each affected service, '
+                    'then use sudo drlink system synchronize only after confirming '
+                    'the Server-authoritative target.',
                     'state',
                 )
             elif extra_enabled:
