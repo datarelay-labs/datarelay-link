@@ -148,9 +148,16 @@ macos = Path(".github/workflows/macos-client.yml").read_text(encoding="utf-8")
 if "  apple-silicon:\n    if: github.event_name != 'pull_request' || github.base_ref == 'feature/v2.4.0-final-product-closure'\n" not in macos:
     raise SystemExit("macOS Apple Silicon qualification must be gated off ordinary PRs")
 windows = Path(".github/workflows/windows-client.yml").read_text(encoding="utf-8")
+# Full native Windows testing is an explicit qualification request, not the
+# default PR workload. Keep default gating and require the precise opt-in.
+native_condition = (
+    "if: github.event_name != 'pull_request' || "
+    "github.base_ref == 'feature/v2.4.0-final-product-closure' || "
+    "contains(github.event.pull_request.body, 'NATIVE_WINDOWS_QUALIFICATION=1')"
+)
 for job in ("windows-powershell51", "windows-pwsh7"):
-    if f"  {job}:\n    if: github.event_name != 'pull_request' || github.base_ref == 'feature/v2.4.0-final-product-closure'\n" not in windows:
-        raise SystemExit(f"{job} qualification must be gated off ordinary PRs")
+    if f"  {job}:\n    {native_condition}\n" not in windows:
+        raise SystemExit(f"{job} qualification must remain gated off unrequested ordinary PRs and support explicit native qualification")
 if "  linux-pwsh-cross:\n" not in windows:
     raise SystemExit("Linux pwsh cross-language PR feedback must remain available")
 
