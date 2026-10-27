@@ -128,6 +128,7 @@ python3 tests/test-mcp-server-self.py
 python3 tests/test-mcp-server-local-executor.py
 python3 tests/test-mcp-server-full-control.py
 python3 tests/test-mcp-server-full-control-public.py
+python3 tests/test-mcp-full-control-rollout.py
 python3 tests/test-mcp-native-domain.py
 python3 tests/test-mcp-native-letsencrypt-preflight.py
 python3 tests/test-mcp-native-direct-upgrade.py

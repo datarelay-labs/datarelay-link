@@ -74,6 +74,7 @@ python3 tests/test-v24-offline-tombstone-duplicate.py
 echo "=== Native MCP full-control regressions ==="
 python3 tests/test-mcp-server-full-control.py
 python3 tests/test-mcp-server-full-control-public.py
+python3 tests/test-mcp-full-control-rollout.py
 bash tests/test-project-file-manifest.sh
 
 echo "=== derived artifact closure ==="

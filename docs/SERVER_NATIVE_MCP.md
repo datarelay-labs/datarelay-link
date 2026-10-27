@@ -136,6 +136,14 @@ For this already-running public endpoint, use a reviewed **MCP-only rollout**:
 5. Check module hashes, active Bridge, unchanged TLS/OAuth metadata and real
    Native MCP ALLOW/DENY receipts. Retain rollback until acceptance completes.
 
+`tools/operator-native-mcp-full-control.py` implements the narrow file transaction.
+Its default `--check` is read-only. Apply requires root, an exact clean committed
+`--head`, explicit `--exec-user` and `--allowed-root`; UID 0 requires `--allow-root`.
+It installs committed Git blobs, writes only the dedicated `zz-native-full-control.conf`,
+checks backup/install hashes, and automatically restores affected files after a
+failed restart. Rollback refuses later file/permission changes. AI Access remains
+unchanged and must be authorized separately; the helper cannot grant tool privileges.
+
 The historical single443, certificate-issuance, Preview, domain and Server-peer
 scripts are not this rollout path. Do not rerun them for full-control enablement.
 A current tool/platform privilege denial must be reported and respected;
@@ -148,6 +156,8 @@ Focused source checks:
 ```bash
 python3 tests/test-mcp-server-full-control.py
 python3 tests/test-mcp-server-full-control-public.py
+python3 tests/test-mcp-full-control-rollout.py
+bash tests/test-project-file-manifest.sh
 python3 tests/test-mcp-server-self.py
 python3 tests/test-mcp-server-local-executor.py
 python3 tests/test-ai-access-mcp-e2e.py
