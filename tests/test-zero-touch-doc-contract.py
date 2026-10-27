@@ -103,6 +103,7 @@ class ZeroTouchDocContract(unittest.TestCase):
         for test in (
             'test-zero-touch-doc-contract.py',
             'test-zero-touch-operator-command-bound.py',
+            'test-zero-touch-guided-preflight.py',
             'test-enrolled-routed-target-parity.py',
             'test-zero-touch-short-url.sh',
         ):
@@ -121,6 +122,7 @@ class ZeroTouchDocContract(unittest.TestCase):
         public_tests = self.read('tests/test-zero-touch-short-url.sh')
         for name in ('test-zero-touch-doc-contract.py',
                      'test-zero-touch-operator-command-bound.py',
+                     'test-zero-touch-guided-preflight.py',
                      'test-enrolled-routed-target-parity.py',
                      'test-cli-inventory-selection-journey.py',
                      'test-zero-touch-short-url.sh'):

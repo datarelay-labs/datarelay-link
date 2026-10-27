@@ -356,6 +356,11 @@ def remapped_server_cfg(cfg):
     out['registry_file'] = str(
         remap(cfg.get('registry_file') or str(Path(cfg['enrollments_dir']).parent / 'registry.json'))
     )
+    # A hermetic test Server also owns its private CA under the test root.
+    # Without this mapping the Windows stage-1 renderer reads host /etc paths,
+    # leading to a false prerequisite rejection after valid IP PKI checks.
+    if _test_root() and cfg.get('tls_ca_cert'):
+        out['tls_ca_cert'] = str(remap(cfg['tls_ca_cert']))
     return out
 
 
@@ -538,6 +543,45 @@ def private_ca_ip_bootstrap_plan(cfg, ca_fp):
             'allocator': allocator, 'leaf_sha256': pki.fingerprint_from_cert_file(leaf)}
 
 
+def validate_zero_touch_prerequisites(cfg, platform, installer, ca_fp, *, long_bootstrap=False):
+    """Side-effect-free availability gate shared by guided + issuing CLI paths.
+
+    No enrollment IDs/ports are allocated. External HEAD preflight is bounded;
+    only an issuer-local PKI with a matching IP SAN qualifies private-CA IP.
+    """
+    allocator = str(cfg.get('allocator_public_url') or '').strip()
+    if not installer:
+        if platform == 'windows':
+            fail('Windows Agent installer URL is not configured; '
+                 'set server windows-installer-url <URL>')
+        fail('Agent installer URL is not configured; set server installer-url <URL>')
+    if not allocator:
+        fail('allocator public URL is not configured; cannot generate Zero-Touch')
+    if not allocator.lower().startswith('https://'):
+        fail('allocator public URL must be HTTPS')
+    if not ca_fp:
+        fail('allocator CA SHA256 fingerprint is unavailable; cannot generate a secure command')
+    compact_host = short_url_host_for_cfg(cfg) if not long_bootstrap else ''
+    private_ip_plan = None
+    if not compact_host and not long_bootstrap:
+        private_ip_plan = private_ca_ip_bootstrap_plan(cfg, ca_fp)
+        if not private_ip_plan:
+            fail('Secure compact Zero-Touch is not configured. Use a qualified '
+                 'public HTTPS hostname or a numeric-IP allocator with a valid '
+                 'Private CA and matching Server certificate IP SAN. '
+                 'No enrollment ticket was issued.')
+    label = 'Windows Agent installer URL' if platform == 'windows' else 'Agent installer URL'
+    preflight_installer_url(installer, label=label)
+    if platform == 'windows' and private_ip_plan:
+        module = load_allocator()
+        renderer = getattr(module, 'windows_renderer_inputs_from_cfg', None)
+        resolved_cfg = remapped_server_cfg(cfg)
+        resolved_cfg['windows_client_installer_url'] = installer
+        if not callable(renderer) or renderer(resolved_cfg) is None:
+            fail('Windows secure stage-1 renderer is unavailable; no ticket was issued')
+    return compact_host, private_ip_plan
+
+
 _ZT = None
 
 
@@ -706,6 +750,7 @@ def parse_args(argv=None):
             % (ZERO_TOUCH_DEFAULT_TTL, ZERO_TOUCH_MAX_TTL_TEXT, MAX_ENROLLMENT_TTL_TEXT)
         ),
     )
+    p.add_argument('--preflight-zero-touch', action='store_true', help=argparse.SUPPRESS)
     p.add_argument('--note', default='')
     p.add_argument(
         '--client-name',
@@ -1379,7 +1424,7 @@ def print_one_line(ticket, ttl, note, public_host, control_public, allocator, ca
 
 def main(argv=None):
     a = parse_args(argv)
-    zero_touch = bool(a.one_line)
+    zero_touch = bool(a.one_line or a.preflight_zero_touch)
     ttl_raw = a.ttl
     if ttl_raw is None or str(ttl_raw).strip() == '':
         ttl_raw = ZERO_TOUCH_DEFAULT_TTL if zero_touch else '600'
@@ -1399,7 +1444,7 @@ def main(argv=None):
     if (a.ssh or a.rdp or a.services_file) and not a.one_line:
         fail('--ssh, --rdp, and --services-file require --one-line')
     platform = str(a.platform or 'linux').strip().lower()
-    if platform == 'windows' and not a.one_line:
+    if platform == 'windows' and not (a.one_line or a.preflight_zero_touch):
         fail('--platform windows requires --one-line')
     if a.rdp and platform != 'windows':
         fail('--rdp requires --platform windows')
@@ -1420,6 +1465,20 @@ def main(argv=None):
 
     cfg = json.loads(Path(CONFIG).read_text())
     require_onboarding_config(cfg)
+    if a.preflight_zero_touch:
+        # Run before the public Wizard asks for name, targets or SSH metadata.
+        # This cannot create an enrollment, write Server config or issue ports.
+        ca_path = remap(str(cfg.get('tls_ca_cert') or '/etc/drlink/pki/ca.crt'))
+        try:
+            ca_fp = fingerprint_from_cert(ca_path) if ca_path.is_file() else ''
+        except OSError:
+            ca_fp = ''
+        installer = resolve_configured_installer_url(cfg, windows=(platform == 'windows'))
+        validate_zero_touch_prerequisites(
+            cfg, platform, installer, ca_fp, long_bootstrap=a.long_bootstrap
+        )
+        print('Zero-Touch prerequisites verified; no ticket was issued.')
+        return 0
     enroll_dir = remap(cfg['enrollments_dir'])
     enroll_dir.mkdir(parents=True, exist_ok=True)
     try:
@@ -1484,38 +1543,11 @@ def main(argv=None):
         # Optional connection-example metadata; enrollment proceeds without it.
         ssh_user = ''
 
-    if not installer:
-        if platform == 'windows':
-            fail(
-                'Windows Agent installer URL is not configured; '
-                'set server windows-installer-url <URL> before creating a Windows Zero-Touch Agent'
-            )
-        fail(
-            'Agent installer URL is not configured; '
-            'run: set server installer-url <URL>'
-        )
-    if not allocator:
-        fail('allocator public URL is not configured; cannot generate a zero-touch command')
-    if not allocator.lower().startswith('https://'):
-        fail('allocator public URL must be HTTPS')
-    if not ca_fp:
-        fail('allocator CA SHA256 fingerprint is not available; cannot generate a secure command')
-
-    # Check prerequisites before collecting a Managed Host or service draft.
-    # A failing bootstrap endpoint must not surprise the operator after Y.
-    private_ip_plan = None
-    if a.one_line:
-        compact_host = short_url_host_for_cfg(cfg) if not a.long_bootstrap else ''
-        if not compact_host and not a.long_bootstrap:
-            private_ip_plan = private_ca_ip_bootstrap_plan(cfg, ca_fp)
-        if not compact_host and not private_ip_plan and not a.long_bootstrap:
-            fail(
-                'Secure compact Zero-Touch is not configured. Use a trusted HTTPS '
-                'bootstrap hostname or an IP-based allocator whose Server TLS '
-                'certificate has that IP in SAN and is signed by its configured '
-                'private CA. No enrollment ticket was issued.'
-            )
-        preflight_installer_url(installer, label=installer_label)
+    # Re-check the same gate at issuance: a Server setting or certificate may
+    # have changed while the user was filling out the guided service draft.
+    compact_host, private_ip_plan = validate_zero_touch_prerequisites(
+        cfg, platform, installer, ca_fp, long_bootstrap=a.long_bootstrap
+    )
 
     alloc_mod = load_allocator()
     if alloc_mod is None:

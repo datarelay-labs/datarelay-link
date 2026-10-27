@@ -1827,6 +1827,17 @@ frpctl_zt_prompt_ssh() {
   return 0
 }
 
+frpctl_zt_preflight() {
+  # Check the real Server's public-DNS or pinned-private-CA IP capability
+  # *before* asking the user for a Managed Host name, services or SSH user.
+  # Dry-run unit tests only validate menu grammar/dispatch (no real PKI).
+  local platform="${1:-linux}"
+  if [[ "${FRP_CTL_DRY_RUN:-}" == "1" ]]; then
+    return 0
+  fi
+  frpctl_run frp-create-client --preflight-zero-touch --platform "$platform"
+}
+
 frpctl_zt_invoke_create_client() {
   # Usage: frpctl_zt_invoke_create_client [extra frp-create-client args...]
   local -a args=()
@@ -2151,18 +2162,21 @@ frpctl_guided_zero_touch() {
   choice="$(frpctl_read "Select: " "")" || return 1
   case "$choice" in
     1)
+      frpctl_zt_preflight linux || return 1
       _FRP_ZT_CLIENT_NAME=""
       _FRP_ZT_NOTE=""
       frpctl_zt_prompt_client_identification || return 1
       frpctl_guided_zero_touch_linux
       ;;
     2)
+      frpctl_zt_preflight windows || return 1
       _FRP_ZT_CLIENT_NAME=""
       _FRP_ZT_NOTE=""
       frpctl_zt_prompt_client_identification || return 1
       frpctl_guided_zero_touch_windows
       ;;
     3)
+      frpctl_zt_preflight linux || return 1
       _FRP_ZT_CLIENT_NAME=""
       _FRP_ZT_NOTE=""
       frpctl_zt_prompt_client_identification || return 1
@@ -2317,6 +2331,7 @@ frpctl_guided_enroll() {
   choice="$(frpctl_read "Select: " "")" || return 1
   case "$choice" in
     1)
+      frpctl_zt_preflight linux || return 1
       _FRP_ZT_PLATFORM=linux; frpctl_zt_run_ssh
       ;;
     2)

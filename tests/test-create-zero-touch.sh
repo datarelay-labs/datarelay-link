@@ -547,4 +547,76 @@ pass "PTY_CLI_TEST"
 pass "FRPCTL_COMPLETION"
 
 echo
+# Public CLI regression: the backend no-ticket preflight must run before the
+# first name/service prompt. Dry-run parser tests cannot prove this boundary.
+export FRP_CTL_DRY_RUN=0
+# The original grammar-only fixture intentionally has no installer URLs. Add
+# explicit safe loopback placeholders so this negative checks the *CA gate*,
+# not an unrelated missing-installer prerequisite.
+python3 - "$SERVER/etc/drlink/config.json" <<'PY2'
+import json,sys
+from pathlib import Path
+p=Path(sys.argv[1]);cfg=json.loads(p.read_text())
+cfg['enrollments_dir']='/var/lib/drlink/enrollments'
+cfg['client_installer_url']='https://127.0.0.1:49191/artifacts/agent/bootstrap-client.sh'
+cfg['windows_client_installer_url']='https://127.0.0.1:49191/artifacts/agent/bootstrap-client.ps1'
+p.write_text(json.dumps(cfg)+'\n')
+PY2
+for platform in 1 2 3; do
+  run_repl "$SERVER" "$WORKDIR/early-preflight-fail-$platform.out" \
+    'set enrollment zero-touch' "$platform" exit || true
+  grep -q 'ERROR: allocator CA SHA256 fingerprint is unavailable' \
+    "$WORKDIR/early-preflight-fail-$platform.out" \
+    || { tail -35 "$WORKDIR/early-preflight-fail-$platform.out" >&2; fail "early prerequisite error missing for platform $platform"; }
+  ! grep -q '^Managed Host details$' "$WORKDIR/early-preflight-fail-$platform.out" \
+    || fail "platform $platform prompted user before prerequisite failure"
+done
+pass "ZERO_TOUCH_REAL_CLI_FAILS_BEFORE_USER_INPUT"
+
+# For a real numeric-IP private CA Server the same *public* drlink Wizard
+# must proceed to the identification menu after, not before, the gate.
+VALID="$WORKDIR/valid-private-ca-server"
+mkdir -p "$VALID/etc/drlink" "$VALID/var/lib/drlink"
+python3 - "$ROOT" "$VALID" <<'PY2'
+import json,sys
+from pathlib import Path
+sys.path.insert(0, str(Path(sys.argv[1]) / 'lib'))
+import frp_pki
+root = Path(sys.argv[2])
+frp_pki.ensure_pki(root / 'etc/drlink/pki', '127.0.0.1')
+config = {
+    'enrollments_dir': '/var/lib/drlink/enrollments',
+    'allocator_public_url': 'https://127.0.0.1:49191/enroll',
+    'client_installer_url': 'https://127.0.0.1:49191/artifacts/agent/bootstrap-client.sh',
+    'windows_client_installer_url': 'https://127.0.0.1:49191/artifacts/agent/bootstrap-client.ps1',
+    'tls_ca_cert': '/etc/drlink/pki/ca.crt',
+    'tls_server_cert': '/etc/drlink/pki/server.crt',
+    'public_ip': '127.0.0.1', 'control_port': 443,
+}
+(root / 'etc/drlink/config.json').write_text(json.dumps(config) + '\n')
+PY2
+for platform in 1 2 3; do
+  back=3
+  [[ "$platform" == 2 ]] && back=4
+  run_repl "$VALID" "$WORKDIR/early-preflight-pass-$platform.out" \
+    'set enrollment zero-touch' "$platform" 'escare' '' "$back" exit \
+    || fail "preflight prevented valid Private CA platform $platform"
+  grep -q 'Zero-Touch prerequisites verified; no ticket was issued' \
+    "$WORKDIR/early-preflight-pass-$platform.out" \
+    || fail "valid Private CA preflight not announced for platform $platform"
+  grep -q '^Managed Host details$' "$WORKDIR/early-preflight-pass-$platform.out" \
+    || fail "platform $platform did not reach the user wizard after preflight"
+  python3 - "$WORKDIR/early-preflight-pass-$platform.out" <<'PY2' \
+    || fail "platform $platform preflight ran after prompts"
+import sys
+text=open(sys.argv[1], encoding='utf-8').read()
+assert text.index('Zero-Touch prerequisites verified') < text.index('Managed Host details')
+PY2
+done
+if find "$VALID" "$SERVER" -type f -path '*/enrollments/*.json' | grep -q .; then
+  fail 'early preflight issued an enrollment without owner confirmation'
+fi
+export FRP_CTL_DRY_RUN=1
+pass "ZERO_TOUCH_REAL_CLI_IP_PRECHECK_BEFORE_USER_INPUT"
+
 echo "CREATE_ZERO_TOUCH_TEST=PASS"
