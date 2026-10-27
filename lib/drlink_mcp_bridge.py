@@ -426,6 +426,9 @@ class MCPBridge:
 
     def close(self) -> None:
         self._agent_stop.set()
+        native = getattr(self, "_native_full", None)
+        if native is not None:
+            native.close()
         for _cid, (_stop, thread) in list(self._agents.items()):
             thread.join(timeout=1)
         self._agents.clear()

@@ -2,9 +2,45 @@
 
 > Workstream: [Issue #223](https://github.com/datarelay-labs/datarelay-link/issues/223)
 >
-> Candidate status: Native Server MCP Preview is live on dev-drlink at **loopback 127.0.0.1:16106**,
-> pinned to immutable v2.4 candidate 73fce8e3. Native Let's Encrypt HTTPS and actual ChatGPT OAuth are **not yet connected**.
-> The existing public FRP Direct-mode TCP/443 must be reconciled with the supported DRLink single443 frontend before the public MCP URL is available.
+> Current public endpoint: **https://mcp.link.xdr.ooo/mcp**, hosted on dev-drlink/access.xdr.ooo.
+> The owner completed on-host Let's Encrypt, OAuth approval and `server:self` host-info authorization.
+> Native `get_server` and `get_system_info` succeeded through ChatGPT. Do not repeat TLS setup or enrollment.
+> **Full-control implementation is WIP, not deployed or acceptance-qualified.** The live developer executor remains OFF.
+
+## Full-control WIP — owner requirement, 2026-10-27
+
+The owner requires general shell/argv commands, writable Git (including
+add/commit/push), package and service management, and deployment operations
+using an explicitly selected operating-system account. Root administration
+requires a separate operator-controlled opt-in; per-call OAuth/AI Access
+and attribution remain mandatory. A command working-directory scope is
+**not** a filesystem sandbox once general command execution is authorized.
+
+Source `lib/drlink_mcp_full_control.py` and Native Bridge dispatch are now
+present. The runtime includes operator-selected account launching, general
+commands, bounded process-output pages, owner-bound stdin/termination, and
+existing Agent file/process helpers. Installation/upgrade source manifests
+include the module. Existing restrictive mode is retained as the default,
+not presented as the completed owner-requested full-control feature.
+
+**Do not enable full-control on this WIP build.** Remaining acceptance blockers:
+
+- The MCP tool descriptors still advertise the old read-only/test-only
+  contract. A tool edit to add truthful side-effect annotations and shell/job
+  schemas was platform-blocked. New job methods are not discoverable yet.
+- The output reader still uses buffered `read(8192)`; prompt-sized output
+  before process exit is not qualified. Its attempted fix was blocked.
+- Writing the new isolated full-control test suite was blocked; the suite
+  is absent and was not executed. Existing Server-self/local-executor
+  regression results do not establish full-control acceptance.
+- A real full-control account/job/Git/file acceptance suite, final packaging
+  provenance, an authorized rollout and actual ChatGPT workflow tests are
+  required before deployment or Desktop Commander removal.
+
+The earlier restricted-executor sections below describe the currently
+installed mode. They do not override the owner's full-administration goal.
+Current implementation and exact tool-denial evidence are tracked in
+Issue #223, including comment 6441365580.
 
 ## Current owner scope: direct ChatGPT-to-access.xdr.ooo MCP
 
