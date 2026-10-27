@@ -205,7 +205,7 @@ def build_proxy_map(plane: ControlPlane) -> dict[str, dict]:
                 (svc["id"],),
             ).fetchone()
             if meta is not None and remote_service_proxy_id is not None:
-                sid = remote_service_proxy_id(svc["name"])
+                sid = remote_service_proxy_id(svc["name"], stored=meta["runtime_proxy_id"])
             name = expected_proxy_name(hostname, mid, sid)
             entry = {
                 "client_id": mid,

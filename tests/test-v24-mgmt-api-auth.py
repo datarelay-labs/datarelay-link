@@ -71,6 +71,30 @@ def _signed_headers(key, machine_id, body, op, method, path, ts=None, nonce=None
 
 
 class MgmtApiAuthTests(unittest.TestCase):
+    def test_long_publications_preserve_old_canonical_id_and_allocate_new_peer(self):
+        import drlink_v24_runtime as runtime
+        first = 'c27d-f051-identical-long-service-prefix-first'
+        second = 'c27d-f051-identical-long-service-prefix-second'
+        v24.set_service_object(self.server, 'peer', type='tcp', port=2222, oneshot=True)
+        def publish(name, service, port):
+            return mgmt.upsert_remote_service_on_server(
+                root=self.agent_tmp, name=name, destination='this-host', service=service,
+                enabled=False, pool_class='normal', target_host='127.0.0.1',
+                target_port=port, target_mode='self')
+        created = publish(first, 'ssh', 22)
+        legacy = runtime.legacy_remote_service_proxy_id(first)
+        self.server.conn.execute('UPDATE remote_service_meta SET runtime_proxy_id=? WHERE service_id=?',
+                                  (legacy, created['publication']['id']))
+        self.server.conn.commit()
+        updated = publish(first, 'ssh', 22)
+        peer = publish(second, 'peer', 2222)
+        self.assertEqual(updated['proxy_id'], legacy)
+        self.assertEqual(updated['endpoint_port'], created['endpoint_port'])
+        self.assertEqual(updated['publication']['id'], created['publication']['id'])
+        self.assertNotEqual(peer['proxy_id'], updated['proxy_id'])
+        self.assertNotEqual(peer['endpoint_port'], updated['endpoint_port'])
+        self.assertEqual(peer['proxy_id'], runtime.remote_service_proxy_id(second))
+
     def setUp(self):
         self.server_tmp = tempfile.mkdtemp(prefix="drlink-mgmt-auth-srv-")
         self.agent_tmp = tempfile.mkdtemp(prefix="drlink-mgmt-auth-agt-")
@@ -948,11 +972,11 @@ class MgmtApiAuthTests(unittest.TestCase):
         self.assertEqual(before["released"], 0)
 
         class FailingAllocator:
-            def release_remote_service_endpoint(self, *_args):
+            def release_remote_service_endpoint(self, *_args, **_kwargs):
                 raise RuntimeError("simulated registry storage failure")
 
         class WrongPortAllocator:
-            def release_remote_service_endpoint(self, *_args):
+            def release_remote_service_endpoint(self, *_args, **_kwargs):
                 return {"released_port": port + 1, "proxy_id": "rs-f020-keep-on-failure"}
 
         auth = SimpleNamespace(machine_id=MACHINE_A, allocator=None)
@@ -975,7 +999,8 @@ class MgmtApiAuthTests(unittest.TestCase):
                 self.assertEqual(reserved["released"], 0)
 
         class ConfirmingAllocator:
-            def release_remote_service_endpoint(self, *_args):
+            def release_remote_service_endpoint(self, *_args, proxy_id=None):
+                self.seen_proxy_id = proxy_id
                 return {"released_port": port, "proxy_id": "rs-f020-keep-on-failure"}
 
         auth.allocator = ConfirmingAllocator()
@@ -983,6 +1008,7 @@ class MgmtApiAuthTests(unittest.TestCase):
             self.server, auth, "f020-keep-on-failure"
         )
         self.assertEqual(deleted["status"], "DELETED")
+        self.assertEqual(auth.allocator.seen_proxy_id, 'rs-f020-keep-on-failure')
         row = self.server.conn.execute(
             "SELECT released FROM published_services WHERE name='f020-keep-on-failure'"
         ).fetchone()

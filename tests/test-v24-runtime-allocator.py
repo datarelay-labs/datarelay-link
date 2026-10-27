@@ -104,6 +104,45 @@ class RuntimeRenderTests(unittest.TestCase):
         self.assertEqual(runtime.remote_service_proxy_id("Web-API"), "rs-web-api")
         self.assertTrue(runtime.remote_service_proxy_id("x").startswith("rs-"))
 
+    def test_allowed_long_names_do_not_share_runtime_or_allocator_identity(self):
+        names = ["c27d-fpool-lastslot-filler-%03d" % i for i in range(95)]
+        ids = [runtime.remote_service_proxy_id(name) for name in names]
+        self.assertEqual(len(set(ids)), len(names))
+        self.assertTrue(all(runtime.SERVICE_ID_RE.fullmatch(sid) for sid in ids))
+        self.assertEqual(ids, [runtime.remote_service_proxy_id(n.upper()) for n in names])
+
+    def test_canonical_legacy_long_identity_is_preserved_without_relabeling_new_names(self):
+        name = "c27d-f051-identical-long-service-prefix-first"
+        legacy = ("rs-" + name)[:32]
+        self.assertNotEqual(runtime.remote_service_proxy_id(name), legacy)
+        self.assertEqual(runtime.remote_service_proxy_id(name, stored=legacy), legacy)
+        with self.assertRaises(v24.ControlPlaneError):
+            runtime.remote_service_proxy_id(name, stored="rs-unrelated-publication")
+
+
+class RuntimeProxyIdentityMigrationTests(unittest.TestCase):
+    def test_old_rows_keep_ids_and_subsequent_schema_checks_do_not_relabel_new_rows(self):
+        import sqlite3
+        conn = sqlite3.connect(":memory:")
+        self.addCleanup(conn.close)
+        conn.row_factory = sqlite3.Row
+        conn.execute("CREATE TABLE published_services(id TEXT PRIMARY KEY, name TEXT)")
+        conn.executescript(v24.V2_SCHEMA_SQL.replace("  runtime_proxy_id TEXT,\n", ""))
+        name = "c27d-f051-identical-long-service-prefix-first"
+        conn.execute("INSERT INTO published_services VALUES ('pub-old', ?)", (name,))
+        conn.execute("INSERT INTO remote_service_meta(service_id) VALUES ('pub-old')")
+        conn.execute("INSERT INTO agent_remote_services(name,destination,service_object,updated_at) "
+                     "VALUES (?, 'target', 'tcp', '2026-10-27T00:00:00Z')", (name,))
+        v24.ensure_v2_schema(conn)
+        legacy = ("rs-" + name)[:32]
+        self.assertEqual(conn.execute("SELECT runtime_proxy_id FROM remote_service_meta").fetchone()[0], legacy)
+        self.assertEqual(conn.execute("SELECT runtime_proxy_id FROM agent_remote_services").fetchone()[0], legacy)
+        conn.execute("INSERT INTO published_services VALUES ('pub-new', 'new-long-name-pending-publication')")
+        conn.execute("INSERT INTO remote_service_meta(service_id) VALUES ('pub-new')")
+        v24.ensure_v2_schema(conn)
+        self.assertIsNone(conn.execute("SELECT runtime_proxy_id FROM remote_service_meta "
+                                       "WHERE service_id='pub-new'").fetchone()[0])
+
 
 class FRPAuthenticatedReloadSecurityTests(unittest.TestCase):
     def test_existing_admin_requires_strong_auth_and_loopback_private_file(self):
@@ -232,6 +271,26 @@ class FRPAuthenticatedReloadSecurityTests(unittest.TestCase):
 
 
 class RuntimeApplyRemoveTests(unittest.TestCase):
+    def test_long_name_runtime_preserves_canonical_old_id_and_distinguishes_new_peer(self):
+        first = "c27d-f051-identical-long-service-prefix-first"
+        second = "c27d-f051-identical-long-service-prefix-second"
+        legacy = runtime.legacy_remote_service_proxy_id(first)
+        self.plane.conn.execute("UPDATE agent_remote_services SET name=?, runtime_proxy_id=? WHERE name='web'",
+                                (first, legacy))
+        now = v24.utc_now_iso()
+        self.plane.conn.execute("INSERT INTO agent_object_catalog VALUES ('service-object','web-peer',?,?)",
+                                ('{"name":"web-peer","type":"tcp","port":8081}', now))
+        self.plane.conn.execute("INSERT INTO agent_remote_services "
+                                "(name,destination,service_object,endpoint_port,pending_allocation,updated_at) "
+                                "VALUES (?, 'agent-1','web-peer',6011,0,?)", (second, now))
+        self.plane.conn.commit()
+        desired = runtime.build_desired_runtime_services(self.plane, runtime.load_client_state(self.tmp), root=self.tmp)
+        self.assertEqual(desired[legacy]['remote_port'], 6010)
+        self.assertEqual(desired[runtime.remote_service_proxy_id(second)]['remote_port'], 6011)
+        result = runtime.apply_agent_runtime(self.plane, root=self.tmp)
+        self.assertTrue(result['ok'], result)
+        self.assertEqual(runtime._configured_v24_runtime_ports(self.tmp), {first: 6010, second: 6011})
+
     def _populate_capacity_projection(self):
         # Distinct canonical services with a shared local target are sufficient
         # to expose projection work growth; no wall-clock/SLO assertion.
@@ -922,6 +981,24 @@ class RuntimeApplyRemoveTests(unittest.TestCase):
 
 
 class AllocatorAuthorityTests(unittest.TestCase):
+    def test_policy_and_restore_project_canonical_legacy_long_identity(self):
+        import drlink_runtime_policy as policy
+        import drlink_upgrade_reconcile as reconcile
+        name = 'c27d-f051-identical-long-service-prefix-first'
+        legacy = runtime.legacy_remote_service_proxy_id(name)
+        self.plane.set_published_service('agent1', name, service_type='tcp', target_mode='self',
+                                         target_host='127.0.0.1', target_port=22, public_port=6007)
+        publication = self.plane.conn.execute("SELECT id FROM published_services WHERE name=?", (name,)).fetchone()[0]
+        self.plane.conn.execute("INSERT INTO remote_service_meta(service_id, service_object_id, runtime_proxy_id) "
+                                "VALUES (?, 'fixture-service', ?)", (publication, legacy))
+        self.plane.conn.commit()
+        restored = reconcile.build_client_inventory_from_control_plane(self.plane)
+        self.assertEqual(restored['clients']['agent1']['services'][legacy]['remote_port'], 6007)
+        mapping = policy.build_proxy_map(self.plane)
+        key = policy.expected_proxy_name('agent1', 'agent1', legacy)
+        self.assertEqual(mapping[key]['published_id'], publication)
+        self.assertEqual(mapping[key]['public_port'], 6007)
+
     def setUp(self):
         self.tmp = tempfile.mkdtemp(prefix="drlink-alloc-")
         os.environ["FRP_DEPLOY_TEST_ROOT"] = self.tmp

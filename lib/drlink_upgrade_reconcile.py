@@ -48,12 +48,12 @@ def _truthy(value: Any) -> bool:
     return text in ("1", "true", "yes", "y")
 
 
-def remote_service_proxy_id(name: str) -> str:
+def remote_service_proxy_id(name: str, *, stored: Optional[str] = None) -> str:
     try:
         from drlink_v24_runtime import remote_service_proxy_id as _proxy_id
 
-        return _proxy_id(name)
-    except Exception:
+        return _proxy_id(name, stored=stored)
+    except ImportError:
         raw = str(name or "").strip().lower()
         return (V24_PREFIX + raw)[:32] if raw else V24_PREFIX + "svc"
 
@@ -86,12 +86,12 @@ def is_v24_runtime_projection(
             return True
     if sid_s.startswith(V24_PREFIX) and plane is not None and client_id:
         for row in plane.conn.execute(
-            "SELECT s.name FROM published_services s "
+            "SELECT s.name, m.runtime_proxy_id FROM published_services s "
             "JOIN remote_service_meta m ON m.service_id = s.id "
             "WHERE s.client_id = ? AND s.released = 0",
             (client_id,),
         ):
-            if remote_service_proxy_id(row["name"]) == sid_s:
+            if remote_service_proxy_id(row["name"], stored=row["runtime_proxy_id"]) == sid_s:
                 return True
     return False
 
@@ -2575,7 +2575,7 @@ def build_client_inventory_from_control_plane(plane: ControlPlane) -> dict:
             meta = _remote_meta(plane, svc)
             is_v24 = bool(meta is not None and str(meta["service_object_id"] or "").strip())
             if is_v24:
-                sid = remote_service_proxy_id(name)
+                sid = remote_service_proxy_id(name, stored=meta["runtime_proxy_id"])
                 pool = str(meta["pool_class"] or "normal").strip().lower()
                 if pool not in ("normal", "fixed-tcp"):
                     pool = "normal"

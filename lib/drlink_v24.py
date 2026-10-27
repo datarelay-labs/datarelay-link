@@ -197,6 +197,7 @@ CREATE TABLE IF NOT EXISTS ai_policy_path_scopes (
 
 CREATE TABLE IF NOT EXISTS remote_service_meta (
   service_id TEXT PRIMARY KEY,
+  runtime_proxy_id TEXT,
   status TEXT NOT NULL DEFAULT 'HEALTHY',
   pool_class TEXT NOT NULL DEFAULT 'normal',
   service_object_id TEXT,
@@ -211,6 +212,7 @@ CREATE TABLE IF NOT EXISTS remote_service_meta (
 
 CREATE TABLE IF NOT EXISTS agent_remote_services (
   name TEXT PRIMARY KEY,
+  runtime_proxy_id TEXT,
   destination TEXT NOT NULL,
   destination_client_id TEXT,
   service_object TEXT NOT NULL,
@@ -369,6 +371,23 @@ def ensure_v2_schema(conn: sqlite3.Connection) -> None:
             "ALTER TABLE remote_service_meta ADD COLUMN runtime_verified INTEGER NOT NULL DEFAULT 0"
         )
     agent_cols = {str(r[1]) for r in conn.execute("PRAGMA table_info(agent_remote_services)")}
+    # Preserve old runtime identities once, in canonical state. Re-running
+    # schema discovery must not relabel subsequently created publications.
+    from drlink_v24_runtime import legacy_remote_service_proxy_id
+    for table, columns in (("remote_service_meta", meta_cols), ("agent_remote_services", agent_cols)):
+        if "runtime_proxy_id" in columns:
+            continue
+        conn.execute("ALTER TABLE " + table + " ADD COLUMN runtime_proxy_id TEXT")
+        if table == "remote_service_meta":
+            rows = conn.execute("SELECT m.service_id, p.name FROM remote_service_meta m "
+                                "JOIN published_services p ON p.id=m.service_id").fetchall()
+            for service_id, name in rows:
+                conn.execute("UPDATE remote_service_meta SET runtime_proxy_id=? WHERE service_id=?",
+                             (legacy_remote_service_proxy_id(name), service_id))
+        else:
+            for row in conn.execute("SELECT name FROM agent_remote_services").fetchall():
+                conn.execute("UPDATE agent_remote_services SET runtime_proxy_id=? WHERE name=?",
+                             (legacy_remote_service_proxy_id(row[0]), row[0]))
     if "destination_client_id" not in agent_cols:
         conn.execute("ALTER TABLE agent_remote_services ADD COLUMN destination_client_id TEXT")
     if "runtime_verified" not in agent_cols:
@@ -6849,7 +6868,7 @@ def set_remote_service_agent(
         enabled = bool(existing["enabled"])
 
     intent_fields = ("destination", "destination_client_id", "service_object",
-                     "enabled", "endpoint_port", "delete_pending", "updated_at")
+                     "enabled", "endpoint_port", "delete_pending", "updated_at", "runtime_proxy_id")
 
     def reconciliation_intent_changed():
         if not reconcile_existing:
@@ -7158,6 +7177,9 @@ def set_remote_service_agent(
         endpoint_host = os.environ.get("DRLINK_HOST") or endpoint_host
     endpoint_host = endpoint_host or '-'
     endpoint_port = existing["endpoint_port"] if existing else None
+    from drlink_v24_runtime import remote_service_proxy_id
+    runtime_proxy_id = remote_service_proxy_id(
+        name, stored=_row_get(existing, "runtime_proxy_id") if existing else None)
     pending = 0
     status = "DISABLED" if not en else "DEGRADED"
     reason = "Runtime activation pending."
@@ -7228,6 +7250,8 @@ def set_remote_service_agent(
                 )
                 endpoint_host = remote.get("endpoint_host") or endpoint_host
                 endpoint_port = remote.get("endpoint_port")
+                if remote.get("proxy_id"):
+                    runtime_proxy_id = remote_service_proxy_id(name, stored=str(remote["proxy_id"]))
                 pending = int(remote.get("pending_allocation") or 0)
                 if en:
                     status = remote.get("status") or "DEGRADED"
@@ -7369,8 +7393,8 @@ def set_remote_service_agent(
                 plane_db.conn.execute(
                     "INSERT OR REPLACE INTO remote_service_meta"
                     "(service_id, status, pool_class, service_object_id, destination_name, "
-                    "destination_client_id, pending_allocation, delete_pending, reason) "
-                    "VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?)",
+                    "destination_client_id, pending_allocation, delete_pending, reason, runtime_proxy_id) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?)",
                     (
                         pub["id"],
                         status if en else "DISABLED",
@@ -7380,6 +7404,7 @@ def set_remote_service_agent(
                         destination_client_id,
                         pending,
                         reason,
+                        runtime_proxy_id,
                     ),
                 )
             if reconcile_existing and (not server_reachable or live_mgmt):
@@ -7391,12 +7416,12 @@ def set_remote_service_agent(
                 updated = plane_db.conn.execute(
                     "UPDATE agent_remote_services SET destination=?, destination_client_id=?, "
                     "service_object=?, enabled=?, status=?, endpoint_host=?, endpoint_port=?, "
-                    "pending_allocation=?, delete_pending=0, pool_class=?, reason=?, updated_at=?, "
+                    "pending_allocation=?, delete_pending=0, pool_class=?, reason=?, updated_at=?, runtime_proxy_id=?, "
                     "runtime_verified=0, enrollment_seed=0 WHERE name=? COLLATE NOCASE AND "
                     + " AND ".join(field + " IS ?" for field in intent_fields),
                     (dest_token, destination_client_id, svc_name, 1 if en else 0,
                      status if en else "DISABLED", endpoint_host, endpoint_port,
-                     pending, pool_class, reason, now, name)
+                     pending, pool_class, reason, now, runtime_proxy_id, name)
                     + tuple(_row_get(existing, field) for field in intent_fields),
                 ).rowcount
                 if not updated:
@@ -7406,8 +7431,8 @@ def set_remote_service_agent(
                     "INSERT OR REPLACE INTO agent_remote_services"
                     "(name, destination, destination_client_id, service_object, enabled, status, "
                     "endpoint_host, endpoint_port, pending_allocation, delete_pending, pool_class, "
-                    "reason, updated_at) "
-                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?)",
+                    "reason, updated_at, runtime_proxy_id) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?)",
                     (
                         name,
                         dest_token,
@@ -7421,6 +7446,7 @@ def set_remote_service_agent(
                         pool_class,
                         reason,
                         now,
+                        runtime_proxy_id,
                     ),
                 )
             return {"entity": {"type": "remote-service", "id": name, "name": name}, "operation": "set"}
@@ -7815,8 +7841,8 @@ def unset_remote_service_agent(plane_db, name: str, *, root: Optional[str] = Non
                 "INSERT OR REPLACE INTO agent_remote_services"
                 "(name, destination, destination_client_id, service_object, enabled, status, "
                 "endpoint_host, endpoint_port, pending_allocation, delete_pending, pool_class, "
-                "reason, updated_at) "
-                "VALUES (?, ?, ?, ?, 0, 'DISABLED', ?, ?, 0, 1, ?, 'delete pending sync', ?)",
+                "reason, updated_at, runtime_proxy_id) "
+                "VALUES (?, ?, ?, ?, 0, 'DISABLED', ?, ?, 0, 1, ?, 'delete pending sync', ?, ?)",
                 (
                     name,
                     existing["destination"],
@@ -7826,6 +7852,7 @@ def unset_remote_service_agent(plane_db, name: str, *, root: Optional[str] = Non
                     existing["endpoint_port"],
                     existing["pool_class"],
                     utc_now_iso(),
+                    _row_get(existing, "runtime_proxy_id"),
                 ),
             )
         return {"entity": {"type": "remote-service", "id": name, "name": name}, "operation": "delete"}
