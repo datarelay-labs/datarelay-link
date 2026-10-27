@@ -595,5 +595,20 @@ pass "FRESH_MANUAL_CODE_SUPERSEDES_PENDING_SELECTION"
 )
 pass "TRANSPORT_FAILURE_CANNOT_REUSE_TERMINAL_PREFLIGHT_CLASS"
 
+(
+  set -euo pipefail
+  . "$ROOT/lib/frp-common.sh"
+  . "$ROOT/lib/frp-client-common.sh"
+  FRP_ENROLLMENT_PREFLIGHT_ERROR_CLASS=ENROLLMENT_CODE_EXPIRED
+  frp_allocator_curl() { printf '%s' '{"error":"temporarily unavailable"}'; }
+  if frp_enrollment_preflight 'https://unreachable.invalid/enroll' 'fixture-id' \
+      'fixture-secret' 'fixture-machine'; then
+    fail "untyped server failure unexpectedly passed preflight"
+  fi
+  [[ -z "$FRP_ENROLLMENT_PREFLIGHT_ERROR_CLASS" ]] \
+    || fail "untyped server failure synthesized a terminal authorization verdict"
+)
+pass "UNTYPED_FAILURE_CANNOT_SUPERSEDE_PENDING_AUTHORIZATION"
+
 echo
 echo "PENDING_ENROLL_RECOVERY_TEST=PASS"

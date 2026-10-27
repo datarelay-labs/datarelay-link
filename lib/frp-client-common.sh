@@ -3574,7 +3574,8 @@ if data.get('valid') is True:
 
 error_class=str(data.get('error_class') or 'AUTH_FAILED')
 error=str(data.get('error') or 'enrollment preflight failed')
-print(error_class)
+# Only an explicit server verdict may supersede durable pending authorization.
+print(str(data.get('error_class') or ''))
 print('ERROR: %s' % error, file=sys.stderr)
 if error_class == 'ENROLLMENT_CODE_USED':
     print('This Enrollment Code has already been used.', file=sys.stderr)
