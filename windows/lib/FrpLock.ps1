@@ -3,17 +3,29 @@
 # apply, discard, sync, update, and uninstall on one host. Read-only commands
 # (status/info/list/doctor) must not take this lock.
 #
-# Directory mkdir lock with PID reclaim. Re-entrant for the same process so
-# apply can call internal helpers that also enter the lock.
+# A per-root OS mutex serializes metadata publication and stale-owner reclaim.
+# The directory/PID remains readable and compatible with older clients.
+# Re-entrant for the same process so apply can enter internal helpers.
 
 if ((Test-Path variable:script:FrpLockLoaded) -and $script:FrpLockLoaded) { return }
 $script:FrpLockLoaded = $true
 $script:FrpClientLockDepth = 0
 $script:FrpClientLockOwner = $null
 $script:FrpClientLockPath = $null
+$script:FrpClientLockMutex = $null
 
 function Get-FrpClientLockPath {
     Join-Path (Get-FrpStateDir) 'client-manage.lock'
+}
+
+function Get-FrpClientLockMutexName {
+    $root = [IO.Path]::GetFullPath((Get-FrpWindowsRoot)).TrimEnd([char[]]@('\', '/'))
+    if (Test-FrpIsWindowsHost) { $root = $root.ToUpperInvariant() }
+    $sha = [Security.Cryptography.SHA256]::Create()
+    try { $digest = $sha.ComputeHash([Text.Encoding]::UTF8.GetBytes($root)) }
+    finally { $sha.Dispose() }
+    # SYSTEM boot workers and interactive/SSH operators use different sessions.
+    return ('Global\DataRelayLinkClient-' + [BitConverter]::ToString($digest).Replace('-', ''))
 }
 
 function Test-FrpLockPidAlive {
@@ -49,46 +61,96 @@ function Enter-FrpClientLock {
         $script:FrpClientLockDepth++
         return $true
     }
-    Initialize-FrpDirectories
-    $lock = Get-FrpClientLockPath
-    if (Test-Path -LiteralPath $lock) {
-        $pidPath = Join-Path $lock 'pid'
-        $old = ''
-        if (Test-Path -LiteralPath $pidPath) {
-            try { $old = ([string](Get-Content -LiteralPath $pidPath -ErrorAction SilentlyContinue | Select-Object -First 1)).Trim() } catch { $old = '' }
-        }
-        if (Test-FrpLockPidAlive -ProcessId $old -PidPath $pidPath) {
+    $mutex = $null
+    $ownsMutex = $false
+    $entered = $false
+    try {
+        $mutex = [Threading.Mutex]::new($false, (Get-FrpClientLockMutexName))
+        try { $ownsMutex = $mutex.WaitOne(0) }
+        catch [Threading.AbandonedMutexException] { $ownsMutex = $true }
+        if (-not $ownsMutex) {
             Write-Host 'ERROR: another Data Relay Link Agent management operation is already running.'
             return $false
         }
-        Remove-Item -LiteralPath $lock -Recurse -Force -ErrorAction SilentlyContinue
-    }
-    try {
-        New-Item -ItemType Directory -Path $lock -ErrorAction Stop | Out-Null
+        Initialize-FrpDirectories
+        $lock = Get-FrpClientLockPath
+        if (Test-Path -LiteralPath $lock) {
+            $pidPath = Join-Path $lock 'pid'
+            $old = ''
+            if (Test-Path -LiteralPath $pidPath) {
+                try { $old = ([string](Get-Content -LiteralPath $pidPath -ErrorAction Stop | Select-Object -First 1)).Trim() }
+                catch {
+                    # An unreadable ownership publication is not a dead owner.
+                    Write-Host 'ERROR: another Data Relay Link Agent management operation is already running.'
+                    return $false
+                }
+            }
+            if (Test-FrpLockPidAlive -ProcessId $old -PidPath $pidPath) {
+                Write-Host 'ERROR: another Data Relay Link Agent management operation is already running.'
+                return $false
+            }
+            if ($old -notmatch '^[0-9]+$') {
+                $age = ([datetime]::UtcNow - (Get-Item -LiteralPath $lock -ErrorAction Stop).LastWriteTimeUtc).TotalSeconds
+                if ($age -lt 30) {
+                    Write-Host 'ERROR: another Data Relay Link Agent management operation is already running.'
+                    return $false
+                }
+            }
+            Remove-Item -LiteralPath $lock -Recurse -Force -ErrorAction Stop
+        }
+        try {
+            New-Item -ItemType Directory -Path $lock -ErrorAction Stop | Out-Null
+            # Unlike the provider's mkdir check, CreateNew cannot let two
+            # concurrent publishers both overwrite an ownership record.
+            $pidPath = Join-Path $lock 'pid'
+            $stream = [IO.File]::Open($pidPath, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write, [IO.FileShare]::Read)
+            try {
+                $bytes = [Text.Encoding]::UTF8.GetBytes(([string]$PID + [Environment]::NewLine))
+                $stream.Write($bytes, 0, $bytes.Length)
+                $stream.Flush()
+            } finally { $stream.Dispose() }
+        } catch [IO.IOException] {
+            Write-Host 'ERROR: another Data Relay Link Agent management operation is already running.'
+            return $false
+        }
+        $script:FrpClientLockDepth = 1
+        $script:FrpClientLockOwner = $PID
+        $script:FrpClientLockPath = $lock
+        $script:FrpClientLockMutex = $mutex
+        $entered = $true
+        return $true
     } catch {
-        Write-Host 'ERROR: another Data Relay Link Agent management operation is already running.'
+        Write-Host ('ERROR: cannot acquire the Agent management lock. Retry after the current operation finishes; check local state access if the error persists. {0}' -f $_.Exception.Message)
         return $false
+    } finally {
+        if (-not $entered -and $null -ne $mutex) {
+            if ($ownsMutex) { $mutex.ReleaseMutex() }
+            $mutex.Dispose()
+        }
     }
-    Set-Content -LiteralPath (Join-Path $lock 'pid') -Value ([string]$PID)
-    $script:FrpClientLockDepth = 1
-    $script:FrpClientLockOwner = $PID
-    $script:FrpClientLockPath = $lock
-    return $true
 }
 
 function Exit-FrpClientLock {
+    if ($script:FrpClientLockDepth -le 0 -or [string]$script:FrpClientLockOwner -ne [string]$PID) { return }
     if ($script:FrpClientLockDepth -gt 1 -and [string]$script:FrpClientLockOwner -eq [string]$PID) {
         $script:FrpClientLockDepth--
         return
     }
-    $lock = $script:FrpClientLockPath
-    if (-not $lock) { $lock = Get-FrpClientLockPath }
-    if ($lock -and (Test-Path -LiteralPath $lock)) {
-        Remove-Item -LiteralPath $lock -Recurse -Force -ErrorAction SilentlyContinue
+    try {
+        $lock = $script:FrpClientLockPath
+        if ($lock -and (Test-Path -LiteralPath $lock)) {
+            Remove-Item -LiteralPath $lock -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    } finally {
+        if ($null -ne $script:FrpClientLockMutex) {
+            try { $script:FrpClientLockMutex.ReleaseMutex() }
+            finally { $script:FrpClientLockMutex.Dispose() }
+        }
+        $script:FrpClientLockMutex = $null
+        $script:FrpClientLockDepth = 0
+        $script:FrpClientLockOwner = $null
+        $script:FrpClientLockPath = $null
     }
-    $script:FrpClientLockDepth = 0
-    $script:FrpClientLockOwner = $null
-    $script:FrpClientLockPath = $null
 }
 
 function Invoke-FrpWithClientLock {

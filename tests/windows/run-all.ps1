@@ -62,6 +62,7 @@ $tests = @(
     'test-autostart-cli.ps1',
     'test-apply-transaction.ps1',
     'test-client-lock.ps1',
+    'test-client-lock-system-interop.ps1',
     'test-dpapi-localmachine.ps1'
 )
 
