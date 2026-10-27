@@ -24,7 +24,9 @@ jobs:
           bash scripts/check-public-metadata.sh
 
   apple-silicon:
-    if: github.event_name != 'pull_request' || github.base_ref == 'feature/v2.4.0-final-product-closure'
+    # Owner-requested native validation of DNS-free Zero-Touch on PR #225.
+    # Preserve the existing bounded native-runner gate for unrelated PRs.
+    if: github.event_name != 'pull_request' || github.base_ref == 'feature/v2.4.0-final-product-closure' || github.head_ref == 'fix/issue165-owner-seed-target-20261027'
     runs-on: macos-15
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
@@ -35,6 +37,11 @@ jobs:
             /bin/bash "$test"
           done
           /bin/bash tests/test-frpctl-pty-completion.sh
+          # Verify the real macOS bash/curl/OpenSSL execution path, not only
+          # Linux-based Darwin mocks in the portable compatibility job.
+          python3 tests/test-zero-touch-operator-command-bound.py
+          python3 tests/test-zero-touch-guided-preflight.py
+          python3 tests/test-zero-touch-command-exit.py
           python3 scripts/build-bundles.py
           git diff --exit-code dist/
       - name: Verify pinned FRP binary
