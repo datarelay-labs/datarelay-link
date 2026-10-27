@@ -200,29 +200,48 @@ def ensure_tree(root: Optional[str | Path] = None) -> Path:
 
 
 def _frontend_http_user() -> str:
-    """Best-effort nginx worker user for HTTP-01 webroot traversal ACLs."""
-    for name in ("www-data", "nginx", "nobody"):
-        try:
-            import pwd
+    """Return the *running DRLink frontend worker* identity, not a guessed user.
 
-            pwd.getpwnam(name)
-            return name
-        except Exception:
-            continue
-    return ""
+    The distro nginx.conf may declare 'user www-data', but the separately
+    managed /etc/drlink/frontend.conf has no user directive. Its worker can
+    run as 'nobody' even when www-data is installed. ACLs granted to that
+    unrelated distro identity make real Let's Encrypt HTTP-01 return EACCES.
+    """
+    import pwd
+
+    try:
+        master = subprocess.run(
+            ["systemctl", "show", "drlink-frontend.service",
+             "--property=MainPID", "--value"],
+            check=True, capture_output=True, text=True, timeout=5,
+        )
+        pid = int(master.stdout.strip())
+        if pid <= 1:
+            return ""
+        workers = subprocess.run(
+            ["ps", "-o", "uid=", "--ppid", str(pid)],
+            check=True, capture_output=True, text=True, timeout=5,
+        )
+        ids = {int(v) for v in workers.stdout.split() if v.isdecimal()}
+        if len(ids) != 1 or 0 in ids:
+            return ""
+        return pwd.getpwuid(next(iter(ids))).pw_name
+    except (OSError, ValueError, KeyError, subprocess.SubprocessError):
+        return ""
 
 
 def ensure_http01_publish_permissions(root: Optional[str | Path] = None) -> None:
     """Ensure frontend can traverse to the HTTP-01 webroot; secrets stay closed."""
     base = _root(root)
     webroot = acme_webroot(root)
+    well_known = webroot / ".well-known"
     challenges = challenges_dir(root)
-    for path in (webroot, challenges):
+    # The intermediate .well-known directory is created by mkdir(parents=True)
+    # under the operator's umask. An umask of 077 otherwise leaves it 0700,
+    # even though webroot and acme-challenge themselves are chmod 0755.
+    for path in (webroot, well_known, challenges):
         path.mkdir(parents=True, exist_ok=True)
-        try:
-            os.chmod(path, 0o755)
-        except OSError:
-            pass
+        os.chmod(path, 0o755)
     # mcp TLS tree itself must be traversable (account/active remain 0700).
     try:
         os.chmod(tls_tree(root), 0o755)
@@ -240,34 +259,43 @@ def ensure_http01_publish_permissions(root: Optional[str | Path] = None) -> None
                     pass
         return
     user = _frontend_http_user()
+    if not user:
+        raise McpTlsError(
+            "Cannot identify the running DRLink HTTPS frontend nginx worker; "
+            "refusing to expose the ACME challenge or weaken directory permissions",
+            failure_class="ACME_WORKER_IDENTITY_UNAVAILABLE",
+        )
     ancestors = [
         Path("/var/lib/drlink"),
         Path("/var/lib/drlink/tls"),
         tls_tree(root),
     ]
-    if user and shutil.which("setfacl"):
+    if shutil.which("setfacl"):
         for ancestor in ancestors:
             if not ancestor.is_dir():
                 continue
             try:
                 subprocess.run(
                     ["setfacl", "-m", "u:%s:--x" % user, str(ancestor)],
-                    check=False,
+                    check=True,
                     stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
+                    stderr=subprocess.PIPE,
+                    timeout=5,
                 )
-            except OSError:
-                pass
+            except (OSError, subprocess.SubprocessError) as exc:
+                raise McpTlsError(
+                    "Unable to grant the actual frontend nginx worker execute-only "
+                    "access to the ACME HTTP-01 ancestor directory",
+                    failure_class="ACME_WEBROOT_PERMISSIONS",
+                ) from exc
     else:
-        # Fallback: other-execute only (no read/list) so nginx can traverse.
+        # Legacy platform fallback with no POSIX ACL support: traverse only,
+        # never read/list permissions, on the three required ancestor dirs.
         for ancestor in ancestors:
             if not ancestor.is_dir():
                 continue
-            try:
-                mode = stat.S_IMODE(ancestor.stat().st_mode)
-                os.chmod(ancestor, mode | 0o011)
-            except OSError:
-                pass
+            mode = stat.S_IMODE(ancestor.stat().st_mode)
+            os.chmod(ancestor, mode | 0o011)
 
 
 # ---------------------------------------------------------------------------
