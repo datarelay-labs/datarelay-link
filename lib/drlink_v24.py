@@ -6060,12 +6060,23 @@ def _synchronize_agent_remote_services_locked(plane_db, *, root: Optional[str] =
                         })
                         continue
                     claim_status = status
+                    claim_reason = str(row['reason'] or '')
                     if enabled:
-                        live_status = runtime.verified_remote_service_status(
+                        live_status, live_reason = runtime.verified_remote_service_status(
                             plane_db, row["name"], root=root,
-                            allow_unverified=status == "DEGRADED")[0]
+                            allow_unverified=status == "DEGRADED")
                         if status == "HEALTHY":
-                            if not row["runtime_verified"] or live_status != "HEALTHY":
+                            if not row["runtime_verified"]:
+                                stable = False
+                                break
+                            if live_status == 'DEGRADED':
+                                # Management presence may survive loss of the
+                                # independent FRP transport. Report that loss
+                                # without replaying healthy sibling proxies.
+                                claim_status = 'DEGRADED'
+                                claim_reason = live_reason or 'Runtime verification is missing.'
+                                degraded.append({'name': row['name'], 'reason': claim_reason})
+                            elif live_status != 'HEALTHY':
                                 stable = False
                                 break
                         elif status == "DEGRADED":
@@ -6093,7 +6104,7 @@ def _synchronize_agent_remote_services_locked(plane_db, *, root: Optional[str] =
                     claims.append({
                         "name": row["name"],
                         "status": claim_status,
-                        "reason": "" if claim_status == "HEALTHY" else str(row["reason"] or ""),
+                        "reason": "" if claim_status == "HEALTHY" else claim_reason,
                         "runtime_verified": enabled and claim_status == "HEALTHY",
                         "endpoint_port": row["endpoint_port"],
                     })
