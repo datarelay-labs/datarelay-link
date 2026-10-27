@@ -52,6 +52,41 @@ class CompactZeroTouchContract(unittest.TestCase):
             self.assertNotIn(" -k", line)
             self.assertNotIn("zt1.", line)
 
+    @unittest.skipUnless(shutil.which('shasum') and shutil.which('awk'),
+                         'native shasum/awk unavailable')
+    def test_macos_stage1_installer_sha256_without_gnu_sha256sum(self):
+        """Stock macOS has shasum, not the GNU sha256sum command."""
+        ticket = 'bt1.' + ('a' * 16) + '.' + ('b' * 64)
+        script = zt.render_short_url_bootstrap_script(
+            'https://192.0.2.20:6099/enroll', 'c' * 64, ticket,
+            'https://192.0.2.20:6099/artifacts/agent/bootstrap-client.sh',
+        )
+        self.assertIn('shasum -a 256 "$INSTALLER_FILE"', script)
+        self.assertIn('if [[ "$GOT" != "$WANT" ]]; then', script)
+        start = script.index('if command -v sha256sum')
+        end = script.index('if [[ "$GOT" != "$WANT" ]]', start)
+        hash_shell = 'set -euo pipefail\n' + script[start:end] + 'printf "%s" "$GOT"\n'
+        with tempfile.TemporaryDirectory(prefix='drlink-macos-sha-') as temp:
+            base = Path(temp)
+            payload = base / 'installer.sh'
+            payload.write_bytes(b'#!/bin/bash\nprintf MACOS_NATIVE\n')
+            expected = hashlib.sha256(payload.read_bytes()).hexdigest()
+            bin_dir = base / 'bin'
+            bin_dir.mkdir()
+            for name in ('shasum', 'awk'):
+                (bin_dir / name).symlink_to(shutil.which(name))
+            # PATH deliberately excludes sha256sum, the stock macOS baseline.
+            env = dict(os.environ, PATH=str(bin_dir), INSTALLER_FILE=str(payload))
+            good = subprocess.run(['/bin/bash', '-c', hash_shell], env=env,
+                                  text=True, capture_output=True, timeout=9)
+            self.assertEqual(good.returncode, 0, good.stderr)
+            self.assertEqual(good.stdout, expected)
+            (bin_dir / 'shasum').unlink()
+            missing = subprocess.run(['/bin/bash', '-c', hash_shell], env=env,
+                                     text=True, capture_output=True, timeout=9)
+            self.assertNotEqual(missing.returncode, 0)
+            self.assertIn('SHA256 verifier unavailable', missing.stderr)
+
     def test_windows_hash_first_within_single_copy_command(self):
         line = zt.windows_strict_launcher(HOST, HANDLE, HASH)
         self.assertLessEqual(len(line), 500, len(line))

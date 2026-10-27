@@ -721,7 +721,16 @@ def render_short_url_bootstrap_script(allocator_url, ca_sha256, ticket, installe
         _pinned_or_stock_curl_line('SUMS_URL', 'SUMS_FILE', same_https_origin(sums_url, allocator_url)),
         _pinned_or_stock_curl_line('INSTALLER_URL', 'INSTALLER_FILE', same_https_origin(installer, allocator_url)),
         'WANT="$(awk -v names="$EXPECTED_NAMES" \'BEGIN{split(names,a,","); for(i in a) ok[a[i]]=1; c=0} ($2 in ok){print tolower($1); c++} END{if(c!=1) exit 1}\' "$SUMS_FILE")"',
-        'GOT="$(sha256sum "$INSTALLER_FILE" | awk \'{print tolower($1)}\')"',
+        # GNU sha256sum is not installed on a stock macOS host. Preserve
+        # byte-identical digest verification using native shasum -a 256.
+        'if command -v sha256sum >/dev/null 2>&1; then',
+        '  GOT="$(sha256sum "$INSTALLER_FILE" | awk \'{print tolower($1)}\')"',
+        'elif command -v shasum >/dev/null 2>&1; then',
+        '  GOT="$(shasum -a 256 "$INSTALLER_FILE" | awk \'{print tolower($1)}\')"',
+        'else',
+        '  echo "ERROR: SHA256 verifier unavailable (install sha256sum or shasum)" >&2',
+        '  exit 1',
+        'fi',
         'if [[ "$GOT" != "$WANT" ]]; then',
         '  echo "ERROR: installer SHA256 mismatch (integrity check failed)" >&2',
         '  exit 1',
