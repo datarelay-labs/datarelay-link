@@ -9,8 +9,11 @@ import hashlib
 import io
 import os
 import shutil
+import ssl
+import threading
 import json
 from contextlib import redirect_stdout
+from http.server import BaseHTTPRequestHandler, HTTPServer
 import tempfile
 import sys
 import unittest
@@ -158,6 +161,68 @@ class CompactZeroTouchContract(unittest.TestCase):
             self.assertLessEqual(len(commands[0]), 900)
             self.assertIn('/i/', commands[0])
             self.assertNotIn('zt1.', commands[0])
+
+    def test_private_ca_real_https_ip_command_pins_before_stage_execution(self):
+        # Real local TLS, real curl/openssl, simulated sudo only. A typical
+        # Python HTTPS listener omits close_notify on close. The unauthenticated
+        # public CA read must not fail merely on TLS shutdown; the strict
+        # verified handle request and SHA pin must remain mandatory.
+        import frp_pki
+        with tempfile.TemporaryDirectory(prefix='drlink-ip-real-tls-') as td:
+            root = Path(td)
+            pki = frp_pki.ensure_pki(root / 'pki', '127.0.0.1')
+            marker = root / 'executed'
+            paths = []
+            handle = HANDLE
+
+            class TestEndpoint(BaseHTTPRequestHandler):
+                def log_message(self, *_args):
+                    return
+
+                def do_GET(self):
+                    paths.append(self.path)
+                    if self.path == '/ca.crt':
+                        data = Path(pki['ca_crt']).read_bytes()
+                    elif self.path == '/i/' + handle:
+                        data = ('#!/bin/sh\nprintf PASS > ' + str(marker) + '\n').encode()
+                    else:
+                        self.send_error(404)
+                        return
+                    self.send_response(200)
+                    self.send_header('Content-Length', str(len(data)))
+                    self.end_headers()
+                    self.wfile.write(data)
+
+            endpoint = HTTPServer(('127.0.0.1', 0), TestEndpoint)
+            ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+            ctx.load_cert_chain(pki['server_crt'], pki['server_key'])
+            endpoint.socket = ctx.wrap_socket(endpoint.socket, server_side=True)
+            thread = threading.Thread(target=endpoint.serve_forever, daemon=True)
+            thread.start()
+            stub = root / 'sudo'
+            stub.write_text('#!/bin/sh\nexec "$@"\n')
+            stub.chmod(0o755)
+            env = dict(os.environ, PATH=td + os.pathsep + os.environ['PATH'])
+            origin = 'https://127.0.0.1:%s/enroll' % endpoint.server_port
+            try:
+                for name, pin, should_execute in (
+                    ('good', pki['fingerprint'], True),
+                    ('wrong-pin', '0' * 64, False),
+                ):
+                    with self.subTest(name=name):
+                        marker.unlink(missing_ok=True)
+                        paths.clear()
+                        cmd = zt.private_ca_ip_linux_command(origin, pin, handle)
+                        result = subprocess.run(['bash', '-c', cmd], capture_output=True,
+                                                text=True, env=env, timeout=12)
+                        self.assertEqual(marker.exists(), should_execute, result.stderr)
+                        self.assertEqual(result.returncode, 0 if should_execute else 1)
+                        self.assertIn('/ca.crt', paths)
+                        self.assertEqual('/i/' + handle in paths, should_execute)
+            finally:
+                endpoint.shutdown()
+                endpoint.server_close()
+                thread.join(timeout=3)
 
     def test_private_ca_windows_does_not_send_handle_before_ca_pin(self):
         fp, digest = 'a' * 64, 'b' * 64

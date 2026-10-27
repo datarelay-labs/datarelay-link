@@ -176,7 +176,10 @@ def private_ca_ip_linux_command(allocator_url, ca_sha256, handle):
         "set -euo pipefail;umask 077;d=$(mktemp -d);trap 'rm -rf \"$d\"' EXIT;"
         "printf 'GET /ca.crt HTTP/1.0\\r\\nHost: %s\\r\\nConnection: close\\r\\n\\r\\n'|"
         "openssl s_client -quiet -connect %s:%s 2>/dev/null|"
-        "sed -n '/^-----BEGIN CERTIFICATE-----/,/^-----END CERTIFICATE-----/p' >\"$d/ca\";"
+        # A peer may omit TLS close_notify after sending its complete public
+        # CA PEM. The untrusted read alone can ignore that socket-close error;
+        # subsequent DER parsing + exact fingerprint and strict TLS cannot.
+        "sed -n '/^-----BEGIN CERTIFICATE-----/,/^-----END CERTIFICATE-----/p' >\"$d/ca\" || :;"
         "test \"$(openssl x509 -in \"$d/ca\" -outform DER|openssl dgst -sha256|awk '{print $NF}')\" = %s;"
         "openssl x509 -in \"$d/ca\" -out \"$d/trust\";"
         "curl -fsSL --max-redirs 0 --proto '=https' --tlsv1.2 --cacert \"$d/trust\" %s -o \"$d/stage1\";"
