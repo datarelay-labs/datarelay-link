@@ -92,6 +92,20 @@ class EnrollmentRoutedTargetParity(unittest.TestCase):
             "WHERE s.released=0 ORDER BY s.public_port"
         )]
 
+    def test_all_enrollment_paths_share_the_deployed_canonical_target_name(self):
+        # PR220 historically emitted 24 hex digits while PR222's independent
+        # helper emitted 20. Their individually green suites cannot prove the
+        # merged Server and Agent refer to the same Network Object.
+        for target in (LAN, "::1", "2001:db8::20", "App.Example.test"):
+            with self.subTest(target=target):
+                normalized, expected = v24.enrolled_destination_reference(target)
+                self.assertEqual(v24.enrolled_target_object_name(target), expected)
+                self.assertEqual(len(expected.split("enrolled-target-", 1)[1]), 24)
+                _, actual = v24.ensure_enrolled_destination_object(self.server, target)
+                self.assertEqual(actual, expected)
+        for loopback in ("127.0.0.1", "localhost"):
+            self.assertIsNone(v24.enrolled_target_object_name(loopback))
+
     def test_enrollment_lan_targets_are_bound_not_self(self):
         self._publish()
         rows = self._server_rows()
@@ -263,6 +277,106 @@ class EnrollmentRoutedTargetParity(unittest.TestCase):
                 "SELECT destination FROM agent_remote_services WHERE name='aio-ssh'"
             ).fetchone()["destination"], "operator-target",
         )
+
+    def test_signed_server_ack_recovers_stale_legacy_self_seeds(self):
+        # The old installed Agent recorded 127.0.0.1 for both LAN services,
+        # even though the Server retained the signed LAN destination.
+        self._publish()
+        from drlink_mgmt_sync import MgmtAuthContext, server_report_remote_service_status
+        state_file = Path(self.agent_root, "etc/frp/client-state.json")
+        state = json.loads(state_file.read_text())
+        for name in ("aio-ssh", "https"):
+            state["services"][name]["local_ip"] = "127.0.0.1"
+        state_file.write_text(json.dumps(state) + "\n")
+        self.agent = ControlPlane(self.agent_root)
+        self.addCleanup(self.agent.close)
+        v24.ensure_v2_schema(self.agent.conn)
+        v24.project_enrolled_services_into_agent_catalog(self.agent, root=self.agent_root)
+        v24.sync_agent_catalog_from_server(
+            self.agent, server_plane=self.server, root=self.agent_root
+        )
+        self.assertEqual(
+            v24.repair_enrolled_lan_seed_destinations(self.agent, root=self.agent_root), 0
+        )
+        ack = server_report_remote_service_status(
+            self.server,
+            MgmtAuthContext(CLIENT, {"id": CLIENT}, "nonce", 1, allocator=None),
+            {"services": [
+                {"name": name, "status": "DEGRADED", "runtime_verified": False}
+                for name in ("ssh", "aio-ssh", "https")
+            ]},
+        )
+        by_name = {v["name"]: v for v in ack["services"]}
+        self.assertEqual(by_name["aio-ssh"]["authoritative_target"]["host"], LAN)
+        self.assertEqual(by_name["https"]["authoritative_target"]["host"], LAN)
+        self.assertEqual(v24._reconcile_agent_from_server_status(self.agent, ack), 3)
+        for name, port in (("aio-ssh", 6001), ("https", 6002)):
+            row = self.agent.conn.execute(
+                "SELECT * FROM agent_remote_services WHERE name=?", (name,)
+            ).fetchone()
+            self.assertEqual(row["destination"], v24.enrolled_target_object_name(LAN))
+            self.assertIsNone(row["destination_client_id"])
+            self.assertEqual(row["endpoint_port"], port)
+            self.assertEqual(row["status"], "DEGRADED")
+            self.assertEqual(row["runtime_verified"], 0)
+        self.assertEqual(
+            self.agent.conn.execute(
+                "SELECT destination FROM agent_remote_services WHERE name='ssh'"
+            ).fetchone()[0], "drlink-agent",
+        )
+        desired = runtime.build_desired_runtime_services(
+            self.agent, state, root=self.agent_root
+        )
+        for name in ("aio-ssh", "https"):
+            self.assertEqual(desired[runtime.remote_service_proxy_id(name)]["local_ip"], LAN)
+
+    def test_signed_lan_recovery_never_guesses_or_overwrites_operator_edits(self):
+        self._publish()
+        from drlink_mgmt_sync import MgmtAuthContext, server_report_remote_service_status
+        path = Path(self.agent_root, "etc/frp/client-state.json")
+        state = json.loads(path.read_text())
+        for name in ("aio-ssh", "https"):
+            state["services"][name]["local_ip"] = "127.0.0.1"
+        path.write_text(json.dumps(state) + "\n")
+        agent = ControlPlane(self.agent_root)
+        self.addCleanup(agent.close)
+        v24.ensure_v2_schema(agent.conn)
+        v24.project_enrolled_services_into_agent_catalog(agent, root=self.agent_root)
+        v24.sync_agent_catalog_from_server(agent, server_plane=self.server, root=self.agent_root)
+        # Explicit operator ownership must always take priority over the seed.
+        agent.conn.execute(
+            "UPDATE agent_remote_services SET enrollment_seed=0,destination='operator-target' "
+            "WHERE name='aio-ssh'"
+        )
+        agent.conn.commit()
+        ack = server_report_remote_service_status(
+            self.server, MgmtAuthContext(CLIENT, {"id": CLIENT}, "nonce", 1, allocator=None),
+            {"services": [{"name": name, "status": "DEGRADED", "runtime_verified": False}
+                          for name in ("ssh", "aio-ssh", "https")]},
+        )
+        by_name = {r["name"]: r for r in ack["services"]}
+        tampered = dict(by_name["https"])
+        tampered["authoritative_target"] = dict(tampered["authoritative_target"])
+        tampered["authoritative_target"]["host"] = "10.99.88.77"
+        forged = {"services": [by_name["aio-ssh"], tampered, by_name["ssh"]]}
+        v24._reconcile_agent_from_server_status(agent, forged)
+        rows = {r["name"]: r for r in agent.conn.execute(
+            "SELECT * FROM agent_remote_services ORDER BY name"
+        )}
+        self.assertEqual(rows["aio-ssh"]["destination"], "operator-target")
+        self.assertEqual(rows["https"]["destination"], "drlink-agent")
+        self.assertEqual(rows["ssh"]["destination"], "drlink-agent")
+        # A correct authenticated per-service mapping recovers only the
+        # untouched HTTPS seed after the forged probe is rejected.
+        v24._reconcile_agent_from_server_status(agent, ack)
+        rows = {r["name"]: r for r in agent.conn.execute(
+            "SELECT * FROM agent_remote_services ORDER BY name"
+        )}
+        self.assertEqual(rows["aio-ssh"]["destination"], "operator-target")
+        self.assertEqual(rows["https"]["destination"],
+                         v24.enrolled_target_object_name(LAN))
+        self.assertEqual(rows["ssh"]["destination"], "drlink-agent")
+        self.assertEqual(rows["https"]["endpoint_port"], 6002)
 
     def test_mismatched_publication_remains_fail_closed(self):
         self._publish()

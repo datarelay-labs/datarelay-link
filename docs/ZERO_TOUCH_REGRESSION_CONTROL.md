@@ -33,6 +33,34 @@ The operator requested a short one-line Agent enrollment. The installed Server p
 7. **Signed enrollment and routing:** bootstrap tickets are bounded, one-time and bound to first machine. For another LAN destination, the Server/Agent authoritative reference must represent the exact signed IP or FQDN, not `this-host`. Preserve Service ID, target port, public port and intentional disabled state; a TCP-open local target alone must not mark public service `HEALTHY`.
 8. **No false acceptance:** generated installer parity, stock TLS, issued-command bytes, installation, reported Source HEAD, real external SSH/HTTPS traffic, and cleanup are distinct observable gates. Success on a different HEAD, internal-only mock or an unopened destination listener is not interchangeable.
 
+## Historical Agent self-target recovery contract
+
+An earlier installed Agent may retain `127.0.0.1` in `client-state.json`
+for an originally signed LAN service, even after the Server has correctly
+migrated the destination Network Object. Re-reading that stale file or selecting
+the only visible LAN Network Object is **not** a valid recovery algorithm.
+
+The Server's authenticated, client-scoped Remote Service status response carries
+an additive per-service `authoritative_target` projection (destination name,
+optional bound Client ID, Service Object, target IP/port, and target mode).
+An Agent may correct an old bootstrap **only** when all of the following hold:
+
+- The exact Remote Service row is `enrollment_seed=1`, not deleted or operator-modified.
+- The Server-authenticated response matches the original public endpoint and Service Object.
+- The routed Network Object name is the deterministic enrollment target for
+  the Server-provided IP and agrees with the refreshed signed Agent catalog.
+- The Server-provided target port agrees with its signed Service Object.
+- The old Agent destination is demonstrably self-bound; neither an unrelated
+  Managed Host nor an already-routed operator choice may be overwritten.
+
+Before applying a corrected runtime route, the Agent clears its stale
+`HEALTHY`/verification state and requires fresh FRP apply/Server acknowledgement.
+A concurrent operator edit, missing authenticated ACK, conflicting catalog, or
+ambiguous binding must remain unchanged/fail closed. The source-level RED→GREEN
+regression is `tests/test-enrolled-routed-target-parity.py`; installed
+Server/Agent exact-HEAD :6001 SSH and :6002 HTTPS reachability remain separate
+real-environment acceptance requirements.
+
 ## Reproducible acceptance matrix
 
 | Scenario | Expected output/behavior | Actual gate |

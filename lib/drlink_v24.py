@@ -5867,6 +5867,67 @@ def _push_agent_remote_service_status(
     )
 
 
+def _signed_lan_seed_destination(plane_db, row, item: dict) -> Optional[str]:
+    """Recover a legacy self-bound bootstrap seed only from a signed Server ACK.
+
+    The Agent's historical client-state can contain 127.0.0.1 for a LAN seed.
+    A signed object catalog alone cannot tell which service uses that address.
+    Require the per-service Server publication, its exact port, and an exact
+    matching signed Network + Service Object; never guess a LAN destination.
+    Explicit operator edits clear enrollment_seed and cannot be overwritten.
+    """
+    if not bool(row["enrollment_seed"]) or row["delete_pending"]:
+        return None
+    target = item.get("authoritative_target")
+    if not isinstance(target, dict) or target.get("mode") != "routed":
+        return None
+    if target.get("destination_client_id") not in (None, ""):
+        return None
+    host = str(target.get("host") or "").strip()
+    name = str(target.get("destination") or "").strip()
+    if not host or not name or enrolled_target_object_name(host) != name:
+        return None
+    if str(row["destination"] or "").casefold() == name.casefold():
+        return None
+    identity = load_agent_identity(getattr(plane_db, "root", None))
+    self_id = str(identity.get("machine_id") or "")
+    self_name = str(identity.get("hostname") or identity.get("label") or "").casefold()
+    if str(row["destination"] or "").casefold() not in (
+        "this-host", "this_host", "self", self_name
+    ):
+        return None
+    if str(row["destination_client_id"] or "") not in ("", self_id):
+        return None
+    try:
+        public_port = int(item.get("endpoint_port") or 0)
+        service_port = int(target.get("port") or 0)
+    except (TypeError, ValueError):
+        return None
+    if (public_port < 1 or public_port != int(row["endpoint_port"] or 0)
+            or row["pending_allocation"] or service_port < 1 or service_port > 65535):
+        return None
+    service_name = str(target.get("service") or "").strip()
+    if service_name.casefold() != str(row["service_object"] or "").casefold():
+        return None
+    # Catalog is the authenticated, fresh Server object snapshot. A hostile
+    # or stale ACK that does not agree with it must not change desired state.
+    catalog = _catalog_payload(plane_db, "network-object", name)
+    svc_catalog = _catalog_payload(plane_db, "service-object", service_name)
+    if not catalog or not svc_catalog or catalog.get("type") not in ("host", "fqdn"):
+        return None
+    vals = catalog.get("values")
+    if not isinstance(vals, list) or len(vals) != 1:
+        return None
+    if str(vals[0]).strip().casefold() != host.casefold():
+        return None
+    try:
+        if int(svc_catalog.get("port")) != service_port:
+            return None
+    except (TypeError, ValueError):
+        return None
+    return name
+
+
 def _reconcile_agent_from_server_status(
     plane_db, result: dict, *, expected_rows: Optional[dict] = None,
 ) -> int:
@@ -5899,8 +5960,18 @@ def _reconcile_agent_from_server_status(
             # ACK predates the current row; never overwrite its newer
             # status, verification bit, endpoint or pending-allocation state.
             continue
+        # This is a signed management response, not an Agent-inferred alias.
+        # Correct only provenance-marked bootstrap rows, and first demote any
+        # stale HEALTHY generation before a fresh routed runtime activation.
+        corrected_destination = _signed_lan_seed_destination(plane_db, row, item)
         assignments = []
         values = []
+        if corrected_destination:
+            assignments.extend(("destination = ?", "destination_client_id = NULL",
+                                "status = ?", "runtime_verified = 0", "reason = ?"))
+            values.extend((corrected_destination,
+                           "DISABLED" if not row["enabled"] else "DEGRADED",
+                           "Reverify corrected legacy LAN bootstrap target against Server."))
         if "endpoint_port" in item:
             raw = item.get("endpoint_port")
             if raw is None or raw == "":
@@ -5925,7 +5996,7 @@ def _reconcile_agent_from_server_status(
             if int(row["pending_allocation"] or 0) != int(new_pending):
                 assignments.append("pending_allocation = ?")
                 values.append(int(new_pending))
-        if "status" in item:
+        if not corrected_destination and "status" in item:
             status = str(item.get("status") or "").strip().upper()
             if status in ("HEALTHY", "DEGRADED", "DISABLED"):
                 if str(row["status"] or "") != status:
@@ -5939,7 +6010,7 @@ def _reconcile_agent_from_server_status(
                 if int(_row_get(row, "runtime_verified") or 0) != want_verified:
                     assignments.append("runtime_verified = ?")
                     values.append(want_verified)
-        if "reason" in item:
+        if not corrected_destination and "reason" in item:
             reason = str(item.get("reason") or "")
             if str(row["reason"] or "") != reason:
                 assignments.append("reason = ?")
@@ -5949,12 +6020,20 @@ def _reconcile_agent_from_server_status(
         assignments.append("updated_at = ?")
         values.append(now)
         values.append(name)
-        plane_db.conn.execute(
-            "UPDATE agent_remote_services SET %s WHERE name = ? COLLATE NOCASE"
-            % ", ".join(assignments),
+        guarded = ""
+        if corrected_destination:
+            # Do not clobber an operator edit racing the delayed status ACK.
+            guarded = (" AND enrollment_seed=1 AND destination=? "
+                       "AND destination_client_id IS ? AND service_object=? "
+                       "AND endpoint_port=?")
+            values.extend((row["destination"], row["destination_client_id"],
+                           row["service_object"], row["endpoint_port"]))
+        cursor = plane_db.conn.execute(
+            "UPDATE agent_remote_services SET %s WHERE name = ? COLLATE NOCASE%s"
+            % (", ".join(assignments), guarded),
             tuple(values),
         )
-        changed += 1
+        changed += int(cursor.rowcount or 0)
     if changed and not getattr(plane_db, "_batch_mode", False):
         _commit_if_autonomous(plane_db)
     return changed
@@ -6336,7 +6415,25 @@ def _synchronize_agent_remote_services_locked(plane_db, *, root: Optional[str] =
                             for row in snapshot_rows
                         },
                     )
-                    if verified:
+                    # Only destination corrections (not ordinary Server ACK
+                    # metadata/status convergence) invalidate the old FRP
+                    # generation and require full runtime apply. Preserve the
+                    # lightweight status-only path for legitimate DEGRADED
+                    # proxy observations and known unreachable services.
+                    route_changed = False
+                    for old_row in snapshot_rows:
+                        latest = plane_db.conn.execute(
+                            "SELECT destination,destination_client_id FROM "
+                            "agent_remote_services WHERE name=? COLLATE NOCASE",
+                            (old_row["name"],),
+                        ).fetchone()
+                        if (latest is None
+                                or latest["destination"] != old_row["destination"]
+                                or latest["destination_client_id"]
+                                   != old_row["destination_client_id"]):
+                            route_changed = True
+                            break
+                    if verified and not route_changed:
                         for name in promotable:
                             plane_db.conn.execute(
                                 "UPDATE agent_remote_services SET status='HEALTHY', "
@@ -8054,8 +8151,6 @@ def enrolled_destination_reference(target: str) -> tuple[str, Optional[str]]:
     target = str(target or '127.0.0.1').strip()
     if target.lower() in ('127.0.0.1', 'localhost'):
         return '127.0.0.1', None
-    if target == '::1':
-        return '::1', None
     try:
         target = str(ipaddress.ip_address(target))
     except ValueError:

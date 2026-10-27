@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# P2.11.1 zero-touch bootstrap: CLI, preflight, isolated end-to-end.
+# Zero-Touch compact default plus explicit legacy pinned-package enrollment regression.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -167,9 +167,13 @@ grep -q 'frp-create-client --one-line --ssh --ssh-user aella' "$WORKDIR/help.out
 pass "CREATE_CLIENT_HELP"
 
 "$CREATE" --one-line --client-name inventory-only >"$WORKDIR/nosvc.out" 2>"$WORKDIR/nosvc.err"
-grep -q 'FRP_BUNDLE_FILE=' "$WORKDIR/nosvc.out" || fail "short command shape"
-grep -q 'sudo bash -c' "$WORKDIR/nosvc.out" || fail "pinned-CA wrapper missing"
-grep -q 'zt1.' "$WORKDIR/nosvc.out" || fail "opaque package token"
+# Default is now compact IP/Private-CA. The remainder of this suite explicitly
+# selects the legacy long mode where it inspects or redeems the embedded bt1.
+# Compact /i/ handles are lookup credentials and must never be redeemed as bt1.
+grep -q '^bash -c ' "$WORKDIR/nosvc.out" || fail "compact IP command shape"
+grep -q '/i/' "$WORKDIR/nosvc.out" || fail "compact IP handle missing"
+grep -q -- '--cacert' "$WORKDIR/nosvc.out" || fail "strict pinned CA request missing"
+! grep -q 'zt1\.' "$WORKDIR/nosvc.out" || fail "default regressed to long package"
 grep -q 'no service or public port' "$WORKDIR/nosvc.out" || fail "management-only explanation"
 # Legacy env marker is no longer required; profile is server-side.
 pass "ONE_LINE_MANAGEMENT_ONLY"
@@ -183,7 +187,7 @@ grep -q -- '--ssh-user requires --ssh' "$WORKDIR/sshu.err" || fail "ssh-user mes
 pass "SSH_USER_REQUIRES_SSH"
 
 set +e
-"$CREATE" --one-line --ssh --ssh-user aella --ssh-port 99999 >"$WORKDIR/badport.out" 2>"$WORKDIR/badport.err"
+"$CREATE" --one-line --long-bootstrap --ssh --ssh-user aella --ssh-port 99999 >"$WORKDIR/badport.out" 2>"$WORKDIR/badport.err"
 rc=$?
 set -e
 [[ "$rc" -ne 0 ]] || fail "invalid ssh-port should fail"
@@ -191,7 +195,7 @@ grep -qi 'invalid --ssh-port' "$WORKDIR/badport.err" || fail "ssh-port message"
 pass "INVALID_SSH_PORT"
 
 set +e
-"$CREATE" --one-line --ssh --ssh-user aella --ttl 0 >"$WORKDIR/badttl.out" 2>"$WORKDIR/badttl.err"
+"$CREATE" --one-line --long-bootstrap --ssh --ssh-user aella --ttl 0 >"$WORKDIR/badttl.out" 2>"$WORKDIR/badttl.err"
 rc=$?
 set -e
 [[ "$rc" -ne 0 ]] || fail "ttl 0 should fail"
@@ -200,7 +204,7 @@ pass "INVALID_TTL"
 
 echo 'not json' >"$WORKDIR/bad.json"
 set +e
-"$CREATE" --one-line --services-file "$WORKDIR/bad.json" >"$WORKDIR/badsvc.out" 2>"$WORKDIR/badsvc.err"
+"$CREATE" --one-line --long-bootstrap --services-file "$WORKDIR/bad.json" >"$WORKDIR/badsvc.out" 2>"$WORKDIR/badsvc.err"
 rc=$?
 set -e
 [[ "$rc" -ne 0 ]] || fail "invalid services file should succeed? no"
@@ -246,7 +250,7 @@ PY
 # ---------------------------------------------------------------------------
 BEFORE_TICKETS="$(ticket_count)"
 set +e
-FRP_DEPLOY_TEST_ROOT="$TREE" python3 "$CREATE" --one-line --ssh --note client-01 \
+FRP_DEPLOY_TEST_ROOT="$TREE" python3 "$CREATE" --one-line --long-bootstrap --ssh --note client-01 \
   </dev/null >"$WORKDIR/nontty.out" 2>"$WORKDIR/nontty.err"
 nontty_rc=$?
 set -e
@@ -270,7 +274,7 @@ pass "NONINTERACTIVE_SSH_USER_OPTIONAL"
 BEFORE_TICKETS="$(ticket_count)"
 set +e
 FRP_CREATE_CLIENT_TEST_INPUT='' FRP_DEPLOY_TEST_ROOT="$TREE" \
-  python3 "$CREATE" --one-line --ssh --note client-01 \
+  python3 "$CREATE" --one-line --long-bootstrap --ssh --note client-01 \
   >"$WORKDIR/eof.out" 2>"$WORKDIR/eof.err"
 eof_rc=$?
 set -e
@@ -281,22 +285,20 @@ grep -q 'Managed Host name:' "$WORKDIR/eof.out" || fail "EOF did not prompt clie
 pass "TICKET_NOT_CREATED_BEFORE_INPUT"
 
 BEFORE_TICKETS="$(ticket_count)"
-FRP_CREATE_CLIENT_TEST_INPUT=$'\nseoul-groupware\n\n\n\nY\n' FRP_DEPLOY_TEST_ROOT="$TREE" \
-  python3 "$CREATE" --one-line --ssh \
+FRP_CREATE_CLIENT_TEST_INPUT=$'\nseoul-groupware\n\nY\n' FRP_DEPLOY_TEST_ROOT="$TREE" \
+  python3 "$CREATE" --one-line --long-bootstrap --ssh \
   >"$WORKDIR/prompt.out" 2>"$WORKDIR/prompt.err"
 grep -q 'Managed Host details' "$WORKDIR/prompt.out" || fail "missing Managed Host details"
 grep -q 'Managed Host name:' "$WORKDIR/prompt.out" || fail "missing Managed Host name prompt"
 grep -q 'ERROR: Managed Host name cannot be blank.' "$WORKDIR/prompt.err" \
   || fail "blank client name not rejected"
-grep -q 'SSH service setup' "$WORKDIR/prompt.out" || fail "missing SSH setup heading"
-grep -q 'SSH username is optional connection-example metadata.' \
-  "$WORKDIR/prompt.out" || fail "missing optional SSH username help"
-grep -qF 'SSH username [optional]:' "$WORKDIR/prompt.out" || fail "missing optional username prompt"
-grep -qF 'SSH port [22]:' "$WORKDIR/prompt.out" || fail "missing port prompt"
+if grep -qE 'SSH service setup|SSH username \[optional\]:|SSH port \[22\]:' "$WORKDIR/prompt.out"; then
+  fail "backend asked redundant SSH connection-example questions"
+fi
 grep -q 'Managed Host configuration' "$WORKDIR/prompt.out" || fail "missing confirmation"
 grep -q 'Managed Host name : seoul-groupware' "$WORKDIR/prompt.out" || fail "confirmation Managed Host name"
-grep -qE 'SSH user[[:space:]]*:[[:space:]]*<username>|SSH user[[:space:]]*:[[:space:]]*-' \
-  "$WORKDIR/prompt.out" || fail "blank username should show placeholder"
+! grep -q 'Optional SSH login hint' "$WORKDIR/prompt.out" \
+  || fail "blank username invented an SSH login hint"
 grep -qE 'Target[[:space:]]*:[[:space:]]*127.0.0.1:22' "$WORKDIR/prompt.out" || fail "confirmation target"
 grep -q 'zt1\.\|/i/' "$WORKDIR/prompt.out" || fail "generated command missing install launcher"
 if grep -E 'FRP_SSH_USER=.ubuntu|Client SSH user: ubuntu|SSH user : ubuntu' \
@@ -314,14 +316,14 @@ pass "FRP_SSH_USER_OPTIONAL"
 pass "TICKET_CREATED_AFTER_INPUT"
 
 BEFORE_TICKETS="$(ticket_count)"
-FRP_CREATE_CLIENT_TEST_INPUT=$'seoul-groupware\n\naella\n\nY\n' FRP_DEPLOY_TEST_ROOT="$TREE" \
-  python3 "$CREATE" --one-line --ssh \
+FRP_CREATE_CLIENT_TEST_INPUT=$'seoul-groupware\n\nY\n' FRP_DEPLOY_TEST_ROOT="$TREE" \
+  python3 "$CREATE" --one-line --long-bootstrap --ssh --ssh-user aella \
   >"$WORKDIR/prompt-user.out" 2>"$WORKDIR/prompt-user.err"
-grep -qE 'SSH user[[:space:]]*:[[:space:]]*aella' "$WORKDIR/prompt-user.out" || fail "explicit user not confirmed"
+grep -qE 'Optional SSH login hint[[:space:]]*:[[:space:]]*aella' "$WORKDIR/prompt-user.out" || fail "explicit user not confirmed"
 [[ "$(ticket_ssh_user)" == "aella" ]] || fail "entered username not stored in SSH service"
 pass "SSH_USER_STORED_WHEN_PROVIDED"
 
-FRP_DEPLOY_TEST_ROOT="$TREE" python3 "$CREATE" --one-line --ssh --ssh-user aella --note client-01 \
+FRP_DEPLOY_TEST_ROOT="$TREE" python3 "$CREATE" --one-line --long-bootstrap --ssh --ssh-user aella --note client-01 \
   >"$WORKDIR/explicit.out" 2>"$WORKDIR/explicit.err"
 if grep -q 'SSH service setup' "$WORKDIR/explicit.out" "$WORKDIR/explicit.err"; then
   fail "explicit --ssh-user prompted"
@@ -337,14 +339,14 @@ pass "EXPLICIT_SSH_USER_NONINTERACTIVE"
 # Cancel before issuance so this check does not consume a Zero-Touch slot.
 BEFORE_TICKETS="$(ticket_count)"
 FRP_CREATE_CLIENT_TEST_INPUT=$'n\n' FRP_DEPLOY_TEST_ROOT="$TREE" \
-  python3 "$CREATE" --one-line --ssh --ssh-user '' --ssh-port 22 \
+  python3 "$CREATE" --one-line --long-bootstrap --ssh --ssh-user '' --ssh-port 22 \
   --client-name seoul-groupware --note '' \
   >"$WORKDIR/blank-explicit.out" 2>"$WORKDIR/blank-explicit.err"
 if grep -q 'SSH username \[optional\]:' "$WORKDIR/blank-explicit.out" "$WORKDIR/blank-explicit.err"; then
   fail "explicit blank SSH username prompted again"
 fi
-grep -qE 'SSH user[[:space:]]*:[[:space:]]*<username>' "$WORKDIR/blank-explicit.out" \
-  || fail "blank explicit username should show <username>"
+! grep -q 'Optional SSH login hint' "$WORKDIR/blank-explicit.out" \
+  || fail "blank explicit username invented a login hint"
 grep -q 'Cancelled.' "$WORKDIR/blank-explicit.out" || fail "blank explicit username did not reach confirm"
 [[ "$(ticket_count)" == "$BEFORE_TICKETS" ]] || fail "cancelled blank username created a ticket"
 pass "EXPLICIT_BLANK_SSH_USER_NOT_REPROMPTED"
@@ -352,7 +354,7 @@ pass "EXPLICIT_BLANK_SSH_USER_NOT_REPROMPTED"
 # ---------------------------------------------------------------------------
 # One-line command generation
 # ---------------------------------------------------------------------------
-FRP_DEPLOY_TEST_ROOT="$TREE" python3 "$CREATE" --one-line --ssh --ssh-user aella --note customer-server \
+FRP_DEPLOY_TEST_ROOT="$TREE" python3 "$CREATE" --one-line --long-bootstrap --ssh --ssh-user aella --note customer-server \
   >"$WORKDIR/oneline.out"
 grep -q 'short-lived one-time bootstrap ticket' "$WORKDIR/oneline.out" || fail "sensitive warning"
 grep -q 'Treat the command as sensitive' "$WORKDIR/oneline.out" || fail "treat as sensitive"
@@ -429,7 +431,7 @@ pass "ONE_LINE_COMMAND"
 pass "BOOTSTRAP_TICKET_HASHED_AT_REST_CLI"
 pass "SERVER_CREATION_NO_PORT_RESERVATION_CLI"
 
-FRP_DEPLOY_TEST_ROOT="$TREE" python3 "$CREATE" --one-line --ssh --ssh-port 2222 --ssh-user user \
+FRP_DEPLOY_TEST_ROOT="$TREE" python3 "$CREATE" --one-line --long-bootstrap --ssh --ssh-port 2222 --ssh-user user \
   >"$WORKDIR/sshport.out"
 # SSH port/user live in the server-side bootstrap profile, not the short command.
 python3 - "$WORKDIR/sshport.out" "$TREE/var/lib/drlink/bootstrap" <<'PY' || fail "ssh-port profile"
@@ -467,7 +469,7 @@ cfg['allocator_public_url'] = "https://203.0.113.10/enroll;id"
 cfg['client_installer_url'] = "https://example.test/bootstrap-client.sh;uname"
 path.write_text(json.dumps(cfg, indent=2) + "\n")
 PY
-FRP_DEPLOY_TEST_ROOT="$TREE" python3 "$CREATE" --one-line --ssh --ssh-user aella --note "note;rm -rf /" \
+FRP_DEPLOY_TEST_ROOT="$TREE" python3 "$CREATE" --one-line --long-bootstrap --ssh --ssh-user aella --note "note;rm -rf /" \
   >"$WORKDIR/quoted.out"
 python3 - "$WORKDIR/quoted.out" <<'PY' || fail "command injection"
 import base64, json, re, sys
@@ -496,7 +498,7 @@ pass "NO_SHELL_INJECTION"
 
 # ssh_user is restricted to [A-Za-z0-9._@-]{1,32} before the command is printed.
 set +e
-FRP_DEPLOY_TEST_ROOT="$TREE" python3 "$CREATE" --one-line --ssh --ssh-user "ubuntu admin" \
+FRP_DEPLOY_TEST_ROOT="$TREE" python3 "$CREATE" --one-line --long-bootstrap --ssh --ssh-user "ubuntu admin" \
   >"$WORKDIR/spaceuser.out" 2>"$WORKDIR/spaceuser.err"
 src=$?
 set -e
@@ -505,7 +507,7 @@ grep -qi 'invalid ssh_user' "$WORKDIR/spaceuser.out" "$WORKDIR/spaceuser.err" ||
 pass "SSH_USER_SPACES_REJECTED"
 
 set +e
-FRP_DEPLOY_TEST_ROOT="$TREE" python3 "$CREATE" --one-line --ssh --ssh-user "o'reilly" \
+FRP_DEPLOY_TEST_ROOT="$TREE" python3 "$CREATE" --one-line --long-bootstrap --ssh --ssh-user "o'reilly" \
   >"$WORKDIR/quoteuser.out" 2>"$WORKDIR/quoteuser.err"
 qrc=$?
 set -e
@@ -514,7 +516,7 @@ grep -qi 'invalid ssh_user' "$WORKDIR/quoteuser.out" "$WORKDIR/quoteuser.err" ||
 pass "SSH_USER_QUOTE_REJECTED"
 
 set +e
-FRP_DEPLOY_TEST_ROOT="$TREE" python3 "$CREATE" --one-line --ssh --ssh-user $'bad\nuser' \
+FRP_DEPLOY_TEST_ROOT="$TREE" python3 "$CREATE" --one-line --long-bootstrap --ssh --ssh-user $'bad\nuser' \
   >"$WORKDIR/nluser.out" 2>"$WORKDIR/nluser.err"
 nrc=$?
 set -e
@@ -522,7 +524,7 @@ set -e
 grep -qi 'control characters' "$WORKDIR/nluser.out" "$WORKDIR/nluser.err" || fail "newline ssh-user error"
 pass "SSH_USER_NEWLINE_REJECTED"
 
-FRP_DEPLOY_TEST_ROOT="$TREE" python3 "$CREATE" --one-line --ssh --ssh-user 'ubuntu.admin@host-01' \
+FRP_DEPLOY_TEST_ROOT="$TREE" python3 "$CREATE" --one-line --long-bootstrap --ssh --ssh-user 'ubuntu.admin@host-01' \
   >"$WORKDIR/safeuser.out"
 python3 - "$WORKDIR/safeuser.out" "$TREE/var/lib/drlink/bootstrap" <<'PY' || fail "safe ssh-user not in profile"
 import base64, json, re, sys
@@ -570,7 +572,7 @@ cfg['client_installer_url'] = ''
 cfg['windows_client_installer_url'] = ''
 path.write_text(json.dumps(cfg, indent=2) + "\n")
 PY
-FRP_DEPLOY_TEST_ROOT="$TREE" python3 "$CREATE" --one-line --ssh --ssh-user aella \
+FRP_DEPLOY_TEST_ROOT="$TREE" python3 "$CREATE" --one-line --long-bootstrap --ssh --ssh-user aella \
   >"$WORKDIR/derived.out" 2>"$WORKDIR/derived.err" \
   || fail "missing installer with allocator should derive server-local URL"
 grep -q 'https://203.0.113.10:9443/artifacts/agent/bootstrap-client.sh' "$WORKDIR/derived.out" \
@@ -593,7 +595,7 @@ cfg['allocator_public_url'] = ''
 path.write_text(json.dumps(cfg, indent=2) + "\n")
 PY
 set +e
-FRP_DEPLOY_TEST_ROOT="$TREE" python3 "$CREATE" --one-line --ssh --ssh-user aella \
+FRP_DEPLOY_TEST_ROOT="$TREE" python3 "$CREATE" --one-line --long-bootstrap --ssh --ssh-user aella \
   >"$WORKDIR/nourl.out" 2>"$WORKDIR/nourl.err"
 rc=$?
 set -e
@@ -869,7 +871,7 @@ ln -sfn "$ALLOC_ROOT/registry.json" "$LIVE_TREE/var/lib/drlink/registry.json"
 ln -sfn "$ALLOC_ROOT/server_token" "$LIVE_TREE/etc/frp/server_token"
 
 issue_ticket() {
-  FRP_DEPLOY_TEST_ROOT="$LIVE_TREE" python3 "$CREATE" --one-line --ssh --ssh-user "$SSH_USER" --ssh-port "$LISTEN_PORT" --note customer-01
+  FRP_DEPLOY_TEST_ROOT="$LIVE_TREE" python3 "$CREATE" --one-line --long-bootstrap --ssh --ssh-user "$SSH_USER" --ssh-port "$LISTEN_PORT" --note customer-01
 }
 
 issue_ticket >"$WORKDIR/live-create.out"

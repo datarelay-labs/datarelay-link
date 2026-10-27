@@ -1904,6 +1904,26 @@ def server_report_remote_service_status(plane, auth: MgmtAuthContext, body: dict
                 if generation is not None and extra:
                     extra = "%s (generation %s)" % (extra, generation)
                 projection = _canonical_status_projection(name, pub, meta, status, extra or "")
+                # Return this authenticated client's per-service authoritative
+                # routing target. Legacy Agents may have saved a self target
+                # in client-state even while the Server owns a LAN route. An
+                # Agent must never infer a service binding from an arbitrary
+                # catalog object: the Server supplies the exact name, public
+                # endpoint, Service Object and destination in one signed ACK.
+                if meta["service_object_id"]:
+                    svc = plane.conn.execute(
+                        "SELECT name FROM service_objects WHERE id=?",
+                        (meta["service_object_id"],),
+                    ).fetchone()
+                    if svc is not None:
+                        projection["authoritative_target"] = {
+                            "destination": str(meta["destination_name"] or ""),
+                            "destination_client_id": meta["destination_client_id"],
+                            "service": str(svc["name"]),
+                            "host": str(pub["target_host"] or ""),
+                            "port": pub["target_port"],
+                            "mode": str(pub["target_mode"] or ""),
+                        }
                 pending = int(projection["pending_allocation"])
                 verified_flag = 1 if status == "HEALTHY" else 0
                 # Return the Server's *validated* runtime result to the Agent.

@@ -398,6 +398,35 @@ class CompactZeroTouchContract(unittest.TestCase):
         self.assertNotIn("FRP_BOOTSTRAP_TICKET=", output.getvalue())
         self.assertNotIn("Zero-touch Agent command", output.getvalue())
 
+    def test_private_ca_renderers_keep_compact_guards_without_dns_only_limits(self):
+        # The merged PR226 guards must not reintroduce the FQDN-only failure
+        # by applying 200/500 to the deliberately longer CA-pinned IP route.
+        url = "https://192.0.2.20:6099/enroll"
+        plan = {"mode": "private_ca_ip"}
+        for windows in (False, True):
+            output = io.StringIO()
+            with self.subTest(windows=windows), redirect_stdout(output):
+                if windows:
+                    cli.print_one_line_windows(
+                        TICKET, 600, "", "192.0.2.20", 443, url,
+                        "a" * 64, "https://example.test/installer.ps1",
+                        cfg={}, short_handle=HANDLE, stage1_sha256="b" * 64,
+                        private_ip_plan=plan, require_compact=True,
+                    )
+                else:
+                    cli.print_one_line(
+                        TICKET, 600, "", "192.0.2.20", 443, url,
+                        "a" * 64, "https://example.test/installer.sh", "", 22,
+                        cfg={}, short_handle=HANDLE, private_ip_plan=plan,
+                        require_compact=True,
+                    )
+            lines = output.getvalue().splitlines()
+            prefix = "$ErrorActionPreference=" if windows else "bash -c "
+            command = next(line for line in lines if line.startswith(prefix))
+            self.assertLessEqual(len(command), 1500 if windows else 900)
+            self.assertIn("/i/", command)
+            self.assertNotIn("zt1.", command)
+
     def test_long_private_ca_is_explicit_advanced_opt_in(self):
         self.assertFalse(cli.parse_args(["--one-line"]).long_bootstrap)
         self.assertTrue(
