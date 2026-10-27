@@ -497,7 +497,10 @@ resolve_server_settings
 pass "IP_PUBLIC_URL_IDENTITY_RELOAD"
 
 # Zero-Touch short URL generation follows persisted public_url_host (no second bootstrap).
-python3 - "$ROOT" "$DOMAIN_CFG" "$IP_CFG" <<'PY' || fail "ZT short URL from public_url_host"
+# This is a hermetic installer configuration test, not a live DNS/TLS probe.
+# Use the issuer-recognized root so a currently reachable real FQDN cannot
+# nondeterministically turn the expected unqualified fixture into a short URL.
+FRP_DEPLOY_TEST_ROOT="$FRP_SERVER_TEST_ROOT" python3 - "$ROOT" "$DOMAIN_CFG" "$IP_CFG" <<'PY' || fail "ZT short URL from public_url_host"
 import importlib.machinery
 import importlib.util
 import json
