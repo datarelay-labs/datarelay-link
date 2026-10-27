@@ -65,6 +65,41 @@ Public MCP is served only through the `single443` HTTPS frontend. `direct` deplo
 
 For a single443 Server with an explicitly configured MCP TLS hostname and mode, that hostname is the canonical `https://<MCP-HOSTNAME>/mcp` origin for OAuth issuer, discovery, registration and token exchange. It takes priority over an older `DRLINK_MCP_PUBLIC_URL` environment override (which remains a fallback when no dedicated MCP TLS hostname is configured). After a hostname change, inspect `/.well-known/oauth-authorization-server` and `/.well-known/oauth-protected-resource/mcp` through the externally reachable MCP HTTPS hostname; the issuer, registration endpoint, token endpoint and protected resource must all match the routed, certificate-valid FQDN. Internal loopback discovery checks do not substitute for the external client test.
 
+### First-time ChatGPT OAuth connection (DCR / CIMD)
+
+On a fresh DRLink Server, there may be no existing AI Identity. The first
+remote OAuth authorization must **not** require a pre-existing VERIFIED
+identity (that would make initial onboarding impossible).
+
+1. Add the public `https://<MCP-HOSTNAME>/mcp` endpoint in the supported
+   ChatGPT MCP connection UI; this opens an OAuth request.
+2. Confirm the client, redirect origin, requested resource and permissions
+   before taking the operator action. On the **DRLink Server** run:
+
+   ```text
+   system credential approve-oauth <PENDING-ID> chatgpt
+   ```
+
+   For a previously absent AI Identity, this explicit action creates only
+   an **enabled PENDING** identity and binds the requested client to it. It
+   does not grant VERIFIED trust or bypass consent. Existing disabled,
+   revoked or otherwise unverified identities remain ineligible.
+3. Use the waiting OAuth browser page's **Retry** link. The one-time code
+   is delivered only to the originally registered redirect. Only a valid
+   authorization-code exchange with matching client, redirect URI, resource
+   and PKCE verifier transitions the new identity to VERIFIED. A wrong
+   verifier, expired/replayed code or revoked identity cannot do so.
+   If the operator approves a newer request for this same still-PENDING
+   first identity, the superseded authorization code is invalidated and
+   cannot later acquire trusted access.
+4. The resulting MCP identity still has **no privileged AI Access rights**
+   until a separate, narrowly scoped WHITELIST rule is configured. In the
+   initial No Policy state, all privileged MCP operations remain DENY.
+
+This flow permits first-time OAuth onboarding without using a private
+registration database edit, fabricated credentials or an automatic
+operator-approval bypass.
+
 ### v2.4.0 release status
 
 MCP Bridge is included in the v2.4.0 target. The current stable-release blocker is the real ChatGPT owner/UI authentication path on a plan/surface that officially supports full MCP at evidence-capture time, not MCP protocol implementation itself.

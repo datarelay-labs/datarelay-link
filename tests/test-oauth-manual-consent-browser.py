@@ -522,6 +522,53 @@ class ManualConsentBrowserTests(unittest.TestCase):
     def _public_grammar(self, tokens):
         return match(tokens, "server")
 
+    def test_dcr_first_time_chatgpt_connect_operator_approval_and_pkce(self):
+        """The real public operator command bootstraps an identity, no DB edits."""
+        reg = self.plane.register_oauth_client(
+            {
+                "redirect_uris": ["http://127.0.0.1/first-chatgpt"],
+                "token_endpoint_auth_method": "none",
+                "grant_types": ["authorization_code", "refresh_token"],
+                "client_name": "first-time-chatgpt",
+            }
+        )
+        verifier, challenge = self._pkce()
+        auth = self._authorize(
+            challenge=challenge,
+            state="first-connection",
+            client_id=reg["client_id"],
+            redirect="http://127.0.0.1/first-chatgpt",
+        )
+        self.assertIsNone(self.plane.get_principal("chatgpt"))
+        self.assertIn("AI-IDENTITY", auth["page"])
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            rc = dispatch(
+                ["system", "credential", "approve-oauth", auth["pending_id"], "chatgpt"],
+                root=self.tmp,
+            )
+        self.assertEqual(rc, 0, buf.getvalue())
+        self.assertNotIn("drc_", buf.getvalue())
+        self.assertEqual(self.plane.get_principal("chatgpt")["credential_status"], "pending")
+        cont = open_no_redirect(self.base + auth["continue_path"])
+        self.assertEqual(cont.code, 302)
+        loc = urllib.parse.urlparse(cont.headers["Location"])
+        params = urllib.parse.parse_qs(loc.query)
+        self.assertEqual(params.get("state"), ["first-connection"])
+        issued = self._exchange(
+            code=params["code"][0],
+            verifier=verifier,
+            resource=auth["resource"],
+            client_id=reg["client_id"],
+            redirect="http://127.0.0.1/first-chatgpt",
+        )
+        self.assertTrue(issued.get("access_token", "").startswith("drauth_"))
+        self.assertEqual(self.plane.get_principal("chatgpt")["credential_status"], "verified")
+        status, payload = self._mcp(issued["access_token"])
+        self.assertEqual(status, 200, payload)
+        self.assertIn("tools", json.dumps(payload))
+        print("FIRST_CHATGPT_PUBLIC_CLI_OAUTH_PKCE_MCP=PASS")
+
     def test_dcr_unbound_public_cli_identity_approval(self):
         self.plane.set_ai_principal("agent-dcr", enabled=True)
         self.plane.set_ai_principal("agent-off", enabled=False)
@@ -568,11 +615,8 @@ class ManualConsentBrowserTests(unittest.TestCase):
         self.assertEqual(rc, 1)
         self.assertIn("AI Identity", err.getvalue())
         self.assertNotIn("AI Principal", err.getvalue())
-        err = io.StringIO()
-        with redirect_stderr(err):
-            rc = dispatch(one + ["missing-principal"], root=self.tmp)
-        self.assertEqual(rc, 1)
-        self.assertIn("not found or disabled", err.getvalue())
+        # First-time identity bootstrap is covered in test-oauth-principal-lifecycle.py.
+        # Existing disabled or unverified identities must still fail closed.
         err = io.StringIO()
         with redirect_stderr(err):
             rc = dispatch(one + ["agent-off"], root=self.tmp)

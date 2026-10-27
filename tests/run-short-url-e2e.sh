@@ -439,14 +439,23 @@ pass "REBOOT_RECONNECT"
 
 # Cert failure fails closed: untrusted host must not enroll.
 BAD_HOST="untrusted-bootstrap.invalid"
-# Ensure zt1 fallback still works after cert failure path.
+# Removing an explicit bootstrap host must never silently revert to the
+# historical multi-kilobyte zt1 launcher. A verified public TLS endpoint may
+# still produce a compact /i/ link; otherwise fail before ticket issuance.
 ssh_server "sudo /usr/local/bin/drlink unset server bootstrap-hostname" >/dev/null
-FALLBACK_OUT="$OUT_DIR/zt1-fallback.out"
-fallback_payload="$(printf '%s\\n' '1' "${CLIENT_LABEL}-zt1" 'zt1-fallback' '1' "$TUNNEL_SSH_USER" '22' | base64 -w0 2>/dev/null || printf '%s\\n' '1' "${CLIENT_LABEL}-zt1" 'zt1-fallback' '1' "$TUNNEL_SSH_USER" '22' | base64)"
-ssh_server "sudo env FRP_CTL_TEST_INPUT=\"\$(printf '%s' '$fallback_payload' | base64 -d)\" /usr/local/bin/drlink set enrollment zero-touch" \
-  >"$FALLBACK_OUT" 2>&1 || { cat "$FALLBACK_OUT"; fail "zt1 create"; }
-grep -q 'zt1\.' "$FALLBACK_OUT" || fail "zt1 fallback not printed after unset"
-pass "ZT1_FALLBACK_AFTER_CERT_PATH"
+DEFAULT_OUT="$OUT_DIR/default-after-unset.out"
+default_payload="$(printf '%s\n' '1' "${CLIENT_LABEL}-default" 'compact-default-check' '1' "$TUNNEL_SSH_USER" '22' | base64 -w0 2>/dev/null || printf '%s\n' '1' "${CLIENT_LABEL}-default" 'compact-default-check' '1' "$TUNNEL_SSH_USER" '22' | base64)"
+if ssh_server "sudo env FRP_CTL_TEST_INPUT=\"\$(printf '%s' '$default_payload' | base64 -d)\" /usr/local/bin/drlink set enrollment zero-touch" >"$DEFAULT_OUT" 2>&1; then
+  grep -q 'https://' "$DEFAULT_OUT" || fail "default lacks HTTPS URL"
+  grep -q '/i/' "$DEFAULT_OUT" || fail "default lacks short URL"
+  if grep -q 'zt1\.' "$DEFAULT_OUT"; then
+    fail "default silently printed a long zt1 package"
+  fi
+else
+  grep -q 'No enrollment ticket was issued' "$DEFAULT_OUT" \
+    || { cat "$DEFAULT_OUT"; fail "default failure did not explain bootstrap TLS"; }
+fi
+pass "DEFAULT_NO_SILENT_LONG_AFTER_UNSET"
 
 # Demonstrate short URL to bogus host fails under stock trust (no -k).
 if curl -fsSL --proto '=https' --tlsv1.2 "https://${BAD_HOST}/i/bt1.deadbeefdeadbeef.$(printf 'a%.0s' {1..64})" 2>"$OUT_DIR/bad-cert.err"; then

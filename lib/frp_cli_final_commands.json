@@ -632,7 +632,7 @@
     "roles": "server",
     "category": "Server",
     "summary": "Clear optional server hostname and installer URL settings",
-    "detail": "Unsetting public-hostname falls back to Public IP access. Unsetting bootstrap-hostname falls back to zt1 Zero-Touch commands. Unsetting installer URLs restores automatic/default installer sources.",
+    "detail": "Unsetting public-hostname falls back to Public IP access. Unsetting bootstrap-hostname uses qualified public HTTPS or a Private-CA numeric-IP bootstrap with verified CA fingerprint/IP SAN. If neither route is safe, enrollment fails before ticket issuance. The long private-CA launcher remains explicit advanced-only. Unsetting installer URLs restores automatic/default installer sources.",
     "examples": [
       "unset server public-hostname",
       "unset server bootstrap-hostname",

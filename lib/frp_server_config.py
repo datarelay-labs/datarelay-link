@@ -272,10 +272,11 @@ def public_url_host(cfg):
 def short_url_hostname(cfg):
     """Explicit publicly trusted hostname for Zero-Touch short URL commands.
 
-    Short URL mode is opt-in. Enrollment/public URL hostnames can terminate a
-    private-CA allocator on a non-443 port and therefore do not prove that
-    https://<host>/i/... is publicly trusted. Without bootstrap_hostname,
-    callers must use the pinned-CA zt1 fallback.
+    An explicit bootstrap_hostname is operator-selected public TLS intent.
+    When unset, command generators may qualify a configured public hostname
+    with a real strict-TLS /i/ probe; otherwise default enrollment fails
+    before issuing any ticket. Private-CA long commands require explicit
+    advanced opt-in and must never be an automatic fallback.
     """
     return bootstrap_hostname(cfg)
 

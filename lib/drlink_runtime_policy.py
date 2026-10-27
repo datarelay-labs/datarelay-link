@@ -718,7 +718,8 @@ def sync_enrolled_client(
         if not enabled:
             plane.set_published_service_enabled(client_id, service_name, False)
         pub = plane.conn.execute(
-            "SELECT id, enabled, public_port FROM published_services "
+            "SELECT id, enabled, public_port, target_host, target_port, target_mode "
+            "FROM published_services "
             "WHERE client_id = ? AND name = ? AND released = 0",
             (client_id, service_name),
         ).fetchone()
@@ -745,16 +746,32 @@ def sync_enrolled_client(
                     ),
                 )
                 plane.commit_if_autonomous()
-            elif (target_object and str(meta["destination_name"] or "").lower() == "this-host"
-                  and str(meta["destination_client_id"] or "") == str(client_id)):
-                # Repair only the contradictory legacy bootstrap self binding.
-                # v2.4 operator projections were excluded above; retain ports.
-                plane.conn.execute(
-                    "UPDATE remote_service_meta SET destination_name=?, destination_client_id=NULL, "
-                    "runtime_verified=0, status=?, reason=? WHERE service_id=?",
-                    (target_object, "DEGRADED" if pub["enabled"] else "DISABLED",
-                     "Runtime activation pending." if pub["enabled"] else "", pub["id"]))
-                plane.commit_if_autonomous()
+            elif target_object:
+                # Preserve the original endpoint and only migrate a verified
+                # enrollment self alias, never an operator-selected target.
+                originally_self = (
+                    str(meta["destination_name"] or "").lower()
+                    in ("this-host", "this_host", "self", hostname.lower())
+                    and str(meta["destination_client_id"] or "") == str(client_id)
+                )
+                exact_signed_target = (
+                    str(pub["target_host"] or "") == target_host
+                    and int(pub["target_port"] or 0) == int(local_port)
+                )
+                if originally_self and exact_signed_target:
+                    plane.conn.execute(
+                        "UPDATE remote_service_meta SET destination_name=?, destination_client_id=NULL, "
+                        "runtime_verified=0, status=?, reason=? WHERE service_id=?",
+                        (target_object, "DEGRADED" if pub["enabled"] else "DISABLED",
+                         "Runtime activation pending." if pub["enabled"] else "", pub["id"]))
+                    plane.conn.execute(
+                        "UPDATE published_services SET target_mode='routed', updated_at=? WHERE id=?",
+                        (utc_now_iso(), pub["id"]))
+                    plane.commit_if_autonomous()
+    # Only the authenticated enrollment hook extends an already operator-
+    # approved OAuth owner's scope. Other identities gain no implicit access.
+    from drlink_v24 import enroll_managed_host_in_owner_mcp_access
+    enroll_managed_host_in_owner_mcp_access(plane, client_id)
     return {"client_id": client_id, "services": len(services)}
 
 

@@ -356,6 +356,11 @@ def remapped_server_cfg(cfg):
     out['registry_file'] = str(
         remap(cfg.get('registry_file') or str(Path(cfg['enrollments_dir']).parent / 'registry.json'))
     )
+    # A hermetic test Server also owns its private CA under the test root.
+    # Without this mapping the Windows stage-1 renderer reads host /etc paths,
+    # leading to a false prerequisite rejection after valid IP PKI checks.
+    if _test_root() and cfg.get('tls_ca_cert'):
+        out['tls_ca_cert'] = str(remap(cfg['tls_ca_cert']))
     return out
 
 
@@ -432,20 +437,149 @@ def load_server_config():
 
 
 def short_url_host_for_cfg(cfg, bootstrap_hostname='', public_hostname=''):
-    """Resolve the explicit publicly trusted Zero-Touch bootstrap hostname.
+    """Require qualified HTTPS trust before using a public compact bootstrap.
 
-    public_url_host/public_hostname identify product endpoints, not necessarily
-    a publicly trusted HTTPS listener on port 443. Short URL mode therefore
-    requires bootstrap_hostname; otherwise callers use pinned-CA zt1 fallback.
+    An administrator-set bootstrap_hostname is explicit trust intent.
+    Otherwise, the configured public DNS endpoint is only eligible after a
+    real stock-OS TLS validation probe. Never infer TLS from the presence of
+    a hostname or disable certificate validation to shorten a command.
     """
     scfg = load_server_config()
-    if scfg is not None and isinstance(cfg, dict):
+    cfg = cfg if isinstance(cfg, dict) else {}
+    host = ''
+    if scfg is not None:
         try:
             host = scfg.short_url_hostname(cfg)
         except Exception:
             host = ''
-        return str(host or '').strip().lower()
-    return str(bootstrap_hostname or '').strip().lower()
+    host = str(host or bootstrap_hostname or '').strip().lower()
+    if host:
+        return host
+
+    try:
+        candidate = str(
+            cfg.get('public_hostname')
+            or cfg.get('public_url_host')
+            or public_hostname
+            or ''
+        ).strip().lower()
+        if not candidate or not re.fullmatch(r'[a-z0-9][a-z0-9.-]{2,252}', candidate):
+            return ''
+        if '.' not in candidate or candidate.endswith('.local'):
+            return ''
+        if scfg is not None:
+            candidate = scfg.validate_public_hostname(candidate, required=True)
+    except Exception:
+        return ''
+
+    # Hermetic test roots do not make network calls to a real public service.
+    # Source regression tests mock this function for positive TLS discovery.
+    if _test_root():
+        return ''
+    try:
+        import ssl
+        import urllib.error
+        import urllib.request
+
+        class SameOriginOnly(urllib.request.HTTPRedirectHandler):
+            def redirect_request(self, req, fp, code, msg, headers, newurl):
+                return None
+
+        url = 'https://%s/i/invalid-qualification-probe' % candidate
+        opener = urllib.request.build_opener(
+            urllib.request.HTTPSHandler(context=ssl.create_default_context()),
+            SameOriginOnly(),
+        )
+        try:
+            with opener.open(url, timeout=4) as response:
+                # A random nonexistent ticket cannot legitimately return
+                # installer bytes. A 200/default HTML page is not proof.
+                return ''
+        except urllib.error.HTTPError as exc:
+            # Only the DataRelay allocator's exact fail-closed signature
+            # proves the /i/ handler exists, after public TLS verification.
+            if exc.code != 404:
+                return ''
+            try:
+                body = exc.read(128).decode('utf-8', 'replace').strip()
+            except Exception:
+                return ''
+            return candidate if body == 'bootstrap unavailable' else ''
+    except Exception:
+        return ''
+
+
+def private_ca_ip_bootstrap_plan(cfg, ca_fp):
+    """Allow a DNS-free short command only when local Server PKI is valid.
+
+    This pre-ticket read checks the actual private CA, Server leaf chain and
+    numeric-IP SAN. The remote client independently pins the same CA before
+    sending its one-time credential. No DNS or CA-trust shortcut is implied.
+    """
+    zt = load_zero_touch()
+    pki = load_frp_pki()
+    if zt is None or pki is None:
+        return None
+    allocator = str(cfg.get('allocator_public_url') or '')
+    endpoint = zt.private_ca_ip_endpoint(allocator)
+    if endpoint is None:
+        return None
+    ca = remap(str(cfg.get('tls_ca_cert') or '/etc/drlink/pki/ca.crt'))
+    leaf = remap(str(cfg.get('tls_server_cert') or '/etc/drlink/pki/server.crt'))
+    try:
+        if not ca.is_file() or not leaf.is_file():
+            return None
+    except OSError:
+        return None
+    try:
+        if pki.fingerprint_from_cert_file(ca) != str(ca_fp or '').lower():
+            return None
+        pki.verify_cert_signed_by_ca(ca, leaf)
+        if not pki.cert_covers_identities(leaf, [], [endpoint[1].strip('[]')]):
+            return None
+    except Exception:
+        return None
+    return {'mode': 'private_ca_ip', 'authority': endpoint[0],
+            'allocator': allocator, 'leaf_sha256': pki.fingerprint_from_cert_file(leaf)}
+
+
+def validate_zero_touch_prerequisites(cfg, platform, installer, ca_fp, *, long_bootstrap=False):
+    """Side-effect-free availability gate shared by guided + issuing CLI paths.
+
+    No enrollment IDs/ports are allocated. External HEAD preflight is bounded;
+    only an issuer-local PKI with a matching IP SAN qualifies private-CA IP.
+    """
+    allocator = str(cfg.get('allocator_public_url') or '').strip()
+    if not installer:
+        if platform == 'windows':
+            fail('Windows Agent installer URL is not configured; '
+                 'set server windows-installer-url <URL>')
+        fail('Agent installer URL is not configured; set server installer-url <URL>')
+    if not allocator:
+        fail('allocator public URL is not configured; cannot generate Zero-Touch')
+    if not allocator.lower().startswith('https://'):
+        fail('allocator public URL must be HTTPS')
+    if not ca_fp:
+        fail('allocator CA SHA256 fingerprint is unavailable; cannot generate a secure command')
+    compact_host = short_url_host_for_cfg(cfg) if not long_bootstrap else ''
+    private_ip_plan = None
+    if not compact_host and not long_bootstrap:
+        private_ip_plan = private_ca_ip_bootstrap_plan(cfg, ca_fp)
+        if not private_ip_plan:
+            fail('Secure compact Zero-Touch is not configured. Use a qualified '
+                 'public HTTPS hostname or a numeric-IP allocator with a valid '
+                 'Private CA and matching Server certificate IP SAN. '
+                 'No enrollment ticket was issued.')
+    label = 'Windows Agent installer URL' if platform == 'windows' else 'Agent installer URL'
+    preflight_installer_url(installer, label=label)
+    if platform == 'windows' and private_ip_plan:
+        module = load_allocator()
+        renderer = getattr(module, 'windows_renderer_inputs_from_cfg', None)
+        resolved_cfg = remapped_server_cfg(cfg)
+        resolved_cfg['windows_client_installer_url'] = installer
+        if not callable(renderer) or renderer(resolved_cfg) is None:
+            fail('Windows secure stage-1 renderer is unavailable; no ticket was issued')
+    return compact_host, private_ip_plan
 
 
 _ZT = None
@@ -616,6 +750,7 @@ def parse_args(argv=None):
             % (ZERO_TOUCH_DEFAULT_TTL, ZERO_TOUCH_MAX_TTL_TEXT, MAX_ENROLLMENT_TTL_TEXT)
         ),
     )
+    p.add_argument('--preflight-zero-touch', action='store_true', help=argparse.SUPPRESS)
     p.add_argument('--note', default='')
     p.add_argument(
         '--client-name',
@@ -629,6 +764,11 @@ def parse_args(argv=None):
         '--one-line',
         action='store_true',
         help='Print a one-line zero-touch Agent install command',
+    )
+    p.add_argument(
+        '--long-bootstrap',
+        action='store_true',
+        help='Advanced: explicitly print a long pinned-private-CA command instead of the compact public HTTPS form',
     )
     p.add_argument(
         '--ssh',
@@ -659,7 +799,7 @@ def parse_args(argv=None):
     )
     p.add_argument(
         '--platform',
-        choices=('linux', 'windows'),
+        choices=('linux', 'macos', 'windows'),
         default='linux',
         help='Agent platform for the one-line command (default: linux)',
     )
@@ -960,21 +1100,18 @@ def print_client_configuration(name, note, services=None, ssh_user='', ssh_port=
         print(title)
         print('  Target   : %s:%s' % (host, port))
         user = str(svc.get('ssh_user') or '').strip()
-        if preset == 'ssh' or str(svc.get('id') or '').lower() == 'ssh':
-            if user:
-                print('  SSH user : %s (connection-example metadata; not validated)' % user)
-            else:
-                print('  SSH user : <username> (optional connection-example metadata)')
+        # SSH authentication belongs to the eventual SSH client, not to
+        # DataRelay Link tunnel setup. Only show an explicitly supplied hint.
+        if user and (preset == 'ssh' or str(svc.get('id') or '').lower() == 'ssh'):
+            print('  Optional SSH login hint : %s (not validated)' % user)
         print()
 
 
 def resolve_zero_touch_ssh(ssh_user, ssh_port, port_explicit, user_explicit=False):
-    ssh_user = normalize_ssh_user(ssh_user)
-    if user_explicit or ssh_user or not is_interactive_stdin():
-        # An explicit --ssh-user, including blank, was already collected.
-        # Non-interactive empty ssh_user stays optional (<username> examples).
-        return ssh_user, ssh_port
-    return prompt_zero_touch_ssh('', ssh_port, port_explicit)
+    # The tunnel only needs IP:port. SSH login is a downstream example and
+    # must never interrupt Zero-Touch with a mandatory username prompt.
+    # Preserve an explicitly supplied example for operators who want it.
+    return normalize_ssh_user(ssh_user), ssh_port
 
 
 def print_manual(cfg, record, ttl, public_host, control_public, allocator, ca_fp, installer):
@@ -1050,14 +1187,23 @@ def print_one_line_windows(
     ticket, ttl, note, public_host, control_public, allocator, ca_fp,
     installer, rdp_port=None, client_name='', management_only=False,
     ticket_id='', bootstrap_hostname='', public_hostname='', cfg=None,
-    short_handle='', stage1_sha256=''
+    short_handle='', stage1_sha256='', private_ip_plan=None
 ):
     zt = _zt()
     command = ''
     bootstrap_host = short_url_host_for_cfg(
         cfg, bootstrap_hostname=bootstrap_hostname, public_hostname=public_hostname
     )
-    if bootstrap_host and zt is not None and short_handle and stage1_sha256:
+    if private_ip_plan:
+        if not zt:
+            fail('pinned Private CA bootstrap helper unavailable')
+        try:
+            command = zt.private_ca_ip_windows_command(
+                allocator, ca_fp, stage1_sha256, short_handle
+            )
+        except (KeyError, ValueError) as exc:
+            fail('unable to construct authenticated IP Windows bootstrap: %s' % exc)
+    if not command and bootstrap_host and zt is not None and short_handle and stage1_sha256:
         try:
             command = zt.windows_strict_launcher(
                 bootstrap_host, short_handle, stage1_sha256
@@ -1165,7 +1311,7 @@ def print_one_line_windows(
     print()
 
 
-def print_one_line(ticket, ttl, note, public_host, control_public, allocator, ca_fp, installer, ssh_user, ssh_port, client_name='', management_only=False, ticket_id='', legacy_env=False, bootstrap_hostname='', public_hostname='', cfg=None, short_handle=''):
+def print_one_line(ticket, ttl, note, public_host, control_public, allocator, ca_fp, installer, ssh_user, ssh_port, client_name='', management_only=False, ticket_id='', legacy_env=False, bootstrap_hostname='', public_hostname='', cfg=None, short_handle='', private_ip_plan=None):
     tracking_id = str(ticket_id or '').strip()
     if not tracking_id and ticket:
         zt_id = _zt()
@@ -1179,7 +1325,15 @@ def print_one_line(ticket, ttl, note, public_host, control_public, allocator, ca
     bootstrap_host = short_url_host_for_cfg(
         cfg, bootstrap_hostname=bootstrap_hostname, public_hostname=public_hostname
     )
-    if bootstrap_host and not legacy_env:
+    if private_ip_plan and not legacy_env:
+        zt = _zt()
+        if zt is None:
+            fail('pinned private CA bootstrap helper unavailable')
+        try:
+            command = zt.private_ca_ip_linux_command(allocator, ca_fp, short_handle)
+        except ValueError as exc:
+            fail('unable to construct secure IP bootstrap: %s' % exc)
+    if bootstrap_host and not legacy_env and not private_ip_plan:
         try:
             zt = _zt()
             if zt is None:
@@ -1270,7 +1424,7 @@ def print_one_line(ticket, ttl, note, public_host, control_public, allocator, ca
 
 def main(argv=None):
     a = parse_args(argv)
-    zero_touch = bool(a.one_line)
+    zero_touch = bool(a.one_line or a.preflight_zero_touch)
     ttl_raw = a.ttl
     if ttl_raw is None or str(ttl_raw).strip() == '':
         ttl_raw = ZERO_TOUCH_DEFAULT_TTL if zero_touch else '600'
@@ -1290,7 +1444,7 @@ def main(argv=None):
     if (a.ssh or a.rdp or a.services_file) and not a.one_line:
         fail('--ssh, --rdp, and --services-file require --one-line')
     platform = str(a.platform or 'linux').strip().lower()
-    if platform == 'windows' and not a.one_line:
+    if platform == 'windows' and not (a.one_line or a.preflight_zero_touch):
         fail('--platform windows requires --one-line')
     if a.rdp and platform != 'windows':
         fail('--rdp requires --platform windows')
@@ -1311,6 +1465,20 @@ def main(argv=None):
 
     cfg = json.loads(Path(CONFIG).read_text())
     require_onboarding_config(cfg)
+    if a.preflight_zero_touch:
+        # Run before the public Wizard asks for name, targets or SSH metadata.
+        # This cannot create an enrollment, write Server config or issue ports.
+        ca_path = remap(str(cfg.get('tls_ca_cert') or '/etc/drlink/pki/ca.crt'))
+        try:
+            ca_fp = fingerprint_from_cert(ca_path) if ca_path.is_file() else ''
+        except OSError:
+            ca_fp = ''
+        installer = resolve_configured_installer_url(cfg, windows=(platform == 'windows'))
+        validate_zero_touch_prerequisites(
+            cfg, platform, installer, ca_fp, long_bootstrap=a.long_bootstrap
+        )
+        print('Zero-Touch prerequisites verified; no ticket was issued.')
+        return 0
     enroll_dir = remap(cfg['enrollments_dir'])
     enroll_dir.mkdir(parents=True, exist_ok=True)
     try:
@@ -1375,26 +1543,27 @@ def main(argv=None):
         # Optional connection-example metadata; enrollment proceeds without it.
         ssh_user = ''
 
-    if not installer:
-        if platform == 'windows':
-            fail(
-                'Windows Agent installer URL is not configured; '
-                'set server windows-installer-url <URL> before creating a Windows Zero-Touch Agent'
-            )
-        fail(
-            'Agent installer URL is not configured; '
-            'run: set server installer-url <URL>'
-        )
-    if not allocator:
-        fail('allocator public URL is not configured; cannot generate a zero-touch command')
-    if not allocator.lower().startswith('https://'):
-        fail('allocator public URL must be HTTPS')
-    if not ca_fp:
-        fail('allocator CA SHA256 fingerprint is not available; cannot generate a secure command')
+    # Re-check the same gate at issuance: a Server setting or certificate may
+    # have changed while the user was filling out the guided service draft.
+    compact_host, private_ip_plan = validate_zero_touch_prerequisites(
+        cfg, platform, installer, ca_fp, long_bootstrap=a.long_bootstrap
+    )
 
     alloc_mod = load_allocator()
     if alloc_mod is None:
         fail('allocator module is missing')
+    # Freeze the qualified resolved installer in the issuer-side record. A
+    # merely derived Windows URL must not yield a ticket without a frozen,
+    # hash-bound stage-1 that the compact command will need.
+    issuance_cfg = remapped_server_cfg(cfg)
+    if platform == 'windows':
+        issuance_cfg['windows_client_installer_url'] = installer
+        if private_ip_plan:
+            renderer = getattr(alloc_mod, 'windows_renderer_inputs_from_cfg', None)
+            if not callable(renderer) or renderer(issuance_cfg) is None:
+                fail('Windows secure stage-1 renderer is unavailable; no ticket was issued')
+    else:
+        issuance_cfg['client_installer_url'] = installer
 
     # Identification is collected once. When --client-name was already supplied
     # (guided wrapper), accept a blank --note without a second prompt.
@@ -1427,8 +1596,15 @@ def main(argv=None):
     if not confirm_client_setup():
         return 0
 
-    installer_label = 'Windows Agent installer' if platform == 'windows' else 'Agent installer'
-    preflight_installer_url(installer, label=installer_label)
+    compact_host = compact_host if a.one_line else ''
+    # Rendering receives only the host proven by the operator's explicit
+    # bootstrap setting or the real public TLS probe. Never silently render
+    # thousands of characters on the default beginner path.
+    render_cfg = dict(cfg)
+    if compact_host and not a.long_bootstrap:
+        render_cfg['bootstrap_hostname'] = compact_host
+    else:
+        render_cfg.pop('bootstrap_hostname', None)
 
     bootstrap_cfg = str(cfg.get('bootstrap_dir') or '').strip()
     if bootstrap_cfg:
@@ -1444,7 +1620,7 @@ def main(argv=None):
             ttl,
             note,
             label=client_name,
-            cfg=remapped_server_cfg(cfg),
+            cfg=issuance_cfg,
         )
     except Exception as exc:
         if type(exc).__name__ == 'ZeroTouchCapacityError' or 'MAX_ISSUABLE' in str(exc):
@@ -1459,8 +1635,8 @@ def main(argv=None):
         renderer = ticket_record.get('windows_renderer') or {}
         if isinstance(renderer, dict):
             stage1_sha256 = str(renderer.get('stage1_sha256') or '')
-    bootstrap_hostname = str(cfg.get('bootstrap_hostname') or '').strip()
-    public_hostname = str(cfg.get('public_hostname') or '').strip()
+    bootstrap_hostname = str(render_cfg.get('bootstrap_hostname') or '').strip()
+    public_hostname = str(render_cfg.get('public_hostname') or '').strip()
     if platform == 'windows':
         print_one_line_windows(
             ticket,
@@ -1477,9 +1653,10 @@ def main(argv=None):
             ticket_id=ticket_id,
             bootstrap_hostname=bootstrap_hostname,
             public_hostname=public_hostname,
-            cfg=cfg,
+            cfg=render_cfg,
             short_handle=short_handle,
             stage1_sha256=stage1_sha256,
+            private_ip_plan=private_ip_plan,
         )
     else:
         print_one_line(
@@ -1498,8 +1675,9 @@ def main(argv=None):
             ticket_id=ticket_id,
             bootstrap_hostname=bootstrap_hostname,
             public_hostname=public_hostname,
-            cfg=cfg,
+            cfg=render_cfg,
             short_handle=short_handle,
+            private_ip_plan=private_ip_plan,
         )
     try:
         here = Path(__file__).resolve()

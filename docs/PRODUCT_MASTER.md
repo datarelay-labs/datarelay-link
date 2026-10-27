@@ -228,6 +228,27 @@ When destination is another host, the current Agent Host is the Relay Host.
 
 A policy Rule never creates connectivity.
 
+### Zero-Touch default and regression-prevention gate
+
+**ZT-P0-CONTRACT-20261026.** A first-time operator receives a short,
+copyable Zero-Touch command by default using either verified public HTTPS DNS
+or a direct numeric IP with the project's pinned Private CA. The latter
+verifies the fetched public CA certificate fingerprint **before** sending any
+one-time credential and uses strict TLS for subsequent requests. Neither DNS
+nor a third-party public certificate is mandatory. If neither safe path is
+configured, fail before the service wizard and ticket issuance. Never silently
+emit a multi-kilobyte `zt1` package. The advanced long bootstrap remains
+explicit opt-in and optional SSH login metadata stays optional.
+
+Linux/macOS and Windows must share this behavior, while Windows checks the
+downloaded stage-1 hash before running it. Signed Zero-Touch LAN destinations
+must not be projected as Agent `this-host`; Server/Agent destination and
+public endpoint must remain authoritative and stable. Unit/CI PASS alone
+cannot qualify the installed product: see
+`docs/ZERO_TOUCH_REGRESSION_CONTROL.md` for causes, negative tests, and
+the real external operator/Agent E2E gates.
+
+
 ## 12. Remote Service state and endpoint stability
 
 States:
@@ -323,6 +344,18 @@ OAuth Client Credentials
 A display name alone is never authentication.
 
 Authentication and AI Access authorization are separate.
+
+**First owner MCP onboarding (operator-approved exception):** a NEW OAuth AI
+Identity approved by the Server operator through the first-identity consent
+ceremony is not authorized merely by receiving the redirect. Only after the
+same client's genuine PKCE exchange verifies that identity does the Server
+create the scoped owner profile: all seven canonical MCP permissions, explicit
+file paths `/*`, and an audited WHITELIST rule to the enrolled/trusted
+Managed Host group. Subsequent signed Agent enrollments extend that existing
+owner group. Other OAuth identities remain unmatched/DENY; credential
+revocation, endpoint retirement, runtime availability, and existing filesystem
+safety restrictions still fail closed. Do not create an implicit global ALL
+policy or skip operator OAuth approval.
 
 **v2.4.0 scope decision (current owner, 2026-10-16):** The v2.4.0 target includes the current Managed Host/Network Object/Service Object/Permission Object model, Remote Access, Controlled Internet Access, Zero-Touch enrollment, guided/direct CLI, ConfigurationBundle, revision/audit, product/Relay Engine lifecycle, multi-platform Agent, **AI Identity/AI Access and server-side MCP Bridge**. The MCP/AI-only exclusions in `CLI_ONLY_E2E_SCENARIOS.md` narrow **that test run only**. They are not an MCP deferral to 2.5.0 and do not relax the full v2.4.0 release gates. Record real implementation/candidate bytes and exact Source HEAD; documentation is not proof of feature completion.
 

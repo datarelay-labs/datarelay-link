@@ -126,6 +126,35 @@ scenarios:
       - "verification fails closed and never refreshes tracked metadata in the caller worktree"
     release_gate: true
 
+  - id: DRLINK-ZERO-TOUCH-UX-CONTRACT-001
+    name: Zero-Touch current default UX, authority and regression protection
+    level: integration
+    domains:
+      - "public-surface"
+      - "server"
+      - "client"
+      - "artifact-integrity"
+    triggers:
+      - affected
+      - release
+    cost: medium
+    estimated_seconds: 35
+    timeout_seconds: 150
+    agent_default: true
+    platforms:
+      - "linux"
+    command: "python3 tests/test-zero-touch-doc-contract.py && python3 tests/test-zero-touch-operator-command-bound.py && python3 tests/test-zero-touch-guided-preflight.py && python3 tests/test-enrolled-routed-target-parity.py && bash tests/test-zero-touch-short-url.sh"
+    invariants:
+      - "ZT-P0-CONTRACT-20261026 is aligned across Zero-Touch design, canonical Product/CLI Master, public CLI reference and operator audit"
+      - "default trusted-HTTPS short installer is bounded, and unqualified default fails before issuing a ticket instead of silently returning a multi-kilobyte zt1"
+      - "public drlink Guided Zero-Touch preflights all three OS paths before name/service prompts and cannot issue tickets on a failed prerequisite"
+      - "generic 404 HTML, failed TLS, redirect, and plain-IP identity never qualify as a trusted bootstrap endpoint"
+      - "the deliberately chosen advanced private-CA bootstrap retains fingerprint and installer integrity checks"
+      - "Server/Agent Zero-Touch LAN targets retain signed destination, stable public port and correct fail-closed runtime authority across upgrade"
+      - "machine and document tests are supporting evidence: U-009, O-002, A-018 and real Server/Agent/external traffic must PASS at the same exact installed Source HEAD before release"
+      - "negative, cleanup and SHA256/artifact qualification are mandatory; prior-release or different-HEAD PASS cannot substitute"
+    release_gate: true
+
   - id: DRLINK-CLI-FEATURE-SCENARIO-RELEASE
     name: CLI feature/operator workflow reconciliation evidence validation
     level: static
