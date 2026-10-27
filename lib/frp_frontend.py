@@ -426,6 +426,9 @@ def _allocator_https_proxy_location(directive, allocator_listen_port, ca_cert):
             proxy_send_timeout 180s;
             proxy_connect_timeout 10s;
             proxy_buffering off;
+            # Stream bounded management bodies; workers cannot spool into
+            # the installer's root-private nginx temporary directory.
+            proxy_request_buffering off;
         }''' % (
         directive,
         allocator_listen_port,

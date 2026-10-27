@@ -19,6 +19,11 @@ from pathlib import Path
 
 FORMAT = "data-relay-link-server-backup"
 LEGACY_FORMATS = {"frp-auto-deploy-server-backup"}
+LEGACY_PATH_PREFIXES = (
+    ('etc/frp-auto-deploy', 'etc/drlink'),
+    ('var/lib/frp-auto-deploy', 'var/lib/drlink'),
+    ('var/log/frp-auto-deploy', 'var/log/drlink'),
+)
 SCHEMA_VERSION = 1
 TRUST_REQUIRED = {
     "etc/drlink/version",
@@ -135,6 +140,11 @@ def assert_same_version_restore(root: Path, manifest: dict) -> None:
     """
     backup_version = str(manifest.get("project_version") or "").strip()
     installed_version = read_installed_project_version(root)
+    if manifest.get('legacy_migration') == 'v2.3.0-to-v2.4.0':
+        if (manifest.get('format') in LEGACY_FORMATS and backup_version == '2.3.0'
+                and installed_version == '2.4.0'):
+            return
+        raise RestoreError('legacy backup migration requires an installed v2.4.0 Server')
     if not backup_version or backup_version == "unknown":
         raise RestoreError(
             "backup project_version is missing; cross-version restore is not supported"
@@ -159,6 +169,20 @@ def extract_and_validate(archive_path: Path, destination: Path) -> dict:
 
     seen_files: set[str] = set()
     with archive:
+        try:
+            header = json.load(archive.extractfile('manifest.json'))
+        except (KeyError, TypeError, ValueError, OSError) as exc:
+            raise RestoreError('backup manifest is invalid or missing') from exc
+        legacy = (isinstance(header, dict) and header.get('format') in LEGACY_FORMATS
+                  and header.get('project_version') == '2.3.0')
+
+        def canonical(rel):
+            if legacy:
+                for old, new in LEGACY_PATH_PREFIXES:
+                    if rel == old or rel.startswith(old + '/'):
+                        return new + rel[len(old):]
+            return rel
+
         for member in archive.getmembers():
             name = member.name.rstrip("/")
             validate_rel(name)
@@ -168,7 +192,8 @@ def extract_and_validate(archive_path: Path, destination: Path) -> dict:
                 pass
             elif name.startswith("payload/"):
                 rel = name[len("payload/") :]
-                allowed = allowed_directory(rel) if member.isdir() else allowed_path(rel)
+                normalized = canonical(rel)
+                allowed = allowed_directory(normalized) if member.isdir() else allowed_path(normalized)
                 if rel and not allowed:
                     raise RestoreError(f"archive contains unexpected file: {rel}")
             else:
@@ -210,14 +235,26 @@ def extract_and_validate(archive_path: Path, destination: Path) -> dict:
             raise RestoreError("backup manifest file entry is invalid")
         rel = str(item.get("path") or "")
         validate_rel(rel)
-        if rel in declared or not allowed_path(rel):
+        if rel in declared or not allowed_path(canonical(rel)):
             raise RestoreError(f"backup manifest contains unexpected file: {rel}")
         digest = str(item.get("sha256") or "").lower()
         if len(digest) != 64 or any(char not in "0123456789abcdef" for char in digest):
             raise RestoreError(f"backup manifest checksum is invalid: {rel}")
         declared[rel] = item
 
-    missing = REQUIRED - declared.keys()
+    required = REQUIRED
+    if legacy:
+        required = set()
+        for rel in REQUIRED - {CONTROL_DB_REL}:
+            for old, new in LEGACY_PATH_PREFIXES:
+                if rel == new or rel.startswith(new + '/'):
+                    rel = old + rel[len(new):]
+                    break
+            required.add(rel)
+        required.add('var/lib/frp-auto-deploy/registry.json')
+        if CONTROL_DB_REL in {canonical(rel) for rel in declared}:
+            raise RestoreError('legacy backup contains conflicting SQLite authority')
+    missing = required - declared.keys()
     if missing:
         raise RestoreError(f"backup is missing required file: {sorted(missing)[0]}")
 
@@ -245,6 +282,9 @@ def extract_and_validate(archive_path: Path, destination: Path) -> dict:
     if supplied_lines != checksum_lines:
         raise RestoreError("checksum manifest does not match the backup manifest")
 
+    if legacy:
+        migrate_v23_backup_payload(destination, manifest)
+
     for rel in (
         "etc/drlink/config.json",
     ):
@@ -256,9 +296,71 @@ def extract_and_validate(archive_path: Path, destination: Path) -> dict:
             raise RestoreError(f"expected JSON object: {rel}")
     if not (destination / "payload/etc/frp/server_token").read_bytes().strip():
         raise RestoreError("FRP token is empty")
-    if CONTROL_DB_REL not in declared and CONTROL_DB_REL in REQUIRED:
+    if not legacy and CONTROL_DB_REL not in declared and CONTROL_DB_REL in REQUIRED:
         raise RestoreError(f"backup is missing required file: {CONTROL_DB_REL}")
     return manifest
+
+
+def migrate_v23_backup_payload(extracted: Path, manifest: dict) -> None:
+    """Normalize only a checksum-verified v2.3 archive in private staging.
+
+    Reuse the upgrade's fail-closed identity/policy reconciliation. The original
+    archive and the live Server remain unchanged during validation.
+    """
+    payload = extracted / 'payload'
+    for old, new in LEGACY_PATH_PREFIXES:
+        source, target = payload / old, payload / new
+        if source.exists():
+            if target.exists():
+                raise RestoreError('legacy backup mixes canonical and legacy state roots')
+            target.parent.mkdir(parents=True, exist_ok=True)
+            source.rename(target)
+
+    def rewrite(value):
+        if isinstance(value, dict):
+            return {key: rewrite(item) for key, item in value.items()}
+        if isinstance(value, list):
+            return [rewrite(item) for item in value]
+        if isinstance(value, str):
+            for old, new in LEGACY_PATH_PREFIXES:
+                if value == '/' + old or value.startswith('/' + old + '/'):
+                    return '/' + new + value[len(old) + 1:]
+        return value
+
+    try:
+        config = payload / 'etc/drlink/config.json'
+        cfg = rewrite(json.loads(config.read_text(encoding='utf-8')))
+        config.write_text(json.dumps(cfg, indent=2) + '\n', encoding='utf-8')
+        toml = payload / 'etc/frp/frps.toml'
+        text = toml.read_text(encoding='utf-8')
+        for old, new in LEGACY_PATH_PREFIXES:
+            text = text.replace('/' + old + '/', '/' + new + '/')
+        lib_dir = str(Path(__file__).resolve().parent.parent / 'lib')
+        if lib_dir not in sys.path:
+            sys.path.insert(0, lib_dir)
+        from drlink_control_plane import ControlPlane
+        from drlink_upgrade_reconcile import reconcile_control_plane
+        from frp_server_config import ensure_frps_allowed_pool
+        from frp_infrastructure_ports import tcp_relay_port_range
+        text = ensure_frps_allowed_pool(text, *tcp_relay_port_range(cfg))
+        toml.write_text(text, encoding='utf-8')
+        plane = ControlPlane(str(payload))
+        try:
+            # Never resolve a backup's absolute registry_file against the live
+            # host while validating. The only authority here is staged data.
+            stage_cfg = dict(cfg, registry_file=str(payload / 'var/lib/drlink/registry.json'))
+            result = reconcile_control_plane(plane, root=str(payload), cfg=stage_cfg, connected=False)
+            if not result.get('ok'):
+                raise RestoreError('legacy backup reconciliation failed: %s' % result.get('error'))
+            plane.compile_runtime()
+        finally:
+            plane.close()
+    except RestoreError:
+        raise
+    except Exception as exc:
+        raise RestoreError('legacy backup migration failed: %s' % exc) from exc
+    manifest['legacy_migration'] = 'v2.3.0-to-v2.4.0'
+    (extracted / 'manifest.json').write_text(json.dumps(manifest, indent=2) + '\n', encoding='utf-8')
 
 
 def fixed_mode(rel: str) -> int:
@@ -330,6 +432,7 @@ def apply_payload(root: Path, extracted: Path, allow_hook: bool = True) -> None:
     count = 0
     hook_after = int(os.environ.get("FRP_RESTORE_HOOK_FAIL_AFTER", "0") or "0")
     ignore = RESTORE_IGNORE
+    manifest = json.loads((extracted / 'manifest.json').read_text(encoding='utf-8'))
 
     for tree_rel in TREE_ROOTS:
         if tree_rel in ignore or any(
@@ -351,6 +454,10 @@ def apply_payload(root: Path, extracted: Path, allow_hook: bool = True) -> None:
         if any(rel.startswith(prefix) for prefix in TREE_PREFIXES)
     }
     for rel in sorted((REQUIRED | OPTIONAL_EXACT) - tree_files):
+        # A legacy state migration restores data, not superseded software
+        # identity. assert_same_version_restore already required installed 2.4.
+        if rel == 'etc/drlink/version' and manifest.get('legacy_migration') == 'v2.3.0-to-v2.4.0':
+            continue
         if rel in ignore:
             continue
         source = payload / rel
@@ -676,7 +783,34 @@ def validate_staged_control_db(db_path: Path, manifest_path: Path | None = None)
         conn.close()
 
 
-def post_restore_reconcile(root: Path, payload_source: Path | None = None) -> None:
+def _read_restore_revision_floor(root: Path) -> int:
+    """Read the live high-water mark without requiring healthy legacy state.
+
+    Corrupt-current recovery must remain available when no live revision can
+    be read; the restored candidate's own high-water mark still advances.
+    """
+    import sqlite3
+
+    path = root / CONTROL_DB_REL
+    if not path.is_file():
+        return 0
+    conn = None
+    try:
+        conn = sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True)
+        return int(conn.execute(
+            "SELECT COALESCE(MAX(revision), 0) FROM config_revisions"
+        ).fetchone()[0])
+    except (sqlite3.DatabaseError, OSError, TypeError, ValueError):
+        return 0
+    finally:
+        if conn is not None:
+            conn.close()
+
+
+def post_restore_reconcile(
+    root: Path, payload_source: Path | None = None,
+    *, previous_revision: int | None = None,
+) -> None:
     """Rebuild derived runtime from restored DB and fail-closed AI job state.
 
     Restore intentionally purges non-authoritative projections (including the
@@ -710,6 +844,8 @@ def post_restore_reconcile(root: Path, payload_source: Path | None = None) -> No
             raise RestoreError(str(exc)) from exc
     plane = ControlPlane(str(root))
     try:
+        if previous_revision is not None:
+            plane.advance_restored_revision(previous_revision)
         # Backup-time presence/proxy verification cannot prove continuity after
         # the server stack is replaced. Require a fresh signed Agent report and
         # runtime reconciliation before advertising restored services as healthy.
@@ -1358,14 +1494,23 @@ def main() -> int:
             )
             if gate == "cancelled":
                 return 1
+            previous_revision = _read_restore_revision_floor(root)
             snapshot = make_snapshot(root)
             rollback_kind, rollback_temp, rollback = classify_rollback_snapshot(snapshot)
+            if rollback is not None:
+                previous_revision = max(
+                    previous_revision,
+                    _read_restore_revision_floor(rollback / "payload"),
+                )
             # Mutation marker only after preflight succeeds (candidate valid;
             # current state preserved as VALIDATED or RAW_CORRUPT evidence).
             _write_txn(root, snapshot, rollback_kind=rollback_kind)
             try:
                 apply_payload(root, candidate)
-                post_restore_reconcile(root, payload_source=candidate)
+                post_restore_reconcile(
+                    root, payload_source=candidate,
+                    previous_revision=previous_revision,
+                )
                 _reapply_egress_permissions_after_restore(root)
                 restart_services(root, expect_client_role=expect_client_role)
                 verify_restored_control_state(root, expect_client_role=expect_client_role)

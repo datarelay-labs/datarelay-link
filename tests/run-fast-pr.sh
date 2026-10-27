@@ -19,6 +19,16 @@ echo "=== version and release governance ==="
 echo "=== public CLI / contract regressions ==="
 ./tests/test-cli-catalog-parity.sh
 python3 tests/test-public-cli-grammar-parity.py
+# User-visible list -> immutable selector -> detail, plus Zero-Touch LAN authority.
+# These were previously absent from the PR gate despite being release-blocking.
+python3 tests/test-v24-managed-host-liveness.py
+python3 tests/test-cli-inventory-selection-journey.py
+python3 tests/test-enrolled-routed-target-parity.py
+python3 tests/test-mcp-owner-default-access.py
+python3 tests/test-zero-touch-operator-command-bound.py
+python3 tests/test-zero-touch-guided-preflight.py
+python3 tests/test-zero-touch-doc-contract.py
+bash tests/test-zero-touch-short-url.sh
 python3 tests/test-cli-feature-scenario-remediation.py
 python3 tests/test-cli-only-e2e-delta-triage.py
 python3 tests/test-guided-configuration-input.py
@@ -43,12 +53,31 @@ python3 tests/test-v24-agent-bundle-synchronization-lock.py
 python3 tests/test-frpc-proxy-isolation.py
 bash tests/test-agent-candidate-payload.sh
 bash tests/test-status-surface-parity.sh
+bash tests/test-cli-protected-backend-guidance.sh
+bash tests/test-guided-ux.sh
 bash tests/test-proxy-readiness-session-causality.sh
 bash tests/test-client-proxy-health-wait.sh
 bash tests/test-macos-proxy-wait-cursor.sh
 python3 tests/test-enrollment-public-guidance.py
 python3 tests/test-no-legacy-current-surface.py
 python3 tests/test-canonical-runtime-policy.py
+python3 tests/test-runtime-generation-atomicity.py
+python3 tests/test-server-fixed-pool-migration.py
+python3 tests/test-v24-agent-bundle-absent-idempotency.py
+python3 tests/test-v24-server-bundle-absent-idempotency.py
+python3 tests/test-v24-remote-binding-uniqueness.py
+python3 tests/test-v24-sqlite-row-dependencies.py
+python3 tests/test-v24-upgrade-policy-preservation.py
+python3 tests/test-v24-bundle-preview-writer-isolation.py
+python3 tests/test-v24-bootstrap-catalog-convergence.py
+python3 tests/test-v24-bundle-stale-plan-safety.py
+python3 tests/test-zero-touch-command-exit.py
+bash tests/test-client-rollback-absent-unit.sh
+bash tests/test-client-upgrade-enrolled-state.sh
+bash tests/test-client-upgrade-legacy-supervisor.sh
+python3 tests/test-agent-bundle-fresh-catalog.py
+python3 tests/test-short-url-qualified-provenance.py
+python3 tests/test-legacy-backup-migration.py
 python3 tests/test-egress-runtime-no-list-permission.py
 python3 tests/test-v24-upgrade-reconcile.py
 python3 tests/test-doctor-proxy-identity.py

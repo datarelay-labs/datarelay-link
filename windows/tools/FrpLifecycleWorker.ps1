@@ -21,7 +21,12 @@ while ($true) {
     try {
         if (Test-FrpIsEnrolled) {
             $null = Invoke-FrpAgentLifecycle -State 'connected'
-            $rc = Invoke-FrpWithClientLock { return (Invoke-FrpV24Synchronize) }
+            $rc = Invoke-FrpWithClientLock {
+                # A signed status-only heartbeat preserves live connections.
+                # Reconcile only when current-process evidence/Server ACK no
+                # longer confirms the desired endpoints.
+                return (Invoke-FrpV24LifecycleSync)
+            }
         }
     } catch {
         $rc = 1

@@ -1202,7 +1202,7 @@ def _unset_help(role):
         "  unset server bootstrap-hostname\n\n"
         "unset removes metadata only. It does not release ports or revoke identity.\n"
         "unset server public-hostname falls back to Public IP access.\n"
-        "unset server bootstrap-hostname falls back to zt1 Zero-Touch commands.\n"
+        "Unsetting bootstrap-hostname selects a qualified public-HTTPS hostname or verified Private-CA numeric-IP bootstrap. DNS is optional; unsafe prerequisites fail before ticket issuance. Advanced --long-bootstrap remains explicit.\n"
     )
 
 
@@ -2161,6 +2161,12 @@ def _machine_allowed_flags(tokens):
 
 
 def _option_rejection_message(tok, focus):
+    parts = str(focus).split()
+    if parts[:2] == ['system', 'update'] and len(parts) >= 3 and parts[2] in ('product', 'engine', 'check-engine'):
+        # An unsupported option's value is not a positional update argument.
+        # Teach the valid public command rather than forwarding a local source
+        # path (or other option value) to the updater as an unexpected argument.
+        focus = ' '.join(parts[:3])
     return {
         "status": "error",
         "exit_code": 2,

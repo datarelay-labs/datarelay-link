@@ -176,6 +176,31 @@ def _open_control_plane(cfg):
         return None
 
 
+def enrollment_service_projection(existing_services, requested):
+    """Match a client's promoted proxy keys back to its enrollment Service IDs.
+
+    Promotion changes the engine key, not the user's endpoint ownership. Only
+    adopt the exact derived key with the same public name from this client's
+    existing inventory; arbitrary same-name records cannot claim a reservation.
+    """
+    from drlink_v24_runtime import remote_service_proxy_id
+
+    services = dict(existing_services or {})
+    for spec in requested:
+        sid = spec['id']
+        if sid in services:
+            continue
+        proxy_id = remote_service_proxy_id(sid)
+        previous = services.get(proxy_id)
+        if (
+            isinstance(previous, dict)
+            and previous.get('v24_remote_service') is True
+            and str(previous.get('name') or '').casefold() == sid.casefold()
+        ):
+            services[sid] = services.pop(proxy_id)
+    return services
+
+
 def sync_enrollment_to_control_plane(cfg, client, machine_id):
     """Persist enrolled client inventory into SQLite (authoritative).
 
@@ -2053,6 +2078,7 @@ class Allocator:
                     used.add(port)
 
             previous = services.get(sid) if isinstance(services.get(sid), dict) else {}
+            displaced_port = None
             remote_port = coerce_port(preserve_port)
             if remote_port is None:
                 remote_port = coerce_port(previous.get('remote_port'))
@@ -2068,7 +2094,39 @@ class Allocator:
                     if owner:
                         break
                 if owner and owner != (machine_id, sid):
-                    remote_port = None
+                    # First v2.4 edit of an enrolled service changes its engine
+                    # proxy key (ssh -> rs-ssh), not its public endpoint. Adopt
+                    # only the same authenticated client's same named legacy
+                    # service, inside this registry transaction. Other services
+                    # and other clients retain exclusive ownership.
+                    legacy_id = owner[1]
+                    legacy = services.get(legacy_id)
+                    if (
+                        owner[0] == machine_id
+                        and str(legacy_id).casefold() == str(service_name).casefold()
+                        and isinstance(legacy, dict)
+                        and not legacy.get('v24_remote_service')
+                        and (
+                            sid not in services
+                            or (
+                                sid == remote_service_proxy_id(service_name)
+                                and previous.get('v24_remote_service') is True
+                                and previous.get('enabled') is False
+                                and str(previous.get('name') or '').casefold()
+                                == str(service_name).casefold()
+                            )
+                        )
+                        and start <= remote_port <= end
+                        and remote_port not in self.protected_ports()
+                    ):
+                        # Recovery can leave an older disabled projection beside
+                        # the current legacy reservation. The explicit Server
+                        # port wins over that same-service inactive projection.
+                        displaced_port = coerce_port(previous.get('remote_port'))
+                        services.pop(legacy_id)
+                        owner = (machine_id, sid)
+                    else:
+                        remote_port = None
                 elif remote_port in self.protected_ports():
                     remote_port = None
                 elif remote_port < start or remote_port > end:
@@ -2100,6 +2158,16 @@ class Allocator:
             services[sid] = stored
             # Keep reserved[] in sync for bookkeeping consumers.
             reserved = list(state.get('reserved') or [])
+            if displaced_port is not None and displaced_port != int(remote_port):
+                still_owned = any(
+                    coerce_port((record or {}).get('remote_port')) == displaced_port
+                    for other in clients.values()
+                    for record in (other.get('services') or {}).values()
+                )
+                if not still_owned:
+                    reserved = [item for item in reserved
+                                if coerce_port(item) != displaced_port]
+                    state['reserved'] = reserved
             if int(remote_port) not in [coerce_port(x) for x in reserved]:
                 reserved.append(int(remote_port))
                 state['reserved'] = reserved
@@ -2330,8 +2398,27 @@ class Allocator:
                 return ZT.render_short_url_windows_bootstrap_script(
                     allocator, ca_fp, credential, installer
                 )
+            provenance = None
+            # Public DNS aliases can differ from the allocator's pinned-IP
+            # origin. Carry the locally verified candidate identity in stage 1
+            # instead of falling back to the installer's older embedded HEAD.
+            if urlparse(installer).path == '/artifacts/agent/bootstrap-client.sh':
+                if QA is None:
+                    return None
+                artifact_root = QA.installed_root()
+                try:
+                    artifact = QA.lookup_installed(artifact_root, 'agent-installer', 'linux', 'any')
+                    manifest = QA.load_manifest(artifact_root)
+                    if manifest.get('qualification_status') != 'PASS':
+                        return None
+                    provenance = {**manifest, 'sha256': artifact['sha256']}
+                    if artifact.get('source_head') != manifest.get('source_head'):
+                        return None
+                except QA.ArtifactError:
+                    return None
             return ZT.render_short_url_bootstrap_script(
-                allocator, ca_fp, credential, installer
+                allocator, ca_fp, credential, installer,
+                qualified_provenance=provenance,
             )
         except ValueError:
             return None
@@ -3125,7 +3212,9 @@ class Allocator:
                             label=(record or {}).get('label'),
                             note=(record or {}).get('note'),
                         )
-                        existing_services = dict(client.get('services') or {})
+                        existing_services = enrollment_service_projection(
+                            client.get('services'), requested,
+                        )
                         used = self.used_ports(state)
                         updated = {}
                         requested_ids = {svc['id'] for svc in requested}
@@ -3258,7 +3347,9 @@ class Allocator:
                         if ident_error:
                             return 400, api_error(ident_error, 'AUTH_FAILED')
 
-                        existing_services = dict(client.get('services') or {})
+                        existing_services = enrollment_service_projection(
+                            client.get('services'), requested,
+                        )
                         used = self.used_ports(state)
                         updated = {}
                         requested_ids = {svc['id'] for svc in requested}

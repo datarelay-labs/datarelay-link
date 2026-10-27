@@ -255,8 +255,12 @@ switch -Regex ($cmdLower) {
                 $Command = 'update'
                 if ($Id -eq 'product') { $script:FrpUpdateMode = 'project' }
                 elseif ($Id -eq 'engine') { $script:FrpUpdateMode = 'engine' }
-                elseif ($Id -eq 'check-engine') { $script:FrpUpdateMode = 'engine'; $Check = $true }
-                else { Write-Host 'ERROR: use system update product | engine | check-engine'; exit 2 }
+                elseif ($Id -eq 'check-engine') {
+                    Write-Host 'ERROR: system update check-engine is available on the Server only.'
+                    Write-Host 'Run it on the Server. On this Agent, use system update engine -Check to check its Server-provided engine.'
+                    exit 2
+                }
+                else { Write-Host 'ERROR: use system update product | engine'; exit 2 }
                 $Id = $null
             }
             'export' {
@@ -376,7 +380,6 @@ system
   system synchronize
   system update product
   system update engine
-  system update check-engine
   system diagnostics
   system support-bundle
   system version
@@ -683,6 +686,13 @@ function Invoke-FrpClientUpdate {
         }
         if (-not (Enter-FrpClientLock)) { return 1 }
         try {
+            if ($env:FRP_WINDOWS_BOOTSTRAP_PATH) {
+                # Prior-stable bridge: verify the complete outer bootstrap
+                # against the existing Server/CA before updating management
+                # files or recording candidate source identity. No enrollment.
+                $existingState = Read-FrpClientState
+                Confirm-FrpWindowsSourceProvenance -AllocatorUrl ([string]$existingState.allocator_url)
+            }
             Install-FrpProjectManagementFiles -SrcRoot $src
             if (Test-FrpIsEnrolled) { Install-FrpLifecycleTask | Out-Null }
             Write-Host ("Project update complete from {0}" -f $src)
@@ -938,15 +948,46 @@ function Invoke-FrpClientSupportBundle {
     New-Item -ItemType Directory -Force -Path $stage | Out-Null
     $sections = New-Object System.Collections.Generic.List[string]
     try {
+        # Read only published install identity fields. Copying the raw version
+        # file would also copy any unrelated/secret fields added to that file.
+        $provenance = [ordered]@{
+            project_version = $null
+            relay_engine_version = $null
+            release_channel = $null
+            source_head = $null
+            content_source_head = $null
+            relay_engine_sha256 = $null
+        }
+        $published = @{
+            PROJECT_VERSION = 'project_version'; FRP_VERSION = 'relay_engine_version'
+            RELEASE_CHANNEL = 'release_channel'; SOURCE_HEAD = 'source_head'
+            CONTENT_SOURCE_HEAD = 'content_source_head'; FRP_SHA256_WINDOWS_AMD64 = 'relay_engine_sha256'
+        }
+        $versionPath = Get-FrpVersionPath
+        if (Test-Path -LiteralPath $versionPath) {
+            foreach ($line in Get-Content -LiteralPath $versionPath) {
+                if ($line -notmatch '^([^=]+)=(.*)$') { continue }
+                $key = $Matches[1]; $value = $Matches[2].Trim()
+                if (-not $published.ContainsKey($key)) { continue }
+                $field = $published[$key]
+                if ($field -in @('source_head','content_source_head') -and $value -notmatch '^[a-fA-F0-9]{40}$') { continue }
+                if ($field -eq 'relay_engine_sha256' -and $value -notmatch '^[a-fA-F0-9]{64}$') { continue }
+                if ($value -and $value -ne 'UNKNOWN') { $provenance[$field] = $value }
+            }
+        }
+        $missingProvenance = @($provenance.Keys | Where-Object { -not $provenance[$_] })
         $meta = @{
             format = 'data-relay-link-support-bundle-windows'
             created_at = (Get-Date).ToUniversalTime().ToString('o')
             hostname = $hostName
-            role = 'client'
+            role = 'AgentHost'
             root = $root
             read_only = $true
             secrets_policy = 'private keys, tokens, and DPAPI secrets omitted'
-        } | ConvertTo-Json -Depth 4
+            provenance = $provenance
+            provenance_status = $(if ($missingProvenance.Count) { 'incomplete' } else { 'complete' })
+            missing_provenance_fields = $missingProvenance
+        } | ConvertTo-Json -Depth 5
         Set-Content -LiteralPath (Join-Path $stage 'meta.json') -Value $meta -Encoding UTF8
         [void]$sections.Add('meta')
 
@@ -1213,6 +1254,7 @@ switch ($Command) {
         $autoOn = Test-FrpAutostartTaskExists
         $lifecycleOn = Test-FrpAutostartTaskExists -TaskName (Get-FrpLifecycleTaskName)
         if ($st.Running -and $autoOn -and $lifecycleOn) {
+            Set-FrpClientRuntimeIntent -Intent active
             Write-Host 'Agent Host is already active.'
             Write-Host 'Runtime    : active'
             Write-Host 'Autostart  : enabled'
@@ -1238,6 +1280,7 @@ switch ($Command) {
         $autoOn = Test-FrpAutostartTaskExists
         $lifecycleOn = Test-FrpAutostartTaskExists -TaskName (Get-FrpLifecycleTaskName)
         if (-not $st.Running -and -not $autoOn -and -not $lifecycleOn) {
+            Set-FrpClientRuntimeIntent -Intent paused
             Write-Host 'Agent Host is already paused.'
             Write-Host 'Runtime is stopped and autostart is disabled.'
             exit 0
@@ -1251,6 +1294,7 @@ switch ($Command) {
             Write-Host $_.Exception.Message
             exit 1
         }
+        Set-FrpClientRuntimeIntent -Intent paused
         Write-Host 'Agent Host paused.'
         Write-Host 'Runtime    : stopped'
         Write-Host 'Autostart  : disabled'
@@ -1274,6 +1318,10 @@ switch ($Command) {
         $st = Get-FrpClientStatus
         Write-Host ("enrolled={0}" -f $st.Enrolled)
         Write-Host ("running={0}" -f $st.Running)
+        Write-Host ("Runtime       : {0}" -f $st.RuntimeState)
+        Write-Host ("Runtime intent: {0}" -f $st.RuntimeIntent)
+        Write-Host ("Autostart     : {0}" -f $(if ($st.AutostartEnabled) { 'enabled' } else { 'disabled' }))
+        Write-Host ("Lifecycle task: {0}" -f $(if ($st.LifecycleEnabled) { 'enabled' } else { 'disabled' }))
         if ($null -ne $st.Pid) { Write-Host ("pid={0}" -f $st.Pid) }
         if ($st.Server) { Write-Host ("server={0}" -f $st.Server) }
         if ($st.Transport) { Write-Host ("transport={0}" -f $st.Transport) }

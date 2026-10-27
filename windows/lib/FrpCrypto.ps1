@@ -159,6 +159,10 @@ public static class FrpCryptoNative
 
     static void WriteCanonical(StringBuilder sb, object value)
     {
+        // Nested PowerShell values can retain an extended-object wrapper,
+        // especially an empty dictionary. Serialize its actual JSON value.
+        if (value != null && value.GetType().FullName == "System.Management.Automation.PSObject")
+            value = value.GetType().GetProperty("BaseObject").GetValue(value, null);
         if (value == null || value is DBNull) { sb.Append("null"); return; }
         if (value is bool) { sb.Append(((bool)value) ? "true" : "false"); return; }
         if (value is string) { WriteJsonString(sb, (string)value); return; }
@@ -515,6 +519,10 @@ public static class FrpCryptoNative
 
     static void WriteCanonical(StringBuilder sb, object value)
     {
+        // Nested PowerShell values can retain an extended-object wrapper,
+        // especially an empty dictionary. Serialize its actual JSON value.
+        if (value != null && value.GetType().FullName == "System.Management.Automation.PSObject")
+            value = value.GetType().GetProperty("BaseObject").GetValue(value, null);
         if (value == null || value is DBNull) { sb.Append("null"); return; }
         if (value is bool) { sb.Append(((bool)value) ? "true" : "false"); return; }
         if (value is string) { WriteJsonString(sb, (string)value); return; }
@@ -606,6 +614,54 @@ public static class FrpCryptoNative
     }
 }
 
+function ConvertFrom-FrpJson {
+    param([Parameter(Mandatory = $true)][string]$Json)
+    # PowerShell's ConvertFrom-Json eagerly converts ISO strings to DateTime.
+    # Signed JSON must preserve their exact spelling, including offset and
+    # fractional precision. Windows PowerShell 5 uses the Framework serializer
+    # (ISO timestamps remain strings); PowerShell 7 ships Newtonsoft instead.
+    if ($PSVersionTable.PSVersion.Major -le 5) {
+        Add-Type -AssemblyName System.Web.Extensions -ErrorAction Stop
+        $serializer = New-Object System.Web.Script.Serialization.JavaScriptSerializer
+        $serializer.MaxJsonLength = 16777216
+        $value = $serializer.DeserializeObject($Json)
+        if ($value -is [System.Collections.IDictionary]) {
+            $properties = [ordered]@{}
+            foreach ($key in $value.Keys) { $properties[$key] = $value[$key] }
+            return [pscustomobject]$properties
+        }
+        return ,$value
+    }
+    $reader = New-Object Newtonsoft.Json.JsonTextReader (New-Object System.IO.StringReader $Json)
+    $reader.DateParseHandling = [Newtonsoft.Json.DateParseHandling]::None
+    try {
+        $token = [Newtonsoft.Json.Linq.JToken]::ReadFrom($reader)
+        if ($reader.Read()) { throw 'ERROR: trailing content in JSON response' }
+        return ConvertFrom-FrpJsonToken $token
+    } finally { $reader.Close() }
+}
+
+function ConvertFrom-FrpJsonToken {
+    param($Token)
+    # JObject's PowerShell adapter treats .Type as a JSON property lookup.
+    switch ([string]$Token.get_Type()) {
+        'Object' {
+            $obj = [ordered]@{}
+            foreach ($property in $Token.Properties()) {
+                $obj[$property.Name] = ConvertFrom-FrpJsonToken $property.Value
+            }
+            return [pscustomobject]$obj
+        }
+        'Array' {
+            $list = New-Object System.Collections.ArrayList
+            foreach ($item in $Token) { [void]$list.Add((ConvertFrom-FrpJsonToken $item)) }
+            return ,$list.ToArray()
+        }
+        'Null' { return $null }
+        default { return $Token.Value }
+    }
+}
+
 function ConvertTo-FrpPlainObject {
     param($InputObject)
     if ($null -eq $InputObject) { return $null }
@@ -630,7 +686,7 @@ function ConvertTo-FrpPlainObject {
                 $ht[$p.Name] = ConvertTo-FrpPlainObject $p.Value
             }
         }
-        if ($ht.Count -gt 0) { return $ht }
+        if ($ht.Count -gt 0 -or $InputObject -is [pscustomobject]) { return $ht }
     }
     return $InputObject
 }

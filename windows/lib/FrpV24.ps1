@@ -100,7 +100,7 @@ function Invoke-FrpV24MgmtRequest {
     if ($Method -eq 'GET') { $wireBody = $null }
     $raw = Invoke-FrpHttpsJson -Method $Method -Url $url -Body $wireBody -Headers $headers
     if (-not $raw) { return [pscustomobject]@{} }
-    $data = $raw | ConvertFrom-Json
+    $data = ConvertFrom-FrpJson -Json $raw
     if ($data.error) { throw ('ERROR: Server management request failed: {0}' -f [string]$data.error) }
     $props = @($data.PSObject.Properties.Name)
     if ($props -contains 'response_hmac') {
@@ -187,6 +187,38 @@ function Resolve-FrpV24LegacyServiceName {
     ) -f $name, $port
 }
 
+function Resolve-FrpV24LegacyDestinationName {
+    param([Parameter(Mandatory=$true)]$Item, [Parameter(Mandatory=$true)]$Catalog)
+    $target = [string]$Item.local_ip
+    if ([string]$Item.target_mode -ieq 'routed' -and [string]$Item.target_host) {
+        $target = [string]$Item.target_host
+    }
+    $target = $target.Trim()
+    if (-not $target -or $target -ieq '127.0.0.1' -or $target -ieq 'localhost') { return 'this-host' }
+    $targetIp = $null
+    $isIp = [System.Net.IPAddress]::TryParse($target, [ref]$targetIp)
+    $targetObjects = @()
+    foreach ($obj in @($Catalog.networkObjects)) {
+        if ([string]$obj.type -notin @('host','ip','fqdn')) { continue }
+        $values = @($obj.values)
+        if ($values.Count -ne 1) { continue }
+        $same = $false
+        if ($isIp) {
+            $candidateIp = $null
+            if ([System.Net.IPAddress]::TryParse([string]$values[0], [ref]$candidateIp)) {
+                $same = $targetIp.Equals($candidateIp)
+            }
+        } else {
+            $same = ([string]$values[0]).TrimEnd('.') -ieq $target.TrimEnd('.')
+        }
+        if ($same) { $targetObjects += $obj }
+    }
+    $enrolledObjects = @($targetObjects | Where-Object { [string]$_.name -like 'enrolled-target-*' })
+    if ($enrolledObjects.Count -eq 1) { return [string]$enrolledObjects[0].name }
+    if ($targetObjects.Count -eq 1) { return [string]$targetObjects[0].name }
+    throw ('ERROR: bootstrap LAN target for service {0} requires one matching canonical Network Object. Inspect Server network-objects, then run: system synchronize' -f [string]$Item.id)
+}
+
 function ConvertTo-FrpV24RemoteMap {
     $state = Read-FrpClientState
     return (ConvertTo-FrpServiceMap -Services $state.services)
@@ -212,6 +244,96 @@ function Save-FrpV24ServiceMap {
         $args['PublicHostname'] = [string]$state.public_hostname
     }
     Save-FrpClientState @args | Out-Null
+}
+function Get-FrpRuntimeProcessIdentity {
+    param([int]$ProcessId)
+    if (-not (Test-FrpProcessAlive -ProcessId $ProcessId -ValidateOwnership -ExpectedExe (Get-FrpFrpcPath))) { return $null }
+    try { return (Get-Process -Id $ProcessId -ErrorAction Stop).StartTime.ToUniversalTime().Ticks }
+    catch { return $null }
+}
+function Save-FrpV24RuntimeBoundary {
+    param([int]$ProcessId, [int64]$LogOffset = -1)
+    $identity = Get-FrpRuntimeProcessIdentity -ProcessId $ProcessId
+    if ($null -eq $identity) { return }
+    $log = Get-Item -LiteralPath (Get-FrpLogPath) -ErrorAction Stop
+    $record = [ordered]@{
+        pid = $ProcessId; process_ticks = $identity
+        log_offset = $(if ($LogOffset -ge 0) { $LogOffset } else { $log.Length }); log_created_ticks = $log.CreationTimeUtc.Ticks
+        config_sha256 = (Get-FileHash -LiteralPath (Get-FrpTomlPath) -Algorithm SHA256).Hash
+    }
+    $path = Join-Path (Get-FrpStateDir) 'v24-runtime-boundary.json'
+    [System.IO.File]::WriteAllText($path, ($record | ConvertTo-Json -Compress))
+    Restrict-FrpFileAcl -Path $path
+}
+function Test-FrpV24RuntimeService {
+    param($Item, [string]$HostId)
+    try {
+        if ($Item.enabled -eq $false -or $Item.pending_allocation -or -not $Item.remote_port) { return $false }
+        $boundary = Get-Content -LiteralPath (Join-Path (Get-FrpStateDir) 'v24-runtime-boundary.json') -Raw | ConvertFrom-Json
+        $status = Get-FrpClientStatus
+        if (-not $status.Running -or [int]$status.Pid -ne [int]$boundary.pid) { return $false }
+        $identity = Get-FrpRuntimeProcessIdentity -ProcessId ([int]$status.Pid)
+        if ($null -eq $identity -or $identity -ne $boundary.process_ticks) { return $false }
+        if ((Get-FileHash -LiteralPath (Get-FrpTomlPath) -Algorithm SHA256).Hash -ne $boundary.config_sha256) { return $false }
+        $log = Get-Item -LiteralPath (Get-FrpLogPath)
+        if ($log.Length -lt $boundary.log_offset) { return $false }
+        # Windows creation time identifies the file across rotation; Unix .NET
+        # may expose ctime here, which changes on append in cross-platform tests.
+        if ((Test-FrpIsWindowsHost) -and $log.CreationTimeUtc.Ticks -ne $boundary.log_created_ticks) { return $false }
+        # Read only bounded evidence written after this process's launch boundary.
+        # Rotation/truncation or an oversized epoch cannot establish continuity.
+        $length = $log.Length - [int64]$boundary.log_offset
+        if ($length -gt 8388608) { return $false }
+        $stream = [System.IO.File]::Open($log.FullName, 'Open', 'Read', 'ReadWrite')
+        try {
+            [void]$stream.Seek([int64]$boundary.log_offset, 'Begin')
+            $reader = New-Object System.IO.StreamReader($stream)
+            try { $text = $reader.ReadToEnd() } finally { $reader.Dispose() }
+        } finally { $stream.Dispose() }
+        $connected = $false; $success = $false
+        $proxy = '[' + $HostId + '-' + [string]$Item.id + ']'
+        foreach ($line in ($text -split "`n")) {
+            if ($line -match 'login to server success') { $connected = $true; $success = $false }
+            elseif ($line -match 'login (to )?server failed|session closed|control worker is closed|try to reconnect|try to connect to server|connect to server error|read from control stream closed') { $connected = $false; $success = $false }
+            elseif ($connected -and $line.Contains($proxy) -and $line -match 'start proxy|stop proxy') { $success = $line -match 'start proxy success' }
+            elseif ($connected -and $line -match 'proxy removed:' -and $line.Contains($HostId + '-' + [string]$Item.id)) { $success = $false }
+        }
+        return ($connected -and $success)
+    } catch { return $false }
+}
+function Update-FrpV24RuntimeStatus {
+    $state = Read-FrpClientState
+    $map = ConvertTo-FrpV24RemoteMap
+    $claims = @(); $allAcknowledged = $true
+    foreach ($key in @($map.Keys)) {
+        $item = $map[$key]
+        if (-not $item.v24_remote_service) { continue }
+        $verified = Test-FrpV24RuntimeService -Item $item -HostId ([string]$state.host_id)
+        $status = if ($item.enabled -eq $false) { 'DISABLED' } elseif ($verified) { 'HEALTHY' } else { 'DEGRADED' }
+        # Demote before transport: an unavailable/tampered ACK cannot retain stale HEALTHY.
+        $item.status = $(if ($item.enabled -eq $false) { 'DISABLED' } else { 'DEGRADED' })
+        $item['runtime_verified'] = $false
+        $claims += [ordered]@{name=[string]$item.id;status=$status;runtime_verified=$verified;endpoint_port=$item.remote_port;reason=$(if ($status -eq 'DEGRADED') {'Current Agent runtime is not verified.'} else {''})}
+    }
+    if (-not $claims.Count) { return $false }
+    Save-FrpV24ServiceMap -Map $map
+    $ack = Invoke-FrpV24MgmtRequest -Method POST -Path '/v1/remote-services-status' -Body ([ordered]@{services=$claims})
+    foreach ($claim in $claims) {
+        $matches = @($ack.services | Where-Object { [string]$_.name -ieq $claim.name })
+        $item = $map[$claim.name.ToLowerInvariant()]
+        if ($matches.Count -ne 1 -or [int]$matches[0].endpoint_port -ne [int]$item.remote_port) { $allAcknowledged = $false; continue }
+        $result = $matches[0]
+        $item.status = $(if ($item.enabled -eq $false) { 'DISABLED' } elseif ($claim.runtime_verified -and $result.status -eq 'HEALTHY' -and $result.runtime_verified -eq $true -and -not $result.pending_allocation) { 'HEALTHY' } else { 'DEGRADED' })
+        $item['runtime_verified'] = ($item.status -eq 'HEALTHY')
+        $item.reason = [string]$result.reason
+        if ($item.enabled -ne $false -and $item.status -ne 'HEALTHY') { $allAcknowledged = $false }
+    }
+    Save-FrpV24ServiceMap -Map $map
+    return $allAcknowledged
+}
+function Invoke-FrpV24LifecycleSync {
+    if (Update-FrpV24RuntimeStatus) { return 0 }
+    return (Invoke-FrpV24Synchronize)
 }
 function Update-FrpV24Runtime {
     if (-not (Test-Path -LiteralPath (Get-FrpTomlPath))) {
@@ -250,7 +372,9 @@ function Update-FrpV24Runtime {
     }
 
     # Lifecycle heartbeat remains present for active, pending, and management-only Agents.
-    Install-FrpLifecycleTask | Out-Null
+    # A running lifecycle worker can itself reconcile. Re-registering its
+    # healthy task here would terminate that worker in the middle of apply.
+    if (-not (Test-FrpLifecycleTaskHealthy)) { Install-FrpLifecycleTask | Out-Null }
     $running = (Get-FrpClientStatus).Running
     if ($runtimeEnabledAny) {
         Set-FrpInstallStatus -Status 'installed'
@@ -258,7 +382,14 @@ function Update-FrpV24Runtime {
             Install-FrpAutostartTask | Out-Null
         }
         if ($running) { Stop-FrpClient | Out-Null }
+        # Start-FrpClient records a boundary before spawning the new process;
+        # status uses only that process's connection/proxy events and signed ACK.
         Start-FrpClient -Force:$true | Out-Null
+        for ($attempt = 0; $attempt -lt 10; $attempt++) {
+            try { if (Update-FrpV24RuntimeStatus) { break } }
+            catch { if (-not (Test-FrpV24OfflineEligibleError -Message $_.Exception.Message)) { throw } }
+            Start-Sleep -Milliseconds 200
+        }
         return
     }
 
@@ -291,6 +422,10 @@ function Format-FrpV24RemoteRecord {
     if (-not $service) { $service = [string]$Item.preset }
     $status = [string]$Item.status
     if (-not $status) { $status = $(if ($Item.enabled -eq $false) { 'DISABLED' } else { 'DEGRADED' }) }
+    if ($status -eq 'HEALTHY' -and -not $env:FRP_WINDOWS_V24_FIXTURE_DIR) {
+        $state = Read-FrpClientState
+        if (-not $Item.runtime_verified -or -not (Test-FrpV24RuntimeService -Item $Item -HostId ([string]$state.host_id))) { $status = 'DEGRADED' }
+    }
     return @(
         ('Remote Service: {0}' -f [string]$Item.id)
         ('  Destination : {0}' -f $destination)
@@ -356,6 +491,40 @@ function Convert-FrpV24AckToRecord {
     if ($Ack.destination_client_id) { $rec['destination_client_id'] = [string]$Ack.destination_client_id }
     return $rec
 }
+function Get-FrpV24BindingKey {
+    param([string]$Destination, [string]$Service, $Catalog)
+    $target = Resolve-FrpV24DestinationTarget -Destination $Destination -Catalog $Catalog
+    $identity = [string]$target.ClientId
+    if ([string]$target.Mode -eq 'local') { $identity = [string](Read-FrpClientState).machine_id }
+    $address = ([string]$target.Host).Trim()
+    $parsed = $null
+    if ([System.Net.IPAddress]::TryParse($address, [ref]$parsed)) { $address = $parsed.ToString() }
+    else { $address = $address.TrimEnd('.').ToLowerInvariant() }
+    if (-not $identity -and $address -eq '127.0.0.1') { $identity = [string](Read-FrpClientState).machine_id }
+    $selector = if ($identity) { 'client:' + $identity } else { 'address:' + $address }
+    return ($selector.ToLowerInvariant() + '|' + $Service.ToLowerInvariant())
+}
+
+function Assert-FrpV24UniqueBinding {
+    param([string]$Name, [string]$Destination, [string]$Service, $Catalog, $Map, [switch]$CheckDesired)
+    $key = Get-FrpV24BindingKey -Destination $Destination -Service $Service -Catalog $Catalog
+    $current = $Map[$Name.ToLowerInvariant()]
+    if (-not $CheckDesired -and $current -and $current.v24_remote_service -and [string]$current.service_object) {
+        $currentKey = Get-FrpV24BindingKey -Destination ([string]$current.destination) -Service ([string]$current.service_object) -Catalog $Catalog
+        if ($currentKey -eq $key) { return }
+    }
+    foreach ($otherName in @($Map.Keys)) {
+        if ([string]$otherName -ieq $Name) { continue }
+        $other = $Map[$otherName]
+        if (-not $other.v24_remote_service -or -not [string]$other.service_object) { continue }
+        if ([string]$other.service_object -ine $Service) { continue }
+        $otherKey = Get-FrpV24BindingKey -Destination ([string]$other.destination) -Service ([string]$other.service_object) -Catalog $Catalog
+        if ($otherKey -eq $key) {
+            throw ('ERROR: Destination and Service binding already uses Remote Service {0}. No changes were applied.' -f $otherName)
+        }
+    }
+}
+
 function Invoke-FrpV24SetRemoteService {
     param(
         [Parameter(Mandatory=$true)][string]$Name,
@@ -380,6 +549,7 @@ function Invoke-FrpV24SetRemoteService {
     $catalog = Get-FrpV24Catalog
     $sobj = Get-FrpV24ServiceObject -Name $Service -Catalog $catalog
     $target = Resolve-FrpV24DestinationTarget -Destination $Destination -Catalog $catalog
+    Assert-FrpV24UniqueBinding -Name $Name -Destination $Destination -Service ([string]$sobj.name) -Catalog $catalog -Map (ConvertTo-FrpV24RemoteMap)
     $pool = $(if ([string]$sobj.type -eq 'fixed-tcp') { 'fixed-tcp' } else { 'normal' })
     $preserve = $null
     if ($null -ne $existing -and $existing.remote_port) { $preserve = [int]$existing.remote_port }
@@ -428,7 +598,7 @@ function Invoke-FrpV24SetRemoteService {
     # is obsolete and must not release the service on the next synchronize.
     Remove-FrpV24PendingDelete -Name $Name
     if (-not $SkipRuntime) { Update-FrpV24Runtime }
-    if (-not $Quiet) { Write-Host (Format-FrpV24RemoteRecord -Item $map[$key]) }
+    if (-not $Quiet) { Write-Host (Format-FrpV24RemoteRecord -Item (Get-FrpV24RemoteRecord -Name $Name)) }
     return 0
 }
 
@@ -523,7 +693,7 @@ function Invoke-FrpV24Synchronize {
             $service = Resolve-FrpV24LegacyServiceName -Item $item -Catalog $catalog
             $setArgs = @{
                 Name = [string]$item.id
-                Destination = 'this-host'
+                Destination = (Resolve-FrpV24LegacyDestinationName -Item $item -Catalog $catalog)
                 Service = $service
                 Enabled = [bool]($item.enabled -ne $false)
                 SkipRuntime = $true
@@ -591,9 +761,65 @@ function ConvertTo-FrpV24YamlScalar {
     return "'" + $v.Replace("'", "''") + "'"
 }
 
+function ConvertTo-FrpV24ValidatedAgentBundle {
+    param($Body)
+    if ($null -eq $Body -or $Body -isnot [pscustomobject]) { throw 'ERROR: configurationBundle must be a mapping' }
+    if ([string]$Body.context -ne 'agent') { throw 'ERROR: ConfigurationBundle context must be agent on a Windows Agent Host' }
+    foreach ($field in @($Body.PSObject.Properties.Name)) {
+        if ($field -cnotin @('context','sourceRevision','remoteServices')) { throw ('ERROR: unknown Agent Bundle section: {0}' -f $field) }
+    }
+    $items = @()
+    if ($null -ne $Body.remoteServices) {
+        if ($Body.remoteServices -isnot [array]) { throw 'ERROR: remoteServices must be a list' }
+        $items = @($Body.remoteServices)
+    }
+    foreach ($item in $items) {
+        if ($null -eq $item -or $item -isnot [pscustomobject]) { throw 'ERROR: remoteServices entry must be a mapping' }
+        $fields = @($item.PSObject.Properties.Name)
+        foreach ($field in $fields) {
+            if ($field -cnotin @('name','destination','service','enabled','state')) { throw ('ERROR: unknown Remote Service field: {0}' -f $field) }
+        }
+        if ($item.name -isnot [string] -or [string]::IsNullOrWhiteSpace($item.name)) { throw 'ERROR: Remote Service name is required' }
+        $item.name = $item.name.Trim()
+        if ('state' -cin $fields) {
+            if ($item.state -isnot [string] -or $item.state.Trim().ToLowerInvariant() -ne 'absent') { throw 'ERROR: Remote Service state must be absent when supplied' }
+            if (@($fields | Where-Object { $_ -cnotin @('name','state') }).Count) { throw 'ERROR: absent Remote Service cannot contain present-state fields' }
+            $item.state = 'absent'
+            continue
+        }
+        foreach ($field in @('destination','service')) {
+            if ($field -cin $fields) {
+                if ($item.$field -isnot [string] -or [string]::IsNullOrWhiteSpace($item.$field)) { throw ('ERROR: Remote Service {0} {1} must be a nonempty name' -f $item.name,$field) }
+                $item.$field = $item.$field.Trim()
+            }
+        }
+        if ('enabled' -cin $fields) {
+            $value = $item.enabled
+            if ($value -is [bool]) { continue }
+            if (($value -is [int] -or $value -is [long]) -and $value -in @(0,1)) { $item.enabled = [bool]$value; continue }
+            if ($value -is [string]) {
+                $token = $value.Trim().ToLowerInvariant()
+                if ($token -in @('true','yes','1','enabled')) { $item.enabled = $true; continue }
+                if ($token -in @('false','no','0','disabled')) { $item.enabled = $false; continue }
+            }
+            throw 'ERROR: invalid enabled value; expected true or false'
+        }
+    }
+    return [pscustomobject]@{context='agent';remoteServices=$items}
+}
+
 function Read-FrpV24AgentBundle {
     param([Parameter(Mandatory=$true)][string]$Path)
-    if ($Path -eq '-') { $text = [Console]::In.ReadToEnd() }
+    if ($Path -eq '-') {
+        # Match the public interactive contract while retaining EOF-terminated pipes.
+        if (-not [Console]::IsInputRedirected) { Write-Host 'Paste ConfigurationBundle; finish with :end on its own line.' }
+        $lines = New-Object System.Collections.Generic.List[string]
+        while ($null -ne ($line = [Console]::In.ReadLine())) {
+            if ($line -eq ':end') { break }
+            $lines.Add($line)
+        }
+        $text = $lines -join "`n"
+    }
     else { $text = Get-Content -LiteralPath $Path -Raw -ErrorAction Stop }
     if ([string]::IsNullOrWhiteSpace($text)) { throw 'ERROR: ConfigurationBundle is empty' }
     $trim = $text.TrimStart()
@@ -601,26 +827,13 @@ function Read-FrpV24AgentBundle {
         $doc = $text | ConvertFrom-Json
         $body = $doc.configurationBundle
         if ($null -eq $body) { throw 'ERROR: configurationBundle root is required' }
-        if ([string]$body.context -ne 'agent') {
-            throw 'ERROR: ConfigurationBundle context must be agent on a Windows Agent Host'
-        }
-        $items = @($body.remoteServices)
-        foreach ($item in $items) {
-            if (-not [string]$item.name) { throw 'ERROR: Remote Service name is required' }
-            $state = ([string]$item.state).Trim().ToLowerInvariant()
-            if ($state -and $state -ne 'absent') { throw 'ERROR: Remote Service state must be absent when supplied' }
-            if ($state -ne 'absent') {
-                if (-not [string]$item.destination) { throw ('ERROR: Remote Service {0} destination is required' -f $item.name) }
-                if (-not [string]$item.service) { throw ('ERROR: Remote Service {0} service is required' -f $item.name) }
-                if ($null -eq $item.enabled) { $item | Add-Member -NotePropertyName enabled -NotePropertyValue $true -Force }
-            }
-        }
-        return [pscustomobject]@{ context = 'agent'; remoteServices = $items }
+        return ConvertTo-FrpV24ValidatedAgentBundle -Body $body
     }
     $context = $null
     $items = New-Object System.Collections.ArrayList
     $current = $null
     $inRemote = $false
+    $sequenceIndent = $null
     foreach ($rawLine in ($text -split "[$([char]13)$([char]10)]+")) {
         $line = $rawLine
         if ([string]::IsNullOrWhiteSpace($line)) { continue }
@@ -639,31 +852,28 @@ function Read-FrpV24AgentBundle {
             continue
         }
         if ($inRemote -and $line -match '^[ ]{4}\[\][ ]*$') { continue }
-        if ($inRemote -and $line -match '^[ ]{4}-[ ]+name:[ ]*(.+?)[ ]*$') {
+        if ($inRemote -and $line -match '^(?<indent>[ ]{2}|[ ]{4})-[ ]+name:[ ]*(?<value>.+?)[ ]*$') {
+            $itemIndent = $Matches['indent'].Length
+            if ($null -ne $sequenceIndent -and $sequenceIndent -ne $itemIndent) {
+                throw 'ERROR: remoteServices sequence items must use the same indentation'
+            }
+            $sequenceIndent = $itemIndent
             if ($null -ne $current) { [void]$items.Add([pscustomobject]$current) }
-            $current = [ordered]@{ name = [string](ConvertFrom-FrpV24YamlScalar -Text $Matches[1]) }
+            $current = [ordered]@{ name = [string](ConvertFrom-FrpV24YamlScalar -Text $Matches['value']) }
             continue
         }
-        if ($inRemote -and $line -match '^[ ]{6}(destination|service|enabled|state):[ ]*(.*?)[ ]*$') {
+        if ($inRemote -and $line -match '^(?<indent>[ ]+)(?<field>destination|service|enabled|state):[ ]*(?<value>.*?)[ ]*$') {
             if ($null -eq $current) { throw 'ERROR: remoteServices item must start with name' }
-            $current[$Matches[1]] = ConvertFrom-FrpV24YamlScalar -Text $Matches[2]
+            if ($Matches['indent'].Length -ne ($sequenceIndent + 2)) {
+                throw 'ERROR: remoteServices fields must align with their item name'
+            }
+            $current[$Matches['field']] = ConvertFrom-FrpV24YamlScalar -Text $Matches['value']
             continue
         }
         throw ('ERROR: unsupported ConfigurationBundle YAML line: {0}' -f $line.Trim())
     }
     if ($null -ne $current) { [void]$items.Add([pscustomobject]$current) }
-    if ([string]$context -ne 'agent') { throw 'ERROR: ConfigurationBundle context must be agent on a Windows Agent Host' }
-    foreach ($item in @($items)) {
-        if (-not [string]$item.name) { throw 'ERROR: Remote Service name is required' }
-        $state = ([string]$item.state).Trim().ToLowerInvariant()
-        if ($state -and $state -ne 'absent') { throw 'ERROR: Remote Service state must be absent when supplied' }
-        if ($state -ne 'absent') {
-            if (-not [string]$item.destination) { throw ('ERROR: Remote Service {0} destination is required' -f $item.name) }
-            if (-not [string]$item.service) { throw ('ERROR: Remote Service {0} service is required' -f $item.name) }
-            if ($null -eq $item.enabled) { $item | Add-Member -NotePropertyName enabled -NotePropertyValue $true -Force }
-        }
-    }
-    return [pscustomobject]@{ context = 'agent'; remoteServices = @($items) }
+    return ConvertTo-FrpV24ValidatedAgentBundle -Body ([pscustomobject]@{context=$context;remoteServices=@($items)})
 }
 function Export-FrpV24AgentBundleText {
     $lines = New-Object System.Collections.ArrayList
@@ -712,6 +922,17 @@ function Get-FrpV24BundlePlan {
             [void]$changes.Add([pscustomobject]@{ op=$op; name=$name; item=$item; before=$existing })
             continue
         }
+        # A Bundle patches existing desired state. Omitted selectors and enabled
+        # preserve existing values; only new resources require both selectors.
+        foreach ($field in @('destination','service','enabled')) {
+            if (Test-FrpObjectHasProperty -Object $item -Name $field) { continue }
+            $value = $null
+            if ($null -ne $existing) {
+                $value = if ($field -eq 'service') { $existing.service_object } else { $existing.$field }
+            } elseif ($field -eq 'enabled') { $value = $true }
+            if ($null -eq $value -or ($field -ne 'enabled' -and -not [string]$value)) { throw ('ERROR: new Remote Service {0} requires destination and service' -f $name) }
+            $item | Add-Member -NotePropertyName $field -NotePropertyValue $value -Force
+        }
         Get-FrpV24ServiceObject -Name ([string]$item.service) -Catalog $catalog | Out-Null
         $op = 'CREATE'
         if ($null -ne $existing) {
@@ -724,6 +945,23 @@ function Get-FrpV24BundlePlan {
             $op = $(if ($same) { 'NO_CHANGE' } else { 'UPDATE' })
         }
         [void]$changes.Add([pscustomobject]@{ op=$op; name=$name; item=$item; before=$existing })
+    }
+    # Validate the complete desired map before confirmation or any mutation.
+    $desired = @{}
+    $currentMap = ConvertTo-FrpV24RemoteMap
+    foreach ($key in @($currentMap.Keys)) { $desired[([string]$key).ToLowerInvariant()] = $currentMap[$key] }
+    $names = @{}
+    foreach ($change in @($changes)) {
+        $key = ([string]$change.name).ToLowerInvariant()
+        if ($names.ContainsKey($key)) { throw ('ERROR: duplicate Remote Service name: {0}' -f $change.name) }
+        $names[$key] = $true
+        if ($change.op -eq 'DELETE' -or [string]$change.item.state -eq 'absent') { $desired.Remove($key) | Out-Null }
+        else {
+            $desired[$key] = [pscustomobject]@{destination=[string]$change.item.destination;service_object=[string]$change.item.service;v24_remote_service=$true}
+        }
+    }
+    foreach ($change in @($changes | Where-Object { $_.op -in @('CREATE','UPDATE') })) {
+        Assert-FrpV24UniqueBinding -Name ([string]$change.name) -Destination ([string]$change.item.destination) -Service ([string]$change.item.service) -Catalog $catalog -Map $desired -CheckDesired
     }
     return ,$changes.ToArray()
 }
@@ -815,7 +1053,7 @@ function Invoke-FrpV24AgentBundleApply {
     }
     $applied = New-Object System.Collections.ArrayList
     try {
-        foreach ($c in $mutating) {
+        foreach ($c in @($mutating | Where-Object { $_.op -eq 'DELETE' }) + @($mutating | Where-Object { $_.op -ne 'DELETE' })) {
             if ($c.op -eq 'DELETE') {
                 Invoke-FrpV24UnsetRemoteService -Name ([string]$c.name) -NoConfirm -SkipRuntime -Quiet | Out-Null
             } else {
@@ -897,11 +1135,11 @@ function Resolve-FrpV24DestinationTarget {
             return [pscustomobject]@{ Host=[string]$values[0]; Mode='host'; ClientId=$obj.client_id }
         }
     }
-    foreach ($host in @($Catalog.managedHosts)) {
-        if ([string]$host.name -ine $dest -and [string]$host.hostname -ine $dest) { continue }
-        $addresses = @($host.addresses)
+    foreach ($managedHost in @($Catalog.managedHosts)) {
+        if ([string]$managedHost.name -ine $dest -and [string]$managedHost.hostname -ine $dest) { continue }
+        $addresses = @($managedHost.addresses)
         if ($addresses.Count -gt 0 -and [string]$addresses[0]) {
-            return [pscustomobject]@{ Host=[string]$addresses[0]; Mode='host'; ClientId=$host.id }
+            return [pscustomobject]@{ Host=[string]$addresses[0]; Mode='host'; ClientId=$managedHost.id }
         }
     }
     throw ('ERROR: Destination Network Object or Managed Host not found in synchronized catalog: {0}' -f $Destination)

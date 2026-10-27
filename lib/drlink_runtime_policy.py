@@ -32,7 +32,7 @@ from drlink_control_db import (
     runtime_dir,
     utc_now_iso,
 )
-from drlink_control_plane import ControlPlane
+from drlink_control_plane import ControlPlane, coherent_read
 
 DECISION_ALLOW = "ALLOW"
 DECISION_DENY = "DENY"
@@ -109,6 +109,7 @@ def open_plane(cfg: Optional[dict] = None, root: Optional[str] = None) -> Contro
     return ControlPlane(root or root_from_cfg(cfg))
 
 
+@coherent_read
 def generation_status(
     plane: ControlPlane, plane_name: str, *, validated_revision: Optional[int] = None
 ) -> dict:
@@ -153,6 +154,15 @@ def generation_status(
         "mismatch": mismatch,
         "error": gen.get("error") or ("generation mismatch" if mismatch else ""),
     }
+
+
+@coherent_read
+def cached_generation_status(plane: ControlPlane, plane_name: str, validated_revision: int) -> dict:
+    # Revalidate a new snapshot fully before adopting its revision. The strict
+    # generation_status fast path still rejects unvalidated/stale revisions.
+    if plane.current_revision() != int(validated_revision):
+        return generation_status(plane, plane_name)
+    return generation_status(plane, plane_name, validated_revision=validated_revision)
 
 
 def parse_remote_addr(remote_addr: str) -> str:
@@ -278,6 +288,7 @@ def _destination_for_service(plane: ControlPlane, mapped: dict) -> str:
     return ""
 
 
+@coherent_read
 def authorize_remote(
     plane: ControlPlane,
     *,
@@ -376,6 +387,7 @@ def authorize_remote(
     return result
 
 
+@coherent_read
 def authorize_internet(
     plane: ControlPlane,
     *,
@@ -477,6 +489,7 @@ def list_enabled_fixed_tcp(plane: ControlPlane) -> dict[str, dict]:
     return out
 
 
+@coherent_read
 def authorize_fixed_tcp(
     plane: ControlPlane,
     *,
@@ -682,14 +695,13 @@ def sync_enrolled_client(
         remote_port = svc.get("remote_port")
         preset = str(svc.get("preset") or svc.get("service_type") or "tcp").lower()
         stype = preset if preset in ("ssh", "http", "https", "tcp") else "tcp"
-        mode = "self"
-        target_host = local_ip
-        # Routed targets are explicit non-loopback destinations when marked.
-        if str(svc.get("target_mode") or "").lower() == "routed":
-            mode = "routed"
-            target_host = str(svc.get("target_host") or local_ip)
-        service_name = str(sid).strip().lower()
         import drlink_v24 as v24
+        explicit_target = (svc.get("target_host")
+                           if str(svc.get("target_mode") or "").lower() == "routed"
+                           else None) or local_ip
+        target_host, target_object = v24.ensure_enrolled_destination_object(plane, explicit_target)
+        mode = "routed" if target_object else "self"
+        service_name = str(sid).strip().lower()
         service_object = v24.ensure_enrolled_service_object(
             plane, stype, local_port or (22 if stype == 'ssh' else 0))
         plane.set_published_service(
@@ -706,13 +718,14 @@ def sync_enrolled_client(
         if not enabled:
             plane.set_published_service_enabled(client_id, service_name, False)
         pub = plane.conn.execute(
-            "SELECT id, enabled, public_port FROM published_services "
+            "SELECT id, enabled, public_port, target_host, target_port, target_mode "
+            "FROM published_services "
             "WHERE client_id = ? AND name = ? AND released = 0",
             (client_id, service_name),
         ).fetchone()
         if pub is not None:
             meta = plane.conn.execute(
-                "SELECT service_id FROM remote_service_meta WHERE service_id = ?",
+                "SELECT * FROM remote_service_meta WHERE service_id = ?",
                 (pub["id"],),
             ).fetchone()
             if meta is None:
@@ -721,17 +734,44 @@ def sync_enrolled_client(
                     "INSERT INTO remote_service_meta"
                     "(service_id, status, pool_class, service_object_id, destination_name, destination_client_id, "
                     "pending_allocation, delete_pending, reason) "
-                    "VALUES (?, ?, 'normal', ?, 'this-host', ?, ?, 0, ?)",
+                    "VALUES (?, ?, 'normal', ?, ?, ?, ?, 0, ?)",
                     (
                         pub["id"],
                         "DISABLED" if not pub_enabled else "DEGRADED",
                         service_object['id'],
-                        client_id,
+                        target_object or 'this-host',
+                        None if target_object else client_id,
                         0 if pub["public_port"] is not None else 1,
                         "" if not pub_enabled else "Runtime activation pending.",
                     ),
                 )
                 plane.commit_if_autonomous()
+            elif target_object:
+                # Preserve the original endpoint and only migrate a verified
+                # enrollment self alias, never an operator-selected target.
+                originally_self = (
+                    str(meta["destination_name"] or "").lower()
+                    in ("this-host", "this_host", "self", hostname.lower())
+                    and str(meta["destination_client_id"] or "") == str(client_id)
+                )
+                exact_signed_target = (
+                    str(pub["target_host"] or "") == target_host
+                    and int(pub["target_port"] or 0) == int(local_port)
+                )
+                if originally_self and exact_signed_target:
+                    plane.conn.execute(
+                        "UPDATE remote_service_meta SET destination_name=?, destination_client_id=NULL, "
+                        "runtime_verified=0, status=?, reason=? WHERE service_id=?",
+                        (target_object, "DEGRADED" if pub["enabled"] else "DISABLED",
+                         "Runtime activation pending." if pub["enabled"] else "", pub["id"]))
+                    plane.conn.execute(
+                        "UPDATE published_services SET target_mode='routed', updated_at=? WHERE id=?",
+                        (utc_now_iso(), pub["id"]))
+                    plane.commit_if_autonomous()
+    # Only the authenticated enrollment hook extends an already operator-
+    # approved OAuth owner's scope. Other identities gain no implicit access.
+    from drlink_v24 import enroll_managed_host_in_owner_mcp_access
+    enroll_managed_host_in_owner_mcp_access(plane, client_id)
     return {"client_id": client_id, "services": len(services)}
 
 
@@ -758,6 +798,11 @@ class ControlPlaneCache:
         self.db_identity = None
 
     def _fingerprint(self, plane: ControlPlane) -> tuple:
+        return self._coherent_fingerprint(plane)
+
+    @staticmethod
+    @coherent_read
+    def _coherent_fingerprint(plane: ControlPlane) -> tuple:
         # This is only a change detector.  Calling status() here performs a
         # full SQLite integrity/foreign-key scan even when the database is
         # unchanged; NewUserConn authorization immediately performs its own
@@ -860,6 +905,16 @@ class ControlPlaneCache:
         try:
             plane = ControlPlane(root, read_only=True)
             conn = plane.conn
+            # Pin the request snapshot before checking its generation. A
+            # concurrent healthy commit is not an authorization failure merely
+            # because the shared cache validated the preceding revision.
+            conn.execute("BEGIN")
+            revision = plane.current_revision()
+            if self.fingerprint is None or revision != int(self.fingerprint[0]):
+                status = plane.status()
+                if not status.get("db_healthy") or status.get("mismatch"):
+                    raise ControlPlaneError("control DB unhealthy or runtime generation mismatch")
+            plane._validated_revision = revision
         except Exception as exc:
             if conn is not None:
                 try:

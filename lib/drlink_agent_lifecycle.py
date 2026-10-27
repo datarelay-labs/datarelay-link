@@ -83,6 +83,20 @@ def local_verification_retry_needed(plane) -> bool:
     return row is not None
 
 
+def current_runtime_verification_lost(plane, root: Optional[str] = None) -> bool:
+    """A fresh management heartbeat does not prove the FRP data transport."""
+    from drlink_v24_runtime import verified_remote_service_status
+
+    rows = plane.conn.execute(
+        "SELECT name FROM agent_remote_services WHERE enabled=1 "
+        "AND delete_pending=0 AND pending_allocation=0 "
+        "AND endpoint_port IS NOT NULL AND upper(status)='HEALTHY' "
+        "AND runtime_verified=1"
+    )
+    return any(verified_remote_service_status(plane, row['name'], root=root)[0]
+               != 'HEALTHY' for row in rows)
+
+
 def heartbeat_once(root: Optional[str] = None) -> dict:
     from drlink_mgmt_sync import report_agent_lifecycle_on_server
 
@@ -127,7 +141,9 @@ def _reconcile_once(root: Optional[str] = None) -> dict:
         ensure_v2_schema(plane.conn)
         local_reconciliation_needed = reconciliation_needed(plane)
         local_verification_retry = (
-            not local_reconciliation_needed and local_verification_retry_needed(plane)
+            not local_reconciliation_needed
+            and (local_verification_retry_needed(plane)
+                 or current_runtime_verification_lost(plane, root))
         )
         if (not server_requests_reconciliation and not local_reconciliation_needed
                 and not local_verification_retry):

@@ -565,6 +565,47 @@ def test_live_management_routes_through_frontend():
             )
             if completed.get('ok') is False:
                 fail('signed complete through frontend', completed)
+            # Installed nginx workers cannot access the root-private spool
+            # directory. Reproduce an unavailable spool deterministically even
+            # when this test runs without root: replace only this test's empty
+            # body directory after nginx has started. A large authenticated
+            # report must reach the real allocator without a tempfile.
+            body_spool = temp_root / 'body'
+            body_spool.rmdir()
+            body_spool.write_text('unavailable test-owned body spool\n')
+            services = [
+                {'name': 'missing-spool-fixture-%03d' % index,
+                 'status': 'DISABLED', 'reason': 'x' * 256}
+                for index in range(96)
+            ]
+            report = mgmt.report_remote_service_status_on_server(
+                root=str(agent_root), services=services,
+            )
+            if report.get('updated'):
+                fail('unknown report allocated or modified a service', report)
+            unsigned_large = urllib.request.Request(
+                'https://127.0.0.1:%s/v1/remote-services-status' % frontend_port,
+                data=json.dumps({'services': services}).encode('utf-8'),
+                headers={'Content-Type': 'application/json'}, method='POST',
+            )
+            try:
+                urllib.request.urlopen(unsigned_large, context=ctx, timeout=5)
+                fail('unsigned large status report was accepted')
+            except urllib.error.HTTPError as exc:
+                if exc.code != 403:
+                    fail('unsigned large status report', (exc.code, exc.read()[:300]))
+            try:
+                mgmt._request_json(
+                    'POST',
+                    'https://127.0.0.1:%s/v1/remote-services-status' % frontend_port,
+                    {'services': [], 'padding': 'x' * 65536},
+                    root=str(agent_root),
+                )
+                fail('oversized status report was accepted')
+            except mgmt.MgmtSyncError as exc:
+                if '(400)' not in str(exc) or 'invalid request body length' not in str(exc):
+                    fail('oversized status report lost backend size bound', str(exc))
+            pass_('SINGLE443_LARGE_STATUS_WITHOUT_BODY_SPOOL_AUTH_PRESERVED')
             pass_('SINGLE443_MGMT_FRONTEND_AUTH')
         finally:
             if nginx_proc is not None and nginx_proc.poll() is None:

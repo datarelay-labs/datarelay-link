@@ -790,6 +790,84 @@ class StatusParityTests(unittest.TestCase):
                     None, 'agent-a', {}))
                 output.assert_not_called()
 
+    def test_idle_heartbeat_demotes_lost_proxy_and_recovers_without_replay(self):
+        from unittest import mock
+        import drlink_agent_lifecycle as lifecycle
+        import drlink_v24_runtime as runtime
+
+        v24.set_service_object(self.server, 'f046-other', type='tcp',
+                               port=18888, oneshot=True)
+        for name, service in [('f046-lost', 'ssh'), ('f046-live', 'f046-other')]:
+            v24.set_remote_service_agent(
+                self.agent, name, destination='this-host', service=service,
+                enabled=True, oneshot=True, root=self.agent_tmp)
+        self.agent.conn.execute(
+            "UPDATE agent_remote_services SET status='HEALTHY',runtime_verified=1,reason=''"
+        )
+        self.agent.conn.commit()
+        v24._push_agent_remote_service_status(self.agent, root=self.agent_tmp)
+        ports = {name: self._server_status(name)['public_port']
+                 for name in ('f046-lost', 'f046-live')}
+        missing = {'f046-lost'}
+
+        def proof(_plane, name, **kwargs):
+            return (('DEGRADED', 'Runtime proxy is not ready in the active generation.')
+                    if name in missing else ('HEALTHY', ''))
+
+        with mock.patch.object(lifecycle, 'heartbeat_once', return_value={
+                'ok': True, 'reconcile_required': False}), \
+             mock.patch.object(runtime, 'verified_remote_service_status', side_effect=proof), \
+             mock.patch.object(v24, '_destination_dependency_status', return_value=None), \
+             mock.patch.object(mgmt, 'upsert_remote_service_on_server') as allocate, \
+             mock.patch.object(runtime, 'apply_agent_runtime') as apply, \
+             mock.patch.object(runtime, '_restart_frpc') as restart, \
+             mock.patch.object(runtime, '_reload_frpc_authenticated') as reload:
+            result = lifecycle.reconcile_once(self.agent_tmp)
+            self.assertEqual(result['status'], 'DEGRADED', result)
+            self.assertTrue(result.get('no_change'), result)
+            for name, expected in [('f046-lost', 'DEGRADED'), ('f046-live', 'HEALTHY')]:
+                self.assertEqual(self._server_status(name)['status'], expected)
+                local = self.agent.conn.execute(
+                    'SELECT status,runtime_verified FROM agent_remote_services WHERE name=?',
+                    (name,),
+                ).fetchone()
+                self.assertEqual(tuple(local), (expected, int(expected == 'HEALTHY')))
+                self.assertEqual(self._server_status(name)['public_port'], ports[name])
+            missing.clear()
+            recovered = lifecycle.reconcile_once(self.agent_tmp)
+            self.assertEqual(recovered['status'], 'SYNCHRONIZED', recovered)
+            for name in ports:
+                self.assertEqual(self._server_status(name)['status'], 'HEALTHY')
+                self.assertEqual(self._server_status(name)['public_port'], ports[name])
+            allocate.assert_not_called()
+            apply.assert_not_called()
+            restart.assert_not_called()
+            reload.assert_not_called()
+
+    def test_healthy_idle_heartbeat_checks_current_proof_without_status_write(self):
+        from unittest import mock
+        import drlink_agent_lifecycle as lifecycle
+        import drlink_v24_runtime as runtime
+
+        v24.set_remote_service_agent(
+            self.agent, 'f046-stable', destination='this-host', service='ssh',
+            enabled=True, oneshot=True, root=self.agent_tmp)
+        self.agent.conn.execute(
+            "UPDATE agent_remote_services SET status='HEALTHY',runtime_verified=1,reason=''"
+        )
+        self.agent.conn.commit()
+        with mock.patch.object(lifecycle, 'heartbeat_once', return_value={
+                'ok': True, 'reconcile_required': False}), \
+             mock.patch.object(runtime, 'verified_remote_service_status',
+                               return_value=('HEALTHY', '')) as proof, \
+             mock.patch.object(mgmt, 'report_remote_service_status_on_server') as report, \
+             mock.patch.object(runtime, 'apply_agent_runtime') as apply:
+            result = lifecycle.reconcile_once(self.agent_tmp)
+        self.assertEqual(result['status'], 'HEARTBEAT', result)
+        proof.assert_called()
+        report.assert_not_called()
+        apply.assert_not_called()
+
     def test_F026_synchronize_verified_noop_avoids_republication_and_restart(self):
         from unittest import mock
         import drlink_v24_runtime as runtime

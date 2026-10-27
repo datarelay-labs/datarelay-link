@@ -115,8 +115,16 @@ fi
 pass "BOOTSTRAP_HOSTNAME_SET"
 
 python3 "$ROOT/tools/frp-server-set" bootstrap-hostname --unset >/dev/null
+# Standard Zero-Touch must never silently emit a 4,000-char private-CA command.
+if python3 "$ROOT/tools/frp-create-client" --one-line --client-name no-compact-host \
+  >"$WORKDIR/missing-compact.out" 2>"$WORKDIR/missing-compact.err"; then
+  fail "Default one-line unexpectedly emitted a long private-CA command"
+fi
+grep -q 'No enrollment ticket was issued' "$WORKDIR/missing-compact.err" \
+  || fail "Compact HTTPS prerequisite was not actionable"
+pass "DEFAULT_NO_SILENT_LONG_COMMAND"
 OUT_ZT1="$WORKDIR/zt1.out"
-python3 "$ROOT/tools/frp-create-client" --one-line --client-name mgmt-only --note 'n1' \
+python3 "$ROOT/tools/frp-create-client" --one-line --long-bootstrap --client-name mgmt-only --note 'n1' \
   >"$OUT_ZT1" || fail "one-line without bootstrap hostname"
 grep -q "curl -fsSL --proto =https --cacert" "$OUT_ZT1" \
   || { cat "$OUT_ZT1"; fail "zt1 fallback missing"; }
@@ -124,9 +132,9 @@ grep -q 'zt1\.' "$OUT_ZT1" || { cat "$OUT_ZT1"; fail "zt1 package missing"; }
 if grep -q '/i/' "$OUT_ZT1"; then
   fail "short URL unexpectedly printed without bootstrap_hostname"
 fi
-pass "ZT1_FALLBACK_ABSENT_HOSTNAME"
+pass "ZT1_EXPLICIT_ADVANCED_LONG_MODE"
 
-# DNS public_url_host alone must stay on the pinned-CA zt1 fallback.
+# Explicit advanced --long-bootstrap must retain pinned-CA integrity; plain DNS alone does not bypass trust qualification.
 python3 - "$TREE/etc/drlink/config.json" <<'PY' || fail "set public_url_host domain"
 import json, sys
 from pathlib import Path
@@ -141,7 +149,7 @@ cfg['allocator_public_url'] = 'https://remote.xdr.ooo:%s/enroll' % (
 path.write_text(json.dumps(cfg, indent=2) + "\n")
 PY
 OUT_DOMAIN="$WORKDIR/domain-fallback.out"
-python3 "$ROOT/tools/frp-create-client" --one-line --client-name domain-fallback --note 'dns' \
+python3 "$ROOT/tools/frp-create-client" --one-line --long-bootstrap --client-name domain-fallback --note 'dns' \
   >"$OUT_DOMAIN" || fail "one-line with public_url_host domain"
 grep -q "curl -fsSL --proto =https --cacert" "$OUT_DOMAIN" \
   || { cat "$OUT_DOMAIN"; fail "domain public_url_host missing pinned-CA fallback"; }
@@ -151,10 +159,10 @@ if grep -q '/i/' "$OUT_DOMAIN"; then
   cat "$OUT_DOMAIN"
   fail "public_url_host incorrectly enabled short URL without bootstrap_hostname"
 fi
-pass "PUBLIC_URL_HOST_DOMAIN_ZT1_FALLBACK"
+pass "PUBLIC_URL_HOST_DOMAIN_EXPLICIT_LONG_MODE"
 
 OUT_DOMAIN_WINDOWS="$WORKDIR/domain-windows-fallback.out"
-python3 "$ROOT/tools/frp-create-client" --one-line --platform windows --rdp \
+python3 "$ROOT/tools/frp-create-client" --one-line --long-bootstrap --platform windows --rdp \
   --client-name domain-win-fallback --note 'dns-win' >"$OUT_DOMAIN_WINDOWS" \
   || fail "Windows one-line with public_url_host domain"
 # Windows now transports the hash-before-execute script as UTF-16LE
@@ -182,7 +190,7 @@ if grep -q '/i/' "$OUT_DOMAIN_WINDOWS"; then
   cat "$OUT_DOMAIN_WINDOWS"
   fail "Windows public_url_host incorrectly enabled short URL without bootstrap_hostname"
 fi
-pass "WINDOWS_PUBLIC_URL_HOST_PINNED_CA_FALLBACK"
+pass "WINDOWS_EXPLICIT_LONG_MODE_PINNED_CA"
 
 # IP-selected public_url_host must not invent short URL from public_hostname.
 python3 - "$TREE/etc/drlink/config.json" <<'PY' || fail "set public_url_host IP"
@@ -199,21 +207,21 @@ cfg['allocator_public_url'] = 'https://203.0.113.10:%s/enroll' % (
 path.write_text(json.dumps(cfg, indent=2) + "\n")
 PY
 OUT_IP_ID="$WORKDIR/ip-identity.out"
-python3 "$ROOT/tools/frp-create-client" --one-line --client-name ip-identity --note 'ip' \
+python3 "$ROOT/tools/frp-create-client" --one-line --long-bootstrap --client-name ip-identity --note 'ip' \
   >"$OUT_IP_ID" || fail "one-line with public_url_host IP"
 grep -q "curl -fsSL --proto =https --cacert" "$OUT_IP_ID" \
   || { cat "$OUT_IP_ID"; fail "IP identity should use pinned long command"; }
 if grep -q '/i/' "$OUT_IP_ID"; then
   fail "IP public_url_host unexpectedly printed short URL"
 fi
-pass "PUBLIC_URL_HOST_IP_NO_SHORT_URL"
+pass "PUBLIC_URL_HOST_IP_ADVANCED_ONLY"
 
 python3 "$ROOT/tools/frp-server-set" bootstrap-hostname bootstrap.example.com >/dev/null
 
 OUT_MGMT="$WORKDIR/mgmt.out"
 python3 "$ROOT/tools/frp-create-client" --one-line --client-name short-mgmt --note 'mgmt' \
   >"$OUT_MGMT" || fail "mgmt short url"
-grep -E -q "curl -fsSL https://bootstrap\\.example\\.com/i/[A-Za-z0-9_-]{22}\\|sudo bash$" \
+grep -E -q "curl -fsSL https://bootstrap\\.example\\.com/i/[A-Za-z0-9_-]{22}" \
   "$OUT_MGMT" || { cat "$OUT_MGMT"; fail "mgmt short URL shape"; }
 if grep -q 'zt1\.' "$OUT_MGMT"; then
   fail "mgmt short URL still printed zt1"
@@ -223,7 +231,7 @@ pass "MANAGEMENT_ONLY_SHORT_URL"
 OUT_SSH="$WORKDIR/ssh.out"
 python3 "$ROOT/tools/frp-create-client" --one-line --ssh --ssh-user aella \
   --client-name short-ssh --note 'ssh' >"$OUT_SSH" || fail "ssh short url"
-grep -E -q "curl -fsSL https://bootstrap\\.example\\.com/i/[A-Za-z0-9_-]{22}\\|sudo bash" "$OUT_SSH" \
+grep -E -q "curl -fsSL https://bootstrap\\.example\\.com/i/[A-Za-z0-9_-]{22}" "$OUT_SSH" \
   || { cat "$OUT_SSH"; fail "ssh short URL shape"; }
 pass "SSH_ONLY_SHORT_URL"
 
@@ -235,7 +243,7 @@ JSON
 OUT_MULTI="$WORKDIR/multi.out"
 python3 "$ROOT/tools/frp-create-client" --one-line --services-file "$SERVICES" \
   --client-name short-multi --note 'multi' >"$OUT_MULTI" || fail "multi short url"
-grep -E -q "curl -fsSL https://bootstrap\\.example\\.com/i/[A-Za-z0-9_-]{22}\\|sudo bash" "$OUT_MULTI" \
+grep -E -q "curl -fsSL https://bootstrap\\.example\\.com/i/[A-Za-z0-9_-]{22}" "$OUT_MULTI" \
   || { cat "$OUT_MULTI"; fail "multi short URL shape"; }
 pass "MULTI_SERVICE_SHORT_URL"
 
@@ -671,7 +679,7 @@ pass "REDACT_HELPER"
 
 # Real short-URL E2E mutates Server bootstrap_hostname and installer-url while
 # exercising fallback behavior. It must restore both before reporting PASS so
-# later Zero-Touch commands cannot silently expand back to pinned-CA fallback
+# later Zero-Touch commands cannot silently regress from compact HTTPS to long pinned-CA output
 # or advertise a stale installer source.
 RUNNER="$ROOT/tests/run-short-url-e2e.sh"
 grep -q '^snapshot_server_settings()' "$RUNNER" || fail "real E2E missing Server settings snapshot"

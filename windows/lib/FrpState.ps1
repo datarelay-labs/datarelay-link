@@ -446,6 +446,7 @@ function ConvertTo-FrpServiceRecord {
         if ($null -ne $ht[$key] -and [string]$ht[$key] -ne '') { $rec[$key] = $ht[$key] }
     }
     if ($null -ne $ht['pending_allocation']) { $rec['pending_allocation'] = [bool]$ht['pending_allocation'] }
+    if ($null -ne $ht['runtime_verified']) { $rec['runtime_verified'] = [bool]$ht['runtime_verified'] }
     if ($preset -eq 'ssh' -and $ht['ssh_user']) {
         $rec['ssh_user'] = [string]$ht['ssh_user']
     }

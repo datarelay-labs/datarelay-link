@@ -35,6 +35,10 @@ try {
     Assert-FrpTrue ($help -match 'system autostart') 'help advertises system autostart'
     Assert-FrpTrue ($help -match 'system update product') 'help advertises system update product'
     Assert-FrpTrue ($help -match 'system update engine') 'help advertises system update engine'
+    Assert-FrpTrue ($help -notmatch '(?m)^  system update check-engine\s*$') 'Agent help hides Server-only upstream check'
+    $upstream = & $hostExe -NoProfile -ExecutionPolicy Bypass -File $clientPath system update check-engine 2>&1 | Out-String
+    Assert-FrpTrue ($LASTEXITCODE -ne 0) 'Agent rejects Server-only upstream check'
+    Assert-FrpTrue ($upstream -match 'Server') 'upstream check directs operator to Server'
     Assert-FrpTrue ($help -match 'system support-bundle') 'help advertises system support-bundle'
     Assert-FrpTrue ($help -match 'system uninstall') 'help advertises system uninstall'
     Assert-FrpTrue ($help -notmatch '(?m)^  status\s') 'help hides legacy root status'

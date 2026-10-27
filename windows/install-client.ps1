@@ -23,6 +23,7 @@ param(
     [string]$Hostname = $env:FRP_HOSTNAME,
     [switch]$SkipStart,
     [switch]$SkipDownload,
+    [switch]$Upgrade,
     [switch]$Help
 )
 
@@ -35,6 +36,11 @@ Data Relay Link Windows Agent Host installer
 Zero-touch:
   .\install-client.ps1 -ZeroTouch -AllocatorUrl https://HOST/enroll `
       -CaSha256 <DER-SHA256> -BootstrapTicket 'bt1.<id>.<secret>'
+
+Existing enrolled Agent software upgrade:
+  .\bootstrap-client.ps1 -Upgrade
+  Verify the Server-qualified bootstrap SHA256 before executing this file.
+  Preserves enrollment, CA, engine, desired services and public ports.
 
 Environment equivalents:
   FRP_ALLOCATOR_URL, FRP_ALLOCATOR_CA_SHA256, FRP_BOOTSTRAP_TICKET
@@ -81,6 +87,30 @@ foreach ($mod in @(
 
 # Load DPAPI assembly when present (Windows).
 try { Add-Type -AssemblyName System.Security -ErrorAction SilentlyContinue | Out-Null } catch { }
+
+if ($Upgrade) {
+    if ($ZeroTouch -or $BootstrapTicket) {
+        Write-Host 'ERROR: -Upgrade does not enroll or accept a Bootstrap Ticket.'
+        exit 2
+    }
+    if (-not (Test-FrpIsEnrolled)) {
+        Write-Host 'ERROR: -Upgrade requires an existing enrolled Agent; no identity was created.'
+        exit 1
+    }
+    if (-not $env:FRP_WINDOWS_BOOTSTRAP_PATH) {
+        Write-Host 'ERROR: run -Upgrade from the verified Server-qualified bootstrap-client.ps1 file.'
+        exit 1
+    }
+    $previousSource = $env:FRP_WINDOWS_PROJECT_SRC
+    try {
+        $env:FRP_WINDOWS_PROJECT_SRC = $PSScriptRoot
+        & powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot 'tools/FrpClient.ps1') system update product
+        exit $LASTEXITCODE
+    } finally {
+        if ($null -eq $previousSource) { Remove-Item Env:FRP_WINDOWS_PROJECT_SRC -ErrorAction SilentlyContinue }
+        else { $env:FRP_WINDOWS_PROJECT_SRC = $previousSource }
+    }
+}
 
 # Generated one-liners and Short URL bootstraps set FRP_ZERO_TOUCH=1 and
 # invoke this script with -File (never irm|iex). Honor that env so enrollment

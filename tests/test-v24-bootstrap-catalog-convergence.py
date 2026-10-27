@@ -921,6 +921,144 @@ class BootstrapCatalogConvergenceTests(unittest.TestCase):
         self.assertEqual(int(http["endpoint_port"]), 6001)
         agent.close()
 
+    def test_simultaneous_enrollments_share_target_without_overwrite_or_conflict(self):
+        from concurrent.futures import ThreadPoolExecutor
+        # Schema creation is a separate startup transaction; coordinate only
+        # the two actual target creations, not first-open schema migration.
+        initialized = ControlPlane(self.server_tmp)
+        initialized.close()
+        barrier = threading.Barrier(2)
+        mutate = ControlPlane._mutate
+        def synchronized(plane, command, *args, **kwargs):
+            if command.startswith('set network-object enrolled-target-'):
+                barrier.wait(timeout=10)
+            return mutate(plane, command, *args, **kwargs)
+        def create(_):
+            plane = ControlPlane(self.server_tmp)
+            try:
+                return v24.ensure_enrolled_destination_object(plane, '198.51.100.42')
+            finally:
+                plane.close()
+        with mock.patch.object(ControlPlane, '_mutate', synchronized), ThreadPoolExecutor(2) as pool:
+            results = list(pool.map(create, (1, 2)))
+        self.assertEqual(results[0], results[1])
+        check = ControlPlane(self.server_tmp)
+        self.addCleanup(check.close)
+        objects = [row for row in v24.list_network_objects(check) if row['value'] == '198.51.100.42']
+        self.assertEqual(len(objects), 1)
+
+    def test_upgrade_import_keeps_explicit_lan_target_reference_available(self):
+        server = ControlPlane(self.server_tmp)
+        self.addCleanup(server.close)
+        server.upsert_client(MACHINE, hostname='frp-client', label='real-e2e-ubuntu24')
+        UR._import_legacy_service(server, MACHINE, 'http', {
+            'preset': 'http', 'local_ip': '198.51.100.42', 'local_port': 18080,
+            'remote_port': 6000, 'enabled': True})
+        row = server.conn.execute("SELECT * FROM published_services WHERE name='http'").fetchone()
+        self.assertEqual(row['target_mode'], 'routed')
+        self.assertEqual(row['target_host'], '198.51.100.42')
+        objects = [row for row in v24.list_network_objects(server)
+                   if row['value'] == '198.51.100.42']
+        self.assertEqual(len(objects), 1)
+        self.assertTrue(objects[0]['name'].startswith('enrolled-target-'))
+        self.assertEqual(row['public_port'], 6000)
+
+    def test_bootstrap_destination_normalization_and_collision_fail_closed(self):
+        server = ControlPlane(self.server_tmp)
+        agent = ControlPlane(self.agent_tmp)
+        self.addCleanup(server.close)
+        self.addCleanup(agent.close)
+        for submitted, normalized in [('198.51.100.42', '198.51.100.42'),
+                                      ('2001:db8::42', '2001:db8::42'),
+                                      ('LAN.Example.Test.', 'lan.example.test'),
+                                      ('::1', '::1')]:
+            with self.subTest(target=submitted):
+                host, name = v24.ensure_enrolled_destination_object(server, submitted)
+                self.assertEqual(host, normalized)
+                self.assertEqual(v24.ensure_enrolled_destination_object(agent, submitted), (host, name))
+                self.assertEqual(server._object_values(server.get_object(name)['id']), [host])
+                # Repeated projection is idempotent, not an object mutation.
+                self.assertEqual(v24.ensure_enrolled_destination_object(server, submitted), (host, name))
+                wrong = '203.0.113.99' if ':' not in host else '2001:db8::99'
+                kind = 'fqdn' if normalized == 'lan.example.test' else 'ip'
+                if kind == 'fqdn':
+                    wrong = 'operator.example.test'
+                v24.set_network_object(server, name, type=kind, value=wrong, oneshot=True, confirm=True)
+                with self.assertRaisesRegex(Exception, 'conflicts with an existing definition'):
+                    v24.ensure_enrolled_destination_object(server, submitted)
+                self.assertEqual(server._object_values(server.get_object(name)['id']), [wrong])
+        for self_target in ('127.0.0.1', 'localhost'):
+            self.assertEqual(v24.ensure_enrolled_destination_object(server, self_target), ('127.0.0.1', None))
+        for invalid in ('https://private.example.test', '192.0.2.1/24'):
+            with self.assertRaises(Exception):
+                v24.ensure_enrolled_destination_object(server, invalid)
+
+    def test_bootstrap_lan_target_has_canonical_destination_on_server_and_agent(self):
+        target = '198.51.100.42'
+        state_path = Path(self.agent_tmp) / 'etc/frp/client-state.json'
+        state = json.loads(state_path.read_text())
+        state['services']['ssh']['local_ip'] = target
+        state_path.write_text(json.dumps(state))
+        server = ControlPlane(self.server_tmp)
+        agent = ControlPlane(self.agent_tmp)
+        self.addCleanup(server.close)
+        self.addCleanup(agent.close)
+        RP.sync_enrolled_client(server, client_id=MACHINE, hostname='frp-client',
+                                services=state['services'])
+        pub = server.conn.execute("SELECT * FROM published_services WHERE name='ssh'").fetchone()
+        self.assertEqual(pub['target_mode'], 'routed')
+        self.assertEqual(pub['target_host'], target)
+        meta = server.conn.execute('SELECT * FROM remote_service_meta WHERE service_id=?',
+                                   (pub['id'],)).fetchone()
+        self.assertNotEqual(meta['destination_name'], 'this-host')
+        self.assertIsNone(meta['destination_client_id'])
+        obj = server.get_object(meta['destination_name'])
+        self.assertEqual(server._object_values(obj['id']), [target])
+        self.assertFalse(UR.server_target_projection_reason(server, pub, meta))
+        seeded = v24.project_enrolled_services_into_agent_catalog(agent, root=self.agent_tmp)
+        row = agent.conn.execute("SELECT * FROM agent_remote_services WHERE name='ssh'").fetchone()
+        self.assertEqual(row['destination'], meta['destination_name'])
+        self.assertIsNone(row['destination_client_id'])
+        obj = agent.get_object(row['destination'])
+        self.assertEqual(agent._object_values(obj['id']), [target])
+        self.assertEqual(row['endpoint_port'], 6000)
+        self.assertEqual(seeded[0]['view']['status'], 'DEGRADED')
+        snapshot = v24._agent_remote_service_mgmt_snapshot(agent, row, root=self.agent_tmp,
+                                                          host_name='frp-client')
+        self.assertEqual(snapshot['target_host'], target)
+        self.assertEqual(snapshot['target_mode'], 'routed')
+        desired = V24R.build_desired_runtime_services(agent, state, root=self.agent_tmp)
+        self.assertEqual(desired['rs-ssh']['local_ip'], target)
+        self.assertEqual(desired['rs-ssh']['remote_port'], 6000)
+
+        # Upgrade/replay of the exact broken bootstrap projection must keep
+        # identity and endpoint while repairing the authoritative reference.
+        server.conn.execute("UPDATE remote_service_meta SET destination_name='this-host', "
+                            "destination_client_id=? WHERE service_id=?", (MACHINE, pub['id']))
+        server.conn.commit()
+        agent.conn.execute("UPDATE agent_remote_services SET destination='frp-client', "
+                           "destination_client_id=? WHERE name='ssh'", (MACHINE,))
+        agent.conn.commit()
+        RP.sync_enrolled_client(server, client_id=MACHINE, hostname='frp-client',
+                                services=state['services'])
+        meta = server.conn.execute('SELECT * FROM remote_service_meta WHERE service_id=?',
+                                   (pub['id'],)).fetchone()
+        self.assertFalse(UR.server_target_projection_reason(server, pub, meta))
+        v24.project_enrolled_services_into_agent_catalog(agent, root=self.agent_tmp)
+        repaired = agent.conn.execute("SELECT * FROM agent_remote_services WHERE name='ssh'").fetchone()
+        self.assertEqual(repaired['destination'], meta['destination_name'])
+        self.assertIsNone(repaired['destination_client_id'])
+        self.assertEqual(repaired['endpoint_port'], 6000)
+        self.assertEqual(repaired['runtime_verified'], 0)
+        # An operator edit clears enrollment_seed; replay must not replace it.
+        agent.conn.execute("UPDATE agent_remote_services SET destination='operator-target', "
+                           "enrollment_seed=0 WHERE name='ssh'")
+        agent.conn.commit()
+        v24.project_enrolled_services_into_agent_catalog(agent, root=self.agent_tmp)
+        self.assertEqual(agent.conn.execute("SELECT destination FROM agent_remote_services "
+                                            "WHERE name='ssh'").fetchone()['destination'],
+                         'operator-target')
+
     def test_open_local_target_without_relay_verification_stays_degraded(self):
         self._read_only_shows(self.agent_tmp)
         agent = ControlPlane(self.agent_tmp)

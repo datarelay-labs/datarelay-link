@@ -1202,11 +1202,13 @@ def _import_legacy_service(plane: ControlPlane, client_id: str, sid: str, rec: d
     remote_port = rec.get("remote_port")
     preset = str(rec.get("preset") or rec.get("service_type") or "tcp").lower()
     stype = preset if preset in ("ssh", "http", "https", "tcp") else "tcp"
-    mode = "self"
-    target_host = local_ip
-    if str(rec.get("target_mode") or "").lower() == "routed":
-        mode = "routed"
-        target_host = str(rec.get("target_host") or local_ip)
+    from drlink_v24 import ensure_enrolled_destination_object
+
+    explicit_target = (rec.get("target_host")
+                       if str(rec.get("target_mode") or "").lower() == "routed"
+                       else None) or local_ip
+    target_host, target_object = ensure_enrolled_destination_object(plane, explicit_target)
+    mode = "routed" if target_object else "self"
     plane.set_published_service(
         client_id,
         str(sid).strip().lower(),
@@ -1419,6 +1421,7 @@ def _plan_legacy_policy(plane: ControlPlane, registry: dict) -> dict:
     clients = registry.get("clients") if isinstance(registry.get("clients"), dict) else {}
     remote_rules = []
     remote_restrictive = False
+    routed_access_signatures = {}
     if access is not None:
         lists = access.get("access_lists") or {}
         bindings = access.get("service_access") or {}
@@ -1482,6 +1485,23 @@ def _plan_legacy_policy(plane: ControlPlane, registry: dict) -> dict:
                     if cidrs is None and sid_s != sid_raw:
                         cidrs = restricted.get((cid_s, sid_s))
                     public = cidrs is None
+                    from drlink_v24 import enrolled_destination_reference
+
+                    explicit_target = (
+                        svc.get('target_host') if str(svc.get('target_mode') or '').lower() == 'routed'
+                        else None
+                    ) or svc.get('local_ip') or '127.0.0.1'
+                    _target, target_object = enrolled_destination_reference(explicit_target)
+                    service_destination = target_object or dest
+                    if target_object:
+                        key = (service_destination, port)
+                        signature = None if public else tuple(sorted(set(cidrs)))
+                        if key in routed_access_signatures and routed_access_signatures[key] != signature:
+                            raise _legacy_policy_error(
+                                'LAN services sharing destination/port have different legacy access policies; '
+                                'the canonical policy cannot represent them without changing access.'
+                            )
+                        routed_access_signatures[key] = signature
                     if not public and not cidrs:
                         continue
                     sources = ["v23any4", "v23any6"] if public else [_cidr_object_name(c) for c in cidrs]
@@ -1491,7 +1511,8 @@ def _plan_legacy_policy(plane: ControlPlane, registry: dict) -> dict:
                             "name": _remote_rule_name(cid_s, sid_raw, public=public),
                             "sources": sources,
                             "source_values": ["0.0.0.0/0", "::/0"] if public else list(cidrs),
-                            "destination": dest,
+                            "destination": service_destination,
+                            "legacy_destination": dest,
                             "service": _service_object_name(port),
                             "port": port,
                         }
@@ -1767,8 +1788,95 @@ def _apply_legacy_policy(plane: ControlPlane, registry: dict) -> None:
         plane, "internet", plan["internet_rules"], restrictive=plan["internet_restrictive"]
     ):
         return
+    remote_rules = plan['remote_rules']
+    if any(rule['destination'] != rule.get('legacy_destination', rule['destination']) for rule in remote_rules):
+        historical = [dict(rule, destination=rule.get('legacy_destination', rule['destination']))
+                      for rule in remote_rules]
+        import drlink_v24 as v24
+        remote = v24.get_access_policy(plane, 'remote')
+        if (remote.get('mode') is not None
+                and not _projection_satisfied(plane, 'remote', remote_rules, restrictive=plan['remote_restrictive'])
+                and not _projection_satisfied(plane, 'remote', historical, restrictive=plan['remote_restrictive'])):
+            raise _legacy_policy_error(
+                'Existing Remote Access policy differs from both the canonical and historical migration '
+                'projection. Operator modifications were preserved; review the policy before reconciliation.'
+            )
     _apply_rule_set(plane, "remote", plan["remote_rules"], restrictive=plan["remote_restrictive"])
     _apply_rule_set(plane, "internet", plan["internet_rules"], restrictive=plan["internet_restrictive"])
+
+
+def legacy_enrolled_lan_projection_repairs(plane: ControlPlane, registry: dict) -> list:
+    """Only exact signed Legacy enrollment/self-projection contradictions."""
+    import drlink_v24 as v24
+    findings = []
+    for cid, client in (registry.get("clients") or {}).items():
+        if not isinstance(client, dict):
+            continue
+        for sid, spec in (client.get("services") or {}).items():
+            if not isinstance(spec, dict) or is_v24_runtime_projection(
+                sid, spec, plane=plane, client_id=str(cid)
+            ):
+                continue
+            target = str(spec.get("local_ip") or "127.0.0.1").strip()
+            ref = v24.enrolled_target_object_name(target)
+            if not ref:
+                continue
+            pub = _published_for(plane, str(cid), str(sid))
+            meta = _remote_meta(plane, pub) if pub else None
+            if pub is None or meta is None:
+                continue
+            try:
+                exact = (
+                    str(pub["target_host"] or "") == target
+                    and int(pub["target_port"] or 0) == int(spec.get("local_port") or 0)
+                    and int(pub["public_port"] or 0) == int(spec.get("remote_port") or 0)
+                    and str(pub["target_mode"] or "").lower() == "self"
+                )
+            except (TypeError, ValueError):
+                continue
+            if not exact:
+                continue
+            dest = str(meta["destination_name"] or "").strip().lower()
+            if dest not in THIS_HOST and dest != str(client.get("hostname") or "").lower():
+                continue
+            if str(meta["destination_client_id"] or "") != str(cid):
+                continue
+            findings.append((str(cid), str(sid), target, ref, str(pub["id"])))
+    return findings
+
+
+def apply_legacy_enrolled_lan_projection_repairs(
+    plane: ControlPlane, findings: list
+) -> int:
+    repaired = 0
+    for _cid, _name, address, target_ref, service_id in findings:
+        try:
+            normalized = str(ipaddress.ip_address(address))
+            kind = "host"
+        except ValueError:
+            normalized = address.lower()
+            kind = "fqdn"
+        obj = plane.get_object(target_ref)
+        if obj is None:
+            plane.set_object_type(target_ref, kind)
+            plane.set_object_value(target_ref, normalized)
+        elif (
+            obj["type"] != kind or obj["origin"] == "managed"
+            or plane._object_values(obj["id"]) != [normalized]
+        ):
+            raise ControlPlaneError("Legacy bootstrap target name collision; no repair applied")
+        plane.conn.execute(
+            "UPDATE remote_service_meta SET destination_name=?, "
+            "destination_client_id=NULL, status='DEGRADED', runtime_verified=0, "
+            "reason='Reverify routed enrollment after upgrade.' WHERE service_id=?",
+            (target_ref, service_id),
+        )
+        plane.conn.execute(
+            "UPDATE published_services SET target_mode='routed', updated_at=? "
+            "WHERE id=?", (utc_now_iso(), service_id),
+        )
+        repaired += 1
+    return repaired
 
 
 def apply_upgrade_reconciliation(
@@ -1785,7 +1893,8 @@ def apply_upgrade_reconciliation(
         raise ControlPlaneError("upgrade reconcile: registry is missing a clients object")
     plan = preview_upgrade_reconciliation(plane, registry)
     policy_pending = legacy_policy_pending(plane, registry)
-    if not plan["has_work"] and not policy_pending:
+    legacy_lan_repairs = legacy_enrolled_lan_projection_repairs(plane, registry)
+    if not plan["has_work"] and not policy_pending and not legacy_lan_repairs:
         return {"ok": True, "applied": False, "skipped": True, "plan": plan}
 
     def write():
@@ -1893,6 +2002,9 @@ def apply_upgrade_reconciliation(
                                     "VALUES (?, ?, ?, ?, 0, ?)",
                                     (want, cid_s, existing["id"], existing["name"], utc_now_iso()),
                                 )
+
+            # Exact Server-owned bootstrap registry is the only repair authority.
+            apply_legacy_enrolled_lan_projection_repairs(plane, legacy_lan_repairs)
 
             # Repair stale SQLite claims against authoritative ownership.
             for port, owner in list(owners.items()):

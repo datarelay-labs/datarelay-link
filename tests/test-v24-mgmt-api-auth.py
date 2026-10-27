@@ -608,10 +608,11 @@ class MgmtApiAuthTests(unittest.TestCase):
             target_host="127.0.0.1", target_port=22, target_mode="self",
         )
         original_port = int(created["endpoint_port"])
+        v24.set_service_object(self.server, "other-ssh", type="tcp", port=2222, oneshot=True)
         another = mgmt.upsert_remote_service_on_server(
             root=self.agent_tmp, name="second-ssh", destination="this-host",
-            service="ssh", enabled=True, pool_class="normal",
-            target_host="127.0.0.1", target_port=22, target_mode="self",
+            service="other-ssh", enabled=True, pool_class="normal",
+            target_host="127.0.0.1", target_port=2222, target_mode="self",
         )
         other_port = int(another["endpoint_port"])
         self.assertNotEqual(original_port, other_port)
@@ -648,6 +649,120 @@ class MgmtApiAuthTests(unittest.TestCase):
                 "SELECT public_port FROM published_services WHERE name = 'ssh-access'"
             ).fetchone()[0], original_port,
         )
+
+    def test_F041_reconcile_releases_obsolete_canonical_reservations(self):
+        # Enrollment may move the authoritative publication while an earlier
+        # promoted endpoint remains in port_reservations. Reconcile must free
+        # only that same publication's unused old slot, not other owners.
+        self.server.upsert_client(MACHINE_B, label="agent-b", hostname="agent-b")
+        pending_other = self.server._allocate_port(MACHINE_B, "pending-other")
+        self.server.conn.commit()
+        for index in range(3):
+            with self.subTest(cycle=index):
+                name = "recover-%d" % index
+                service = "recover-svc-%d" % index
+                other_service = "new-owner-svc-%d" % index
+                for obj, port in [(service, 2220 + index), (other_service, 2230 + index)]:
+                    v24.set_service_object(self.server, obj, type="tcp", port=port, oneshot=True)
+                args = dict(root=self.agent_tmp, name=name, destination="this-host",
+                            service=service, enabled=True, pool_class="normal",
+                            target_host="127.0.0.1", target_port=2220 + index,
+                            target_mode="self")
+                created = mgmt.upsert_remote_service_on_server(**args)
+                old_port = int(created["endpoint_port"])
+                new_port = 6040 + index
+                self.server.set_published_service(MACHINE_A, name, public_port=new_port)
+                self.assertEqual(self.server.conn.execute(
+                    "SELECT released FROM port_reservations WHERE public_port=?", (old_port,)
+                ).fetchone()[0], 1)
+                # Also heal the exact stale row left by an older installation.
+                self.server.conn.execute(
+                    "UPDATE port_reservations SET released=0 WHERE public_port=?", (old_port,))
+                self.server.conn.commit()
+                updated = mgmt.upsert_remote_service_on_server(**args)
+                self.assertEqual(updated["endpoint_port"], new_port)
+                old = self.server.conn.execute(
+                    "SELECT released FROM port_reservations WHERE public_port=?", (old_port,)
+                ).fetchone()
+                self.assertEqual(old["released"], 1)
+                self.assertEqual(self.server.conn.execute(
+                    "SELECT COUNT(*) FROM port_reservations WHERE service_id=("
+                    "SELECT id FROM published_services WHERE client_id=? AND name=?) "
+                    "AND released=0", (MACHINE_A, name)).fetchone()[0], 1)
+                # A different Remote Service must actually reclaim the freed
+                # endpoint; absence from a registry projection is insufficient.
+                other = mgmt.upsert_remote_service_on_server(
+                    root=self.agent_tmp, name="new-owner-%d" % index,
+                    destination="this-host", service=other_service, enabled=True,
+                    pool_class="normal", target_host="127.0.0.1",
+                    target_port=2230 + index, target_mode="self")
+                self.assertEqual(other["endpoint_port"], old_port)
+                self.assertEqual(self.server.conn.execute(
+                    "SELECT released FROM port_reservations WHERE public_port=?",
+                    (pending_other,)).fetchone()[0], 0)
+
+    def test_F041_cleanup_never_frees_a_live_other_publication(self):
+        created = mgmt.upsert_remote_service_on_server(
+            root=self.agent_tmp, name="recover", destination="this-host", service="ssh",
+            enabled=True, pool_class="normal", target_host="127.0.0.1",
+            target_port=22, target_mode="self")
+        old_port = int(created["endpoint_port"])
+        self.server.set_published_service(MACHINE_A, "recover", public_port=6040)
+        self.server.upsert_client(MACHINE_B, label="agent-b", hostname="agent-b")
+        self.server.conn.execute(
+            "UPDATE port_reservations SET released=0 WHERE public_port=?", (old_port,))
+        self.server.conn.commit()
+        self.server.set_published_service(
+            MACHINE_B, "live-other", service_type="tcp", target_mode="self",
+            target_host="127.0.0.1", target_port=2222, enabled=True,
+            public_port=old_port)
+        updated = mgmt.upsert_remote_service_on_server(
+            root=self.agent_tmp, name="recover", destination="this-host", service="ssh",
+            enabled=True, pool_class="normal", target_host="127.0.0.1",
+            target_port=22, target_mode="self")
+        self.assertEqual(updated["endpoint_port"], 6040)
+        self.assertEqual(self.server.conn.execute(
+            "SELECT released FROM port_reservations WHERE public_port=?", (old_port,)
+        ).fetchone()[0], 0)
+        self.assertEqual(self.server.conn.execute(
+            "SELECT public_port FROM published_services WHERE client_id=? AND name='live-other'",
+            (MACHINE_B,)).fetchone()[0], old_port)
+
+    def test_F041_cleanup_rolls_back_with_failed_runtime_commit(self):
+        mgmt.upsert_remote_service_on_server(
+            root=self.agent_tmp, name="recover", destination="this-host", service="ssh",
+            enabled=True, pool_class="normal", target_host="127.0.0.1",
+            target_port=22, target_mode="self")
+        old_port = self.server.conn.execute(
+            "SELECT public_port FROM published_services WHERE name='recover'").fetchone()[0]
+        self.server.set_published_service(MACHINE_A, "recover", public_port=6040)
+        self.server.conn.execute(
+            "UPDATE port_reservations SET released=0 WHERE public_port=?", (old_port,))
+        self.server.conn.commit()
+        before = [tuple(row) for row in self.server.conn.execute(
+            "SELECT * FROM port_reservations ORDER BY public_port")]
+        revision = self.server.current_revision()
+        original_compile = self.server.compile_runtime
+        os.environ.pop("DRLINK_SKIP_ACTIVATION", None)
+        try:
+            def fail_compile(**_kwargs):
+                self.assertEqual(self.server.conn.execute(
+                    "SELECT released FROM port_reservations WHERE public_port=?", (old_port,)
+                ).fetchone()[0], 1)
+                raise ControlPlaneError("injected post-cleanup activation failure")
+            self.server.compile_runtime = fail_compile
+            with self.assertRaisesRegex(ControlPlaneError, "Runtime activation failed"):
+                mgmt.server_upsert_remote_service(self.server, mgmt.MgmtAuthContext(
+                    MACHINE_A, {}, "cleanup-rollback", int(time.time())), {
+                        "name": "recover", "destination": "this-host", "service": "ssh",
+                        "enabled": True, "pool_class": "normal", "target_mode": "self",
+                        "target_host": "127.0.0.1", "target_port": 22})
+            self.assertEqual(self.server.current_revision(), revision)
+            self.assertEqual([tuple(row) for row in self.server.conn.execute(
+                "SELECT * FROM port_reservations ORDER BY public_port")], before)
+        finally:
+            self.server.compile_runtime = original_compile
+            os.environ["DRLINK_SKIP_ACTIVATION"] = "1"
 
     def test_F002_server_reservation_overrides_stale_agent_port_hint(self):
         created = mgmt.upsert_remote_service_on_server(

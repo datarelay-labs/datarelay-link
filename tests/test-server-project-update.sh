@@ -55,7 +55,7 @@ EOF
   cat >"$tree/etc/frp/frps.toml" <<'EOF'
 bindPort = 7000
 auth.tokenSource.file.path = "/etc/frp/server_token"
-allowPorts = [{ start = 6000, end = 6098 }]
+allowPorts = [{ start = 6000, end = 6098 }, { start = 6200, end = 6299 }]
 EOF
   cat >"$tree/etc/drlink/config.json" <<'EOF'
 {
@@ -203,6 +203,27 @@ grep -q "PROJECT_VERSION=${PROJECT_VERSION}" "$OK/etc/drlink/version" ||
 grep -q 'FRP_VERSION=0.71.0' "$OK/etc/drlink/version" || fail "FRP metadata changed"
 pass "STATE_REGISTRY_TOKEN_CA_PRESERVED"
 pass "NO_CLIENT_REENROLLMENT"
+
+# Legacy installs lack the separate Fixed TCP engine allow-list entry. Upgrade
+# only that field; preserve every other protected byte and restore it on failure.
+LEGACY_POOL="$WORKDIR/legacy-fixed-pool"
+setup_tree "$LEGACY_POOL"
+sed -i 's/, { start = 6200, end = 6299 }//' "$LEGACY_POOL/etc/frp/frps.toml"
+LEGACY_EXPECTED="$(state_digest "$OK")"
+run_local "$LEGACY_POOL" >"$WORKDIR/legacy-fixed-pool.out"
+grep -q 'FIXED_POOL_MIGRATION=changed' "$WORKDIR/legacy-fixed-pool.out" || fail "legacy pool not migrated"
+[[ "$(state_digest "$LEGACY_POOL")" == "$LEGACY_EXPECTED" ]] || fail "pool migration changed unrelated protected state"
+pass "LEGACY_FIXED_POOL_MIGRATED_WITH_IDENTITY_PRESERVED"
+
+POOL_FAIL="$WORKDIR/legacy-fixed-pool-fail"
+setup_tree "$POOL_FAIL"
+sed -i 's/, { start = 6200, end = 6299 }//' "$POOL_FAIL/etc/frp/frps.toml"
+POOL_BEFORE="$(state_digest "$POOL_FAIL")"
+if FRP_SERVER_UPGRADE_HOOK_FAIL=verify run_local "$POOL_FAIL" >"$WORKDIR/pool-fail.out" 2>"$WORKDIR/pool-fail.err"; then
+  fail "pool migration accepted failed verification"
+fi
+[[ "$(state_digest "$POOL_FAIL")" == "$POOL_BEFORE" ]] || fail "rollback did not restore legacy pool and identity"
+pass "LEGACY_FIXED_POOL_ROLLBACK_PRESERVES_PRIOR_CONFIG"
 
 # Pre-egress installs must bootstrap Controlled Egress without losing identity state.
 PRE_EGRESS="$WORKDIR/pre-egress"

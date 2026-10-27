@@ -988,13 +988,26 @@ def _ordered_v24_changes(changes: Iterable[dict]) -> list[dict]:
     return delete_first + others
 
 
+def _refresh_agent_bundle_catalog(plane: ControlPlane) -> None:
+    import drlink_mgmt_sync as mgmt
+    if not mgmt.use_live_mgmt_path(plane.root) or not v24.detect_server_reachable(plane, plane.root):
+        return
+    try:
+        v24.sync_agent_catalog_from_server(plane, root=plane.root)
+    except mgmt.MgmtUnavailableError:
+        # Offline planning retains its existing strict dependency checks. A
+        # signature/integrity or other policy error is never swallowed here.
+        return
+
+
 def _validate_plan_applyability(
     plane: ControlPlane, changes: Iterable[dict], *, agent: bool = False
 ) -> None:
     """Dry-run local dependencies using the same CRUD/order as real Apply.
 
-    Read-only callers validate on an in-memory snapshot. Writable Apply callers
-    already holding a transaction retain its state and use a savepoint.
+    Planning callers validate on an in-memory snapshot, including writable CLI
+    connections. Only Apply callers already holding a transaction validate on
+    that transaction and use a savepoint.
     Validation runs inside a SQLite savepoint with batch mode enabled, so the
     exact authoritative CRUD dependency checks execute but every mutation is
     rolled back and no revision/audit/runtime activation is produced. This
@@ -1004,13 +1017,16 @@ def _validate_plan_applyability(
     if not ordered:
         return
 
-    if getattr(plane, "_read_only", False):
+    if getattr(plane, "_read_only", False) or not plane.conn.in_transaction:
         scratch = sqlite3.connect(":memory:", isolation_level=None)
         scratch.row_factory = sqlite3.Row
         try:
             plane.conn.backup(scratch)
             scratch.execute("PRAGMA foreign_keys = ON")
             preview = ControlPlane(plane.root, conn=scratch)
+            if agent:
+                _refresh_agent_bundle_catalog(preview)
+            scratch.execute("BEGIN IMMEDIATE")
             _validate_plan_applyability(preview, ordered, agent=agent)
         finally:
             scratch.close()
@@ -1363,7 +1379,7 @@ def prepare_v24_plan(plane: ControlPlane, raw_text: str, *, role: Optional[str] 
         for item in nos:
             name = item["name"]
             if item.get("state") == "absent":
-                changes.append({"op": "DELETE", "kind": "network-object", "name": name, "item": item})
+                changes.append({"op": "DELETE" if plane.get_object(name) else "NO_CHANGE", "kind": "network-object", "name": name, "item": item})
                 continue
             existing = plane.get_object(name)
             store_type = v24.NETWORK_STORE.get(str(item.get("type") or "").lower())
@@ -1386,7 +1402,7 @@ def prepare_v24_plan(plane: ControlPlane, raw_text: str, *, role: Optional[str] 
         for item in ngs:
             name = item["name"]
             if item.get("state") == "absent":
-                changes.append({"op": "DELETE", "kind": "network-group", "name": name, "item": item})
+                changes.append({"op": "DELETE" if plane.get_object_group(name) else "NO_CHANGE", "kind": "network-group", "name": name, "item": item})
                 continue
             existing = plane.get_object_group(name)
             if existing:
@@ -1399,7 +1415,7 @@ def prepare_v24_plan(plane: ControlPlane, raw_text: str, *, role: Optional[str] 
             name = item["name"]
             existing = v24.get_service_object(plane, name)
             if item.get("state") == "absent":
-                changes.append({"op": "DELETE", "kind": "service-object", "name": name, "item": item})
+                changes.append({"op": "DELETE" if v24.get_service_object(plane, name) else "NO_CHANGE", "kind": "service-object", "name": name, "item": item})
             elif (
                 existing
                 and existing["type"] == str(item.get("type") or "").lower()
@@ -1418,7 +1434,7 @@ def prepare_v24_plan(plane: ControlPlane, raw_text: str, *, role: Optional[str] 
         for item in sgs:
             name = item["name"]
             if item.get("state") == "absent":
-                changes.append({"op": "DELETE", "kind": "service-group", "name": name, "item": item})
+                changes.append({"op": "DELETE" if v24.get_service_group(plane, name) else "NO_CHANGE", "kind": "service-group", "name": name, "item": item})
                 continue
             existing = v24.get_service_group(plane, name)
             if existing:
@@ -1436,7 +1452,7 @@ def prepare_v24_plan(plane: ControlPlane, raw_text: str, *, role: Optional[str] 
         for item in pos:
             name = item["name"]
             if item.get("state") == "absent":
-                changes.append({"op": "DELETE", "kind": "permission-object", "name": name, "item": item})
+                changes.append({"op": "DELETE" if v24.get_permission_object(plane, name) else "NO_CHANGE", "kind": "permission-object", "name": name, "item": item})
                 continue
             existing = v24.get_permission_object(plane, name)
             if existing:
@@ -1454,7 +1470,7 @@ def prepare_v24_plan(plane: ControlPlane, raw_text: str, *, role: Optional[str] 
         for item in pgs:
             name = item["name"]
             if item.get("state") == "absent":
-                changes.append({"op": "DELETE", "kind": "permission-group", "name": name, "item": item})
+                changes.append({"op": "DELETE" if v24.get_permission_group(plane, name) else "NO_CHANGE", "kind": "permission-group", "name": name, "item": item})
                 continue
             existing = v24.get_permission_group(plane, name)
             if existing:
@@ -1607,7 +1623,19 @@ def prepare_v24_plan(plane: ControlPlane, raw_text: str, *, role: Optional[str] 
         for item in rss:
             name = item["name"]
             if item.get("state") == "absent":
-                changes.append({"op": "DELETE", "kind": "remote-service", "name": name, "item": item})
+                existing = plane.conn.execute(
+                    "SELECT delete_pending FROM agent_remote_services "
+                    "WHERE name = ? COLLATE NOCASE", (name,),
+                ).fetchone()
+                # Absence is desired state, unlike a direct unset command.
+                # An offline tombstone already expresses that intent and must
+                # survive unchanged until synchronization releases the Server
+                # publication. Reapplying must not delete/recreate the queue.
+                absent = existing is None or bool(existing["delete_pending"])
+                changes.append({
+                    "op": "NO_CHANGE" if absent else "DELETE",
+                    "kind": "remote-service", "name": name, "item": item,
+                })
                 continue
             existing = plane.conn.execute(
                 "SELECT * FROM agent_remote_services WHERE name = ? COLLATE NOCASE AND delete_pending = 0",
@@ -1803,10 +1831,16 @@ def apply_v24_plan(
     compile_runtime = not is_agent
     plane._agent_mgmt_side_effects = []
     checkpoint = None
+    runtime_checkpoint = None
     fresh: V24Plan = plan
     rev: Optional[int] = None
     try:
-        if (is_agent or compile_runtime) and plane._activation_should_run():
+        if is_agent:
+            # The preview refreshed only its in-memory catalog. Re-read the
+            # authenticated Server catalog under the Agent synchronization
+            # guard before the final locked validation of Apply.
+            _refresh_agent_bundle_catalog(plane)
+        if is_agent and plane._activation_should_run():
             checkpoint = plane._pre_activation_checkpoint()
 
         plane.conn.execute("BEGIN IMMEDIATE")
@@ -1820,6 +1854,11 @@ def apply_v24_plan(
             if _plan_security_impact(fresh)["requires_confirmation"] and not confirmed:
                 plane._rollback_open_transaction()
                 _raise_plan_confirmation(fresh)
+
+            if compile_runtime and plane._activation_should_run():
+                # Capture under the write lock so rollback cannot restore
+                # artifacts from before another writer's successful commit.
+                runtime_checkpoint = plane._runtime_activation_snapshot()
 
             prev_batch = plane._batch_mode
             plane._batch_mode = True
@@ -1855,18 +1894,39 @@ def apply_v24_plan(
                     sort_keys=True,
                 )[:2000],
             )
+            if compile_runtime and plane._activation_should_run():
+                try:
+                    if plane._forced_activation_failure():
+                        raise ControlPlaneError("simulated activation failure")
+                    plane.compile_runtime()
+                except Exception:
+                    raise ControlPlaneError(
+                        "ERROR:\nRuntime activation failed.\n\n"
+                        "Previous configuration was restored.\n"
+                        "No configuration changes remain active."
+                    ) from None
+            # A live authorization reader must see either the preceding valid
+            # revision or the complete new revision and its active generation.
             plane._commit_open_transaction()
         except ConfirmationRequired:
             plane._rollback_open_transaction()
+            if runtime_checkpoint is not None:
+                plane._rollback_precommit_runtime(runtime_checkpoint)
             raise
         except ConcurrencyError:
             plane._rollback_open_transaction()
+            if runtime_checkpoint is not None:
+                plane._rollback_precommit_runtime(runtime_checkpoint)
             raise
         except ControlPlaneError:
             plane._rollback_open_transaction()
+            if runtime_checkpoint is not None:
+                plane._rollback_precommit_runtime(runtime_checkpoint)
             raise
         except Exception as exc:
             plane._rollback_open_transaction()
+            if runtime_checkpoint is not None:
+                plane._rollback_precommit_runtime(runtime_checkpoint)
             if isinstance(exc, sqlite3.IntegrityError) and "foreign key" in str(exc).lower():
                 raise ControlPlaneError(
                     "ERROR:\nCannot apply this change because a referenced dependency still exists.\n\n"
@@ -1875,31 +1935,6 @@ def apply_v24_plan(
                     "ConfigurationBundle with dependency-aware delete ordering."
                 ) from exc
             raise ControlPlaneError("No changes were applied. %s" % exc) from exc
-
-        if compile_runtime and plane._activation_should_run():
-            try:
-                if plane._forced_activation_failure():
-                    raise ControlPlaneError("simulated activation failure")
-                plane.compile_runtime()
-            except Exception:
-                try:
-                    plane._rollback_activation(checkpoint or {})
-                except Exception:
-                    plane._mark_generation_failed("activation failed; rollback incomplete")
-                    plane._cleanup_activation_checkpoint(checkpoint)
-                    raise ControlPlaneError(
-                        "ERROR:\nApply failed and automatic rollback was not fully successful.\n\n"
-                        "The current runtime state may require operator attention.\n\n"
-                        "Run:\n  system diagnostics"
-                    ) from None
-                plane._cleanup_activation_checkpoint(checkpoint)
-                raise ControlPlaneError(
-                    "ERROR:\nRuntime activation failed.\n\n"
-                    "Previous configuration was restored.\n"
-                    "No configuration changes remain active."
-                ) from None
-            plane._cleanup_activation_checkpoint(checkpoint)
-            checkpoint = None
 
         if is_agent:
             _finalize_agent_bundle_runtime(plane, fresh, checkpoint)
@@ -2202,6 +2237,61 @@ def build_v24_rollback_bundle(plane: ControlPlane, target_text: str) -> str:
     )
 
 
+def _export_selector_union(plane: ControlPlane, body: dict, names: list, *, service: bool = False) -> str:
+    """Represent legacy multi-selector OR semantics with a canonical Group.
+
+    Export is read-only. Synthetic groups exist in the exported document only,
+    use existing public fields, and cannot replace a conflicting operator name.
+    """
+    import hashlib
+
+    names = list(dict.fromkeys(names))
+    if len(names) <= 1:
+        return names[0] if names else '-'
+    members = set()
+    section = 'serviceGroups' if service else 'networkGroups'
+    for name in names:
+        if service:
+            obj = v24.get_service_object(plane, name)
+            if obj is not None:
+                members.add(obj['name'])
+                continue
+            group = plane.conn.execute('SELECT id FROM service_groups WHERE name=? COLLATE NOCASE', (name,)).fetchone()
+            if group is None:
+                raise BundleError('Cannot export missing Service selector: %s' % name)
+            members.update(row['name'] for row in plane.conn.execute(
+                'SELECT s.name FROM service_group_members m JOIN service_objects s '
+                'ON s.id=m.service_object_id WHERE m.group_id=?', (group['id'],)))
+        else:
+            obj = plane.get_object(name)
+            if obj is not None:
+                members.add(obj['name'])
+                continue
+            group = plane.get_object_group(name)
+            if group is None:
+                raise BundleError('Cannot export missing Network selector: %s' % name)
+            members.update(row['name'] for row in plane._expand_group_members(group['id'], set()))
+    ordered = sorted(members, key=str.lower)
+    if not ordered:
+        raise BundleError('Cannot export an empty selector union')
+    digest = hashlib.sha256(json.dumps(ordered, separators=(',', ':')).encode()).hexdigest()[:20]
+    base = 'export-%s-union-%s' % ('service' if service else 'network', digest)
+    groups = body.setdefault(section, [])
+    existing = {item['name'].lower(): item for item in groups}
+    suffix = 0
+    while True:
+        name = base + ('-%s' % suffix if suffix else '')
+        prior = existing.get(name.lower())
+        if prior is not None and sorted(prior['members'], key=str.lower) == ordered:
+            return prior['name']
+        collision = v24.get_service_object(plane, name) if service else plane.get_object(name)
+        if prior is None and collision is None:
+            groups.append({'name': name, 'members': ordered})
+            groups.sort(key=lambda item: item['name'].lower())
+            return name
+        suffix += 1
+
+
 def export_configuration_v24(plane: ControlPlane) -> str:
     role = v24.detect_cli_role(plane.root)
     if role == "agent":
@@ -2299,26 +2389,21 @@ def export_configuration_v24(plane: ControlPlane) -> str:
                 "SELECT * FROM policy_rules WHERE plane = ? ORDER BY name", (family,)
             ):
                 view = plane._rule_view(rule)
-                # Prefer service object name from rule_service_refs
-                svc = "-"
-                ref = plane.conn.execute(
-                    "SELECT ref_kind, ref_id FROM rule_service_refs WHERE rule_id = ?", (rule["id"],)
-                ).fetchone()
-                if ref and ref["ref_kind"] == "service_object":
-                    sobj = plane.conn.execute(
-                        "SELECT name FROM service_objects WHERE id = ?", (ref["ref_id"],)
-                    ).fetchone()
-                    svc = sobj["name"] if sobj else svc
-                elif ref and ref["ref_kind"] == "service_group":
-                    sgrp = plane.conn.execute(
-                        "SELECT name FROM service_groups WHERE id = ?", (ref["ref_id"],)
-                    ).fetchone()
-                    svc = sgrp["name"] if sgrp else svc
+                service_names = []
+                for ref in plane.conn.execute(
+                    "SELECT ref_kind, ref_id FROM rule_service_refs WHERE rule_id = ?", (rule['id'],)
+                ):
+                    table = 'service_objects' if ref['ref_kind'] == 'service_object' else 'service_groups'
+                    item = plane.conn.execute('SELECT name FROM %s WHERE id=?' % table, (ref['ref_id'],)).fetchone()
+                    if item is None:
+                        raise BundleError('Cannot export a missing Service reference')
+                    service_names.append(item['name'])
+                svc = _export_selector_union(plane, body, service_names, service=True)
                 rules.append(
                     {
                         "name": view["name"],
-                        "source": (view.get("sources") or ["-"])[0],
-                        "destination": (view.get("destinations") or ["-"])[0],
+                        "source": _export_selector_union(plane, body, view.get("sources") or []),
+                        "destination": _export_selector_union(plane, body, view.get("destinations") or []),
                         "service": svc,
                         "enabled": bool(view["enabled"]),
                     }

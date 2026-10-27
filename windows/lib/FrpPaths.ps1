@@ -25,7 +25,30 @@ function Get-FrpWindowsRoot {
         $fallback = '/tmp/drlink-windows-test'
         return $fallback
     }
-    return (Join-Path $env:ProgramData 'drlink')
+    $canonical = Join-Path $env:ProgramData 'drlink'
+    $legacy = Join-Path $env:ProgramData 'frp-auto-deploy'
+    $enrolled = @()
+    foreach ($candidate in @($canonical, $legacy)) {
+        $complete = $true
+        foreach ($rel in @('state/client-state.json','config/frpc.toml','state/client-identity.pub')) {
+            if (-not (Test-Path -LiteralPath (Join-Path $candidate $rel) -PathType Leaf)) { $complete = $false; break }
+        }
+        # Match Get-FrpIdentityKeyPath without recursing through root discovery:
+        # native Windows keeps the existing private key encrypted with DPAPI.
+        $dpapiKey = Join-Path $candidate 'state/client-identity.key.dpapi'
+        $plainKey = Join-Path $candidate 'state/client-identity.key'
+        if (-not ((Test-Path -LiteralPath $dpapiKey -PathType Leaf) -or
+                  (Test-Path -LiteralPath $plainKey -PathType Leaf))) { $complete = $false }
+        if ($complete) { $enrolled += $candidate }
+    }
+    if ($enrolled.Count -gt 1) {
+        throw 'ERROR: multiple enrolled Windows product roots found; refusing to select or replace an identity.'
+    }
+    # A verified candidate's public CLI can refresh prior-stable management
+    # files in place. Keep its real enrolled root, CA, identity and engine;
+    # never fabricate a new install by redirecting FRP_WINDOWS_ROOT.
+    if ($enrolled.Count -eq 1) { return $enrolled[0] }
+    return $canonical
 }
 
 function Get-FrpBinDir { Join-Path (Get-FrpWindowsRoot) 'bin' }

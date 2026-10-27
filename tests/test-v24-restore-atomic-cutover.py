@@ -91,6 +91,19 @@ class RestoreAtomicCutover(unittest.TestCase):
             ),
         }
 
+    def test_successful_restore_does_not_reuse_prior_authority_revision(self):
+        """A restored snapshot must not make an old Bundle token current again."""
+        self.plane.upsert_client(MID, label="before", hostname="before")
+        archive = self.outdir / "before.tar"
+        self.plane.backup(str(archive))
+        self.plane.upsert_client(MID2, label="newer", hostname="newer")
+        prior_authority_revision = self.plane.current_revision()
+
+        self.plane.restore(str(archive))
+
+        self.assertGreater(self.plane.current_revision(), prior_authority_revision)
+        self.assertIsNone(self.plane.get_client(MID2))
+
     def test_canonical_backup_round_trip(self):
         self.plane.upsert_client(MID, label="host-a", hostname="host-a")
         rev_a = self.plane.current_revision()
@@ -104,10 +117,11 @@ class RestoreAtomicCutover(unittest.TestCase):
 
         self.plane.upsert_client(MID2, label="host-b", hostname="host-b")
         self.assertNotEqual(self.plane.current_revision(), rev_a)
+        expected_revision = self.plane.current_revision() + 1
         result = self.plane.restore(str(backup))
         self.assertTrue(result["ok"])
-        self.assertEqual(result["revision"], rev_a)
-        self.assertEqual(self.plane.current_revision(), rev_a)
+        self.assertEqual(result["revision"], expected_revision)
+        self.assertEqual(self.plane.current_revision(), expected_revision)
         row = self.plane.conn.execute(
             "SELECT label FROM clients WHERE id = ?", (MID,)
         ).fetchone()
@@ -117,8 +131,28 @@ class RestoreAtomicCutover(unittest.TestCase):
         ).fetchone()
         self.assertIsNone(missing)
         st = self.plane.status()
-        self.assertEqual(st["revision"], rev_a)
+        self.assertEqual(st["revision"], expected_revision)
         self.assertTrue(st["db_healthy"])
+        for generation in st["generations"].values():
+            self.assertEqual(int(generation["db_revision"]), expected_revision)
+
+    def test_newer_backup_and_repeated_restore_keep_tokens_fresh(self):
+        self.plane.upsert_client(MID, label="snapshot", hostname="snapshot")
+        archive = self.outdir / "newer.tar"
+        self.plane.backup(str(archive))
+        backup_revision = self.plane.current_revision()
+        empty_root = str(self.outdir / "empty")
+        _server_root(empty_root)
+        plane = ControlPlane(empty_root)
+        try:
+            self.assertLess(plane.current_revision(), backup_revision)
+            plane.restore(str(archive))
+            first = plane.current_revision()
+            self.assertEqual(first, backup_revision + 1)
+            plane.restore(str(archive))
+            self.assertEqual(plane.current_revision(), first + 1)
+        finally:
+            plane.close()
 
     def test_arbitrary_sqlite_rejected_before_live_mutation(self):
         self.plane.upsert_client(MID, label="host-a", hostname="host-a")
@@ -286,10 +320,11 @@ class RestoreAtomicCutover(unittest.TestCase):
         self.plane.backup(str(backup))
         rev = self.plane.current_revision()
         self.plane.upsert_client(MID2, label="host-b", hostname="host-b")
+        expected_revision = self.plane.current_revision() + 1
         result = self.plane.restore(str(backup))
-        self.assertEqual(result["revision"], rev)
+        self.assertEqual(result["revision"], expected_revision)
         st = self.plane.status()
-        self.assertEqual(st["revision"], rev)
+        self.assertEqual(st["revision"], expected_revision)
         self.assertTrue(st["db_healthy"])
         self.assertEqual(st["clients"], 1)
         # Runtime compile after restore must succeed for evaluation surfaces.

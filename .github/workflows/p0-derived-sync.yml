@@ -1,0 +1,67 @@
+name: P0 derived bundle synchronization
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    paths:
+      - 'lib/**'
+      - 'tools/**'
+      - 'server/**'
+      - 'tests/**'
+      - 'docs/**'
+      - '.github/workflows/p0-derived-sync.yml'
+permissions:
+  contents: read
+jobs:
+  regenerate:
+    if: >-
+      github.event_name == 'pull_request' &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.head.ref == 'fix/chatgpt-cli-user-journeys-20261026' &&
+      github.event.pull_request.user.login == 'RickLee-kr'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout exact PR without persisted credentials
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Rebuild derived bundles without GitHub token
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./scripts/build-release-artifacts.sh
+          diff="$(git diff --name-only)"
+          if printf '%s\n' "$diff" | grep -Ev '^(dist/bootstrap-(server|client)\.(sh|ps1)|SHA256SUMS|release-manifest\.json|dist/sbom\.spdx\.json)$' | grep -q .; then
+            echo 'Unexpected source change while regenerating artifacts'
+            exit 1
+          fi
+          git add -- dist/bootstrap-server.sh dist/bootstrap-client.sh \
+            dist/bootstrap-client.ps1 SHA256SUMS release-manifest.json
+          if git ls-files --error-unmatch dist/sbom.spdx.json >/dev/null 2>&1; then
+            git add -- dist/sbom.spdx.json
+          fi
+          if git diff --cached --quiet; then
+            echo 'DERIVED_ARTIFACTS_ALREADY_CURRENT=PASS'
+          else
+            git -c user.name='DataRelay Artifact Bot' \
+              -c user.email='artifact-bot@users.noreply.github.com' \
+              commit -m 'build(P0): synchronize verified derived bootstrap bundles'
+          fi
+      - name: Publish fast-forward derived assets to this P0 branch only
+        if: success()
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if [ "$(git rev-parse HEAD)" = "${{ github.event.pull_request.head.sha }}" ]; then
+            echo 'No generated changes to publish'
+            exit 0
+          fi
+          authorization="$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)"
+          git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $authorization" \
+            push origin HEAD:refs/heads/fix/chatgpt-cli-user-journeys-20261026

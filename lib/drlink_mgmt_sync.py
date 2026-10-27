@@ -1343,6 +1343,59 @@ def server_upsert_remote_service(plane, auth: MgmtAuthContext, body: dict) -> di
                 "Remote Service dependency changed during publication. "
                 "Synchronize the catalog and retry. No changes were applied."
             )
+        # Check the effective binding under the publication write lock, before
+        # allocator calls. Managed Host aliases share its immutable ID; IP/FQDN
+        # objects share the normalized authoritative address, not their labels.
+        # Keep unchanged legacy publications operable; reject new duplicates
+        # and rebindings without deleting existing user assets.
+        candidates = plane.conn.execute(
+            "SELECT s.name, m.destination_name, m.destination_client_id "
+            "FROM published_services s "
+            "JOIN remote_service_meta m ON m.service_id=s.id "
+            "WHERE s.client_id=? AND s.released=0 AND m.delete_pending=0 "
+            "AND m.service_object_id=?",
+            (client["id"], sobj["id"]),
+        ).fetchall()
+        from drlink_upgrade_reconcile import _normalize_target_host
+
+        def binding_key(target):
+            bound = target.get('destination_client_id')
+            host = _normalize_target_host(target['target_host'])
+            if bound:
+                return ('client', str(bound))
+            if host == '127.0.0.1':
+                return ('client', str(client['id']))
+            return ('address', target['target_mode'], host)
+
+        wanted_binding = binding_key(authoritative)
+        bindings = []
+        for candidate in candidates:
+            bound = candidate["destination_client_id"] or None
+            if bound:
+                if wanted_binding == ('client', str(bound)):
+                    bindings.append(candidate)
+                continue
+            prior_destination = str(candidate["destination_name"] or "")
+            if prior_destination.casefold() == destination.casefold():
+                bindings.append(candidate)
+                continue
+            try:
+                prior_target = resolve_authoritative_remote_target(
+                    plane, destination=prior_destination,
+                    owner_client_id=client["id"], service_name=service,
+                )
+            except ControlPlaneError:
+                # An invalid old dependency has no effective address. Do not
+                # infer one from stale runtime fields or mutate that publication.
+                continue
+            if binding_key(prior_target) == wanted_binding:
+                bindings.append(candidate)
+        if not any(str(row["name"]).casefold() == name.casefold() for row in bindings):
+            if bindings:
+                raise MgmtSyncError(
+                    "Destination and Service binding already uses Remote Service "
+                    f"{bindings[0]['name']}. No changes were applied."
+                )
         # Serialize publication and local allocator bookkeeping together. No
         # Agent network I/O runs while this Server write transaction is held.
         existing = plane.conn.execute(
@@ -1851,6 +1904,26 @@ def server_report_remote_service_status(plane, auth: MgmtAuthContext, body: dict
                 if generation is not None and extra:
                     extra = "%s (generation %s)" % (extra, generation)
                 projection = _canonical_status_projection(name, pub, meta, status, extra or "")
+                # Return this authenticated client's per-service authoritative
+                # routing target. Legacy Agents may have saved a self target
+                # in client-state even while the Server owns a LAN route. An
+                # Agent must never infer a service binding from an arbitrary
+                # catalog object: the Server supplies the exact name, public
+                # endpoint, Service Object and destination in one signed ACK.
+                if meta["service_object_id"]:
+                    svc = plane.conn.execute(
+                        "SELECT name FROM service_objects WHERE id=?",
+                        (meta["service_object_id"],),
+                    ).fetchone()
+                    if svc is not None:
+                        projection["authoritative_target"] = {
+                            "destination": str(meta["destination_name"] or ""),
+                            "destination_client_id": meta["destination_client_id"],
+                            "service": str(svc["name"]),
+                            "host": str(pub["target_host"] or ""),
+                            "port": pub["target_port"],
+                            "mode": str(pub["target_mode"] or ""),
+                        }
                 pending = int(projection["pending_allocation"])
                 verified_flag = 1 if status == "HEALTHY" else 0
                 # Return the Server's *validated* runtime result to the Agent.

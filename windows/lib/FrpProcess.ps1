@@ -240,6 +240,7 @@ function Start-FrpClient {
     if (-not (Test-Path -LiteralPath (Get-FrpFrpcPath))) {
         throw 'ERROR: frpc.exe is missing; run update or reinstall'
     }
+    Set-FrpClientRuntimeIntent -Intent active
 
     $existingMeta = Read-FrpPidMetadata
     if ($null -ne $existingMeta) {
@@ -274,6 +275,7 @@ function Start-FrpClient {
 
     $frpc = Get-FrpFrpcPath
     $toml = Get-FrpTomlPath
+    $runtimeLogOffset = (Get-Item -LiteralPath (Get-FrpLogPath)).Length
     # Win32_Process.Create starts outside the OpenSSH/WinRM job object, so
     # frpc keeps running after the install/start session disconnects.
     # Start-Process from an SSH session is killed with that session.
@@ -287,6 +289,7 @@ function Start-FrpClient {
     }
     $procId = [int]$created.ProcessId
     Write-FrpPidFile -ProcessId $procId -ExePath $frpc
+    Save-FrpV24RuntimeBoundary -ProcessId $procId -LogOffset $runtimeLogOffset
     Start-Sleep -Milliseconds 400
     if (-not (Test-FrpProcessAlive -ProcessId $procId -ValidateOwnership -ExpectedExe $frpc)) {
         Clear-FrpPidFile
@@ -329,6 +332,21 @@ function Stop-FrpClient {
     return $true
 }
 
+function Set-FrpClientRuntimeIntent {
+    param([Parameter(Mandatory=$true)][ValidateSet('active','paused')][string]$Intent)
+    Initialize-FrpDirectories
+    $path = Join-Path (Get-FrpStateDir) 'runtime-intent.json'
+    $tmp = "$path.$PID.tmp"
+    try {
+        [System.IO.File]::WriteAllText($tmp, ((@{intent=$Intent} | ConvertTo-Json -Compress) + "`n"))
+        Restrict-FrpFileAcl -Path $tmp
+        Move-Item -LiteralPath $tmp -Destination $path -Force
+        Restrict-FrpFileAcl -Path $path
+    } finally {
+        if (Test-Path -LiteralPath $tmp) { Remove-Item -LiteralPath $tmp -Force }
+    }
+}
+
 function Get-FrpClientStatus {
     Clear-FrpStalePid
     $meta = Read-FrpPidMetadata
@@ -342,8 +360,29 @@ function Get-FrpClientStatus {
     if (Test-Path -LiteralPath (Get-FrpStatePath)) {
         try { $state = Read-FrpClientState } catch { }
     }
+    # Absence on an older installation is unknown, never an inferred pause.
+    # The marker is operator intent only; process/task observations stay separate.
+    $intent = 'unknown'
+    try {
+        $intentPath = Join-Path (Get-FrpStateDir) 'runtime-intent.json'
+        if (Test-Path -LiteralPath $intentPath) {
+            $saved = Get-Content -LiteralPath $intentPath -Raw | ConvertFrom-Json
+            if ($saved.intent -is [string] -and $saved.intent -in @('active','paused')) { $intent = $saved.intent }
+        }
+    } catch { }
+    $runtimeState = if ($running) { 'Active' }
+        elseif (-not $enrolled) { 'Not enrolled' }
+        elseif ($intent -eq 'paused') { 'Paused (intentional)' }
+        elseif ($intent -eq 'active') { 'Stopped (unexpected)' }
+        else { 'Stopped (intent unknown)' }
+    $autostart = Test-FrpAutostartTaskExists
+    $lifecycle = Test-FrpAutostartTaskExists -TaskName (Get-FrpLifecycleTaskName)
     return [pscustomobject]@{
         Running   = $running
+        RuntimeIntent = $intent
+        RuntimeState = $runtimeState
+        AutostartEnabled = $autostart
+        LifecycleEnabled = $lifecycle
         Pid       = $pidVal
         Enrolled  = $enrolled
         StatePath = (Get-FrpStatePath)

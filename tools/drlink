@@ -22,12 +22,38 @@ _BACKEND=""
 
 if [[ -f "${_HERE}/frpctl" ]]; then
   _BACKEND="${_HERE}/frpctl"
-elif [[ -n "${_ROOT}" && -f "${_ROOT}/usr/local/lib/drlink/frpctl" ]]; then
-  _BACKEND="${_ROOT}/usr/local/lib/drlink/frpctl"
+elif [[ -n "${_ROOT}" ]]; then
+  # A selected installation root is an authority boundary. Missing or
+  # inaccessible files there must not fall through to another installation.
+  if [[ -f "${_ROOT}/usr/local/lib/drlink/frpctl" ]]; then
+    _BACKEND="${_ROOT}/usr/local/lib/drlink/frpctl"
+  fi
 elif [[ -f /usr/local/lib/drlink/frpctl ]]; then
   _BACKEND=/usr/local/lib/drlink/frpctl
 elif [[ -f '/Library/Application Support/drlink/lib/frpctl' ]]; then
   _BACKEND='/Library/Application Support/drlink/lib/frpctl'
+fi
+
+if [[ "$EUID" -ne 0 ]]; then
+  _PROTECTED_BACKEND=0
+  if [[ -n "${_BACKEND}" && ! -r "${_BACKEND}" ]]; then
+    _PROTECTED_BACKEND=1
+  fi
+  if [[ -z "${_BACKEND}" ]]; then
+    if [[ -n "${_ROOT}" ]]; then
+      _BACKEND_DIRS=("${_ROOT}/usr/local/lib/drlink")
+    else
+      _BACKEND_DIRS=(/usr/local/lib/drlink '/Library/Application Support/drlink' '/Library/Application Support/drlink/lib')
+    fi
+    for _DIR in "${_BACKEND_DIRS[@]}"; do
+      if [[ -d "${_DIR}" && ! -x "${_DIR}" ]]; then _PROTECTED_BACKEND=1; fi
+    done
+  fi
+  if [[ "${_PROTECTED_BACKEND}" -eq 1 ]]; then
+    echo 'ERROR: administrator privileges are required to access the protected Data Relay Link CLI installation.' >&2
+    echo 'Run: sudo drlink' >&2
+    exit 1
+  fi
 fi
 
 if [[ -z "${_BACKEND}" ]]; then

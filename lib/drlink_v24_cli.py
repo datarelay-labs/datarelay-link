@@ -273,7 +273,7 @@ def handle_show(plane: ControlPlane, rest: list[str]) -> Optional[int]:
                 expected="  show network-object <OBJECT> [references]",
             ))
         if len(rest) < 2:
-            raise ControlPlaneError("Usage: show network-object <OBJECT>")
+            raise ControlPlaneError("Usage: show network-object <OBJECT>\\nFind an identifier: show network-objects")
         name = rest[1]
         obj = plane.get_object(name)
         if not obj:
@@ -331,7 +331,7 @@ def handle_show(plane: ControlPlane, rest: list[str]) -> Optional[int]:
                 expected="  show network-group <GROUP> [references]",
             ))
         if len(rest) < 2:
-            raise ControlPlaneError("Usage: show network-group <GROUP>")
+            raise ControlPlaneError("Usage: show network-group <GROUP>\\nFind an identifier: show network-groups")
         g = plane.get_object_group(rest[1])
         if not g:
             raise ControlPlaneError(v24.cli_error("Network Group '%s' was not found." % rest[1]))
@@ -364,7 +364,7 @@ def handle_show(plane: ControlPlane, rest: list[str]) -> Optional[int]:
                 expected="  show service-object <SERVICE> [references]",
             ))
         if len(rest) < 2:
-            raise ControlPlaneError("Usage: show service-object <SERVICE>")
+            raise ControlPlaneError("Usage: show service-object <SERVICE>\\nFind an identifier: show service-objects")
         sobj = v24.get_service_object(plane, rest[1])
         if not sobj:
             raise ControlPlaneError(v24.cli_error("Service Object '%s' was not found." % rest[1]))
@@ -400,7 +400,7 @@ def handle_show(plane: ControlPlane, rest: list[str]) -> Optional[int]:
                 expected="  show service-group <GROUP> [references]",
             ))
         if len(rest) < 2:
-            raise ControlPlaneError("Usage: show service-group <GROUP>")
+            raise ControlPlaneError("Usage: show service-group <GROUP>\\nFind an identifier: show service-groups")
         g = v24.get_service_group(plane, rest[1])
         if not g:
             raise ControlPlaneError(v24.cli_error("Service Group '%s' was not found." % rest[1]))
@@ -434,7 +434,7 @@ def handle_show(plane: ControlPlane, rest: list[str]) -> Optional[int]:
     if res == "permission-object":
         _require_server(plane, "Permission Objects")
         if len(rest) < 2:
-            raise ControlPlaneError("Usage: show permission-object <PERMISSION>")
+            raise ControlPlaneError("Usage: show permission-object <PERMISSION>\\nFind an identifier: show permission-objects")
         pobj = v24.get_permission_object(plane, rest[1])
         if not pobj:
             raise ControlPlaneError(v24.cli_error("Permission Object '%s' was not found." % rest[1]))
@@ -457,7 +457,7 @@ def handle_show(plane: ControlPlane, rest: list[str]) -> Optional[int]:
     if res == "permission-group":
         _require_server(plane, "Permission Groups")
         if len(rest) < 2:
-            raise ControlPlaneError("Usage: show permission-group <GROUP>")
+            raise ControlPlaneError("Usage: show permission-group <GROUP>\\nFind an identifier: show permission-groups")
         g = v24.get_permission_group(plane, rest[1])
         if not g:
             raise ControlPlaneError(v24.cli_error("Permission Group '%s' was not found." % rest[1]))
@@ -478,20 +478,33 @@ def handle_show(plane: ControlPlane, rest: list[str]) -> Optional[int]:
         if not rows:
             sys.stdout.write("No Managed Hosts enrolled.\n")
             return 0
+        sys.stdout.write(
+            "%-32s  %-24s  %-24s  %s\n"
+            % ("HOST ID", "NAME", "HOSTNAME", "STATUS")
+        )
         for row in rows:
             sys.stdout.write(
-                "%s %s %s\n"
+                "%-32s  %-24s  %-24s  %s\n"
                 % (
+                    row["id"],
                     row["label"] or row["hostname"] or row["id"][:8],
                     row["hostname"] or "-",
                     plane.managed_host_connectivity(row),
                 )
             )
+        sys.stdout.write(
+            "\nNext: show managed-host <HOST-ID>\n"
+            "      show managed-host <HOST-ID> remote-services\n"
+        )
         return 0
     if res == "managed-host":
         _require_server(plane, "Managed Hosts")
         if len(rest) < 2:
-            raise ControlPlaneError("Usage: show managed-host <HOST>")
+            raise ControlPlaneError(
+                "Usage: show managed-host <HOST>\n"
+                "Find a HOST ID: show managed-hosts\n"
+                "Inspect services: show managed-host <HOST> remote-services"
+            )
         syntax = "  show managed-host <HOST> [remote-services|agent|addresses]"
         if len(rest) > 3:
             raise ControlPlaneError(v24.cli_error(
@@ -610,20 +623,26 @@ def handle_show(plane: ControlPlane, rest: list[str]) -> Optional[int]:
             return 0
         connectivity = plane.managed_host_connectivity(client)
         sys.stdout.write(
-            "Managed Host: %s\nHostname: %s\nStatus: %s\nAgent: %s\nAI executor: %s\n"
+            "Managed Host: %s\nHost ID: %s\nHostname: %s\nStatus: %s\n"
+            "Agent: %s\nAI executor: %s\n\n"
+            "Next: show managed-host %s remote-services\n"
+            "      show managed-host %s addresses\n"
             % (
                 client["label"] or client["hostname"] or client["id"][:8],
+                client["id"],
                 client["hostname"] or "-",
                 connectivity,
                 _presence_word(connectivity),
                 plane.ai_executor_status(client),
+                client["id"],
+                client["id"],
             )
         )
         return 0
     if res == "enrollment":
         _require_server(plane, "Enrollments")
         if len(rest) != 2:
-            raise ControlPlaneError("Usage: show enrollment <ENROLLMENT>")
+            raise ControlPlaneError("Usage: show enrollment <ENROLLMENT>\\nFind an identifier: show enrollments")
         row = plane.conn.execute(
             "SELECT id, kind, status, created_at, expires_at FROM enrollments WHERE id = ?",
             (rest[1],),
@@ -662,7 +681,7 @@ def handle_show(plane: ControlPlane, rest: list[str]) -> Optional[int]:
     if res == "ai-identity":
         _require_server(plane, "AI Identities")
         if len(rest) < 2:
-            raise ControlPlaneError("Usage: show ai-identity <IDENTITY>")
+            raise ControlPlaneError("Usage: show ai-identity <IDENTITY>\\nFind an identifier: show ai-identities")
         p = plane.get_principal(rest[1])
         if not p:
             raise ControlPlaneError(v24.cli_error("AI Identity '%s' was not found." % rest[1]))
@@ -730,7 +749,7 @@ def handle_show(plane: ControlPlane, rest: list[str]) -> Optional[int]:
     if res == "remote-service":
         _require_agent(plane)
         if len(rest) < 2:
-            raise ControlPlaneError("Usage: show remote-service <NAME>")
+            raise ControlPlaneError("Usage: show remote-service <NAME>\\nFind an identifier: show remote-services")
         row = plane.conn.execute(
             "SELECT * FROM agent_remote_services WHERE name = ? COLLATE NOCASE", (rest[1],)
         ).fetchone()
@@ -778,7 +797,17 @@ def handle_show(plane: ControlPlane, rest: list[str]) -> Optional[int]:
         elif row["reason"]:
             sys.stdout.write("Reason: %s\n" % row["reason"])
             reason = str(row["reason"]).strip().lower()
-            if (
+            if "authoritative destination reference" in reason or "authoritative_target_mismatch" in reason:
+                sys.stdout.write(
+                    "Next action:\n"
+                    "  On Server: define a Network Object for the actual LAN target.\n"
+                    "  On Agent: set remote-service %s destination <NETWORK-OBJECT> service %s enabled\n"
+                    "Then verify:\n"
+                    "  show remote-service %s\n"
+                    "  Test the public endpoint from another machine.\n"
+                    % (row["name"], row["service_object"], row["name"])
+                )
+            elif (
                 "synchron" in reason
                 or ("pending" in reason and ("runtime" in reason or "activation" in reason))
             ):

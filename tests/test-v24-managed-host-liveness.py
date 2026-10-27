@@ -126,6 +126,26 @@ class ManagedHostLivenessTests(unittest.TestCase):
         with self.assertRaises(ControlPlaneError):
             self.plane.get_client("expernet-dp1")
 
+    def test_discovery_output_completes_host_detail_journey(self):
+        """Only CLI list output must be sufficient to select the immutable host."""
+        self.plane.conn.execute(
+            "UPDATE clients SET label = ? WHERE id = ?",
+            ("ATSecu JumpHost", MACHINE),
+        )
+        self.plane.commit_if_autonomous()
+        listing = self._show("managed-hosts")
+        row = next(line for line in listing.splitlines() if line.startswith(MACHINE))
+        selector = row.split()[0]
+        self.assertEqual(selector, MACHINE)
+        detail = self._show("managed-host", selector)
+        self.assertIn("Host ID: " + selector, detail)
+        self.assertIn("Managed Host: ATSecu JumpHost", detail)
+        self.assertIn("show managed-host " + selector + " remote-services", detail)
+        self.assertIn("No Remote Services reported", self._show(
+            "managed-host", selector, "remote-services"))
+        with self.assertRaisesRegex(ControlPlaneError, "show managed-hosts"):
+            cli.handle_show(self.plane, ["managed-host"])
+
     def test_connected_host_without_ai_worker_stays_online(self):
         row = self._client(MACHINE)
         self.assertEqual(int(row["connected"]), 1)
@@ -135,8 +155,12 @@ class ManagedHostLivenessTests(unittest.TestCase):
         self.assertEqual(self.plane.ai_executor_status(row), "not_ready")
         self.assertEqual(self.plane.managed_host_connectivity(row), "connected")
         listed = self._show("managed-hosts")
-        self.assertIn("%s expernet-dp1 connected" % HOST, listed)
-        self.assertNotIn("%s expernet-dp1 disconnected" % HOST, listed)
+        self.assertIn("HOST ID", listed)
+        self.assertIn("NAME", listed)
+        self.assertIn(MACHINE, listed)
+        self.assertIn("%s  %-24s  %-24s  connected" % (MACHINE, HOST, "expernet-dp1"), listed)
+        self.assertIn("Next: show managed-host <HOST-ID>", listed)
+        self.assertNotIn("%s  %-24s  %-24s  disconnected" % (MACHINE, HOST, "expernet-dp1"), listed)
         overview = self._show("managed-host", HOST)
         self.assertIn("Status: connected", overview)
         self.assertIn("Agent: Connected", overview)
@@ -153,7 +177,8 @@ class ManagedHostLivenessTests(unittest.TestCase):
         self.assertNotIn('"connectivity": "disconnected"', text)
         fresh = self._client(OTHER)
         self.assertTrue(self.plane.client_effectively_connected(fresh))
-        self.assertIn("other-host other connected", listed)
+        self.assertIn(OTHER, listed)
+        self.assertIn("%s  %-24s  %-24s  connected" % (OTHER, "other-host", "other"), listed)
 
     def test_agent_heartbeat_is_separate_from_ai_liveness_and_expires(self):
         self.plane.conn.execute(
@@ -166,7 +191,7 @@ class ManagedHostLivenessTests(unittest.TestCase):
         self.assertEqual(self.plane.managed_host_connectivity(stale), "stale")
         self.assertFalse(self.plane.ai_executor_ready(stale))
         listed = self._show("managed-hosts")
-        self.assertIn("%s expernet-dp1 stale" % HOST, listed)
+        self.assertIn("%s  %-24s  %-24s  stale" % (MACHINE, HOST, "expernet-dp1"), listed)
 
         old_ai_seen = stale["last_seen"]
         self.assertTrue(self.plane.refresh_agent_lifecycle(MACHINE, "connected"))

@@ -406,7 +406,7 @@ class PolicyCache:
                 # and ran full integrity validation when it changed. Do not
                 # re-scan the full database for every CONNECT.
                 verified = self._cp.fingerprint
-                gen = self._RP.generation_status(
+                gen = self._RP.cached_generation_status(
                     self.plane, "internet",
                     validated_revision=int(verified[0]) if verified else -1,
                 )
@@ -509,7 +509,7 @@ class PolicyCache:
                 port=int(port),
                 protocol=protocol,
                 candidate_ips=candidate_ips,
-                validated_revision=int(verified[0]),
+                validated_revision=int(isolated._validated_revision),
             )
             if decision.get("decision") == self._RP.DECISION_ALLOW:
                 decision["decision"] = EG.DECISION_ALLOW
