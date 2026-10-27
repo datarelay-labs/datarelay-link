@@ -44,6 +44,28 @@ echo "=== test registration completeness ==="
 ./tests/test-orphan-suite-coverage.sh
 
 echo "=== tests ==="
+# Unified CLI100/owner fixes must execute in the full suite, not only Fast PR.
+python3 tests/test-agent-bundle-fresh-catalog.py
+python3 tests/test-cli-inventory-selection-journey.py
+bash tests/test-cli-protected-backend-guidance.sh
+bash tests/test-client-rollback-absent-unit.sh
+bash tests/test-client-upgrade-enrolled-state.sh
+bash tests/test-client-upgrade-legacy-supervisor.sh
+python3 tests/test-enrolled-routed-target-parity.py
+python3 tests/test-legacy-backup-migration.py
+python3 tests/test-mcp-owner-default-access.py
+python3 tests/test-runtime-generation-atomicity.py
+python3 tests/test-server-fixed-pool-migration.py
+python3 tests/test-short-url-qualified-provenance.py
+python3 tests/test-v24-agent-bundle-absent-idempotency.py
+python3 tests/test-v24-bundle-preview-writer-isolation.py
+python3 tests/test-v24-remote-binding-uniqueness.py
+python3 tests/test-v24-server-bundle-absent-idempotency.py
+python3 tests/test-v24-sqlite-row-dependencies.py
+python3 tests/test-zero-touch-command-exit.py
+python3 tests/test-zero-touch-doc-contract.py
+python3 tests/test-zero-touch-guided-preflight.py
+python3 tests/test-zero-touch-operator-command-bound.py
 # E2E defect regressions must run in the full suite as well as focused PR checks.
 bash tests/test-agent-candidate-payload.sh
 python3 tests/test-cli-only-e2e-delta-triage.py

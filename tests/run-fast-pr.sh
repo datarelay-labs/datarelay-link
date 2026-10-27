@@ -17,6 +17,9 @@ echo "=== version and release governance ==="
 ./tests/test-version-governance.sh
 
 echo "=== public CLI / contract regressions ==="
+# Catch orphaned full-suite tests and installer config drift before main merge.
+bash tests/test-orphan-suite-coverage.sh
+bash tests/test-server-install-config.sh
 ./tests/test-cli-catalog-parity.sh
 python3 tests/test-public-cli-grammar-parity.py
 # User-visible list -> immutable selector -> detail, plus Zero-Touch LAN authority.
