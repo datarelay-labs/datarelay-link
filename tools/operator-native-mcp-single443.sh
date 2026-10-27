@@ -157,14 +157,36 @@ switch_and_issue() {
   # Single443 installer does not take over an active/ENABLED distro nginx.
   # Both sites-enabled and conf.d must be empty before stopping.
   check_nginx_sites
+  local nginx_was_active=0 nginx_was_enabled=0
+  systemctl is-active --quiet nginx.service && nginx_was_active=1 || :
+  systemctl is-enabled --quiet nginx.service && nginx_was_enabled=1 || :
   systemctl stop nginx.service
   systemctl disable nginx.service
   export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=safe.directory GIT_CONFIG_VALUE_0="$ROOT"
   export FRP_DEPLOYMENT_MODE=single443 FRP_CONFIRM_MODE_SWITCH=yes
   export FRP_RELEASE_CHANNEL=development
+  export FRP_EXPECTED_SOURCE_REF
+  FRP_EXPECTED_SOURCE_REF="$(git_scoped rev-parse HEAD)"
 
   echo "DRLINK_SINGLE443_MODE_SWITCH=START"
-  (cd "$ROOT" && bash ./install-server.sh </dev/null)
+  if ! (cd "$ROOT" && bash ./install-server.sh </dev/null); then
+    # Restore the ORIGINAL distro service if the installer rolled back to
+    # Direct mode and no new frontend owns public TCP/443. Never start both.
+    if [[ "$(mode_now)" == "direct" ]] &&
+       ! systemctl is-active --quiet drlink-frontend.service; then
+      if [[ "$nginx_was_enabled" == "1" ]]; then
+        systemctl enable nginx.service || echo "WARNING: nginx re-enable failed" >&2
+      fi
+      if [[ "$nginx_was_active" == "1" ]]; then
+        systemctl start nginx.service || echo "WARNING: nginx restart failed" >&2
+      fi
+      echo "PREEXISTING_NGINX_RESTORED_AFTER_FAILED_SWITCH=PASS"
+    else
+      echo "ERROR: failed install left a non-Direct frontend state; inspect backup and units before retry" >&2
+    fi
+    echo "ERROR: product installer failed; no certificate command was attempted" >&2
+    return 1
+  fi
   if [[ "$(mode_now)" != "single443" ]]; then
     echo "ERROR: installer did not reach single443; use protected backup and installer recovery" >&2
     return 1
