@@ -439,8 +439,11 @@ class ControlPlane:
         except Exception as exc:
             return None, "%s: %s" % (type(exc).__name__, exc)
 
-    def _write_revision(self, command: str, summary: str, snapshot: Optional[dict] = None) -> int:
-        rev = self._next_revision()
+    def _write_revision(
+        self, command: str, summary: str, snapshot: Optional[dict] = None,
+        *, minimum_revision: int = 0,
+    ) -> int:
+        rev = max(self._next_revision(), minimum_revision)
         now = utc_now_iso()
         self.conn.execute(
             "INSERT INTO config_revisions(revision, actor, command, created_at, summary) "
@@ -461,6 +464,19 @@ class ControlPlane:
             (rev, payload),
         )
         return rev
+
+    def advance_restored_revision(self, previous_revision: int) -> int:
+        """Restore data, never a reusable optimistic-concurrency token.
+
+        A fresh history entry also binds the restored configuration snapshot to
+        the revision used when compiling its runtime. Failed cutovers still
+        restore their exact pre-activation checkpoint.
+        """
+        with self.conn:
+            return self._write_revision(
+                "system restore", "restore configuration with a fresh revision",
+                minimum_revision=int(previous_revision) + 1,
+            )
 
     def revision_record(self, revision: int) -> dict:
         try:
@@ -6500,6 +6516,7 @@ class ControlPlane:
         checkpoint = self._pre_activation_checkpoint()
         try:
             self._restore_db_only(src)
+            self.advance_restored_revision(previous_revision)
             if self._forced_restore_failure():
                 raise ControlPlaneError("simulated restore activation failure")
             self.compile_runtime()

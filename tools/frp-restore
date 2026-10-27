@@ -783,7 +783,34 @@ def validate_staged_control_db(db_path: Path, manifest_path: Path | None = None)
         conn.close()
 
 
-def post_restore_reconcile(root: Path, payload_source: Path | None = None) -> None:
+def _read_restore_revision_floor(root: Path) -> int:
+    """Read the live high-water mark without requiring healthy legacy state.
+
+    Corrupt-current recovery must remain available when no live revision can
+    be read; the restored candidate's own high-water mark still advances.
+    """
+    import sqlite3
+
+    path = root / CONTROL_DB_REL
+    if not path.is_file():
+        return 0
+    conn = None
+    try:
+        conn = sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True)
+        return int(conn.execute(
+            "SELECT COALESCE(MAX(revision), 0) FROM config_revisions"
+        ).fetchone()[0])
+    except (sqlite3.DatabaseError, OSError, TypeError, ValueError):
+        return 0
+    finally:
+        if conn is not None:
+            conn.close()
+
+
+def post_restore_reconcile(
+    root: Path, payload_source: Path | None = None,
+    *, previous_revision: int | None = None,
+) -> None:
     """Rebuild derived runtime from restored DB and fail-closed AI job state.
 
     Restore intentionally purges non-authoritative projections (including the
@@ -817,6 +844,8 @@ def post_restore_reconcile(root: Path, payload_source: Path | None = None) -> No
             raise RestoreError(str(exc)) from exc
     plane = ControlPlane(str(root))
     try:
+        if previous_revision is not None:
+            plane.advance_restored_revision(previous_revision)
         # Backup-time presence/proxy verification cannot prove continuity after
         # the server stack is replaced. Require a fresh signed Agent report and
         # runtime reconciliation before advertising restored services as healthy.
@@ -1465,14 +1494,23 @@ def main() -> int:
             )
             if gate == "cancelled":
                 return 1
+            previous_revision = _read_restore_revision_floor(root)
             snapshot = make_snapshot(root)
             rollback_kind, rollback_temp, rollback = classify_rollback_snapshot(snapshot)
+            if rollback is not None:
+                previous_revision = max(
+                    previous_revision,
+                    _read_restore_revision_floor(rollback / "payload"),
+                )
             # Mutation marker only after preflight succeeds (candidate valid;
             # current state preserved as VALIDATED or RAW_CORRUPT evidence).
             _write_txn(root, snapshot, rollback_kind=rollback_kind)
             try:
                 apply_payload(root, candidate)
-                post_restore_reconcile(root, payload_source=candidate)
+                post_restore_reconcile(
+                    root, payload_source=candidate,
+                    previous_revision=previous_revision,
+                )
                 _reapply_egress_permissions_after_restore(root)
                 restart_services(root, expect_client_role=expect_client_role)
                 verify_restored_control_state(root, expect_client_role=expect_client_role)

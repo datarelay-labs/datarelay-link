@@ -210,6 +210,29 @@ class CorruptCurrentRestoreTests(unittest.TestCase):
             self.assertEqual(self._client_label(), "good")
             self.assertFalse((self.root / "var/lib/drlink/registry.json").exists())
 
+    def test_supported_restore_invalidates_pre_restore_bundle_revision(self):
+        """The public DR path must not rewind the optimistic concurrency token."""
+        archive = self._make_valid_backup()
+        from drlink_control_plane import ControlPlane
+
+        plane = ControlPlane(str(self.root))
+        try:
+            plane.upsert_client("b" * 32, label="after-backup", hostname="after-backup")
+            prior_authority_revision = plane.current_revision()
+        finally:
+            plane.close()
+        proc = subprocess.run(
+            [sys.executable, str(self.restore_tool), str(archive)],
+            env=self.env, capture_output=True, text=True,
+        )
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        plane = ControlPlane(str(self.root))
+        try:
+            self.assertGreater(plane.current_revision(), prior_authority_revision)
+            self.assertIsNone(plane.get_client("b" * 32))
+        finally:
+            plane.close()
+
     def test_valid_backup_corrupted_registry(self):
         archive = self._make_valid_backup()
         # F02 condition: only the *live* legacy registry is corrupt. The valid
