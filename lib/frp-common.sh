@@ -515,11 +515,36 @@ frp_validate_release_source_metadata() {
   python3 - "${source}/release-manifest.json" "${source}/VERSION" \
     "$expected_ref" "$expected_channel" <<'PY'
 import json
+import os
 import re
+import subprocess
 import sys
 from pathlib import Path
 
 manifest_path, version_path, expected_ref, expected_channel = sys.argv[1:]
+source = Path(manifest_path).parent
+# Verified archives have no .git and obtain their pin from the artifact
+# envelope. A checkout has independent provenance: never persist a requested
+# SHA that contradicts its actual commit. This runs before either updater's
+# staged-file installation or committed version write.
+if (source / ".git").exists():
+    try:
+        actual_head = subprocess.run(
+            ["git", "-C", str(source), "rev-parse", "--verify", "HEAD"],
+            capture_output=True, text=True, check=True, timeout=5,
+        ).stdout.strip()
+    except (OSError, subprocess.SubprocessError):
+        sys.stderr.write("ERROR: cannot verify update source Git HEAD. Use a readable checkout or a verified release artifact.\n")
+        raise SystemExit(1)
+    expected_head = os.environ.get("FRP_EXPECTED_SOURCE_HEAD", "").strip()
+    pins = [expected_head]
+    if re.fullmatch(r"[0-9a-fA-F]{40}", expected_ref):
+        pins.append(expected_ref)
+    if not re.fullmatch(r"[0-9a-fA-F]{40}", actual_head) or any(
+        pin and pin.lower() != actual_head.lower() for pin in pins
+    ):
+        sys.stderr.write("ERROR: update source identity mismatch with Git HEAD. Select the requested checkout or correct the expected source pin. No update was applied.\n")
+        raise SystemExit(1)
 try:
     data = json.loads(Path(manifest_path).read_text(encoding="utf-8"))
 except Exception:
