@@ -59,11 +59,20 @@ try {
     Exit-FrpClientLock
     $probe = Start-SystemProbe $true
     Assert-FrpTrue (-not $probe.error -and $probe.acquired -eq $true) 'SYSTEM can own the same per-root mutex'
-    $observer = [Threading.Mutex]::new($false, $mutexName)
+    # Observe with synchronization rights, not the constructor's FullControl.
+    $observer = [Threading.Mutex]::OpenExisting($mutexName, [Security.AccessControl.MutexRights]::Synchronize)
     try { Assert-FrpTrue (-not $observer.WaitOne(0)) 'operator opens SYSTEM mutex and observes ownership' }
     finally { $observer.Dispose() }
     Assert-FrpTrue (-not (Enter-FrpClientLock)) 'operator cannot mutate while SYSTEM owns lock'
     Set-Content -LiteralPath $releasePath -Value 'release'
+    $deadline = [datetime]::UtcNow.AddSeconds(30)
+    $reacquired = $false
+    do {
+        Start-Sleep -Milliseconds 100
+        $reacquired = Enter-FrpClientLock
+    } while (-not $reacquired -and [datetime]::UtcNow -lt $deadline)
+    Assert-FrpTrue $reacquired 'operator reacquires after SYSTEM releases without permission changes'
+    Exit-FrpClientLock
     Write-FrpTestPass 'client-lock-system-interop'
 } finally {
     Set-Content -LiteralPath $releasePath -Value 'release' -ErrorAction SilentlyContinue

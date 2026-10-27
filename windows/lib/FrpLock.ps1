@@ -65,7 +65,18 @@ function Enter-FrpClientLock {
     $ownsMutex = $false
     $entered = $false
     try {
-        $mutex = [Threading.Mutex]::new($false, (Get-FrpClientLockMutexName))
+        $mutexName = Get-FrpClientLockMutexName
+        try { $mutex = [Threading.Mutex]::new($false, $mutexName) }
+        catch [UnauthorizedAccessException] {
+            # Creating/opening through the constructor requests FullControl.
+            # Existing service-owned objects may permit synchronization only.
+            # Do not alter their security descriptor to obtain ownership.
+            try { $mutex = [Threading.Mutex]::OpenExisting($mutexName) }
+            catch [UnauthorizedAccessException] {
+                Write-Host 'ERROR: another Data Relay Link Agent management operation is already running.'
+                return $false
+            }
+        }
         try { $ownsMutex = $mutex.WaitOne(0) }
         catch [Threading.AbandonedMutexException] { $ownsMutex = $true }
         if (-not $ownsMutex) {
