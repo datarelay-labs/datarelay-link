@@ -28,14 +28,24 @@ not presented as the completed owner-requested full-control feature.
 - The MCP tool descriptors still advertise the old read-only/test-only
   contract. A tool edit to add truthful side-effect annotations and shell/job
   schemas was platform-blocked. New job methods are not discoverable yet.
-- The output reader still uses buffered `read(8192)`; prompt-sized output
-  before process exit is not qualified. Its attempted fix was blocked.
-- Writing the new isolated full-control test suite was blocked; the suite
-  is absent and was not executed. Existing Server-self/local-executor
-  regression results do not establish full-control acceptance.
-- A real full-control account/job/Git/file acceptance suite, final packaging
-  provenance, an authorized rollout and actual ChatGPT workflow tests are
-  required before deployment or Desktop Commander removal.
+- The output reader now uses `os.read` and the new isolated full-control
+  suite verifies that a short prompt is visible before process exit.
+- `tests/test-mcp-server-full-control.py` now contains 18 tests: **17 pass,
+  one fails**. Real temporary-account fixtures cover general argv/shell,
+  file create/update/read/delete, Git add/commit/push to a local bare repo,
+  process stdin/stop/timeouts, output pagination, identity and policy denial.
+  These are runtime and internal Bridge tests, NOT live ChatGPT acceptance.
+- The failing regression reproduces a completed-job retention defect:
+  completed history consumes the 32-entry registry and blocks later commands
+  until history expires. Its focused fix was rejected by a fresh platform
+  tool safety check. Keep the regression RED; do not weaken or skip it.
+- Public tool schema/side-effect annotation updates were also rejected by
+  a fresh platform check. Existing public descriptors still advertise the
+  old restricted contract and new job methods are not discoverable.
+- No full-control deployment or renewed OAuth request is permitted by a
+  partial test result. Finish the failing regression and public tool wiring,
+  qualify packaging, then perform authorized rollout and real MCP acceptance
+  before asking the user to refresh/reconnect or remove Desktop Commander.
 
 The earlier restricted-executor sections below describe the currently
 installed mode. They do not override the owner's full-administration goal.

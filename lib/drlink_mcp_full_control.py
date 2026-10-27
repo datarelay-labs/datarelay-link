@@ -157,7 +157,9 @@ class Job:
 def _drain(stream, output: Output) -> None:
     try:
         while True:
-            data = stream.read(8192)
+            # Read currently available pipe bytes, including a short interactive
+            # prompt. Buffered read(size) can wait for the entire size or EOF.
+            data = os.read(stream.fileno(), 8192)
             if not data:
                 break
             output.append(data)
