@@ -2329,6 +2329,56 @@ class FalseHealthyFailClosedTests(unittest.TestCase):
         ).fetchone()
         return pub, meta
 
+    def _public_inventory_service_label(self):
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            rc = cli.dispatch(
+                ["show", "managed-host", "agent-a", "remote-services"],
+                root=self.tmp, plane=self.plane,
+            )
+        self.assertEqual(rc, 0, buf.getvalue())
+        row = next(line for line in buf.getvalue().splitlines()
+                   if line.startswith("ssh-access "))
+        self.assertIn("203.0.113.10:6012", row)
+        return row.split()[2]
+
+    def test_inventory_preserves_explicit_legacy_preset_label(self):
+        pub, _ = self._seed_stored_healthy()
+        self.plane.conn.execute(
+            "UPDATE published_services SET preset_name='ssh' WHERE id=?", (pub["id"],)
+        )
+        self.plane.conn.execute(
+            "UPDATE remote_service_meta SET service_object_id=NULL WHERE service_id=?",
+            (pub["id"],),
+        )
+        self.assertEqual(self._public_inventory_service_label(), "ssh")
+
+    def test_inventory_does_not_invent_an_unknown_service_label(self):
+        pub, _ = self._seed_stored_healthy()
+        self.plane.conn.execute(
+            "UPDATE remote_service_meta SET service_object_id=NULL WHERE service_id=?",
+            (pub["id"],),
+        )
+        self.assertEqual(self._public_inventory_service_label(), "-")
+
+    def test_inventory_catalog_label_wins_over_legacy_preset(self):
+        pub, _ = self._seed_stored_healthy()
+        self.plane.conn.execute(
+            "UPDATE published_services SET preset_name='old-preset' WHERE id=?", (pub["id"],)
+        )
+        self.assertEqual(self._public_inventory_service_label(), "ssh")
+
+    def test_inventory_does_not_hide_dangling_catalog_reference_with_preset(self):
+        pub, _ = self._seed_stored_healthy()
+        self.plane.conn.execute(
+            "UPDATE published_services SET preset_name='ssh' WHERE id=?", (pub["id"],)
+        )
+        self.plane.conn.execute(
+            "UPDATE remote_service_meta SET service_object_id='sobj_missing' WHERE service_id=?",
+            (pub["id"],),
+        )
+        self.assertEqual(self._public_inventory_service_label(), "-")
+
     def test_server_ack_cannot_promote_healthy_when_managed_relay_stopped(self):
         from unittest import mock
         pub, meta = self._seed_stored_healthy(connected=True)
