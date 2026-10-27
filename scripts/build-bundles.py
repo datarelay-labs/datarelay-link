@@ -65,6 +65,8 @@ files=[
  'lib/drlink_upgrade_reconcile.py',
  'lib/drlink_ai_agent.py',
  'lib/drlink_mcp_bridge.py',
+ 'lib/drlink_mcp_server_executor.py',
+ 'lib/drlink_mcp_full_control.py',
  'lib/drlink_mcp_tls.py',
  'lib/drlink_mcp_tls_renew.py',
  'lib/frp_ctl_repl.py',

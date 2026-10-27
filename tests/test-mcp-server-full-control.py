@@ -208,6 +208,134 @@ class FullControlRuntimeTests(unittest.TestCase):
         self.assertEqual(second["stdout"]["next_cursor"], first["next_cursor"] + full.PAGE)
         self.assertFalse(second["stdout"]["cursor_was_evicted"])
 
+    def test_output_pages_preserve_exact_utf8_bytes(self):
+        data = ("가🙂" * 30000).encode("utf-8")
+        result = self.completed(self.run_command([
+            sys.executable, "-c", "import sys; sys.stdout.write('가🙂' * 30000)",
+        ]))
+        recovered = bytearray()
+        page = result["stdout"]
+        while True:
+            recovered.extend(base64.b64decode(page["data_b64"]))
+            if page["next_cursor"] == page["total_bytes"]:
+                break
+            page = self.runtime.poll(self.owner, result["job_id"],
+                                     stdout_cursor=page["next_cursor"])["stdout"]
+        self.assertEqual(bytes(recovered), data)
+        self.assertTrue(result["output_complete"])
+
+    def test_history_reclamation_preserves_active_job_and_recent_output(self):
+        with patch.object(full, "MAX_JOBS", 3):
+            active = self.run_command([sys.executable, "-c", "import time; time.sleep(10)"], wait_ms=0)
+            oldest = self.completed(self.run_command(["printf", "old"]))
+            recent = self.completed(self.run_command(["printf", "recent"]))
+            newest = self.completed(self.run_command(["printf", "new"]))
+            self.assertEqual(len(self.runtime.jobs), 3)
+            self.assertNotIn(oldest["job_id"], self.runtime.jobs)
+            self.assertIn(newest["job_id"], self.runtime.jobs)
+            self.assertEqual(self.runtime.poll(self.owner, active["job_id"])["state"], "running")
+            self.assertEqual(self.runtime.poll(self.owner, recent["job_id"])["stdout"]["text"], "recent")
+            self.runtime.stop(self.owner, active["job_id"])
+
+    def test_concurrent_history_reclamation_preserves_execution_receipt(self):
+        import threading
+        paused, release, replied = threading.Event(), threading.Event(), threading.Event()
+        outcome = {}
+        original_poll = self.runtime.poll
+
+        def guarded_poll(*args, **kwargs):
+            if threading.current_thread().name == "first-native-client":
+                paused.set()
+                release.wait(5)
+            return original_poll(*args, **kwargs)
+
+        def first_client():
+            try:
+                outcome["result"] = self.run_command(command="printf 'first\\n' >> effects")
+            except Exception as exc:
+                outcome["error"] = exc
+            finally:
+                replied.set()
+
+        worker = threading.Thread(target=first_client, name="first-native-client")
+        with patch.object(full, "MAX_JOBS", 1), patch.object(self.runtime, "poll", guarded_poll):
+            try:
+                worker.start()
+                deadline = time.monotonic() + 3
+                while not (paused.is_set() or replied.is_set()) and time.monotonic() < deadline:
+                    time.sleep(0.01)
+                self.assertTrue(paused.is_set() or replied.is_set())
+                first_job = next(iter(self.runtime.jobs.values()))
+                self.assertTrue(first_job.done.wait(3))
+                second = self.completed(self.run_command(command="printf 'second\\n' >> effects"))
+                release.set()
+                worker.join(3)
+                self.assertFalse(worker.is_alive())
+                self.assertNotIn("error", outcome)
+                self.assertEqual(outcome["result"]["exit_status"], 0)
+                self.assertEqual(second["exit_status"], 0)
+                self.assertEqual((self.root / "effects").read_text(), "first\nsecond\n")
+            finally:
+                release.set()
+                worker.join(5)
+
+    def test_exited_leader_cleans_up_same_group_child(self):
+        import signal
+        child_pid = None
+        try:
+            result = self.completed(self.run_command([
+                sys.executable, "-u", "-c",
+                "import subprocess,sys; p=subprocess.Popen([sys.executable,'-c',"
+                "'import time; time.sleep(30)']); print(p.pid,flush=True)",
+            ]))
+            child_pid = int(result["stdout"]["text"].strip())
+            state = Path("/proc") / str(child_pid) / "stat"
+            if state.exists():
+                self.assertEqual(state.read_text().split(") ", 1)[1][0], "Z",
+                                 "child still runs after its job completed")
+            with patch.object(full.os, "killpg", wraps=full.os.killpg) as kill:
+                self.runtime.stop(self.owner, result["job_id"])
+                kill.assert_not_called()
+        finally:
+            if child_pid is not None:
+                try:
+                    os.kill(child_pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+
+    def test_partial_input_preserves_utf8_character_boundaries(self):
+        import hashlib
+        data = ("가🙂" * 8000).encode("utf-8")
+        gate = self.root / "read-input"
+        result = self.run_command([
+            sys.executable, "-u", "-c",
+            "import sys,time,pathlib,hashlib; p=pathlib.Path(sys.argv[1]); "
+            "exec('while not p.exists(): time.sleep(0.01)'); "
+            "data=sys.stdin.buffer.read(); print(hashlib.sha256(data).hexdigest())",
+            str(gate),
+        ], wait_ms=0)
+        import fcntl
+        fcntl.fcntl(self.runtime.jobs[result["job_id"]].process.stdin.fileno(),
+                    fcntl.F_SETPIPE_SZ, 4096)
+        remaining = data
+        try:
+            first = self.runtime.send(self.owner, result["job_id"], remaining.decode(), eof=True)
+            remaining = remaining[first["accepted_bytes"]:]
+            remaining.decode("utf-8")
+            gate.touch()
+            deadline = time.monotonic() + 5
+            while remaining and time.monotonic() < deadline:
+                sent = self.runtime.send(self.owner, result["job_id"], remaining.decode(), eof=True)
+                remaining = remaining[sent["accepted_bytes"]:]
+                remaining.decode("utf-8")
+                if not sent["accepted_bytes"]:
+                    time.sleep(0.01)
+            self.assertFalse(remaining, "process stdin did not drain")
+            final = self.completed(result)
+            self.assertEqual(final["stdout"]["text"].strip(), hashlib.sha256(data).hexdigest())
+        finally:
+            gate.touch()
+
     def test_initial_directory_scope_and_request_shape(self):
         with self.assertRaises(full.FullControlDenied):
             self.runtime.start(self.owner, {"cwd": "/", "argv": ["true"]}, self.patterns)
@@ -222,10 +350,10 @@ class FullControlRuntimeTests(unittest.TestCase):
 
 
 class FullControlBridgeAuthorizationTests(unittest.TestCase):
-    """Exercise existing Bridge dispatch against an isolated real policy DB.
+    """Exercise public Bridge dispatch against an isolated real policy DB.
 
-    Job-handler tests call the internal handler deliberately: they are NOT
-    claims that the pending public job tool descriptors are already exposed.
+    These fixtures complement the public HTTP suite and do not replace
+    installed-server acceptance through the genuine MCP connection.
     """
     def setUp(self):
         import contextlib
@@ -310,7 +438,7 @@ class FullControlBridgeAuthorizationTests(unittest.TestCase):
         self.assertFalse(process.get("isError"), process)
         self.assertGreater(process["structuredContent"]["count"], 0)
 
-    def test_each_internal_job_operation_rechecks_current_path_authorization(self):
+    def test_each_public_job_operation_rechecks_current_path_authorization(self):
         import drlink_v24 as v24
         self.authorize()
         response = self.bridge.call_tool(self.principal, "server_run", {
@@ -321,8 +449,12 @@ class FullControlBridgeAuthorizationTests(unittest.TestCase):
         job = response["structuredContent"]["job_id"]
         v24.set_ai_policy_path_scopes(self.plane, "fixture-server", [])
         for name in ("server_job_poll", "server_job_input", "server_job_stop"):
-            result = self.bridge._call_server_full(self.principal, name, {"job_id": job, "data": ""})
+            arguments = {"job_id": job}
+            if name == "server_job_input":
+                arguments["data"] = ""
+            result = self.bridge.call_tool(self.principal, name, arguments)
             self.assertTrue(result.get("isError"), (name, result))
+            self.assertIn("AI Access", result["content"][0]["text"])
 
     def test_disabling_identity_denies_new_commands(self):
         self.authorize()

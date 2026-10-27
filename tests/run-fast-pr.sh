@@ -71,6 +71,11 @@ python3 tests/test-v24-network-object-remote-reference.py
 python3 tests/test-p013-policy-hotpath.py
 python3 tests/test-v24-offline-tombstone-duplicate.py
 
+echo "=== Native MCP full-control regressions ==="
+python3 tests/test-mcp-server-full-control.py
+python3 tests/test-mcp-server-full-control-public.py
+bash tests/test-project-file-manifest.sh
+
 echo "=== derived artifact closure ==="
 bash tests/test-change-closure-artifacts.sh
 

@@ -11,12 +11,14 @@ No settings here change the permissions of the tool used to deploy this code.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import base64
 import hashlib
 import json
 import os
 from pathlib import Path
 import pwd
 import secrets
+import select
 import signal
 import subprocess
 import sys
@@ -132,7 +134,9 @@ class Output:
         with self.lock:
             start = min(self.total, max(cursor, self.dropped))
             chunk = bytes(self.data[start - self.dropped:start - self.dropped + PAGE])
-            return {"text": chunk.decode("utf-8", "replace"), "next_cursor": start + len(chunk),
+            return {"text": chunk.decode("utf-8", "replace"),
+                    "data_b64": base64.b64encode(chunk).decode("ascii"),
+                    "next_cursor": start + len(chunk),
                     "total_bytes": self.total, "truncated_before": self.dropped,
                     "cursor_was_evicted": cursor < self.dropped}
 
@@ -152,13 +156,18 @@ class Job:
     stderr: Output = field(default_factory=Output)
     done: threading.Event = field(default_factory=threading.Event)
     input_lock: threading.Lock = field(default_factory=threading.Lock)
+    lifecycle_lock: threading.Lock = field(default_factory=threading.Lock)
+    readers_stop: threading.Event = field(default_factory=threading.Event)
+    output_complete: bool = True
 
 
-def _drain(stream, output: Output) -> None:
+def _drain(stream, output: Output, stop: threading.Event) -> None:
     try:
-        while True:
-            # Read currently available pipe bytes, including a short interactive
-            # prompt. Buffered read(size) can wait for the entire size or EOF.
+        while not stop.is_set():
+            # A bounded wait also permits closing an inherited pipe held by a
+            # deliberately detached process after the managed group exits.
+            if not select.select([stream], [], [], 0.1)[0]:
+                continue
             data = os.read(stream.fileno(), 8192)
             if not data:
                 break
@@ -167,8 +176,17 @@ def _drain(stream, output: Output) -> None:
         stream.close()
 
 
-def _terminate(job: Job) -> None:
-    if job.process.poll() is None:
+def _terminate(job: Job, *, timeout: bool = False) -> None:
+    # Only the finish worker reaps the leader. Holding its waitable PID until
+    # group cleanup prevents a completed job from signaling a reused PGID.
+    with job.lifecycle_lock:
+        if job.process.returncode is not None:
+            return
+        if timeout:
+            if os.waitid(os.P_PID, job.process.pid,
+                         os.WEXITED | os.WNOHANG | os.WNOWAIT) is not None:
+                return
+            job.timed_out = True
         try:
             os.killpg(job.process.pid, signal.SIGKILL)
         except ProcessLookupError:
@@ -197,15 +215,27 @@ class FullControlRuntime:
             return job
 
     def _finish(self, job: Job, timeout: int, readers: list[threading.Thread]) -> None:
+        timer = threading.Timer(timeout, _terminate, args=(job,), kwargs={"timeout": True})
+        timer.daemon = True
+        timer.start()
         try:
-            job.process.wait(timeout=timeout)
-        except subprocess.TimeoutExpired:
-            job.timed_out = True
-            _terminate(job)
-            job.process.wait()
+            # Observe exit without reaping, then clean remaining same-group
+            # descendants while the leader still pins the process-group ID.
+            os.waitid(os.P_PID, job.process.pid, os.WEXITED | os.WNOWAIT)
+            with job.lifecycle_lock:
+                try:
+                    os.killpg(job.process.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+                job.process.wait()
         finally:
+            timer.cancel()
             for reader in readers:
                 reader.join(timeout=1)
+            job.output_complete = not any(reader.is_alive() for reader in readers)
+            job.readers_stop.set()
+            for reader in readers:
+                reader.join()
             with job.input_lock:
                 if job.process.stdin is not None and not job.process.stdin.closed:
                     job.process.stdin.close()
@@ -242,6 +272,15 @@ class FullControlRuntime:
                        if value.finished is not None and now - value.finished > 600]
             for key in expired:
                 del self.jobs[key]
+            # Completed output remains available until its TTL expires or the
+            # bounded registry needs room. Never reclaim a live process slot.
+            completed = sorted(
+                ((value.finished, key) for key, value in self.jobs.items()
+                 if value.done.is_set() and value.finished is not None),
+            )
+            while len(self.jobs) >= MAX_JOBS and completed:
+                _, oldest = completed.pop(0)
+                del self.jobs[oldest]
             if len(self.jobs) >= MAX_JOBS:
                 raise FullControlDenied("Native process limit reached; collect or stop existing jobs")
             proc = subprocess.Popen(argv, cwd=cwd, env=environment,
@@ -253,21 +292,30 @@ class FullControlRuntime:
             job = Job(identifier, owner, account, cwd,
                       hashlib.sha256(json.dumps(argv).encode()).hexdigest()[:16], proc)
             self.jobs[identifier] = job
-        readers = [threading.Thread(target=_drain, args=(proc.stdout, job.stdout), daemon=True),
-                   threading.Thread(target=_drain, args=(proc.stderr, job.stderr), daemon=True)]
+        readers = [threading.Thread(target=_drain, args=(proc.stdout, job.stdout, job.readers_stop), daemon=True),
+                   threading.Thread(target=_drain, args=(proc.stderr, job.stderr, job.readers_stop), daemon=True)]
         for thread in readers:
             thread.start()
         threading.Thread(target=self._finish, args=(job, timeout, readers), daemon=True).start()
-        return self.poll(owner, identifier, wait_ms=wait_ms)
+        return self._snapshot(job, wait_ms=wait_ms)
 
     def poll(self, owner: str, identifier: str, *, stdout_cursor: int = 0,
              stderr_cursor: int = 0, wait_ms: int = 0) -> dict:
         job = self._owned(owner, identifier)
+        return self._snapshot(job, stdout_cursor=stdout_cursor,
+                              stderr_cursor=stderr_cursor, wait_ms=wait_ms)
+
+    @staticmethod
+    def _snapshot(job: Job, *, stdout_cursor: int = 0,
+                  stderr_cursor: int = 0, wait_ms: int = 0) -> dict:
+        # A command/stop already holds its authorized Job reference. History
+        # reclamation must not turn an executed operation into a false DENY.
         outpos = _integer(stdout_cursor, 0, 2 ** 63 - 1)
         errpos = _integer(stderr_cursor, 0, 2 ** 63 - 1)
         job.done.wait(_integer(wait_ms, 0, 5000) / 1000)
-        return {"job_id": identifier, "state": "completed" if job.done.is_set() else "running",
-                "exit_status": job.process.poll(), "timed_out": job.timed_out,
+        return {"job_id": job.identifier, "state": "completed" if job.done.is_set() else "running",
+                "exit_status": job.process.returncode, "timed_out": job.timed_out,
+                "output_complete": job.done.is_set() and job.output_complete,
                 "stdout": job.stdout.page(outpos), "stderr": job.stderr.page(errpos),
                 "execution_user": job.account.name, "cwd": job.cwd,
                 "fingerprint": job.fingerprint,
@@ -280,10 +328,15 @@ class FullControlRuntime:
         raw = data.encode("utf-8")
         with job.input_lock:
             pipe = job.process.stdin
-            if pipe is None or pipe.closed or job.process.poll() is not None:
+            if pipe is None or pipe.closed or job.process.returncode is not None:
                 raise FullControlDenied("Process input is closed")
             try:
-                written = os.write(pipe.fileno(), raw) if raw else 0
+                # <= PIPE_BUF makes a nonblocking pipe write atomic. Trim
+                # only an incomplete UTF-8 suffix so accepted_bytes always
+                # identifies a suffix that the string API can resend intact.
+                limit = min(PAGE, os.fpathconf(pipe.fileno(), "PC_PIPE_BUF"))
+                chunk = raw[:limit].decode("utf-8", "ignore").encode("utf-8")
+                written = os.write(pipe.fileno(), chunk) if chunk else 0
             except BlockingIOError:
                 written = 0
             except BrokenPipeError:
@@ -296,7 +349,7 @@ class FullControlRuntime:
     def stop(self, owner: str, identifier: str) -> dict:
         job = self._owned(owner, identifier)
         _terminate(job)
-        return self.poll(owner, identifier, wait_ms=1000)
+        return self._snapshot(job, wait_ms=1000)
 
     def close(self) -> None:
         with self.lock:
@@ -312,6 +365,10 @@ def execute_file_action(action: str, arguments: dict, patterns: list[str]) -> di
     account = configured_account()
     if action not in FILE_ACTIONS:
         raise FullControlDenied("Unknown Native file/process action")
+    if not isinstance(arguments, dict):
+        raise FullControlDenied("Native file arguments must be an object")
+    if action in ("write_file", "upload_file") and not isinstance(arguments.get("content"), str):
+        raise FullControlDenied("Native write content must be an explicitly supplied string")
     if action != "list_processes":
         allowed_path(arguments.get("path") or "", patterns, account)
     request = {"capability": action, "arguments": arguments, "patterns": patterns}

@@ -108,7 +108,7 @@ TOOL_DEFS = (
     (
         "server_read_file",
         "Read Server-local file",
-        "Read a scoped development file through the separate unprivileged Server executor",
+        "Read a scoped file through the operator-selected Server execution profile and OS account",
         {"path": "string"},
         {"readOnlyHint": True, "destructiveHint": False, "openWorldHint": False, "idempotentHint": True},
     ),
@@ -128,19 +128,88 @@ TOOL_DEFS = (
     ),
     (
         "server_git",
-        "Read Server Git state",
-        "Run only allowlisted read-only Git commands using argv and cwd in an approved worktree",
-        {"cwd": "string", "argv": "array"},
-        {"readOnlyHint": True, "destructiveHint": False, "openWorldHint": False, "idempotentHint": True},
+        "Run Server Git command",
+        "Run Git argv in the selected Server OS account. Full-control supports add, commit, "
+        "push and other Git operations; the restricted profile permits read-only probes. "
+        "Requires current command-exec AI Access and an approved initial cwd. "
+        "Full-control commands have the account's OS authority; cwd is not a sandbox.",
+        {"type": "object", "properties": {
+            "cwd": {"type": "string", "description": "Absolute initial working directory"},
+            "argv": {"type": "array", "items": {"type": "string"}, "minItems": 1,
+                     "description": "Argument vector beginning with git"},
+            "timeout_seconds": {"type": "integer", "minimum": 1, "maximum": 86400, "default": 3600},
+            "wait_ms": {"type": "integer", "minimum": 0, "maximum": 5000, "default": 1000},
+        }, "required": ["cwd", "argv"], "additionalProperties": False},
+        {"readOnlyHint": False, "destructiveHint": True, "openWorldHint": True, "idempotentHint": False},
     ),
     (
         "server_run",
-        "Run scoped Server developer test",
-        "Execute only approved Python or Bash tests from an explicit development worktree, "
-        "as a separate non-root OS user; no arbitrary shell. Requires command-exec "
-        "AI Access path scope and a separately enabled operator flag.",
-        {"cwd": "string", "argv": "array"},
-        {"readOnlyHint": False, "destructiveHint": True, "openWorldHint": False},
+        "Run Server command",
+        "Run general argv in the operator-selected OS account when full-control is enabled. "
+        "The restricted profile permits selected developer tests only. Requires command-exec "
+        "AI Access for the initial cwd; cwd is not a filesystem sandbox. Returns job_id, "
+        "state and bounded output; use server_job_poll/input/stop for running jobs.",
+        {"type": "object", "properties": {
+            "cwd": {"type": "string", "description": "Absolute initial working directory"},
+            "argv": {"type": "array", "items": {"type": "string"}, "minItems": 1},
+            "timeout_seconds": {"type": "integer", "minimum": 1, "maximum": 86400, "default": 3600},
+            "wait_ms": {"type": "integer", "minimum": 0, "maximum": 5000, "default": 1000},
+        }, "required": ["cwd", "argv"], "additionalProperties": False},
+        {"readOnlyHint": False, "destructiveHint": True, "openWorldHint": True, "idempotentHint": False},
+    ),
+    (
+        "server_exec",
+        "Execute Server shell command",
+        "Execute a shell command in the operator-selected OS account with explicit full-control "
+        "opt-in and current command-exec AI Access. Supports pipelines and service/package/deployment "
+        "commands within that account's OS permissions. Root requires a separate local operator "
+        "opt-in. Initial cwd is not a filesystem sandbox. Returns job_id and bounded output.",
+        {"type": "object", "properties": {
+            "cwd": {"type": "string", "description": "Absolute initial working directory"},
+            "command": {"type": "string", "minLength": 1},
+            "timeout_seconds": {"type": "integer", "minimum": 1, "maximum": 86400, "default": 3600},
+            "wait_ms": {"type": "integer", "minimum": 0, "maximum": 5000, "default": 1000},
+        }, "required": ["cwd", "command"], "additionalProperties": False},
+        {"readOnlyHint": False, "destructiveHint": True, "openWorldHint": True, "idempotentHint": False},
+    ),
+    (
+        "server_job_poll",
+        "Read Server job output",
+        "Read the authenticated identity's job state and output using byte cursors. Every call "
+        "rechecks current AI Access and execution profile. Each stream retains at most 1 MiB; "
+        "pages contain at most 64 KiB and report cursor eviction; data_b64 preserves exact bytes. "
+        "Completed jobs remain for "
+        "up to ten minutes, or until the bounded registry reclaims the oldest completed job.",
+        {"type": "object", "properties": {
+            "job_id": {"type": "string", "minLength": 1},
+            "stdout_cursor": {"type": "integer", "minimum": 0, "maximum": 9223372036854775807, "default": 0},
+            "stderr_cursor": {"type": "integer", "minimum": 0, "maximum": 9223372036854775807, "default": 0},
+            "wait_ms": {"type": "integer", "minimum": 0, "maximum": 5000, "default": 0},
+        }, "required": ["job_id"], "additionalProperties": False},
+        {"readOnlyHint": True, "destructiveHint": False, "openWorldHint": False, "idempotentHint": True},
+    ),
+    (
+        "server_job_input",
+        "Send Server job input",
+        "Send UTF-8 stdin or EOF to the authenticated identity's job after current AI Access "
+        "and profile checks. Input is bounded to 64 KiB; use accepted_bytes to retry unaccepted "
+        "input. EOF closes stdin only after the submitted data has been accepted.",
+        {"type": "object", "properties": {
+            "job_id": {"type": "string", "minLength": 1},
+            "data": {"type": "string", "default": ""},
+            "eof": {"type": "boolean", "default": False},
+        }, "required": ["job_id"], "additionalProperties": False},
+        {"readOnlyHint": False, "destructiveHint": True, "openWorldHint": True, "idempotentHint": False},
+    ),
+    (
+        "server_job_stop",
+        "Stop Server job",
+        "Stop the authenticated identity's Server process job and collect its final state. "
+        "Requires current command-exec AI Access and the same execution profile.",
+        {"type": "object", "properties": {
+            "job_id": {"type": "string", "minLength": 1},
+        }, "required": ["job_id"], "additionalProperties": False},
+        {"readOnlyHint": False, "destructiveHint": True, "openWorldHint": True, "idempotentHint": True},
     ),
     (
         "list_hosts",
@@ -214,6 +283,57 @@ TOOL_DEFS = (
     ),
 )
 
+def _input_schema(props: dict) -> dict:
+    if props.get("type") == "object" and isinstance(props.get("properties"), dict):
+        return json.loads(json.dumps(props))
+    schema_props = {key: ({"type": "array", "items": {"type": "string"}}
+                          if kind == "array" else {"type": kind})
+                    for key, kind in props.items()}
+    schema = {"type": "object", "properties": schema_props}
+    if props:
+        schema["required"] = list(props)
+    return schema
+
+
+SERVER_TOOLS = frozenset(entry[0] for entry in TOOL_DEFS
+                         if entry[0] == "get_server" or entry[0].startswith("server_"))
+SERVER_ARGUMENT_SCHEMAS = {
+    entry[0]: dict(_input_schema(entry[3]), additionalProperties=False)
+    for entry in TOOL_DEFS if entry[0] in SERVER_TOOLS
+}
+
+
+def _server_argument_error(name: str, arguments: dict) -> Optional[str]:
+    """Validate the published Native process schemas without a new dependency."""
+    if not isinstance(arguments, dict):
+        return "Native tool arguments must be an object"
+    schema = SERVER_ARGUMENT_SCHEMAS.get(name)
+    if schema is None:
+        return None
+    props = schema["properties"]
+    if any(key not in props for key in arguments):
+        return "Unexpected Native tool argument"
+    if any(key not in arguments for key in schema.get("required", [])):
+        return "Required Native tool argument is missing"
+    for key, value in arguments.items():
+        spec = props[key]
+        kind = spec["type"]
+        valid = ((kind == "string" and isinstance(value, str))
+                 or (kind == "integer" and isinstance(value, int) and not isinstance(value, bool))
+                 or (kind == "boolean" and isinstance(value, bool))
+                 or (kind == "array" and isinstance(value, list)
+                     and all(isinstance(item, str) for item in value)))
+        if not valid:
+            return "Invalid Native argument type: " + key
+        if kind == "integer" and not spec.get("minimum", value) <= value <= spec.get("maximum", value):
+            return "Native numeric option is outside its bounds: " + key
+        if kind == "string" and len(value) < spec.get("minLength", 0):
+            return "Native string argument is empty: " + key
+        if kind == "array" and not spec.get("minItems", 0) <= len(value) <= 4096:
+            return "Invalid Native argument vector length"
+    return None
+
+
 ENDPOINT_TOOLS = frozenset(
     {
         "get_system_info",
@@ -278,12 +398,8 @@ def _structured_result(data, *, text: Optional[str] = None, is_error: bool = Fal
 
 
 def _tool_descriptor(name: str, title: str, desc: str, props: dict, annotations: dict) -> dict:
-    schema_props = {k: ({"type": "array", "items": {"type": "string"}} if v == "array" else {"type": v})
-                    for k, v in props.items()}
-    required = list(props.keys())
-    input_schema = {"type": "object", "properties": schema_props}
-    if required:
-        input_schema["required"] = required
+    input_schema = (json.loads(json.dumps(SERVER_ARGUMENT_SCHEMAS[name]))
+                    if name in SERVER_ARGUMENT_SCHEMAS else _input_schema(props))
     return {
         "name": name,
         "title": title,
@@ -858,6 +974,9 @@ class MCPBridge:
         aliases = {"server_read_file": "read_file", "server_write_file": "write_file",
                    "server_delete_file": "delete_file"}
         try:
+            argument_error = _server_argument_error(name, arguments)
+            if argument_error:
+                raise full.FullControlDenied(argument_error)
             account = full.configured_account()
             owner = str(principal["id"] or "")
             with self._lock:
@@ -994,8 +1113,7 @@ class MCPBridge:
         return _structured_result(payload)
 
     def call_tool(self, principal, name: str, arguments: dict) -> dict:
-        if name in ("get_server", "server_read_file", "server_write_file",
-                    "server_delete_file", "server_git", "server_run"):
+        if name in SERVER_TOOLS:
             return self._call_server_self(principal, name, arguments)
         if name not in AI_CAPABILITIES:
             self.plane.record_ai_activity(
