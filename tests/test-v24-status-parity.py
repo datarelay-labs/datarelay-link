@@ -2329,6 +2329,27 @@ class FalseHealthyFailClosedTests(unittest.TestCase):
         ).fetchone()
         return pub, meta
 
+    def test_server_ack_cannot_promote_healthy_when_managed_relay_stopped(self):
+        from unittest import mock
+        pub, meta = self._seed_stored_healthy(connected=True)
+        kwargs = dict(agent_runtime={"status": "HEALTHY", "runtime_verified": True},
+                      registry_available=False)
+        self.assertEqual(UR.effective_remote_service_status(
+            self.plane, pub, meta, {}, **kwargs)[0], "HEALTHY")
+        with mock.patch.object(v24, "probe_server_runtime_unit", return_value={
+            "level": "Critical", "detail": "Local Relay Engine is not running",
+        }):
+            status, reason, stale = UR.effective_remote_service_status(
+                self.plane, pub, meta, {}, **kwargs)
+        self.assertEqual(status, "DEGRADED")
+        self.assertIn("Relay Engine", reason)
+        self.assertFalse(stale)
+        row = self.plane.conn.execute(
+            "SELECT public_port, released FROM published_services WHERE id=?", (pub["id"],)
+        ).fetchone()
+        self.assertEqual(row["public_port"], pub["public_port"])
+        self.assertEqual(row["released"], 0)
+
     def test_stored_healthy_without_runtime_is_degraded(self):
         pub, meta = self._seed_stored_healthy()
         status, reason, stale = UR.effective_remote_service_status(
@@ -3352,6 +3373,58 @@ class AgentLifecycleWorkerTests(unittest.TestCase):
                 self.assertEqual(result["status"], "PAUSED")
                 heartbeat.assert_not_called()
                 sync.assert_not_called()
+
+
+class ServerRelayEngineInventoryProofTests(unittest.TestCase):
+    """Fresh signed Agent proof cannot override an explicitly stopped local relay."""
+
+    def plane(self, connected="connected", root=None):
+        from types import SimpleNamespace
+        return SimpleNamespace(root=root, managed_host_connectivity=lambda _client: connected)
+
+    def shown(self, plane, enabled=True):
+        return v24.inventory_remote_service_status(
+            plane, {}, enabled=enabled, stored_status="HEALTHY", runtime_verified=True,
+        )
+
+    def test_stopped_relay_overrides_fresh_verified_agent(self):
+        from unittest import mock
+        from types import SimpleNamespace
+        for state in ("inactive", "failed", "activating", "deactivating"):
+            with self.subTest(state=state), mock.patch("subprocess.run", return_value=SimpleNamespace(
+                returncode=0, stdout="LoadState=loaded\nActiveState=%s\nMainPID=0\n" % state,
+                stderr="",
+            )):
+                self.assertEqual(self.shown(self.plane()), "DEGRADED")
+
+    def test_active_unit_without_engine_pid_is_not_healthy(self):
+        from unittest import mock
+        from types import SimpleNamespace
+        with mock.patch("subprocess.run", return_value=SimpleNamespace(
+            returncode=0, stdout="LoadState=loaded\nActiveState=active\nMainPID=0\n", stderr="",
+        )):
+            self.assertEqual(self.shown(self.plane()), "DEGRADED")
+
+    def test_active_relay_keeps_verified_service_healthy(self):
+        from unittest import mock
+        from types import SimpleNamespace
+        with mock.patch("subprocess.run", return_value=SimpleNamespace(
+            returncode=0, stdout="LoadState=loaded\nActiveState=active\nMainPID=753\n", stderr="",
+        )):
+            self.assertEqual(self.shown(self.plane()), "HEALTHY")
+
+    def test_disabled_and_disconnected_do_not_probe_host(self):
+        from unittest import mock
+        with mock.patch("subprocess.run") as run:
+            self.assertEqual(self.shown(self.plane(), enabled=False), "DISABLED")
+            self.assertEqual(self.shown(self.plane(connected="disconnected")), "DEGRADED")
+            run.assert_not_called()
+
+    def test_isolated_root_never_uses_the_developer_host_runtime(self):
+        from unittest import mock
+        with tempfile.TemporaryDirectory() as tmp, mock.patch("subprocess.run") as run:
+            self.assertEqual(self.shown(self.plane(root=tmp)), "HEALTHY")
+            run.assert_not_called()
 
 
 if __name__ == "__main__":

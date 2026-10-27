@@ -1042,6 +1042,10 @@ def effective_remote_service_status(
     if agent_status == "DEGRADED":
         return "DEGRADED", agent_reason or "Agent reported runtime failure.", False
     if agent_status == "HEALTHY" and verified and port is not None:
+        from drlink_v24 import probe_server_runtime_unit
+        observed = probe_server_runtime_unit(root=getattr(plane, "root", None))
+        if observed.get("level") == "Critical":
+            return "DEGRADED", observed["detail"], False
         return "HEALTHY", "", False
     stored = str(meta["status"] if meta else "") or ""
     if stored == "HEALTHY" and port is not None:

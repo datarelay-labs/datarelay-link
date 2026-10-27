@@ -538,6 +538,7 @@ def handle_show(plane: ControlPlane, rest: list[str]) -> Optional[int]:
                 )
                 return 0
             sys.stdout.write("%-18s %-14s %-10s %-24s %s\n" % ("NAME", "DESTINATION", "SERVICE", "ENDPOINT", "STATUS"))
+            server_runtime = v24.probe_server_runtime_unit(root=plane.root)
             for s in services:
                 sobj = None
                 if s["service_object_id"]:
@@ -563,6 +564,7 @@ def handle_show(plane: ControlPlane, rest: list[str]) -> Optional[int]:
                     enabled=bool(s["enabled"]),
                     stored_status=s["status"] or "",
                     runtime_verified=verified,
+                    server_runtime=server_runtime,
                 )
                 sys.stdout.write(
                     "%-18s %-14s %-10s %-24s %s\n"

@@ -8039,6 +8039,36 @@ def probe_agent_runtime_unit(*, root: Optional[str] = None) -> dict:
     return {"level": "Unknown", "detail": "drlink-client.service status could not be read"}
 
 
+def probe_server_runtime_unit(*, root: Optional[str] = None) -> dict:
+    """Observe a managed local Relay Engine without changing its lifecycle.
+
+    Agent heartbeats describe a different process and cannot override a known
+    stopped Server relay. Isolated roots and unmanaged/legacy runtimes retain
+    their existing authenticated Agent evidence; they must not probe this host.
+    """
+    if str(root or "").rstrip("/"):
+        return {"level": "Unknown", "detail": "Isolated runtime root"}
+    import subprocess
+    try:
+        result = subprocess.run(
+            ["systemctl", "show", "drlink-server.service", "-p", "LoadState",
+             "-p", "ActiveState", "-p", "MainPID"],
+            capture_output=True, text=True, timeout=1, check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return {"level": "Unknown", "detail": "Local relay supervisor unavailable"}
+    values = dict(line.split("=", 1) for line in (result.stdout or "").splitlines() if "=" in line)
+    if result.returncode != 0 or values.get("LoadState") != "loaded":
+        return {"level": "Unknown", "detail": "No managed local Relay Engine unit"}
+    try:
+        pid = int(values.get("MainPID") or "0")
+    except ValueError:
+        pid = 0
+    if values.get("ActiveState") == "active" and pid > 0:
+        return {"level": "Healthy", "detail": "Local Relay Engine is active"}
+    return {"level": "Critical", "detail": "Local Relay Engine is not running"}
+
+
 def inventory_remote_service_status(
     plane_db,
     client,
@@ -8046,6 +8076,7 @@ def inventory_remote_service_status(
     enabled: bool,
     stored_status: str,
     runtime_verified: bool = False,
+    server_runtime: Optional[dict] = None,
 ) -> str:
     """Operator-facing Remote Service status.
 
@@ -8063,6 +8094,11 @@ def inventory_remote_service_status(
         return "DEGRADED"
     stored = str(stored_status or "").strip().upper()
     if stored == "HEALTHY" and runtime_verified:
+        observed = server_runtime if isinstance(server_runtime, dict) else probe_server_runtime_unit(
+            root=getattr(plane_db, "root", None),
+        )
+        if observed.get("level") == "Critical":
+            return "DEGRADED"
         return "HEALTHY"
     if stored == "DISABLED":
         return "DISABLED"
