@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import ipaddress
 import json
 import re
 import shlex
@@ -136,6 +137,93 @@ def short_url_command(hostname, ticket):
     # completely first, without starting a partial script or requiring pipefail.
     return ('(drlink_bootstrap=$(curl -fsSL %s) && '
             'printf \'%%s\\n\' "$drlink_bootstrap" | sudo bash)') % quoted_url
+
+
+def private_ca_ip_endpoint(allocator_url):
+    """Verified syntax for an IP-only HTTPS allocator origin (no userinfo)."""
+    parsed = urlparse(str(allocator_url or '').strip())
+    if (parsed.scheme != 'https' or not parsed.netloc or parsed.username is not None
+            or parsed.password is not None or parsed.query or parsed.fragment):
+        return None
+    try:
+        address = ipaddress.ip_address(parsed.hostname or '')
+        port = parsed.port or 443
+    except (TypeError, ValueError):
+        return None
+    if address.is_multicast or address.is_unspecified or not (1 <= port <= 65535):
+        return None
+    host = '[' + str(address) + ']' if address.version == 6 else str(address)
+    authority = host if port == 443 else host + ':' + str(port)
+    return authority, host, port
+
+
+def private_ca_ip_linux_command(allocator_url, ca_sha256, handle):
+    """Authenticate a private CA before sending a Zero-Touch credential.
+
+    Only the public CA cert is retrieved without prior trust. Its DER SHA256
+    is compared against the operator's pin. All credential traffic afterwards
+    uses strict HTTPS + that verified CA, including IP SAN validation.
+    """
+    endpoint = private_ca_ip_endpoint(allocator_url)
+    ca = str(ca_sha256 or '').lower().strip()
+    if endpoint is None or not re.fullmatch(r'[0-9a-f]{64}', ca):
+        raise ValueError('IP HTTPS allocator and CA fingerprint are required')
+    if not COMPACT_CREDENTIAL_RE.fullmatch(str(handle or '')):
+        raise ValueError('short bootstrap handle is required')
+    authority, host, port = endpoint
+    url = short_url_for_ticket(authority, handle)
+    inner = (
+        "set -euo pipefail;umask 077;d=$(mktemp -d);trap 'rm -rf \"$d\"' EXIT;"
+        "printf 'GET /ca.crt HTTP/1.0\\r\\nHost: %s\\r\\nConnection: close\\r\\n\\r\\n'|"
+        "openssl s_client -quiet -connect %s:%s 2>/dev/null|"
+        "sed -n '/^-----BEGIN CERTIFICATE-----/,/^-----END CERTIFICATE-----/p' >\"$d/ca\";"
+        "test \"$(openssl x509 -in \"$d/ca\" -outform DER|openssl dgst -sha256|awk '{print $NF}')\" = %s;"
+        "openssl x509 -in \"$d/ca\" -out \"$d/trust\";"
+        "curl -fsSL --max-redirs 0 --proto '=https' --tlsv1.2 --cacert \"$d/trust\" %s -o \"$d/stage1\";"
+        "sudo env FRP_ALLOCATOR_CA_FILE=\"$d/trust\" bash \"$d/stage1\""
+    ) % (host, host, port, ca, shell_quote(url))
+    return 'bash -c ' + shlex.quote(inner)
+
+
+def private_ca_ip_windows_command(allocator_url, ca_sha256, stage1_sha256, handle):
+    """Windows short bootstrap: pin public CA before any credential-bearing GET.
+
+    Initial TLS verification is unavailable only while fetching the public CA.
+    The untrusted certificate is never installed or executed: its DER must
+    match the operator's SHA256 before strict --cacert token downloads begin.
+    Stage-1 has its own immutable SHA256 checked before PowerShell execution.
+    """
+    endpoint = private_ca_ip_endpoint(allocator_url)
+    ca = str(ca_sha256 or '').strip().lower()
+    digest = str(stage1_sha256 or '').strip().lower()
+    if (endpoint is None or not re.fullmatch('[0-9a-f]{64}', ca)
+            or not re.fullmatch('[0-9a-f]{64}', digest)
+            or not COMPACT_CREDENTIAL_RE.fullmatch(str(handle or ''))):
+        raise ValueError('IP HTTPS, pinned CA and frozen Windows stage-1 are required')
+    url = short_url_for_ticket(endpoint[0], handle) + '?platform=windows'
+    if re.search(r'[^A-Za-z0-9:/._?=\[\]-]', url):
+        raise ValueError('unsafe bootstrap URL')
+    return (
+        "$ErrorActionPreference='Stop';"
+        "$p=Join-Path $env:TEMP ('d-'+[guid]::NewGuid().ToString('N'));"
+        "$ca=$p+'.crt';$st=$p+'.ps1';"
+        "try{& curl.exe -fsSL --max-redirs 0 --insecure -o $ca 'https://%s/ca.crt';"
+        "if($LASTEXITCODE){throw 'public CA retrieval failed'};"
+        "$cert=New-Object Security.Cryptography.X509Certificates.X509Certificate2($ca);"
+        "$fp=[BitConverter]::ToString([Security.Cryptography.SHA256]::Create().ComputeHash($cert.RawData)).Replace('-','').ToLowerInvariant();"
+        "if($fp -ne '%s'){throw 'CA fingerprint mismatch'};"
+        "$pem='-----BEGIN CERTIFICATE-----'+[Environment]::NewLine+"
+        "[Convert]::ToBase64String($cert.RawData,[Base64FormattingOptions]::InsertLineBreaks)+"
+        "[Environment]::NewLine+'-----END CERTIFICATE-----'+[Environment]::NewLine;"
+        "[IO.File]::WriteAllText($ca,$pem);"
+        "& curl.exe -fsSL --max-redirs 0 --proto '=https' --cacert $ca -o $st '%s';"
+        "if($LASTEXITCODE){throw 'verified stage-1 fetch failed'};"
+        "if((Get-FileHash -Algorithm SHA256 -LiteralPath $st).Hash.ToLowerInvariant() -ne '%s'){throw 'stage-1 hash mismatch'};"
+        "& powershell.exe -NoProfile -ExecutionPolicy Bypass -File $st;"
+        "$rc=$LASTEXITCODE;if($rc -ne 0){exit $rc}"
+        "}finally{Remove-Item -LiteralPath $ca,$st -Force -ErrorAction SilentlyContinue}"
+    ) % (endpoint[0], ca, url, digest)
+
 
 
 def https_origin(url):

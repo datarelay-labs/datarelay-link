@@ -5,10 +5,18 @@ These fixtures contain fake credentials and do not create enrollment tickets.
 """
 from __future__ import annotations
 import importlib.machinery
+import hashlib
+import io
+import os
+import shutil
+import json
+from contextlib import redirect_stdout
+import tempfile
 import sys
 import unittest
 from pathlib import Path
 from unittest import mock
+import subprocess
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "lib"))
@@ -84,6 +92,177 @@ class CompactZeroTouchContract(unittest.TestCase):
                 self.assertEqual(
                     cli.short_url_host_for_cfg({"public_hostname": HOST}), ""
                 )
+
+    def test_private_ca_numeric_ip_has_compact_verified_command(self):
+        import frp_pki
+        with tempfile.TemporaryDirectory(prefix="drlink-ip-bootstrap-") as tmp:
+            data = frp_pki.ensure_pki(Path(tmp) / "pki", "192.0.2.20")
+            cfg = {
+                "allocator_public_url": "https://192.0.2.20:6099/enroll",
+                "tls_ca_cert": data["ca_crt"],
+                "tls_server_cert": data["server_crt"],
+            }
+            plan = cli.private_ca_ip_bootstrap_plan(cfg, data["fingerprint"])
+            self.assertEqual(plan["mode"], "private_ca_ip")
+            self.assertEqual(plan["authority"], "192.0.2.20:6099")
+            command = zt.private_ca_ip_linux_command(
+                cfg["allocator_public_url"], data["fingerprint"], HANDLE
+            )
+            self.assertLessEqual(len(command), 900, len(command))
+            self.assertIn("openssl s_client", command)
+            self.assertIn("--cacert", command)
+            self.assertIn("/i/", command)
+            self.assertNotIn("--insecure", command)
+            self.assertNotIn("curl -k", command)
+            self.assertNotIn("zt1.", command)
+            self.assertIsNone(cli.private_ca_ip_bootstrap_plan(cfg, "0" * 64))
+            cfg["allocator_public_url"] = "https://192.0.2.21:6099/enroll"
+            self.assertIsNone(cli.private_ca_ip_bootstrap_plan(cfg, data["fingerprint"]))
+
+    def test_default_ip_only_linux_mints_short_issuer_command(self):
+        import frp_pki
+        with tempfile.TemporaryDirectory(prefix='drlink-ip-command-') as td:
+            root = Path(td)
+            issued = frp_pki.ensure_pki(root / 'pki', '192.0.2.20')
+            cfg = {
+                'enrollments_dir': str(root / 'enrollments'),
+                'allocator_public_url': 'https://192.0.2.20:6099/enroll',
+                'tls_ca_cert': issued['ca_crt'],
+                'tls_server_cert': issued['server_crt'],
+                'client_installer_url': 'https://example.test/installer.sh',
+            }
+            (root / 'config.json').write_text(json.dumps(cfg))
+            class FakeAllocator:
+                ServiceValidationError = ValueError
+                @staticmethod
+                def normalize_services(items):
+                    return items
+                @staticmethod
+                def issue_bootstrap_ticket(*args, **kwargs):
+                    return TICKET, {}, {'id': 'f' * 16, '_short_handle': HANDLE}
+            output = io.StringIO()
+            with mock.patch.object(cli, 'CONFIG', str(root / 'config.json')), \
+                 mock.patch.object(cli, 'require_onboarding_config'), \
+                 mock.patch.object(cli, 'resolve_configured_installer_url', return_value=cfg['client_installer_url']), \
+                 mock.patch.object(cli, 'preflight_installer_url'), \
+                 mock.patch.object(cli, 'load_allocator', return_value=FakeAllocator), \
+                 mock.patch.object(cli, 'run_enrollment_retention_cleanup'), \
+                 mock.patch.object(cli, 'short_url_host_for_cfg', return_value=''), \
+                 mock.patch.object(cli, 'is_interactive_stdin', return_value=False), \
+                 redirect_stdout(output):
+                result = cli.main(['--one-line', '--client-name', 'escare'])
+            self.assertEqual(result, 0)
+            lines = output.getvalue().splitlines()
+            commands = [x for x in lines if x.startswith('bash -c ')]
+            self.assertEqual(len(commands), 1)
+            self.assertLessEqual(len(commands[0]), 900)
+            self.assertIn('/i/', commands[0])
+            self.assertNotIn('zt1.', commands[0])
+
+    def test_private_ca_windows_does_not_send_handle_before_ca_pin(self):
+        fp, digest = 'a' * 64, 'b' * 64
+        command = zt.private_ca_ip_windows_command(
+            'https://192.0.2.20:6099/enroll', fp, digest, HANDLE
+        )
+        self.assertLessEqual(len(command), 1500)
+        self.assertIn('--insecure -o $ca', command)  # public cert only
+        self.assertIn('--cacert $ca -o $st', command)  # credential protected
+        self.assertEqual(command.count('--insecure'), 1)
+        self.assertLess(command.index("CA fingerprint mismatch"), command.index('/i/'))
+        self.assertLess(command.index('--cacert'), command.index('Get-FileHash'))
+        self.assertLess(command.index('Get-FileHash'), command.index('& powershell.exe'))
+        self.assertIn('stage-1 hash mismatch', command)
+        self.assertIn('WriteAllText', command)  # only one normalized public CA
+        self.assertIn('--max-redirs 0', command)  # no credential redirects
+        self.assertIn('finally{Remove-Item', command)
+
+    @unittest.skipUnless(shutil.which('pwsh'), 'PowerShell parser unavailable')
+    def test_private_ca_windows_stage_never_executes_before_both_pins(self):
+        import frp_pki
+        with tempfile.TemporaryDirectory(prefix='drlink-pwsh-ip-') as td:
+            root = Path(td)
+            ca_data = frp_pki.ensure_pki(root / 'pki', '192.0.2.20')
+            ca = Path(ca_data['ca_crt'])
+            stage = root / 'stage.ps1'
+            stage.write_text('Write-Output verified-stage\n')
+            digest = hashlib.sha256(stage.read_bytes()).hexdigest()
+            (root / 'curl.exe').write_text(
+                '#!/bin/sh\n'
+                'dest=;kind=\n'
+                'for a in "$@"; do\n'
+                ' case "$a" in /ca.crt|*/ca.crt) kind=ca;; *"/i/"*) kind=stage;; esac\n'
+                'done\n'
+                'while [ "$#" -gt 0 ];do if [ "$1" = -o ];then shift;dest="$1";fi;shift;done\n'
+                '[ -n "$dest" ] || exit 11\n'
+                'if [ "$kind" = ca ];then cp "$CASE_ROOT/pki/ca.crt" "$dest";exit 0;fi\n'
+                'if [ "$kind" = stage ];then cp "$CASE_ROOT/stage.ps1" "$dest";exit 0;fi\n'
+                'exit 12\n'
+            )
+            (root / 'powershell.exe').write_text(
+                '#!/bin/sh\n: > "$CASE_ROOT/stage-executed"\nexit 0\n'
+            )
+            for tool in ('curl.exe', 'powershell.exe'):
+                (root / tool).chmod(0o755)
+            env = dict(os.environ, TEMP=td, CASE_ROOT=td,
+                       PATH=td + os.pathsep + os.environ['PATH'])
+            for label, ca_pin, stage_pin, should_run in (
+                ('ok', ca_data['fingerprint'], digest, True),
+                ('bad-ca', '0' * 64, digest, False),
+                ('bad-stage', ca_data['fingerprint'], '0' * 64, False),
+            ):
+                with self.subTest(label=label):
+                    marker = root / 'stage-executed'
+                    marker.unlink(missing_ok=True)
+                    command = zt.private_ca_ip_windows_command(
+                        'https://192.0.2.20:6099/enroll', ca_pin, stage_pin, HANDLE
+                    )
+                    result = subprocess.run(
+                        ['pwsh', '-NoProfile', '-NonInteractive', '-Command', command],
+                        env=env, capture_output=True, text=True, timeout=18,
+                    )
+                    self.assertEqual(marker.exists(), should_run, result.stderr[-250:])
+                    if should_run:
+                        self.assertEqual(result.returncode, 0, result.stderr[-250:])
+                    else:
+                        self.assertNotEqual(result.returncode, 0)
+
+    def test_ip_bootstrap_rejects_dns_and_invalid_url_authority(self):
+        for u in (
+            "https://example.test/enroll", "http://192.0.2.20/enroll",
+            "https://user:pass@192.0.2.20/enroll", "https://192.0.2.20:99999/enroll",
+            "https://192.0.2.20/enroll?token=leak",
+        ):
+            with self.subTest(url=u):
+                self.assertIsNone(zt.private_ca_ip_endpoint(u))
+        self.assertEqual(
+            zt.private_ca_ip_endpoint("https://[2001:db8::1]:6099/enroll"),
+            ("[2001:db8::1]:6099", "[2001:db8::1]", 6099),
+        )
+
+    def test_missing_compact_bootstrap_fails_before_guided_confirmation(self):
+        # Previously the operator entered every service and confirmed Y,
+        # only then discovering the HTTPS prerequisite was absent.
+        with tempfile.TemporaryDirectory() as root:
+            tmp = Path(root)
+            config = {
+                "enrollments_dir": str(tmp / "enrollments"),
+                "allocator_public_url": "https://192.0.2.20:6099/enroll",
+                "tls_ca_cert": str(tmp / "ca.crt"),
+                "client_installer_url": "https://example.test/installer.sh",
+            }
+            (tmp / "config.json").write_text(json.dumps(config))
+            (tmp / "ca.crt").write_text("test-public-ca")
+            with mock.patch.object(cli, "CONFIG", str(tmp / "config.json")), \
+                 mock.patch.object(cli, "require_onboarding_config"), \
+                 mock.patch.object(cli, "fingerprint_from_cert", return_value="a" * 64), \
+                 mock.patch.object(cli, "short_url_host_for_cfg", return_value=""), \
+                 mock.patch.object(cli, "resolve_configured_installer_url", return_value="https://example.test/installer.sh"), \
+                 mock.patch.object(cli, "is_interactive_stdin", return_value=True), \
+                 mock.patch.object(cli, "read_prompt", side_effect=AssertionError("unexpected prompt")):
+                with self.assertRaises(SystemExit) as caught:
+                    cli.main(["--one-line", "--client-name", "escare"])
+                self.assertNotEqual(caught.exception.code, 0)
+                self.assertEqual(list((tmp / "enrollments").iterdir()), [])
 
     def test_long_private_ca_is_explicit_advanced_opt_in(self):
         self.assertFalse(cli.parse_args(["--one-line"]).long_bootstrap)

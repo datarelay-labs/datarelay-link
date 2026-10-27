@@ -3893,9 +3893,13 @@ against `/i/invalid-qualification-probe` and DRLink's exact invalid-handle
 `404 bootstrap unavailable` response. A generic 404, unrelated webpage,
 redirect, invalid TLS certificate or IP literal is not a trust proof.
 
-If no trusted short URL can be qualified, the default must fail *before
-issuing a ticket*, tell the operator how to configure DNS/TLS/443 and the
-short-URL edge, and must never silently print a 4,000-character `zt1` line.
+When public DNS is absent, an allocator addressed by a numeric IP can still
+produce a compact launcher if its Server TLS certificate has the IP SAN and
+its Private CA can be authenticated by the issuer's SHA256 fingerprint.
+The public CA is fetched without any bearer token; all subsequent handle-
+bearing requests require strict CA-verified HTTPS. If neither safe mode is
+available, fail before service prompts and ticket issuance, without silently
+printing a multi-kilobyte `zt1` line.
 The pinned private-CA `zt1` flow is available only via the explicitly
 selected advanced backend `frp-create-client --one-line --long-bootstrap`;
 it keeps strict fingerprint/installer verification and is not a public

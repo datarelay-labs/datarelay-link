@@ -1202,7 +1202,7 @@ def _unset_help(role):
         "  unset server bootstrap-hostname\n\n"
         "unset removes metadata only. It does not release ports or revoke identity.\n"
         "unset server public-hostname falls back to Public IP access.\n"
-        "Unsetting bootstrap-hostname uses qualified public HTTPS for compact Zero-Touch; otherwise enrollment fails before ticket issuance. Advanced --long-bootstrap is explicit only.\n"
+        "Unsetting bootstrap-hostname selects a qualified public-HTTPS hostname or verified Private-CA numeric-IP bootstrap. DNS is optional; unsafe prerequisites fail before ticket issuance. Advanced --long-bootstrap remains explicit.\n"
     )
 
 

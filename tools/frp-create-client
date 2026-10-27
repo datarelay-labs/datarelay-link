@@ -504,6 +504,40 @@ def short_url_host_for_cfg(cfg, bootstrap_hostname='', public_hostname=''):
         return ''
 
 
+def private_ca_ip_bootstrap_plan(cfg, ca_fp):
+    """Allow a DNS-free short command only when local Server PKI is valid.
+
+    This pre-ticket read checks the actual private CA, Server leaf chain and
+    numeric-IP SAN. The remote client independently pins the same CA before
+    sending its one-time credential. No DNS or CA-trust shortcut is implied.
+    """
+    zt = load_zero_touch()
+    pki = load_frp_pki()
+    if zt is None or pki is None:
+        return None
+    allocator = str(cfg.get('allocator_public_url') or '')
+    endpoint = zt.private_ca_ip_endpoint(allocator)
+    if endpoint is None:
+        return None
+    ca = remap(str(cfg.get('tls_ca_cert') or '/etc/drlink/pki/ca.crt'))
+    leaf = remap(str(cfg.get('tls_server_cert') or '/etc/drlink/pki/server.crt'))
+    try:
+        if not ca.is_file() or not leaf.is_file():
+            return None
+    except OSError:
+        return None
+    try:
+        if pki.fingerprint_from_cert_file(ca) != str(ca_fp or '').lower():
+            return None
+        pki.verify_cert_signed_by_ca(ca, leaf)
+        if not pki.cert_covers_identities(leaf, [], [endpoint[1].strip('[]')]):
+            return None
+    except Exception:
+        return None
+    return {'mode': 'private_ca_ip', 'authority': endpoint[0],
+            'allocator': allocator, 'leaf_sha256': pki.fingerprint_from_cert_file(leaf)}
+
+
 _ZT = None
 
 
@@ -1108,14 +1142,23 @@ def print_one_line_windows(
     ticket, ttl, note, public_host, control_public, allocator, ca_fp,
     installer, rdp_port=None, client_name='', management_only=False,
     ticket_id='', bootstrap_hostname='', public_hostname='', cfg=None,
-    short_handle='', stage1_sha256=''
+    short_handle='', stage1_sha256='', private_ip_plan=None
 ):
     zt = _zt()
     command = ''
     bootstrap_host = short_url_host_for_cfg(
         cfg, bootstrap_hostname=bootstrap_hostname, public_hostname=public_hostname
     )
-    if bootstrap_host and zt is not None and short_handle and stage1_sha256:
+    if private_ip_plan:
+        if not zt:
+            fail('pinned Private CA bootstrap helper unavailable')
+        try:
+            command = zt.private_ca_ip_windows_command(
+                allocator, ca_fp, stage1_sha256, short_handle
+            )
+        except (KeyError, ValueError) as exc:
+            fail('unable to construct authenticated IP Windows bootstrap: %s' % exc)
+    if not command and bootstrap_host and zt is not None and short_handle and stage1_sha256:
         try:
             command = zt.windows_strict_launcher(
                 bootstrap_host, short_handle, stage1_sha256
@@ -1223,7 +1266,7 @@ def print_one_line_windows(
     print()
 
 
-def print_one_line(ticket, ttl, note, public_host, control_public, allocator, ca_fp, installer, ssh_user, ssh_port, client_name='', management_only=False, ticket_id='', legacy_env=False, bootstrap_hostname='', public_hostname='', cfg=None, short_handle=''):
+def print_one_line(ticket, ttl, note, public_host, control_public, allocator, ca_fp, installer, ssh_user, ssh_port, client_name='', management_only=False, ticket_id='', legacy_env=False, bootstrap_hostname='', public_hostname='', cfg=None, short_handle='', private_ip_plan=None):
     tracking_id = str(ticket_id or '').strip()
     if not tracking_id and ticket:
         zt_id = _zt()
@@ -1237,7 +1280,15 @@ def print_one_line(ticket, ttl, note, public_host, control_public, allocator, ca
     bootstrap_host = short_url_host_for_cfg(
         cfg, bootstrap_hostname=bootstrap_hostname, public_hostname=public_hostname
     )
-    if bootstrap_host and not legacy_env:
+    if private_ip_plan and not legacy_env:
+        zt = _zt()
+        if zt is None:
+            fail('pinned private CA bootstrap helper unavailable')
+        try:
+            command = zt.private_ca_ip_linux_command(allocator, ca_fp, short_handle)
+        except ValueError as exc:
+            fail('unable to construct secure IP bootstrap: %s' % exc)
+    if bootstrap_host and not legacy_env and not private_ip_plan:
         try:
             zt = _zt()
             if zt is None:
@@ -1450,9 +1501,37 @@ def main(argv=None):
     if not ca_fp:
         fail('allocator CA SHA256 fingerprint is not available; cannot generate a secure command')
 
+    # Check prerequisites before collecting a Managed Host or service draft.
+    # A failing bootstrap endpoint must not surprise the operator after Y.
+    private_ip_plan = None
+    if a.one_line:
+        compact_host = short_url_host_for_cfg(cfg) if not a.long_bootstrap else ''
+        if not compact_host and not a.long_bootstrap:
+            private_ip_plan = private_ca_ip_bootstrap_plan(cfg, ca_fp)
+        if not compact_host and not private_ip_plan and not a.long_bootstrap:
+            fail(
+                'Secure compact Zero-Touch is not configured. Use a trusted HTTPS '
+                'bootstrap hostname or an IP-based allocator whose Server TLS '
+                'certificate has that IP in SAN and is signed by its configured '
+                'private CA. No enrollment ticket was issued.'
+            )
+        preflight_installer_url(installer, label=installer_label)
+
     alloc_mod = load_allocator()
     if alloc_mod is None:
         fail('allocator module is missing')
+    # Freeze the qualified resolved installer in the issuer-side record. A
+    # merely derived Windows URL must not yield a ticket without a frozen,
+    # hash-bound stage-1 that the compact command will need.
+    issuance_cfg = remapped_server_cfg(cfg)
+    if platform == 'windows':
+        issuance_cfg['windows_client_installer_url'] = installer
+        if private_ip_plan:
+            renderer = getattr(alloc_mod, 'windows_renderer_inputs_from_cfg', None)
+            if not callable(renderer) or renderer(issuance_cfg) is None:
+                fail('Windows secure stage-1 renderer is unavailable; no ticket was issued')
+    else:
+        issuance_cfg['client_installer_url'] = installer
 
     # Identification is collected once. When --client-name was already supplied
     # (guided wrapper), accept a blank --note without a second prompt.
@@ -1485,17 +1564,7 @@ def main(argv=None):
     if not confirm_client_setup():
         return 0
 
-    installer_label = 'Windows Agent installer' if platform == 'windows' else 'Agent installer'
-    preflight_installer_url(installer, label=installer_label)
-
-    compact_host = short_url_host_for_cfg(cfg)
-    if not compact_host and not a.long_bootstrap:
-        fail(
-            'A compact Zero-Touch command requires publicly trusted HTTPS on the bootstrap host. '
-            'Configure: set server bootstrap-hostname <PUBLIC-HTTPS-FQDN> '
-            '(and verify DNS/TLS), or explicitly select advanced --long-bootstrap '
-            'for private-CA installation. No enrollment ticket was issued.'
-        )
+    compact_host = compact_host if a.one_line else ''
     # Rendering receives only the host proven by the operator's explicit
     # bootstrap setting or the real public TLS probe. Never silently render
     # thousands of characters on the default beginner path.
@@ -1519,7 +1588,7 @@ def main(argv=None):
             ttl,
             note,
             label=client_name,
-            cfg=remapped_server_cfg(cfg),
+            cfg=issuance_cfg,
         )
     except Exception as exc:
         if type(exc).__name__ == 'ZeroTouchCapacityError' or 'MAX_ISSUABLE' in str(exc):
@@ -1555,6 +1624,7 @@ def main(argv=None):
             cfg=render_cfg,
             short_handle=short_handle,
             stage1_sha256=stage1_sha256,
+            private_ip_plan=private_ip_plan,
         )
     else:
         print_one_line(
@@ -1575,6 +1645,7 @@ def main(argv=None):
             public_hostname=public_hostname,
             cfg=render_cfg,
             short_handle=short_handle,
+            private_ip_plan=private_ip_plan,
         )
     try:
         here = Path(__file__).resolve()

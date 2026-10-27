@@ -230,12 +230,15 @@ A policy Rule never creates connectivity.
 
 ### Zero-Touch default and regression-prevention gate
 
-**ZT-P0-CONTRACT-20261026.** A first-time operator must receive a short,
-copyable public-HTTPS bootstrap command by default when trusted short URL
-delivery is qualified. A missing/unqualified public TLS route must return an
-actionable error **before ticket issuance**, not silently turn into a long
-private-CA `zt1` command. The advanced pinned-CA launcher remains explicit
-opt-in, never a disguised beginner default. SSH login metadata is optional.
+**ZT-P0-CONTRACT-20261026.** A first-time operator receives a short,
+copyable Zero-Touch command by default using either verified public HTTPS DNS
+or a direct numeric IP with the project's pinned Private CA. The latter
+verifies the fetched public CA certificate fingerprint **before** sending any
+one-time credential and uses strict TLS for subsequent requests. Neither DNS
+nor a third-party public certificate is mandatory. If neither safe path is
+configured, fail before the service wizard and ticket issuance. Never silently
+emit a multi-kilobyte `zt1` package. The advanced long bootstrap remains
+explicit opt-in and optional SSH login metadata stays optional.
 
 Linux/macOS and Windows must share this behavior, while Windows checks the
 downloaded stage-1 hash before running it. Signed Zero-Touch LAN destinations

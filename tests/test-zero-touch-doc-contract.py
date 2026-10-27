@@ -48,6 +48,19 @@ class ZeroTouchDocContract(unittest.TestCase):
         self.assertIn('DEFAULT_NO_SILENT_LONG_AFTER_UNSET', real_e2e)
         self.assertNotIn('ZT1_FALLBACK_AFTER_CERT_PATH', real_e2e)
 
+    def test_ip_private_ca_is_a_documented_default_without_dns(self):
+        contract = self.read('docs/ZERO_TOUCH_REGRESSION_CONTROL.md')
+        master = self.read('docs/PRODUCT_MASTER.md')
+        cli = self.read('docs/CLI_REFERENCE.md')
+        short = self.read('docs/ZERO_TOUCH_SHORT_URL.md')
+        for text in (contract, master, cli, short):
+            self.assertIn('numeric IP', text)
+            self.assertIn('CA', text)
+        self.assertIn('before collecting services', contract)
+        self.assertIn('only', contract)
+        self.assertIn('--cacert', short)
+        self.assertIn('without any credential', contract)
+
     def test_operator_and_real_user_contract_is_quantitative(self):
         short = self.read('docs/ZERO_TOUCH_REGRESSION_CONTROL.md')
         user = self.read('docs/FULL_USER_E2E_SCENARIOS.md')
