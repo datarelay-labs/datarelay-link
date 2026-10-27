@@ -3505,6 +3505,7 @@ PY
 frp_enrollment_preflight() {
   local allocator_url="$1" enroll_id="$2" enroll_secret="$3" machine_id="$4"
   local preflight_url request timestamp signature response curl_err parsed
+  FRP_ENROLLMENT_PREFLIGHT_ERROR_CLASS=""
 
   preflight_url="$(python3 - "$allocator_url" <<'PY'
 import sys
@@ -3558,7 +3559,7 @@ PY
   fi
   rm -f "$curl_err"
 
-  if RESPONSE="$response" python3 - <<'PYJSON'
+  if parsed="$(RESPONSE="$response" python3 - <<'PYJSON'
 import json, os, sys
 try:
     data=json.loads(os.environ.get('RESPONSE') or '')
@@ -3573,6 +3574,7 @@ if data.get('valid') is True:
 
 error_class=str(data.get('error_class') or 'AUTH_FAILED')
 error=str(data.get('error') or 'enrollment preflight failed')
+print(error_class)
 print('ERROR: %s' % error, file=sys.stderr)
 if error_class == 'ENROLLMENT_CODE_USED':
     print('This Enrollment Code has already been used.', file=sys.stderr)
@@ -3585,9 +3587,11 @@ elif error_class == 'ENROLLMENT_CODE_BOUND':
     print('This Enrollment Code is already bound to another machine.', file=sys.stderr)
 raise SystemExit(1)
 PYJSON
+  )"
   then
     return 0
   fi
+  FRP_ENROLLMENT_PREFLIGHT_ERROR_CLASS="$parsed"
   return 1
 }
 
