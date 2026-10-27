@@ -364,6 +364,40 @@ class CompactZeroTouchContract(unittest.TestCase):
                 self.assertNotEqual(caught.exception.code, 0)
                 self.assertEqual(list((tmp / "enrollments").iterdir()), [])
 
+    def test_linux_missing_compact_renderer_does_not_fall_back_to_long_command(self):
+        import io
+        import contextlib
+
+        output = io.StringIO()
+        with mock.patch.object(cli, "_zt", return_value=None):
+            with contextlib.redirect_stdout(output):
+                with self.assertRaises(SystemExit):
+                    cli.print_one_line(
+                        TICKET, 600, "", HOST, 7000, "https://server.example",
+                        "c" * 64, "https://example.test/artifacts/agent/bootstrap-client.sh",
+                        "", 22, cfg={"bootstrap_hostname": HOST},
+                        short_handle=HANDLE, require_compact=True,
+                    )
+        self.assertNotIn("FRP_BOOTSTRAP_TICKET=", output.getvalue())
+        self.assertNotIn("zt1.", output.getvalue())
+        self.assertNotIn("Zero-touch Agent command", output.getvalue())
+
+    def test_windows_missing_hash_does_not_fall_back_to_long_command(self):
+        import io
+        import contextlib
+
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            with self.assertRaises(SystemExit):
+                cli.print_one_line_windows(
+                    TICKET, 600, "", HOST, 7000, "https://server.example",
+                    "c" * 64, "https://example.test/artifacts/agent/bootstrap-client.ps1",
+                    cfg={"bootstrap_hostname": HOST}, short_handle=HANDLE,
+                    stage1_sha256="", require_compact=True,
+                )
+        self.assertNotIn("FRP_BOOTSTRAP_TICKET=", output.getvalue())
+        self.assertNotIn("Zero-touch Agent command", output.getvalue())
+
     def test_long_private_ca_is_explicit_advanced_opt_in(self):
         self.assertFalse(cli.parse_args(["--one-line"]).long_bootstrap)
         self.assertTrue(

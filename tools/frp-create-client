@@ -1187,7 +1187,7 @@ def print_one_line_windows(
     ticket, ttl, note, public_host, control_public, allocator, ca_fp,
     installer, rdp_port=None, client_name='', management_only=False,
     ticket_id='', bootstrap_hostname='', public_hostname='', cfg=None,
-    short_handle='', stage1_sha256='', private_ip_plan=None
+    short_handle='', stage1_sha256='', private_ip_plan=None, require_compact=False
 ):
     zt = _zt()
     command = ''
@@ -1210,6 +1210,15 @@ def print_one_line_windows(
             )
         except ValueError:
             command = ''
+
+    compact_limit = 1500 if private_ip_plan else 500
+    if require_compact and (not command or len(command) > compact_limit):
+        fail(
+            'Compact Windows Zero-Touch command could not be generated within '
+            f'{compact_limit} characters. No installation command was printed; an issued '
+            'ticket may remain pending. Review/revoke it before retrying. '
+            'Check the public HTTPS bootstrap endpoint and stage-1 SHA256.'
+        )
 
     if not command:
         sums_url = derive_sha256sums_url(installer)
@@ -1311,16 +1320,15 @@ def print_one_line_windows(
     print()
 
 
-def print_one_line(ticket, ttl, note, public_host, control_public, allocator, ca_fp, installer, ssh_user, ssh_port, client_name='', management_only=False, ticket_id='', legacy_env=False, bootstrap_hostname='', public_hostname='', cfg=None, short_handle='', private_ip_plan=None):
+def print_one_line(ticket, ttl, note, public_host, control_public, allocator, ca_fp, installer, ssh_user, ssh_port, client_name='', management_only=False, ticket_id='', legacy_env=False, bootstrap_hostname='', public_hostname='', cfg=None, short_handle='', private_ip_plan=None, require_compact=False):
     tracking_id = str(ticket_id or '').strip()
     if not tracking_id and ticket:
         zt_id = _zt()
         if zt_id is not None:
             tracking_id = zt_id.bootstrap_record_id(ticket)
 
-    # Short URL mode is explicit and assumes bootstrap_hostname terminates
-    # publicly trusted HTTPS. Without it, use the pinned allocator-CA zt1 path;
-    # never infer port-443 trust from public_url_host/public_hostname.
+    # Default compact modes are qualified public HTTPS or numeric IP with
+    # pinned Private CA. The legacy long package is explicit opt-in only.
     command = ''
     bootstrap_host = short_url_host_for_cfg(
         cfg, bootstrap_hostname=bootstrap_hostname, public_hostname=public_hostname
@@ -1333,7 +1341,7 @@ def print_one_line(ticket, ttl, note, public_host, control_public, allocator, ca
             command = zt.private_ca_ip_linux_command(allocator, ca_fp, short_handle)
         except ValueError as exc:
             fail('unable to construct secure IP bootstrap: %s' % exc)
-    if bootstrap_host and not legacy_env and not private_ip_plan:
+    if bootstrap_host and not legacy_env and not private_ip_plan and (short_handle or not require_compact):
         try:
             zt = _zt()
             if zt is None:
@@ -1341,6 +1349,15 @@ def print_one_line(ticket, ttl, note, public_host, control_public, allocator, ca
             command = zt.short_url_command(bootstrap_host, short_handle or ticket)
         except ValueError:
             command = ''
+
+    compact_limit = 900 if private_ip_plan else 200
+    if require_compact and (not command or len(command) > compact_limit):
+        fail(
+            'Compact Linux/macOS Zero-Touch command could not be generated '
+            f'within {compact_limit} characters. No installation command was printed; '
+            'an issued ticket may remain pending. Review/revoke it before '
+            'retrying. Check the public HTTPS bootstrap endpoint.'
+        )
 
     if not command:
         try:
@@ -1657,6 +1674,7 @@ def main(argv=None):
             short_handle=short_handle,
             stage1_sha256=stage1_sha256,
             private_ip_plan=private_ip_plan,
+            require_compact=not a.long_bootstrap,
         )
     else:
         print_one_line(
@@ -1678,6 +1696,7 @@ def main(argv=None):
             cfg=render_cfg,
             short_handle=short_handle,
             private_ip_plan=private_ip_plan,
+            require_compact=not a.long_bootstrap,
         )
     try:
         here = Path(__file__).resolve()
