@@ -834,8 +834,89 @@ class MCPBridge:
             return winner.get("name")
         return None
 
+    def _call_server_full(self, principal, name: str, arguments: dict) -> dict:
+        """Authenticated, operator-selected general administration on this Server.
+
+        The execution account comes only from local service configuration.
+        All process-control calls re-evaluate AI Access and job ownership;
+        authentication never substitutes for command or file permission.
+        """
+        import drlink_mcp_full_control as full
+
+        target = v24.SERVER_SELF_TARGET
+        started = time.monotonic()
+        decision = None
+        operand = ""
+        payload = None
+        failure = "Native full-control operation denied"
+        result = "DENY"
+        command_tools = {"exec", "server_exec", "server_run", "server_git"}
+        job_tools = {"server_job_poll", "server_job_input", "server_job_stop"}
+        aliases = {"server_read_file": "read_file", "server_write_file": "write_file",
+                   "server_delete_file": "delete_file"}
+        try:
+            account = full.configured_account()
+            owner = str(principal["id"] or "")
+            with self._lock:
+                if not hasattr(self, "_native_full"):
+                    self._native_full = full.FullControlRuntime()
+                runtime = self._native_full
+            operation = aliases.get(name, name)
+            if name in job_tools:
+                operand = runtime.context(owner, str(arguments.get("job_id") or ""))
+                capability = "exec"
+            elif name in command_tools:
+                operand = str(arguments.get("cwd") or
+                              os.environ.get("DRLINK_MCP_SERVER_DEFAULT_CWD") or account.home)
+                capability = "exec"
+            elif operation in full.FILE_ACTIONS:
+                operand = str(arguments.get("path") or "")
+                capability = operation
+            else:
+                raise full.FullControlDenied("Unsupported full-control operation")
+            decision = self._authorize(principal, target, capability, operand or None)
+            if decision["action"] != "ALLOW":
+                raise full.FullControlDenied("AI Access implicit DENY")
+            patterns = list(decision.get("patterns") or [])
+            if capability == "exec":
+                # Initial working directory authorization is not a sandbox for
+                # a general shell. Full-control grants the selected account's
+                # real OS authority; both fact and user are explicit in tools.
+                full.allowed_path(operand, patterns, account)
+                if name in command_tools:
+                    options = dict(arguments)
+                    options["cwd"] = operand
+                    payload = runtime.start(owner, options, patterns, git=name == "server_git")
+                elif name == "server_job_poll":
+                    payload = runtime.poll(owner, arguments["job_id"],
+                                           stdout_cursor=arguments.get("stdout_cursor", 0),
+                                           stderr_cursor=arguments.get("stderr_cursor", 0),
+                                           wait_ms=arguments.get("wait_ms", 0))
+                elif name == "server_job_input":
+                    payload = runtime.send(owner, arguments["job_id"], arguments.get("data", ""),
+                                           eof=arguments.get("eof", False))
+                else:
+                    payload = runtime.stop(owner, arguments["job_id"])
+            else:
+                payload = full.execute_file_action(operation, dict(arguments), patterns)
+            result = "ALLOW"
+        except (full.FullControlDenied, OSError, ValueError, TypeError, KeyError,
+                ControlPlaneError) as exc:
+            failure = str(exc)
+        self.plane.record_ai_activity(
+            principal=principal["name"], endpoint=target, capability=name, result=result,
+            rule=self._rule_name(decision), operand=operand or None,
+            duration_ms=int((time.monotonic() - started) * 1000),
+        )
+        if result != "ALLOW":
+            return _text_result("DENY: " + failure, is_error=True)
+        return _structured_result(payload)
+
     def _call_server_self(self, principal, name: str, arguments: dict) -> dict:
         """Server-target policy is independent of enrolled Managed Host identity."""
+        if (os.environ.get("DRLINK_MCP_SERVER_FULL_CONTROL_ENABLED") == "1"
+                and name not in ("get_server", "get_system_info")):
+            return self._call_server_full(principal, name, arguments)
         target = v24.SERVER_SELF_TARGET
         start = time.monotonic()
         local_actions = {
