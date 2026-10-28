@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -151,16 +152,100 @@ def inventory(repo: str, ref: str, index: str | None, scan_processes: bool) -> d
     }
 
 
+
+def triage_tracked_patch(repo: str, main_sha: str, entry: dict) -> dict:
+    """Test reverse applicability of tracked WIP, without applying the patch.
+
+    A successful reverse-check means the *entire* tracked patch text is already
+    present in the verified base checkout. This never authorizes deletion:
+    untracked/ignored files, branch ancestry and owner/frozen evidence remain
+    independent protections. Raw patch bytes and Git error output are not logged.
+    """
+    path = entry["path"]
+    outcome = {
+        "path": path,
+        "worktree_head": entry.get("head"),
+        "base_head": main_sha,
+        "status": "INDETERMINATE",
+        "tracked_patch_bytes": None,
+        "tracked_patch_sha256": None,
+        "worktree_changed_or_ignored_present": bool(
+            entry.get("tracked_modified_or_untracked") or entry.get("ignored_files")
+        ),
+        "deletion_authorized": False,
+    }
+    if not entry.get("exists") or Path(path).is_symlink():
+        outcome["status"] = "MISSING_OR_SYMLINK"
+        return outcome
+    if git(repo, "rev-parse", "HEAD").stdout.strip() != main_sha:
+        outcome["status"] = "BASE_HEAD_MISMATCH"
+        return outcome
+    base_status = git(repo, "status", "--porcelain=v1", "--untracked-files=normal")
+    if base_status.returncode or base_status.stdout.strip():
+        outcome["status"] = "BASE_DIRTY_OR_UNKNOWN"
+        return outcome
+    current_head = git(path, "rev-parse", "HEAD")
+    current_status = git(path, "status", "--porcelain=v1", "--untracked-files=all")
+    if (current_head.returncode or current_head.stdout.strip() != entry.get("head")
+            or current_status.returncode):
+        outcome["status"] = "WORKTREE_HEAD_OR_STATUS_UNSTABLE"
+        return outcome
+    patch = subprocess.run(
+        ["git", "-C", path, "diff", "--binary", "HEAD", "--"],
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        check=False, timeout=30,
+    )
+    if patch.returncode:
+        outcome["status"] = "DIFF_FAILED"
+        return outcome
+    outcome["tracked_patch_bytes"] = len(patch.stdout)
+    outcome["tracked_patch_sha256"] = hashlib.sha256(patch.stdout).hexdigest()
+    if len(patch.stdout) > 12 * 1024 * 1024:
+        outcome["status"] = "PATCH_TOO_LARGE_TO_COMPARE"
+    elif not patch.stdout:
+        outcome["status"] = "NO_TRACKED_PATCH"
+    else:
+        reverse = subprocess.run(
+            ["git", "-C", repo, "apply", "--reverse", "--check", "-"],
+            input=patch.stdout, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            check=False, timeout=30,
+        )
+        outcome["status"] = (
+            "EXACT_TRACKED_PATCH_ALREADY_IN_BASE" if reverse.returncode == 0
+            else "PATCH_NOT_EXACTLY_IN_BASE"
+        )
+    after_head = git(path, "rev-parse", "HEAD")
+    after_status = git(path, "status", "--porcelain=v1", "--untracked-files=all")
+    base_after = git(repo, "rev-parse", "HEAD")
+    if (after_head.returncode or after_head.stdout.strip() != entry.get("head")
+            or after_status.returncode or after_status.stdout != current_status.stdout
+            or base_after.returncode or base_after.stdout.strip() != main_sha):
+        outcome["status"] = "CONCURRENT_CHANGE_DO_NOT_RELY"
+    return outcome
+
+
 def main() -> int:
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--repository", required=True, help="Existing local Git checkout")
     p.add_argument("--base-ref", default="main")
     p.add_argument("--workspace-index", help="Existing retained checkout index")
     p.add_argument("--output", help="Optional private JSON evidence file")
+    p.add_argument("--triage-path", action="append", default=[],
+                   help="Registered worktree to compare tracked WIP against base (read-only)")
     p.add_argument("--skip-process-scan", action="store_true", help="Test only; always retains uncertainty")
     args = p.parse_args()
     try:
         report = inventory(args.repository, args.base_ref, args.workspace_index, not args.skip_process_scan)
+        if args.triage_path:
+            by_path = {entry["path"]: entry for entry in report["worktrees"]}
+            if len(args.triage_path) > 16 or len(set(args.triage_path)) != len(args.triage_path):
+                raise ValueError("triage accepts 1-16 distinct worktrees per run")
+            if any(path not in by_path for path in args.triage_path):
+                raise ValueError("triage target must be a registered exact worktree path")
+            report["tracked_patch_triage"] = [
+                triage_tracked_patch(report["repository"], report["base_head"], by_path[path])
+                for path in args.triage_path
+            ]
         data = json.dumps(report, ensure_ascii=False, indent=2) + "\n"
         if args.output:
             target = Path(args.output)
