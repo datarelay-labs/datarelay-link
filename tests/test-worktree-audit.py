@@ -103,6 +103,71 @@ class WorktreeAuditTest(unittest.TestCase):
         with self.assertRaises(OSError):
             audit.inventory(str(self.repo), "main", nonexistent, False)
 
+    def test_reverse_check_finds_exact_tracked_wip_in_base(self):
+        (self.clean / "tracked.txt").write_text("later-value\\n")
+        (self.repo / "tracked.txt").write_text("later-value\\n")
+        run("git", "add", "tracked.txt", cwd=self.repo)
+        run("git", "commit", "-qm", "already integrated", cwd=self.repo)
+        report = self.report()
+        e = self.item(report, self.clean)
+        result = audit.triage_tracked_patch(str(self.repo), report["base_head"], e)
+        self.assertEqual(result["status"], "EXACT_TRACKED_PATCH_ALREADY_IN_BASE")
+        self.assertFalse(result["deletion_authorized"])
+        self.assertEqual((self.clean / "tracked.txt").read_text(), "later-value\\n")
+
+    def test_unintegrated_patch_never_implies_deletion(self):
+        (self.clean / "tracked.txt").write_text("branch-only-change\\n")
+        report = self.report()
+        result = audit.triage_tracked_patch(
+            str(self.repo), report["base_head"], self.item(report, self.clean))
+        self.assertEqual(result["status"], "PATCH_NOT_EXACTLY_IN_BASE")
+        self.assertFalse(result["deletion_authorized"])
+
+    def test_untracked_and_ignored_are_not_part_of_patch_proof(self):
+        (self.clean / "new-untracked.txt").write_text("unique content\\n")
+        (self.clean / "private.cache").write_text("retained fixture\\n")
+        report = self.report()
+        e = self.item(report, self.clean)
+        result = audit.triage_tracked_patch(str(self.repo), report["base_head"], e)
+        self.assertEqual(result["status"], "NO_TRACKED_PATCH")
+        self.assertEqual(e["disposition"], "PRESERVE_WIP")
+        self.assertFalse(result["deletion_authorized"])
+
+    def test_stale_snapshot_fails_closed(self):
+        report = self.report()
+        e = dict(self.item(report, self.clean), head="0" * 40)
+        result = audit.triage_tracked_patch(str(self.repo), report["base_head"], e)
+        self.assertEqual(result["status"], "WORKTREE_HEAD_OR_STATUS_UNSTABLE")
+
+    def test_dirty_base_prevents_reverse_proof(self):
+        (self.repo / "tracked.txt").write_text("uncommitted base\\n")
+        report = self.report()
+        result = audit.triage_tracked_patch(
+            str(self.repo), report["base_head"], self.item(report, self.clean))
+        self.assertEqual(result["status"], "BASE_DIRTY_OR_UNKNOWN")
+
+    def test_triage_cli_rejects_unregistered_target(self):
+        proc = subprocess.run(
+            [sys.executable, str(TOOL), "--repository", str(self.repo),
+             "--triage-path", str(self.root / "not-a-worktree"), "--skip-process-scan"],
+            capture_output=True, text=True, check=False, timeout=30)
+        self.assertEqual(proc.returncode, 1)
+        self.assertIn("registered exact worktree", proc.stderr)
+        self.assertTrue(self.clean.is_dir())
+
+    def test_selected_cli_triage_report_is_private(self):
+        target = self.root / "private" / "triage.json"
+        proc = subprocess.run(
+            [sys.executable, str(TOOL), "--repository", str(self.repo),
+             "--triage-path", str(self.clean), "--skip-process-scan",
+             "--output", str(target)],
+            capture_output=True, text=True, check=False, timeout=30)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        result = json.loads(target.read_text())["tracked_patch_triage"][0]
+        self.assertEqual(result["status"], "NO_TRACKED_PATCH")
+        self.assertFalse(result["deletion_authorized"])
+        self.assertEqual(target.stat().st_mode & 0o777, 0o600)
+
     def test_report_written_private_and_no_git_mutation(self):
         before = run("git", "status", "--porcelain", cwd=self.repo)
         target = self.root / "private" / "audit.json"
