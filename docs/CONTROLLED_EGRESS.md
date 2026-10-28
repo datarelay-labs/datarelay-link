@@ -141,6 +141,22 @@ For approved HTTP requests:
 
 Malformed or ambiguous requests fail closed.
 
+### Supported HTTP/1.1 strict profile
+
+This is a deliberately **restricted** forward proxy, not a complete generic
+HTTP/1.1 implementation. A missing or duplicate HTTP/1.1 Host header is 400.
+For CONNECT, supplied Host authority must resolve to the same canonical
+hostname and port as the CONNECT target before DNS or any upstream connection.
+Malformed absolute-form requests with a literal URI fragment are 400 instead
+of silently dropping the fragment.
+
+For HTTP absolute-form, a mismatched Host is rejected rather than ignored and
+rewritten; this is a deliberate fail-closed compatibility exception to
+RFC 9112 §3.2.2. Transfer-Encoding/chunked request bodies remain unsupported
+and are rejected, as documented in the gateway's v1 profile. Do **not**
+advertise full RFC 9112 proxy conformance. The detailed requirements and
+open decisions are in [Standards Compliance & Gap Matrix](STANDARDS_COMPLIANCE_GAP_MATRIX.md).
+
 ## 7. HTTPS CONNECT
 
 For HTTPS proxying:
@@ -238,6 +254,14 @@ public suffix safety where wildcard rules are supported
 ```
 
 Ambiguity fails closed.
+
+The authoritative v2.4 SQLite Internet Access FQDN object interface currently
+accepts ASCII domain names. The legacy/shared hostname helper uses Python's
+stdlib IDNA2003 codec (not complete IDNA2008); it rejects non-ASCII Unicode
+labels when encoding would silently alias a different name such as
+`faß.de` → `fass.de`. Non-lossy names such as `bücher.de` are still
+accepted by that helper. Full IDNA2008/UTS46 input support is a separate
+compatibility decision; it is **not** claimed by this implementation.
 
 ## 14. IP literals
 
