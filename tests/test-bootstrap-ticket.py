@@ -5,7 +5,6 @@ import hashlib
 import hmac
 import json
 import re
-import shlex
 import subprocess
 import os
 import sys
@@ -968,15 +967,21 @@ def test_compact_redaction_and_command_length():
         return
     url = zt.short_url_for_ticket('remote.xdr.ooo', compact)
     cmd = zt.short_url_command('remote.xdr.ooo', compact)
-    if len(url) != 47 or cmd != 'curl -fsSL %s|sudo bash' % url:
-        fail('compact command shape', '%s %s' % (len(url), cmd))
+    if len(url) != 47:
+        fail('compact reference URL length', len(url))
         return
-    if len(cmd) != 68:
-        fail('compact command length', len(cmd))
+    # The 68-character raw curl|bash pipeline is obsolete: it masks download
+    # failures under POSIX shells. Keep the documented <=200-character public
+    # reference benchmark while requiring fail-closed execution behavior.
+    problem = _short_launcher_contract_error(cmd, url)
+    if problem:
+        fail('compact fail-closed command', problem)
         return
     quoted = zt.short_url_command('bad host.example', compact)
-    if compact not in quoted or not quoted.startswith("curl -fsSL '"):
-        fail('unsafe host not quoted', quoted)
+    quoted_url = zt.short_url_for_ticket('bad host.example', compact)
+    problem = _short_launcher_contract_error(quoted, quoted_url)
+    if problem:
+        fail('unsafe host not quoted as a single argument', problem)
         return
     sb_spec = importlib.util.spec_from_file_location(
         'frp_support_bundle', ROOT / 'lib' / 'frp_support_bundle.py'
@@ -1053,20 +1058,47 @@ def test_compact_redaction_and_command_length():
     pass_('COMPACT_REDACTION_AND_COMMAND_LENGTH')
 
 
-def _pipeline_tokens(command):
-    # Python 3.7 shlex absorbs '|' into the current word when
-    # whitespace_split is set, so 'url|sudo' is one token. Later Pythons
-    # keep the pipe. Leave whitespace_split off and treat ':' as a word
-    # character so an unquoted https URL stays one token and the pipe
-    # stays a separate boundary on both.
-    lexer = shlex.shlex(command, posix=True, punctuation_chars='|')
-    lexer.wordchars += ':'
-    return list(lexer)
+def _short_launcher_contract_error(command, url):
+    """Test a short fail-closed POSIX launcher without real curl or sudo.
+
+    The public reference is <=200 characters, not an absolute 68-char cap.
+    Both executable names are shadowed with shell functions: no outbound
+    traffic, privilege escalation, or remote script execution can occur.
+    """
+    if not command or command != command.strip() or '\n' in command or '\r' in command:
+        return 'launcher must be one copyable line'
+    if len(command) > 200:
+        return 'public reference exceeds the 200-character benchmark'
+    if command.count(url) != 1 or 'curl -fsSL ' not in command:
+        return 'verified HTTPS URL must be fetched exactly once'
+    if 'sudo bash' not in command or '--insecure' in command or 'curl -k' in command:
+        return 'verified HTTPS and controlled installer execution required'
+
+    environment = dict(os.environ, BOOTSTRAP_EXPECTED_URL=url)
+    failed = subprocess.run(
+        ['sh', '-c',
+         'curl() { return 22; }; '
+         'sudo() { printf "%s" "UNEXPECTED_SUDO_CALL"; }; ' + command],
+        capture_output=True, text=True, check=False, timeout=10, env=environment,
+    )
+    if failed.returncode == 0 or failed.stdout:
+        return 'download failure must stop before installer execution'
+
+    fetched = subprocess.run(
+        ['sh', '-c',
+         'curl() { test "$1" = -fsSL && test "$2" = "$BOOTSTRAP_EXPECTED_URL" '
+         '|| return 93; printf "%s\n" "echo safe"; }; '
+         'sudo() { test "$1" = bash || return 94; cat; }; ' + command],
+        capture_output=True, text=True, check=False, timeout=10, env=environment,
+    )
+    if fetched.returncode != 0 or fetched.stdout != 'echo safe\n':
+        return 'successful fetch must pass exact script data to installer'
+    return None
 
 
 def test_shell_safety_floor():
     alphabet = set('ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-')
-    unsafe = set(" \t\n;|&$`'\"\\<>()*?[]{}~!")
+    unsafe = set(" \t\n;|&$" + chr(96) + "'\"\\<>()*?[]{}~!")
     for _ in range(10000):
         token = MOD.generate_compact_bootstrap_credential()
         if len(token) != 22 or (set(token) - alphabet):
@@ -1079,47 +1111,26 @@ def test_shell_safety_floor():
     zt = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(zt)
     compact = 'A' * 22
-    cmd = zt.short_url_command('remote.xdr.ooo', compact)
     url = 'https://remote.xdr.ooo/i/%s' % compact
-    if cmd != 'curl -fsSL %s|sudo bash' % url or len(cmd) != 68:
-        fail('68-char target', '%s %s' % (len(cmd), cmd))
-        return
-    if not cmd.startswith('curl -fsSL https://') or '/i/' not in cmd or not cmd.endswith('|sudo bash'):
-        fail('safety model flags removed', cmd)
-        return
     if set(url) & unsafe:
         fail('url metacharacter', url)
         return
-    tokens = _pipeline_tokens(cmd)
-    if tokens != ['curl', '-fsSL', url, '|', 'sudo', 'bash']:
-        fail('shell tokens', tokens)
+    old_pipeline = 'curl -fsSL %s|sudo bash' % url
+    if _short_launcher_contract_error(old_pipeline, url) is None:
+        fail('unsafe historical pipeline incorrectly accepted')
         return
-    sample = MOD.generate_compact_bootstrap_credential()
-    sample_cmd = zt.short_url_command('remote.xdr.ooo', sample)
-    sample_url = 'https://remote.xdr.ooo/i/%s' % sample
-    if _pipeline_tokens(sample_cmd) != ['curl', '-fsSL', sample_url, '|', 'sudo', 'bash']:
-        fail('random credential tokens', sample_cmd)
-        return
-    quoted = zt.short_url_command('bad host.example', compact)
-    quoted_tokens = _pipeline_tokens(quoted)
-    if '|' not in quoted_tokens or any('bad' in part and 'host' in part and ' ' not in part for part in quoted_tokens):
-        fail('unsafe host split', quoted_tokens)
-        return
-    if not any('bad host.example' in part for part in quoted_tokens):
-        fail('unsafe host not kept as one word', quoted_tokens)
-        return
-    proc = subprocess.run(
-        ['bash', '-c', 'set -f; left=${1%%|*}; right=${1#*|}; set -- $left; printf "%s\\n" "$#" "$@"; set -- $right; printf "%s\\n" "$#" "$@"', 'bash', cmd],
-        capture_output=True, text=True, check=False,
-    )
-    if proc.returncode != 0:
-        fail('bash tokenize', proc.stderr)
-        return
-    lines = proc.stdout.splitlines()
-    if lines != ['3', 'curl', '-fsSL', url, '2', 'sudo', 'bash']:
-        fail('bash pipeline split', lines)
-        return
-    pass_('SHELL_SAFETY_68_CHAR_FLOOR')
+    for name, host, ticket in (
+        ('public reference', 'remote.xdr.ooo', compact),
+        ('random credential', 'remote.xdr.ooo', MOD.generate_compact_bootstrap_credential()),
+        ('unsafe host quoted', 'bad host.example', compact),
+    ):
+        command = zt.short_url_command(host, ticket)
+        expected_url = zt.short_url_for_ticket(host, ticket)
+        problem = _short_launcher_contract_error(command, expected_url)
+        if problem:
+            fail(name + ' fail-closed launcher', problem)
+            return
+    pass_('SHELL_SAFETY_COMPACT_FAIL_CLOSED')
 
 
 def test_windows_renderer_frozen_and_launcher():
