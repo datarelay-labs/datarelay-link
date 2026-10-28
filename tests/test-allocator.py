@@ -919,7 +919,50 @@ def case_legacy_authority_replaces_stale_disabled_projection():
     pass_('three authoritative legacy recoveries replace stale disabled projections without leaking reservations')
 
 
+def case_long_remote_service_identity_and_legacy_ownership():
+    from drlink_v24_runtime import legacy_remote_service_proxy_id
+    names = ['c27d-fpool-lastslot-filler-%03d' % i for i in range(95)]
+    for pool in ('normal', 'fixed-tcp'):
+        env = Env(port_start=18000, port_end=18120)
+        try:
+            code, response = env.enroll([svc('ssh', preset='ssh')])
+            assert code == 200, response
+            allocations = [env.allocator.reserve_remote_service_endpoint(
+                'machine-a', name, pool, local_port=20000+i, enabled=False)
+                for i, name in enumerate(names)]
+            assert len({x['remote_port'] for x in allocations}) == len(names)
+            assert len({x['proxy_id'] for x in allocations}) == len(names)
+        finally:
+            env.cleanup()
+    env = Env()
+    try:
+        assert env.enroll([svc('ssh', preset='ssh')])[0] == 200
+        first, second = names[:2]
+        legacy = legacy_remote_service_proxy_id(first)
+        original = env.allocator.reserve_remote_service_endpoint(
+            'machine-a', first, 'fixed-tcp', proxy_id=legacy, enabled=False)
+        before = env.load_state()
+        for action in (
+            lambda: env.allocator.reserve_remote_service_endpoint(
+                'machine-a', second, 'fixed-tcp', proxy_id=legacy, enabled=False),
+            lambda: env.allocator.release_remote_service_endpoint('machine-a', second, proxy_id=legacy),
+        ):
+            try:
+                action()
+                fail('colliding runtime identity changed another publication')
+            except MOD.RegistrySchemaError:
+                assert env.load_state() == before
+        peer = env.allocator.reserve_remote_service_endpoint('machine-a', second, 'fixed-tcp', enabled=False)
+        assert peer['remote_port'] != original['remote_port']
+        assert env.allocator.release_remote_service_endpoint(
+            'machine-a', first, proxy_id=legacy)['released_port'] == original['remote_port']
+    finally:
+        env.cleanup()
+    pass_('long Remote Service names have distinct endpoints in both pools; legacy identity ownership preserved')
+
+
 def main():
+    case_long_remote_service_identity_and_legacy_ownership()
     case_a_single_ssh()
     case_b_no_ssh()
     case_c_multiple()

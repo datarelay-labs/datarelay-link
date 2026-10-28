@@ -741,7 +741,6 @@ frp_client_main() {
   unset FRP_CLIENT_OPERATION_ID 2>/dev/null || true
   if [[ "$FRP_RESUME_PENDING" == "1" ]]; then
     echo "A previous enrollment did not finish (response lost or interrupted)." >&2
-    echo "Resuming from local crash-safe recovery state; the Bootstrap Ticket is not reused." >&2
     if ! frp_pending_enroll_load "$MACHINE_ID" "$SERVICES_FILE" "$ALLOCATED_FILE" "$ENROLL_META_FILE" \
       RESUME_PHASE ENROLL_ID ENROLL_SECRET FRP_CLIENT_OPERATION_ID; then
       echo "ERROR: local recovery state is present but unusable." >&2
@@ -749,11 +748,40 @@ frp_client_main() {
       frp_emit_failure_class RECOVERY_REQUIRED
       return 1
     fi
-    FRP_ZERO_TOUCH_COMPLETE=1
-    FRP_SERVICES_JSON="$(python3 -c 'import json,sys; print(json.dumps(json.load(open(sys.argv[1],encoding="utf-8"))))' "$SERVICES_FILE")"
-    export FRP_SERVICES_JSON
-    services_load_from_env
-    unset FRP_SERVICES_JSON
+    # A newly issued setup command must be usable when the previous attempt's
+    # authorization has expired, been revoked, or no longer exists. Ask the
+    # pinned allocator; local time and an arbitrary network failure cannot
+    # authorize abandoning a transaction. A cached committed response still
+    # resumes without a network call, and an active/used code keeps exact replay.
+    if frp_zero_touch_active && [[ -n "${FRP_BOOTSTRAP_TICKET:-}" ]] \
+        && [[ "$RESUME_PHASE" == "redeemed" ]]; then
+      if frp_enrollment_preflight "$ALLOCATOR_URL" "$ENROLL_ID" "$ENROLL_SECRET" \
+          "$MACHINE_ID" >/dev/null 2>&1; then
+        :
+      else
+        case "${FRP_ENROLLMENT_PREFLIGHT_ERROR_CLASS:-}" in
+          ENROLLMENT_CODE_EXPIRED|ENROLLMENT_CODE_REVOKED|AUTH_FAILED)
+            echo "The previous enrollment authorization is no longer usable." >&2
+            echo "Validating the supplied new one-time setup command." >&2
+            FRP_RESUME_PENDING=0
+            FRP_REPLACE_PENDING=1
+            RESUME_PHASE=""
+            FRP_ZERO_TOUCH_COMPLETE=0
+            # Keep the durable old transaction until the new ticket is accepted
+            # and the existing atomic pending write commits its replacement.
+            unset ENROLL_ID ENROLL_SECRET FRP_CLIENT_OPERATION_ID
+            ;;
+        esac
+      fi
+    fi
+    if [[ "$FRP_RESUME_PENDING" == "1" ]]; then
+      echo "Resuming from local crash-safe recovery state; the Bootstrap Ticket is not reused." >&2
+      FRP_ZERO_TOUCH_COMPLETE=1
+      FRP_SERVICES_JSON="$(python3 -c 'import json,sys; print(json.dumps(json.load(open(sys.argv[1],encoding="utf-8"))))' "$SERVICES_FILE")"
+      export FRP_SERVICES_JSON
+      services_load_from_env
+      unset FRP_SERVICES_JSON
+    fi
   elif frp_zero_touch_active; then
     :
   else

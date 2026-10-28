@@ -524,7 +524,7 @@ def handle_show(plane: ControlPlane, rest: list[str]) -> Optional[int]:
         client = plane.require_client(rest[1])
         if view == "remote-services":
             services = plane.conn.execute(
-                "SELECT s.name, s.public_port, s.enabled, m.destination_name, m.status, "
+                "SELECT s.name, s.public_port, s.enabled, s.preset_name, m.destination_name, m.status, "
                 "m.service_object_id, m.pending_allocation, m.runtime_verified "
                 "FROM published_services s LEFT JOIN remote_service_meta m ON m.service_id = s.id "
                 "WHERE s.client_id = ? AND s.released = 0 ORDER BY s.name",
@@ -538,12 +538,20 @@ def handle_show(plane: ControlPlane, rest: list[str]) -> Optional[int]:
                 )
                 return 0
             sys.stdout.write("%-18s %-14s %-10s %-24s %s\n" % ("NAME", "DESTINATION", "SERVICE", "ENDPOINT", "STATUS"))
+            server_runtime = v24.probe_server_runtime_unit(root=plane.root)
             for s in services:
                 sobj = None
                 if s["service_object_id"]:
                     sobj = plane.conn.execute(
                         "SELECT name FROM service_objects WHERE id = ?", (s["service_object_id"],)
                     ).fetchone()
+                service_label = "-"
+                if sobj:
+                    service_label = sobj["name"]
+                elif not s["service_object_id"]:
+                    # Older enrollment publications carry an explicit preset
+                    # rather than a catalog ID. Do not guess a missing ID.
+                    service_label = s["preset_name"] or "-"
                 endpoint = (
                     "Pending allocation"
                     if s["pending_allocation"]
@@ -563,13 +571,14 @@ def handle_show(plane: ControlPlane, rest: list[str]) -> Optional[int]:
                     enabled=bool(s["enabled"]),
                     stored_status=s["status"] or "",
                     runtime_verified=verified,
+                    server_runtime=server_runtime,
                 )
                 sys.stdout.write(
                     "%-18s %-14s %-10s %-24s %s\n"
                     % (
                         s["name"],
                         s["destination_name"] or "-",
-                        sobj["name"] if sobj else "-",
+                        service_label,
                         endpoint,
                         status,
                     )

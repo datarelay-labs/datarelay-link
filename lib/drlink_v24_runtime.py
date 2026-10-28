@@ -8,6 +8,7 @@ runtime apply (unless DRLINK_SKIP_ACTIVATION is set for unit tests).
 from __future__ import annotations
 
 import json
+import hashlib
 import os
 import re
 import socket
@@ -25,14 +26,30 @@ V24_SERVICE_PREFIX = "rs-"
 SERVICE_ID_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{0,31}$")
 
 
-def remote_service_proxy_id(name: str) -> str:
-    """Stable frpc/client-state service id for a v2.4 Remote Service."""
+def legacy_remote_service_proxy_id(name: str) -> str:
+    """Pre-hash identity, retained only for existing canonical publications."""
     raw = re.sub(r"[^a-z0-9._-]+", "-", str(name or "").strip().lower()).strip("-._")
     if not raw:
         raw = "svc"
     candidate = (V24_SERVICE_PREFIX + raw)[:32]
     if not SERVICE_ID_RE.fullmatch(candidate):
         candidate = (V24_SERVICE_PREFIX + re.sub(r"[^a-z0-9]+", "", raw) + "x")[:32]
+    return candidate
+
+
+def remote_service_proxy_id(name: str, *, stored: Optional[str] = None) -> str:
+    """Bounded identity without discarding the distinguishing name suffix.
+
+    A canonical stored identity preserves existing publications across upgrades
+    and restores. It may select only this exact name's old or current encoding.
+    """
+    raw = re.sub(r"[^a-z0-9._-]+", "-", str(name or "").strip().lower()).strip("-._") or "svc"
+    full = V24_SERVICE_PREFIX + raw
+    candidate = full if len(full) <= 32 else full[:7] + "-" + hashlib.sha256(full.encode()).hexdigest()[:24]
+    if stored:
+        if stored not in (candidate, legacy_remote_service_proxy_id(name)):
+            raise ControlPlaneError("Remote Service runtime identity does not match its canonical name")
+        return stored
     return candidate
 
 
@@ -234,7 +251,7 @@ def build_desired_runtime_services(
         name = str(row["name"])
         if only_name is not None and name.lower() != only_name.lower():
             continue
-        proxy_id = remote_service_proxy_id(name)
+        proxy_id = remote_service_proxy_id(name, stored=dict(row).get("runtime_proxy_id"))
         enabled = bool(row["enabled"]) and str(row["status"] or "") != "DISABLED"
         endpoint_port = row["endpoint_port"]
         reason = str(row["reason"] or "")
@@ -697,7 +714,7 @@ def _agent_runtime_intent_snapshot(plane_db) -> tuple:
     return tuple(tuple(row) for row in plane_db.conn.execute(
         "SELECT name, destination, destination_client_id, service_object, "
         "enabled, endpoint_port, pending_allocation, delete_pending, "
-        "pool_class, enrollment_seed, updated_at, rowid "
+        "pool_class, enrollment_seed, updated_at, runtime_proxy_id, rowid "
         "FROM agent_remote_services ORDER BY name"
     ))
 
@@ -802,7 +819,9 @@ def _apply_agent_runtime_serialized(
             "error": "Agent Remote Service intent changed during runtime projection; retry synchronization",
         }
     if names is not None:
-        want = {remote_service_proxy_id(n) for n in names}
+        selected = {str(n).casefold() for n in names}
+        want = {sid for sid, rec in desired.items()
+                if str(rec.get("name") or "").casefold() in selected}
         # Still keep legacy + selected; drop other v24 not in names only when names filter set
         # for full reconcile names is None.
         filtered = {}
@@ -824,11 +843,11 @@ def _apply_agent_runtime_serialized(
         # marks deletion) before runtime projection, so it remains removable.
         previous = state.get("services") if isinstance(state.get("services"), dict) else {}
         for row in plane_db.conn.execute(
-            "SELECT name, endpoint_port FROM agent_remote_services WHERE "
+            "SELECT name, endpoint_port, runtime_proxy_id FROM agent_remote_services WHERE "
             "enrollment_seed=1 AND enabled=1 AND delete_pending=0 AND "
             "pending_allocation=0 AND endpoint_port IS NOT NULL ORDER BY name"
         ):
-            proxy_id = remote_service_proxy_id(row["name"])
+            proxy_id = remote_service_proxy_id(row["name"], stored=row["runtime_proxy_id"])
             old = previous.get(proxy_id)
             if not isinstance(old, dict) or not old.get("v24_remote_service"):
                 continue
@@ -1106,7 +1125,11 @@ def _configured_v24_runtime_ports(root: Optional[str] = None) -> dict:
         if record.get("enabled", True) is False:
             continue
         name = str(record.get("name") or "").strip()
-        if not name or str(sid) != remote_service_proxy_id(name):
+        if not name:
+            continue
+        try:
+            remote_service_proxy_id(name, stored=str(sid))
+        except ControlPlaneError:
             continue
         if str(record.get("id") or sid) != str(sid):
             continue
@@ -1229,7 +1252,8 @@ def verified_remote_service_status(
     # heartbeat until that same target accepts a connection again.
     if allow_unverified and 'unreachable' in str(row['reason'] or '').lower():
         current = load_client_state(actual_root)
-        target = (current.get('services') or {}).get(remote_service_proxy_id(name))
+        target = (current.get('services') or {}).get(
+            remote_service_proxy_id(name, stored=dict(row).get('runtime_proxy_id')))
         try:
             with socket.create_connection(
                 (str(target['local_ip']), int(target['local_port'])), timeout=0.2
@@ -1241,7 +1265,7 @@ def verified_remote_service_status(
         # Same strictly isolated historical fixture contract as mark_runtime_status.
         return ('HEALTHY', '') if row['endpoint_port'] is not None and not row['pending_allocation'] else ('DEGRADED', missing)
     state = load_client_state(actual_root)
-    proxy_id = remote_service_proxy_id(name)
+    proxy_id = remote_service_proxy_id(name, stored=dict(row).get('runtime_proxy_id'))
     record = (state.get('services') or {}).get(proxy_id)
     desired = build_desired_runtime_services(
         plane_db, state, root=actual_root, only_name=name

@@ -75,6 +75,7 @@ python3 tests/test-v24-bundle-preview-writer-isolation.py
 python3 tests/test-v24-bootstrap-catalog-convergence.py
 python3 tests/test-v24-bundle-stale-plan-safety.py
 python3 tests/test-zero-touch-command-exit.py
+bash tests/test-pending-enroll-recovery.sh
 bash tests/test-client-rollback-absent-unit.sh
 bash tests/test-client-upgrade-enrolled-state.sh
 bash tests/test-client-upgrade-legacy-supervisor.sh

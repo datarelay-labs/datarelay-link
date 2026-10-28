@@ -1,4 +1,8 @@
 @echo off
+setlocal
+REM A PS7 -> cmd.exe -> Windows PowerShell chain inherits PS7 module paths.
+REM Rebuild defaults in the child engine; do not change the caller environment.
+set "PSModulePath="
 REM drlink.cmd — canonical Data Relay Link Windows CLI identity.
 REM DRLINK-PRODUCT-SHIM — ownership marker: uninstall removes only launchers carrying it.
 REM PowerShell 5.1 -File rejects a standalone dash before invoking the script.

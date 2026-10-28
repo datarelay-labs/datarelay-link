@@ -183,21 +183,22 @@ def enrollment_service_projection(existing_services, requested):
     adopt the exact derived key with the same public name from this client's
     existing inventory; arbitrary same-name records cannot claim a reservation.
     """
-    from drlink_v24_runtime import remote_service_proxy_id
+    from drlink_v24_runtime import remote_service_proxy_id, legacy_remote_service_proxy_id
 
     services = dict(existing_services or {})
     for spec in requested:
         sid = spec['id']
         if sid in services:
             continue
-        proxy_id = remote_service_proxy_id(sid)
-        previous = services.get(proxy_id)
-        if (
-            isinstance(previous, dict)
-            and previous.get('v24_remote_service') is True
-            and str(previous.get('name') or '').casefold() == sid.casefold()
-        ):
-            services[sid] = services.pop(proxy_id)
+        for proxy_id in dict.fromkeys((remote_service_proxy_id(sid), legacy_remote_service_proxy_id(sid))):
+            previous = services.get(proxy_id)
+            if (
+                isinstance(previous, dict)
+                and previous.get('v24_remote_service') is True
+                and str(previous.get('name') or '').casefold() == sid.casefold()
+            ):
+                services[sid] = services.pop(proxy_id)
+                break
     return services
 
 
@@ -2078,6 +2079,9 @@ class Allocator:
                     used.add(port)
 
             previous = services.get(sid) if isinstance(services.get(sid), dict) else {}
+            if (previous.get('v24_remote_service')
+                    and str(previous.get('name') or '').casefold() != str(service_name).casefold()):
+                raise RegistrySchemaError('runtime proxy identity belongs to another Remote Service')
             displaced_port = None
             remote_port = coerce_port(preserve_port)
             if remote_port is None:
@@ -2200,7 +2204,11 @@ class Allocator:
             services = client.get('services') or {}
             if not isinstance(services, dict):
                 return {'released_port': None, 'proxy_id': sid}
-            prev = services.pop(sid, None)
+            prev = services.get(sid)
+            if (isinstance(prev, dict) and prev.get('v24_remote_service')
+                    and str(prev.get('name') or '').casefold() != str(service_name).casefold()):
+                raise RegistrySchemaError('runtime proxy identity belongs to another Remote Service')
+            services.pop(sid, None)
             released = coerce_port((prev or {}).get('remote_port')) if isinstance(prev, dict) else None
             # Drop from reserved[] only when no other owner still uses the port.
             if released is not None:

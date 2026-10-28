@@ -25,6 +25,41 @@ try {
     $failed = $false
     try { Get-FrpWindowsRoot | Out-Null } catch { $failed = $_.Exception.Message -match 'multiple enrolled' }
     Assert-FrpTrue $failed 'ambiguous two enrolled roots fail closed'
+    Remove-Item -LiteralPath $canonical -Recurse -Force
+    $script:RootProbeFailures = 1
+    $script:RootProbeAlwaysDenied = $false
+    function Test-Path {
+        [CmdletBinding()]
+        param([string]$LiteralPath, [string]$Path, [string]$PathType)
+        $probe = if ($LiteralPath) { $LiteralPath } else { $Path }
+        if ($probe -eq (Join-Path $legacy 'state/client-state.json') -and
+            ($script:RootProbeAlwaysDenied -or $script:RootProbeFailures -gt 0)) {
+            $script:RootProbeFailures--
+            throw [System.UnauthorizedAccessException]::new('concurrent state replacement fixture')
+        }
+        $parameters = @{}
+        if ($LiteralPath) { $parameters.LiteralPath = $LiteralPath }
+        else { $parameters.Path = $Path }
+        if ($PathType) { $parameters.PathType = $PathType }
+        return (Microsoft.PowerShell.Management\Test-Path @parameters)
+    }
+    try {
+        Assert-FrpEqual $legacy (Get-FrpWindowsRoot) 'transient metadata denial retries without replacing enrolled identity'
+        $script:RootProbeFailures = 2
+        Assert-FrpEqual $legacy (Get-FrpWindowsRoot) 'last bounded attempt can still recover the same legacy root'
+        $script:RootProbeAlwaysDenied = $true
+        $failed = $false
+        try { Get-FrpWindowsRoot | Out-Null }
+        catch { $failed = $_.Exception.Message -match 'cannot inspect.*Retry.*Refusing' }
+        Assert-FrpTrue $failed 'persistent access denial fails closed with actionable recovery, never canonical fallback'
+        Seed-EnrolledRoot $canonical 'client-identity.key'
+        $failed = $false
+        try { Get-FrpWindowsRoot | Out-Null }
+        catch { $failed = $_.Exception.Message -match 'cannot inspect.*Retry.*Refusing' }
+        Assert-FrpTrue $failed 'a complete canonical root cannot hide a second unreadable legacy identity'
+    } finally {
+        Remove-Item Function:Test-Path
+    }
     Write-FrpTestPass 'test-legacy-upgrade-root'
 } finally {
     $env:ProgramData = $oldProgramData

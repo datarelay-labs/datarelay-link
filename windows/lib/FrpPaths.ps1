@@ -27,19 +27,36 @@ function Get-FrpWindowsRoot {
     }
     $canonical = Join-Path $env:ProgramData 'drlink'
     $legacy = Join-Path $env:ProgramData 'frp-auto-deploy'
-    $enrolled = @()
-    foreach ($candidate in @($canonical, $legacy)) {
-        $complete = $true
-        foreach ($rel in @('state/client-state.json','config/frpc.toml','state/client-identity.pub')) {
-            if (-not (Test-Path -LiteralPath (Join-Path $candidate $rel) -PathType Leaf)) { $complete = $false; break }
+    # State replacement/ACL finalization can briefly race a new CLI process.
+    # Retry the entire discovery, never treat an unreadable root as absent:
+    # otherwise a partially inspected legacy identity could select a new root.
+    for ($attempt = 0; $attempt -lt 3; $attempt++) {
+        $enrolled = @()
+        try {
+            foreach ($candidate in @($canonical, $legacy)) {
+                $complete = $true
+                foreach ($rel in @('state/client-state.json','config/frpc.toml','state/client-identity.pub')) {
+                    if (-not (Test-Path -LiteralPath (Join-Path $candidate $rel) -PathType Leaf -ErrorAction Stop)) { $complete = $false; break }
+                }
+                # Match Get-FrpIdentityKeyPath without recursing through root discovery:
+                # native Windows keeps the existing private key encrypted with DPAPI.
+                $dpapiKey = Join-Path $candidate 'state/client-identity.key.dpapi'
+                $plainKey = Join-Path $candidate 'state/client-identity.key'
+                if (-not ((Test-Path -LiteralPath $dpapiKey -PathType Leaf -ErrorAction Stop) -or
+                          (Test-Path -LiteralPath $plainKey -PathType Leaf -ErrorAction Stop))) { $complete = $false }
+                if ($complete) { $enrolled += $candidate }
+            }
+            break
+        } catch {
+            $accessFailure = $_.Exception -is [System.UnauthorizedAccessException] -or
+                $_.Exception -is [System.IO.IOException] -or
+                $_.CategoryInfo.Category -eq [System.Management.Automation.ErrorCategory]::PermissionDenied
+            if (-not $accessFailure) { throw }
+            if ($attempt -eq 2) {
+                throw 'ERROR: cannot inspect existing Windows product state. Retry after the current management operation finishes; if access remains denied, check the existing installation permissions. Refusing to select a new product root or replace an identity.'
+            }
+            Start-Sleep -Milliseconds 100
         }
-        # Match Get-FrpIdentityKeyPath without recursing through root discovery:
-        # native Windows keeps the existing private key encrypted with DPAPI.
-        $dpapiKey = Join-Path $candidate 'state/client-identity.key.dpapi'
-        $plainKey = Join-Path $candidate 'state/client-identity.key'
-        if (-not ((Test-Path -LiteralPath $dpapiKey -PathType Leaf) -or
-                  (Test-Path -LiteralPath $plainKey -PathType Leaf))) { $complete = $false }
-        if ($complete) { $enrolled += $candidate }
     }
     if ($enrolled.Count -gt 1) {
         throw 'ERROR: multiple enrolled Windows product roots found; refusing to select or replace an identity.'

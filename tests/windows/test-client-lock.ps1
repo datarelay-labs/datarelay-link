@@ -28,7 +28,32 @@ try {
     Exit-FrpClientLock
     Assert-FrpTrue (-not (Test-Path -LiteralPath (Get-FrpClientLockPath))) 'released'
 
+    # Metadata can temporarily disappear during cleanup/uninstall. The OS
+    # primitive must still exclude a second real process on this same root.
+    Assert-FrpTrue (Enter-FrpClientLock) 'acquire process-shared guard'
+    Remove-Item -LiteralPath (Get-FrpClientLockPath) -Recurse -Force
+    $guardOut = & $hostExe -NoProfile -ExecutionPolicy Bypass -File $clientPath set remote-service guarded destination this-host service ssh enabled 2>&1 | Out-String
+    Assert-FrpTrue ($LASTEXITCODE -ne 0) 'second process cannot enter while owner metadata is absent'
+    Assert-FrpTrue ($guardOut -match 'already running') 'kernel guard rejects before any management request'
+    Exit-FrpClientLock
+    Assert-FrpTrue (Enter-FrpClientLock) 'guard is released after metadata cleanup'
+    Exit-FrpClientLock
+
     $lock = Get-FrpClientLockPath
+    # Another process can have created the directory but not published its PID.
+    # Missing ownership metadata is not evidence that a fresh lock is stale.
+    New-Item -ItemType Directory -Path $lock -Force | Out-Null
+    Assert-FrpTrue (-not (Enter-FrpClientLock)) 'fresh unpublished owner is not reclaimed'
+    Assert-FrpTrue (Test-Path -LiteralPath $lock) 'fresh contender metadata remains intact'
+    Exit-FrpClientLock
+    Assert-FrpTrue (Test-Path -LiteralPath $lock) 'non-owner exit cannot delete a contender lock'
+    Remove-Item -LiteralPath $lock -Recurse -Force
+
+    New-Item -ItemType Directory -Path $lock -Force | Out-Null
+    (Get-Item -LiteralPath $lock).LastWriteTimeUtc = [datetime]::UtcNow.AddMinutes(-2)
+    Assert-FrpTrue (Enter-FrpClientLock) 'abandoned unpublished legacy metadata eventually recovers'
+    Exit-FrpClientLock
+
     New-Item -ItemType Directory -Path $lock -Force | Out-Null
     Set-Content -LiteralPath (Join-Path $lock 'pid') -Value ([string]$PID)
     Assert-FrpTrue (-not (Enter-FrpClientLock)) 'live holder without depth blocks'

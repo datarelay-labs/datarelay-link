@@ -55,6 +55,7 @@ $tests = @(
     'test-public-operator-guidance.ps1',
     'test-v24-cli-convergence.ps1',
     'test-v24-runtime-verification.ps1',
+    'test-v24-runtime-noop-reconcile.ps1',
     'test-reconcile-release.ps1',
     'test-public-hostname.ps1',
     'test-sync-reconcile.ps1',
@@ -62,6 +63,7 @@ $tests = @(
     'test-autostart-cli.ps1',
     'test-apply-transaction.ps1',
     'test-client-lock.ps1',
+    'test-client-lock-system-interop.ps1',
     'test-dpapi-localmachine.ps1'
 )
 

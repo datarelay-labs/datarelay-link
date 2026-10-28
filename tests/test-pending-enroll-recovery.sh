@@ -28,7 +28,7 @@ extract_bootstrap_ticket() {
 import base64, json, re, sys
 from pathlib import Path
 text = Path(sys.argv[1]).read_text()
-m = re.search(r"/i/([A-Za-z0-9_-]{22}|bt1\.[0-9a-f]+\.[0-9a-f]+)", text)
+m = re.search(r"/i/(bt1\.[0-9a-f]+\.[0-9a-f]+)", text)
 if m:
     print(m.group(1))
     raise SystemExit(0)
@@ -147,9 +147,13 @@ ln -sfn "$ALLOC_ROOT/registry.json" "$LIVE_TREE/var/lib/drlink/registry.json"
 ln -sfn "$ALLOC_ROOT/server_token" "$LIVE_TREE/etc/frp/server_token"
 
 issue_ticket() {
+  # This suite exercises credential/transaction recovery (including bulk's
+  # opaque package), not the separately qualified short-URL downloader.
+  # Explicit advanced output supplies the bt1 inside zt1; a short handle must
+  # never be sent as a credential to /bootstrap/redeem.
   local note="$1"
   FRP_DEPLOY_TEST_ROOT="$LIVE_TREE" python3 "$ROOT/tools/frp-create-client" \
-    --one-line --ssh --ssh-user "$SSH_USER" --note "$note"
+    --one-line --long-bootstrap --ssh --ssh-user "$SSH_USER" --note "$note"
 }
 
 run_client() {
@@ -215,7 +219,10 @@ if run_client "$T1_TREE" "$T1_TICKET" "$T1_MACHINE" "$WORKDIR/t1-a.out" \
     "FRP_CLIENT_HOOK_ENROLL_FAIL=1"; then
   fail "attempt 1 (enroll hook failure) unexpectedly succeeded"
 fi
-[[ -f "$(pending_path "$T1_TREE")" ]] || fail "pending file missing after redeemed-phase crash"
+if [[ ! -f "$(pending_path "$T1_TREE")" ]]; then
+  cat "$WORKDIR/t1-a.out" "$WORKDIR/t1-a.err" >&2
+  fail "pending file missing after redeemed-phase crash"
+fi
 PENDING1_PHASE="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["phase"])' "$(pending_path "$T1_TREE")")"
 [[ "$PENDING1_PHASE" == "redeemed" ]] || fail "expected phase=redeemed, got $PENDING1_PHASE"
 PENDING1_OPERATION_ID="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("operation_id") or "")' "$(pending_path "$T1_TREE")")"
@@ -330,6 +337,129 @@ if grep -qi 'secret' "$T3_TREE/etc/frp/client-state.json"; then
 fi
 pass "PENDING_FILE_MODE_0600"
 pass "PENDING_FILE_SECRET_NEVER_IN_CLIENT_STATE"
+
+# A fresh explicit Zero-Touch command must recover a terminal pending
+# authorization without deleting recovery state on an invalid replacement.
+# Use the real HTTPS allocator; only advance the old fixture's expiry.
+issue_ticket customer-terminal-old >"$WORKDIR/t4-old-create.out"
+T4_OLD="$(extract_bootstrap_ticket "$WORKDIR/t4-old-create.out")"
+T4_TREE="$WORKDIR/client-terminal-pending"
+T4_MACHINE='44445555666677778888999900001111'
+if run_client "$T4_TREE" "$T4_OLD" "$T4_MACHINE" "$WORKDIR/t4-a.out" \
+    "FRP_CLIENT_HOOK_ENROLL_FAIL=1"; then
+  fail "terminal fixture must retain a redeemed transaction"
+fi
+T4_PENDING_BEFORE="$(sha256sum "$(pending_path "$T4_TREE")" | awk '{print $1}')"
+python3 - "$(pending_path "$T4_TREE")" "$ALLOC_ROOT/enrollments" <<'PYEXP'
+import json, sys, time
+from pathlib import Path
+pending = json.loads(Path(sys.argv[1]).read_text())
+p = Path(sys.argv[2]) / (pending['enroll_id'] + '.json')
+d = json.loads(p.read_text())
+d['expires_at'] = int(time.time()) - 10
+p.write_text(json.dumps(d))
+PYEXP
+# A bad replacement cannot erase the only recoverable transaction or create
+# committed Agent state, and may not make an old credential usable again.
+T4_INVALID="bt1.abcdefabcdefabcd.$(printf '%064d' 0)"
+if run_client "$T4_TREE" "$T4_INVALID" "$T4_MACHINE" "$WORKDIR/t4-invalid.out"; then
+  fail "invalid new ticket unexpectedly replaced terminal pending state"
+fi
+T4_PENDING_AFTER_INVALID="$(sha256sum "$(pending_path "$T4_TREE")" | awk '{print $1}')"
+[[ ! -f "$T4_TREE/etc/frp/client-state.json" ]] || fail "invalid replacement committed Agent state"
+issue_ticket customer-terminal-new >"$WORKDIR/t4-new-create.out"
+T4_NEW="$(extract_bootstrap_ticket "$WORKDIR/t4-new-create.out")"
+if ! run_client "$T4_TREE" "$T4_NEW" "$T4_MACHINE" "$WORKDIR/t4-b.out"; then
+  cat "$WORKDIR/t4-b.out" "$WORKDIR/t4-b.err" >&2
+  fail "fresh Zero-Touch command did not supersede an expired pending authorization"
+fi
+grep -q bootstrap_redeem "$WORKDIR/t4-b.out.hook" || fail "fresh replacement ticket was ignored"
+[[ ! -f "$(pending_path "$T4_TREE")" ]] || fail "successful fresh replacement did not clear recovery state"
+[[ -f "$T4_TREE/etc/frp/client-state.json" ]] || fail "fresh replacement did not commit Agent state"
+pass "FRESH_ZERO_TOUCH_RECOVERS_EXPIRED_PENDING"
+[[ "$T4_PENDING_AFTER_INVALID" == "$T4_PENDING_BEFORE" ]] \
+  || fail "invalid replacement modified the prior recovery transaction"
+pass "INVALID_REPLACEMENT_PRESERVES_TERMINAL_PENDING"
+
+# Explicitly pasting the same still-valid ticket must keep exact replay and
+# must not redeem an already-bound ticket a second time.
+issue_ticket customer-same-ticket >"$WORKDIR/t5-create.out"
+T5_TICKET="$(extract_bootstrap_ticket "$WORKDIR/t5-create.out")"
+T5_TREE="$WORKDIR/client-same-ticket"
+T5_MACHINE='55556666777788889999000011112222'
+if run_client "$T5_TREE" "$T5_TICKET" "$T5_MACHINE" "$WORKDIR/t5-a.out" \
+    "FRP_CLIENT_HOOK_ENROLL_FAIL=1"; then
+  fail "same-ticket fixture must retain a redeemed transaction"
+fi
+if ! run_client "$T5_TREE" "$T5_TICKET" "$T5_MACHINE" "$WORKDIR/t5-b.out"; then
+  cat "$WORKDIR/t5-b.out" "$WORKDIR/t5-b.err" >&2
+  fail "same explicit active ticket did not recover by exact replay"
+fi
+if grep -q bootstrap_redeem "$WORKDIR/t5-b.out.hook"; then
+  fail "same active ticket was redeemed again during exact recovery"
+fi
+pass "SAME_EXPLICIT_ACTIVE_TICKET_KEEPS_EXACT_REPLAY"
+
+# Revoked and removed grants are terminal too. The new ticket must still
+# authenticate normally, and replacing authorization must not rotate keys.
+for terminal in revoked missing; do
+  issue_ticket "customer-terminal-${terminal}" >"$WORKDIR/t6-${terminal}-old.out"
+  OLD_TICKET="$(extract_bootstrap_ticket "$WORKDIR/t6-${terminal}-old.out")"
+  TREE="$WORKDIR/client-terminal-${terminal}"
+  case "$terminal" in
+    revoked) MACHINE='66667777888899990000111122220001' ;;
+    missing) MACHINE='88889999000011112222333344445555' ;;
+  esac
+  if run_client "$TREE" "$OLD_TICKET" "$MACHINE" "$WORKDIR/t6-${terminal}-a.out" \
+      "FRP_CLIENT_HOOK_ENROLL_FAIL=1"; then
+    fail "terminal ${terminal} fixture unexpectedly committed"
+  fi
+  KEY_BEFORE="$(sha256sum "$TREE/etc/frp/client-identity.key" | awk '{print $1}')"
+  python3 - "$(pending_path "$TREE")" "$ALLOC_ROOT/enrollments" "$terminal" <<'PYTERM'
+import json, sys
+from pathlib import Path
+rec = json.loads(Path(sys.argv[1]).read_text())
+p = Path(sys.argv[2]) / (rec['enroll_id'] + '.json')
+if sys.argv[3] == 'missing':
+    p.unlink()
+else:
+    d = json.loads(p.read_text())
+    d['revoked_at'] = '2026-01-01T00:00:00Z'
+    p.write_text(json.dumps(d))
+PYTERM
+  issue_ticket "customer-terminal-${terminal}-fresh" >"$WORKDIR/t6-${terminal}-new.out"
+  NEW_TICKET="$(extract_bootstrap_ticket "$WORKDIR/t6-${terminal}-new.out")"
+  if ! run_client "$TREE" "$NEW_TICKET" "$MACHINE" "$WORKDIR/t6-${terminal}-b.out"; then
+    cat "$WORKDIR/t6-${terminal}-b.out" "$WORKDIR/t6-${terminal}-b.err" >&2
+    fail "fresh command could not replace ${terminal} pending authorization"
+  fi
+  [[ "$(sha256sum "$TREE/etc/frp/client-identity.key" | awk '{print $1}')" == "$KEY_BEFORE" ]] \
+    || fail "fresh ${terminal} recovery rotated the management key"
+  [[ ! -f "$(pending_path "$TREE")" ]] || fail "${terminal} recovery left pending state"
+  pass "FRESH_ZERO_TOUCH_RECOVERS_$(printf '%s' "$terminal" | tr '[:lower:]' '[:upper:]')_PENDING_WITH_SAME_KEY"
+done
+
+# A committed cached response is authoritative recovery material, even if a
+# user also pastes a different fresh setup command. Do not consume that ticket
+# or add a network dependency before finishing the original committed install.
+issue_ticket customer-cached-explicit >"$WORKDIR/t7-old-create.out"
+T7_OLD="$(extract_bootstrap_ticket "$WORKDIR/t7-old-create.out")"
+T7_TREE="$WORKDIR/client-cached-explicit"
+T7_MACHINE='77778888999900001111222233334444'
+if run_client "$T7_TREE" "$T7_OLD" "$T7_MACHINE" "$WORKDIR/t7-a.out" \
+    "FRP_CLIENT_HOOK_CRASH_AFTER_ENROLL=1"; then
+  fail "cached explicit fixture unexpectedly committed locally"
+fi
+issue_ticket customer-cached-unused >"$WORKDIR/t7-new-create.out"
+T7_NEW="$(extract_bootstrap_ticket "$WORKDIR/t7-new-create.out")"
+if ! run_client "$T7_TREE" "$T7_NEW" "$T7_MACHINE" "$WORKDIR/t7-b.out"; then
+  cat "$WORKDIR/t7-b.out" "$WORKDIR/t7-b.err" >&2
+  fail "cached committed response did not resume with explicit new input"
+fi
+if grep -qE '^(bootstrap_redeem|enroll)$' "$WORKDIR/t7-b.out.hook"; then
+  fail "cached response resume consumed a fresh ticket or called enrollment"
+fi
+pass "CACHED_COMMITTED_RESPONSE_WITH_EXPLICIT_TICKET_REMAINS_LOCAL"
 
 # The live allocator is only needed by scenarios 1-3. Reap it here instead
 # of relying solely on the script EXIT trap so later helper-only scenarios
@@ -446,6 +576,39 @@ pass "MALFORMED_ENROLLMENT_RESPONSE_FAILS_CLEANLY"
     || { echo "FAIL fresh Manual Code did not supersede pending selection" >&2; exit 1; }
 )
 pass "FRESH_MANUAL_CODE_SUPERSEDES_PENDING_SELECTION"
+
+# Transport/protocol failures cannot inherit a stale terminal verdict and
+# accidentally select a new authorization. This probe never contacts a host.
+(
+  set -euo pipefail
+  . "$ROOT/lib/frp-common.sh"
+  . "$ROOT/lib/frp-client-common.sh"
+  FRP_ENROLLMENT_PREFLIGHT_ERROR_CLASS=ENROLLMENT_CODE_EXPIRED
+  frp_allocator_curl() { return 1; }
+  frp_explain_allocator_curl_error() { :; }
+  if frp_enrollment_preflight 'https://unreachable.invalid/enroll' 'fixture-id' \
+      'fixture-secret' 'fixture-machine'; then
+    fail "transport failure unexpectedly passed preflight"
+  fi
+  [[ -z "$FRP_ENROLLMENT_PREFLIGHT_ERROR_CLASS" ]] \
+    || fail "transport failure retained an old terminal authorization verdict"
+)
+pass "TRANSPORT_FAILURE_CANNOT_REUSE_TERMINAL_PREFLIGHT_CLASS"
+
+(
+  set -euo pipefail
+  . "$ROOT/lib/frp-common.sh"
+  . "$ROOT/lib/frp-client-common.sh"
+  FRP_ENROLLMENT_PREFLIGHT_ERROR_CLASS=ENROLLMENT_CODE_EXPIRED
+  frp_allocator_curl() { printf '%s' '{"error":"temporarily unavailable"}'; }
+  if frp_enrollment_preflight 'https://unreachable.invalid/enroll' 'fixture-id' \
+      'fixture-secret' 'fixture-machine'; then
+    fail "untyped server failure unexpectedly passed preflight"
+  fi
+  [[ -z "$FRP_ENROLLMENT_PREFLIGHT_ERROR_CLASS" ]] \
+    || fail "untyped server failure synthesized a terminal authorization verdict"
+)
+pass "UNTYPED_FAILURE_CANNOT_SUPERSEDE_PENDING_AUTHORIZATION"
 
 echo
 echo "PENDING_ENROLL_RECOVERY_TEST=PASS"

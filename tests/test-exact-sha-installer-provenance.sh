@@ -16,7 +16,7 @@ FAKE_SHA='0123456789abcdef0123456789abcdef01234567'
 . "$ROOT/lib/frp-common.sh"
 
 reset_provenance_env() {
-  unset FRP_EXPECTED_SOURCE_REF FRP_TXN_SOURCE_REF FRP_BOOTSTRAP_URL \
+  unset FRP_EXPECTED_SOURCE_REF FRP_EXPECTED_SOURCE_HEAD FRP_TXN_SOURCE_REF FRP_BOOTSTRAP_URL \
     FRP_CLIENT_INSTALLER_URL FRP_WINDOWS_CLIENT_INSTALLER_URL \
     FRP_RELEASE_CHANNEL FRP_DEPLOY_TEST_ROOT FRP_SERVER_TEST_ROOT \
     FRP_CTL_TEST_ROOT FRP_PUBLIC_HOST FRP_PUBLIC_IP FRP_PUBLIC_HOSTNAME \
@@ -216,11 +216,39 @@ pass "EXPLICIT_INSTALLER_URL_OVERRIDE_PRESERVED"
 
 # --- exact SHA expected_ref accepted against development manifest git_ref ---
 reset_provenance_env
-meta="$(frp_validate_release_source_metadata "$ROOT" "$FAKE_SHA" development)" \
+# An extracted source archive has no Git checkout to compare. Its immutable
+# identity is supplied by the verified artifact envelope.
+ARCHIVE_SOURCE="$WORKDIR/archive-source"
+mkdir -p "$ARCHIVE_SOURCE"
+cp "$ROOT/VERSION" "$ROOT/release-manifest.json" "$ARCHIVE_SOURCE/"
+meta="$(frp_validate_release_source_metadata "$ARCHIVE_SOURCE" "$FAKE_SHA" development)" \
   || fail "exact SHA expected_ref rejected by metadata validate"
 got_ref="$(printf '%s' "$meta" | awk -F'\t' '{print $3}')"
 [[ "$got_ref" == "$FAKE_SHA" ]] || fail "validate did not return exact SHA provenance: $got_ref"
 pass "VALIDATE_ACCEPTS_EXACT_SHA_PROVENANCE"
+
+# A real checkout supplies independent evidence; requested provenance must not
+# relabel that checkout with an unrelated commit before upgrade writes version.
+ACTUAL_HEAD="$(git -C "$ROOT" rev-parse HEAD)"
+if frp_validate_release_source_metadata "$ROOT" "$FAKE_SHA" development \
+    >"$WORKDIR/wrong-ref.out" 2>"$WORKDIR/wrong-ref.err"; then
+  fail "mismatched expected source ref accepted for Git checkout"
+fi
+grep -q 'source.*mismatch' "$WORKDIR/wrong-ref.err" \
+  || fail "mismatched ref lacks actionable diagnostic"
+pass "GIT_CHECKOUT_WRONG_EXPECTED_REF_REJECTED"
+if FRP_EXPECTED_SOURCE_HEAD="$FAKE_SHA" \
+    frp_validate_release_source_metadata "$ROOT" "$ACTUAL_HEAD" development \
+    >"$WORKDIR/wrong-head.out" 2>"$WORKDIR/wrong-head.err"; then
+  fail "mismatched expected source HEAD accepted for Git checkout"
+fi
+grep -q 'source.*mismatch' "$WORKDIR/wrong-head.err" \
+  || fail "mismatched HEAD lacks actionable diagnostic"
+pass "GIT_CHECKOUT_WRONG_EXPECTED_HEAD_REJECTED"
+FRP_EXPECTED_SOURCE_HEAD="$ACTUAL_HEAD" \
+  frp_validate_release_source_metadata "$ROOT" "$ACTUAL_HEAD" development \
+  >"$WORKDIR/matching-head.out" || fail "matching Git source rejected"
+pass "GIT_CHECKOUT_MATCHING_EXPECTED_IDENTITY_ACCEPTED"
 
 # --- local git source inference ---
 reset_provenance_env

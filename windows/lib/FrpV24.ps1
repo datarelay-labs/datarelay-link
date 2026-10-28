@@ -363,7 +363,9 @@ function Update-FrpV24Runtime {
         Services = $runtimeMap
         Transport = [string]$state.frp_transport
     }
+    $previousConfigHash = (Get-FileHash -LiteralPath (Get-FrpTomlPath) -Algorithm SHA256).Hash
     New-FrpClientToml @tomlArgs | Out-Null
+    $configUnchanged = $previousConfigHash -eq (Get-FileHash -LiteralPath (Get-FrpTomlPath) -Algorithm SHA256).Hash
 
     # Fixture mode validates desired state/config only; it must never start host processes.
     if ($env:FRP_WINDOWS_V24_FIXTURE_DIR) {
@@ -377,14 +379,29 @@ function Update-FrpV24Runtime {
     if (-not (Test-FrpLifecycleTaskHealthy)) { Install-FrpLifecycleTask | Out-Null }
     $running = (Get-FrpClientStatus).Running
     if ($runtimeEnabledAny) {
+        # A failed status ACK can trigger reconciliation while frpc has already
+        # reconnected. Preserve its sessions only when the exact configuration
+        # and every enabled proxy still have current owned-process evidence.
+        $reuseRuntime = $running -and $configUnchanged
+        if ($reuseRuntime) {
+            foreach ($sid in @($runtimeMap.Keys)) {
+                $item = $runtimeMap[$sid]
+                if ($item.enabled -eq $false) { continue }
+                if (-not (Test-FrpV24RuntimeService -Item $item -HostId ([string]$state.host_id))) {
+                    $reuseRuntime = $false
+                    break
+                }
+            }
+        }
         Set-FrpInstallStatus -Status 'installed'
-        if ($env:FRP_WINDOWS_SKIP_AUTOSTART -ne '1') {
+        if ($env:FRP_WINDOWS_SKIP_AUTOSTART -ne '1' -and -not (Test-FrpAutostartHealthy)) {
             Install-FrpAutostartTask | Out-Null
         }
-        if ($running) { Stop-FrpClient | Out-Null }
-        # Start-FrpClient records a boundary before spawning the new process;
-        # status uses only that process's connection/proxy events and signed ACK.
-        Start-FrpClient -Force:$true | Out-Null
+        if (-not $reuseRuntime) {
+            if ($running) { Stop-FrpClient | Out-Null }
+            # A changed/unverified generation needs a fresh process boundary.
+            Start-FrpClient -Force:$true | Out-Null
+        }
         for ($attempt = 0; $attempt -lt 10; $attempt++) {
             try { if (Update-FrpV24RuntimeStatus) { break } }
             catch { if (-not (Test-FrpV24OfflineEligibleError -Message $_.Exception.Message)) { throw } }

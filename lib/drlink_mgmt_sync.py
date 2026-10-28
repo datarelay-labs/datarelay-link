@@ -1399,12 +1399,15 @@ def server_upsert_remote_service(plane, auth: MgmtAuthContext, body: dict) -> di
         # Serialize publication and local allocator bookkeeping together. No
         # Agent network I/O runs while this Server write transaction is held.
         existing = plane.conn.execute(
-            "SELECT s.id, s.public_port FROM published_services s "
+            "SELECT s.id, s.public_port, m.runtime_proxy_id FROM published_services s "
+            "LEFT JOIN remote_service_meta m ON m.service_id=s.id "
             "WHERE s.client_id=? AND s.name=? COLLATE NOCASE AND s.released=0",
             (client["id"], name),
         ).fetchone()
         endpoint_port = None
-        proxy_id = None
+        from drlink_v24_runtime import remote_service_proxy_id
+        proxy_id = remote_service_proxy_id(
+            name, stored=existing["runtime_proxy_id"] if existing is not None else None)
         # The Server reservation is authoritative. An Agent's cached port hint
         # may be stale after reconnect; it must never move an existing endpoint.
         if existing is not None and existing["public_port"] is not None:
@@ -1450,11 +1453,13 @@ def server_upsert_remote_service(plane, auth: MgmtAuthContext, body: dict) -> di
                     preserve_port=endpoint_port,
                     extra_used=extra_used,
                     enabled=enabled,
+                    proxy_id=proxy_id,
                 )
             except Exception as exc:
                 raise MgmtSyncError("Endpoint allocation failed: %s" % exc) from exc
             endpoint_port = int(reserved["remote_port"])
-            proxy_id = reserved.get("proxy_id")
+            if reserved.get("proxy_id") != proxy_id:
+                raise MgmtSyncError("Server allocator changed the canonical Remote Service runtime identity")
         elif endpoint_port is None:
             # Test/local path without a live Allocator instance. Keep its port
             # reservation inside this outer publication transaction so a later
@@ -1531,8 +1536,8 @@ def server_upsert_remote_service(plane, auth: MgmtAuthContext, body: dict) -> di
             plane.conn.execute(
                 "INSERT OR REPLACE INTO remote_service_meta"
                 "(service_id, status, pool_class, service_object_id, destination_name, "
-                "destination_client_id, pending_allocation, delete_pending, reason, runtime_verified) "
-                "VALUES (?, ?, ?, ?, ?, ?, 0, 0, ?, ?)",
+                "destination_client_id, pending_allocation, delete_pending, reason, runtime_verified, runtime_proxy_id) "
+                "VALUES (?, ?, ?, ?, ?, ?, 0, 0, ?, ?, ?)",
                 (
                     pub["id"],
                     status,
@@ -1542,6 +1547,7 @@ def server_upsert_remote_service(plane, auth: MgmtAuthContext, body: dict) -> di
                     destination_client_id,
                     reason,
                     1 if status == "HEALTHY" and runtime_verified else 0,
+                    proxy_id,
                 ),
             )
             if endpoint_port is not None:
@@ -1625,7 +1631,12 @@ def server_delete_remote_service(plane, auth: MgmtAuthContext, name: str,
         allocator = getattr(auth, "allocator", None)
         if allocator is not None:
             try:
-                released = allocator.release_remote_service_endpoint(machine_id, name)
+                meta = plane.conn.execute(
+                    "SELECT runtime_proxy_id FROM remote_service_meta WHERE service_id=?",
+                    (pub["id"],)).fetchone()
+                from drlink_v24_runtime import remote_service_proxy_id
+                proxy_id = remote_service_proxy_id(name, stored=meta[0] if meta else None)
+                released = allocator.release_remote_service_endpoint(machine_id, name, proxy_id=proxy_id)
             except Exception as exc:
                 raise MgmtSyncError(
                     "Remote Service endpoint release was not confirmed by the Server allocator. "

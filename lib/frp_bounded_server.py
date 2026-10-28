@@ -31,6 +31,9 @@ class BoundedThreadingMixIn:
     block_on_close = False
     max_concurrent = 32
     request_timeout = 30.0
+    # Subclasses may apply short, bounded accept-loop backpressure. Waiting
+    # here never creates another worker or consumes another reader slot.
+    admission_wait_seconds = 0.0
     reject_callback = None
 
     def __init__(self, *args, **kwargs):
@@ -49,7 +52,12 @@ class BoundedThreadingMixIn:
             request.settimeout(float(self.request_timeout))
         except (OSError, AttributeError):
             pass
-        acquired = self._slot_sem.acquire(blocking=False)
+        wait = min(float(self.admission_wait_seconds), float(self.request_timeout))
+        acquired = (
+            self._slot_sem.acquire(timeout=wait)
+            if wait > 0
+            else self._slot_sem.acquire(blocking=False)
+        )
         if not acquired:
             try:
                 cb = getattr(self, "reject_callback", None)
