@@ -461,6 +461,27 @@ update public docs
 verify clean stable install/bootstrap/update
 ```
 
+## Cross-release engineering track RCL — repository/worktree/PR consolidation
+
+**Status:** ACTIVE / IN PROGRESS (2026-10-28). **Work Packet:** [#230](https://github.com/datarelay-labs/datarelay-link/issues/230). This is cross-release repository hygiene, **not** an extra v2.4 runtime feature, stable-release PASS, or a new UI WBS. #165 CLI-only/full-user validation, #223 Native MCP, #135 v3, and #182/#184's existing 66 UI WBS retain their independent acceptance requirements. The owner's explicit repository cleanup priority does not revoke active actors or reset their source-bound evidence.
+
+**Initial verified baseline:** 81 registered Git worktrees -> 77 after four clean detached ancestral candidate removals, protected by exact-SHA archive refs and a verified private receipt at `/home/aella/drlink-validation/issue165-main-consolidation-20261028/cleanup-results.json`. The separate RCL implementation worktree adds one temporary registered checkout. Initially 19 open PRs; main is clean at `e8ce7f33e2ea06958172293602d7c9a9bfe669e8`. These are baseline facts, not an assertion that all remaining checkouts are disposable.
+
+| WBS | Work | Acceptance / stop rules | State |
+| --- | --- | --- | --- |
+| RCL-0 | Current HEAD/worktree/process/PR inventory with cross-reference to existing workspace index and immutable past receipts | Non-secret reproducible JSON, protected owner/dirty/frozen/ignored cases explicitly retained; no assumed clean candidate | IN PROGRESS |
+| RCL-1 | Safe reduction of inactive historical worktrees | Each target has fresh exact SHA, no process reference/dirty/ignored/evidence dependency, main ancestor and restorable archive ref; no `--force`, branch deletion, reset or automatic pruning | PARTIAL: four removed, receipts verified |
+| RCL-2 | Uncommitted WIP and generated-artifact disposition | Per-worktree change counts, PR owner, diff/status evidence, protected backups; no loss or stealth copy into main | OPEN |
+| RCL-3 | Open PR dependency graph and duplicate change classification | All 19 initial PRs classified KEEP / INTEGRATE_LATER / ALREADY_APPLIED / REVIEW_REQUIRED on verified base/head/diff; preserve v3 stacked dependencies; no mass merge/close | OPEN |
+| RCL-4 | Core structure / large-module cleanup after source-bound release-quality convergence | Complexity and responsibility seams measured, narrow compatible adapters, focused RED->GREEN, public/DB/API behavior parity | DEFERRED until #165 appropriate quality boundary |
+| RCL-5 | Recurrence prevention | Read-only `tools/drlink-worktree-audit.py` with hermetic negative tests, optional explicitly reviewed cleanup procedure and private restore receipts; no scheduled deletion or product runtime impact | IN PROGRESS |
+
+**Execution sequence:** RCL-0 inventory -> RCL-1 individually validated cleanup -> RCL-2 preserve/diff and classify -> RCL-3 dependency-aware PR reconciliation -> RCL-5 safety tooling -> RCL-4 measured refactors only after the release-quality gate permits. Independent safe stages may overlap; a blocked candidate must not stop inventory or other unrelated safe checks. Existing `/home/aella/datarelay-link-WORKSPACE.md` and 2026-10-27 cleanup receipts remain the continuity baseline; this roadmap and [#230](https://github.com/datarelay-labs/datarelay-link/issues/230) are not competing issue queues.
+
+**Hard limits:** do not disturb live Codex, Native MCP, Web/3.0 or protected frozen runs; never infer deletion eligibility solely from clean status, branch merge or elapsed time. Any ambiguous/active/dirty or ignored file is held for explicit evidence-backed disposition. Production, credential/permission, release and genuinely destructive effects retain their separate authority gates. The RCL audit tool is read-only and its classifications never authorize deletion.
+
+---
+
 ## 18. Post-v2.4 demand-driven work
 
 Potential later additions only with real demand:

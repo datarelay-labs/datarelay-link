@@ -19,6 +19,7 @@ echo "=== version and release governance ==="
 echo "=== public CLI / contract regressions ==="
 # Catch orphaned full-suite tests and installer config drift before main merge.
 bash tests/test-orphan-suite-coverage.sh
+python3 tests/test-worktree-audit.py
 bash tests/test-server-install-config.sh
 ./tests/test-cli-catalog-parity.sh
 python3 tests/test-public-cli-grammar-parity.py
