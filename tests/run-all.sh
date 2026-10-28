@@ -42,6 +42,7 @@ python3 -m py_compile tests/test-allocator.py tests/test-chatgpt-owner-acceptanc
 # forgotten; preserve fail-closed orphan detection while failing fast.
 echo "=== test registration completeness ==="
 ./tests/test-orphan-suite-coverage.sh
+python3 tests/test-worktree-audit.py
 
 echo "=== tests ==="
 # Unified CLI100/owner fixes must execute in the full suite, not only Fast PR.
