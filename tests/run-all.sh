@@ -45,6 +45,9 @@ echo "=== test registration completeness ==="
 python3 tests/test-worktree-audit.py
 
 echo "=== tests ==="
+# Development finding-to-regression feedback is supplementary only; it never grants user E2E PASS.
+python3 tests/test_persona_findings.py
+python3 tools/persona_findings.py
 # Unified CLI100/owner fixes must execute in the full suite, not only Fast PR.
 python3 tests/test-agent-bundle-fresh-catalog.py
 python3 tests/test-cli-inventory-selection-journey.py
