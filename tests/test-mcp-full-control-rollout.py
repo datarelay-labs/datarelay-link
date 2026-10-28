@@ -173,6 +173,20 @@ class RolloutTests(unittest.TestCase):
         with self.assertRaisesRegex(rollout.RolloutError, "dedicated rollout"):
             rollout.load_receipt(self.layout.backups / ".." / "receipt.json", self.layout)
 
+    def test_operator_oauth_identity_hint_is_explicit_and_display_only(self):
+        settings = rollout.profile(
+            self.account.pw_name, [str(self.root)], os.geteuid() == 0,
+            approval_identity="plugin-personal-e2e")
+        self.assertEqual(settings["approval_identity"], "plugin-personal-e2e")
+        conf = rollout.dropin(settings).decode()
+        self.assertIn('Environment="DRLINK_MCP_OAUTH_OPERATOR_IDENTITY=plugin-personal-e2e"', conf)
+        self.assertEqual(rollout.check(self.root, self.head, settings, self.layout)["profile"], settings)
+        self.assertNotIn("DRLINK_MCP_OAUTH_OPERATOR_IDENTITY", rollout.dropin(self.settings).decode())
+        for bad in ("", "agent with space", "agent<script>", "a\nEnvironment=BAD=1", "/tmp/x"):
+            with self.assertRaisesRegex(rollout.RolloutError, "AI Identity name"):
+                rollout.profile(self.account.pw_name, [str(self.root)], os.geteuid() == 0,
+                                approval_identity=bad)
+
     def test_account_root_and_path_gates(self):
         with self.assertRaisesRegex(rollout.RolloutError, "separate --allow-root"):
             rollout.profile("root", [str(self.root)])

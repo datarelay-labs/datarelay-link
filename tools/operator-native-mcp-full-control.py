@@ -60,7 +60,7 @@ def require_root():
         raise RolloutError("Apply and rollback require an authorized root invocation")
 
 
-def profile(user, roots, allow_root=False):
+def profile(user, roots, allow_root=False, *, approval_identity=None):
     if not user or not roots:
         raise RolloutError("--exec-user and at least one --allowed-root are required")
     try:
@@ -79,8 +79,13 @@ def profile(user, roots, allow_root=False):
         if ":" in canonical or any(ord(char) < 32 for char in canonical):
             raise RolloutError("Canonical root contains an unsafe environment character")
         resolved.append(canonical)
-    return {"exec_user": account.pw_name, "uid": account.pw_uid,
-            "roots": list(dict.fromkeys(resolved)), "admin": account.pw_uid == 0}
+    settings = {"exec_user": account.pw_name, "uid": account.pw_uid,
+                "roots": list(dict.fromkeys(resolved)), "admin": account.pw_uid == 0}
+    if approval_identity is not None:
+        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}", approval_identity):
+            raise RolloutError("OAuth approval Identity hint must be a safe AI Identity name")
+        settings["approval_identity"] = approval_identity
+    return settings
 
 
 def dropin(settings):
@@ -93,6 +98,8 @@ def dropin(settings):
         "DRLINK_MCP_SERVER_DEFAULT_CWD": settings["roots"][0],
         "DRLINK_MCP_SERVER_ADMIN_ENABLED": "1" if settings["admin"] else "0",
     }
+    if settings.get("approval_identity"):
+        values["DRLINK_MCP_OAUTH_OPERATOR_IDENTITY"] = settings["approval_identity"]
     def escape(value):
         return value.replace("%", "%%").replace("\\", "\\\\").replace('"', '\\"')
     text = "# Managed by operator-native-mcp-full-control.py; see rollout receipt.\n[Service]\n"
@@ -332,12 +339,14 @@ def main(argv=None):
     parser.add_argument("--exec-user")
     parser.add_argument("--allowed-root", action="append", default=[])
     parser.add_argument("--allow-root", action="store_true", help="Explicit opt-in for execution UID 0")
+    parser.add_argument("--approval-ai-identity", help="Verified AI Identity shown in unbound OAuth operator commands (display only)")
     args = parser.parse_args(argv)
     try:
         if args.rollback:
             result = rollback(args.rollback)
         else:
-            settings = profile(args.exec_user, args.allowed_root, args.allow_root)
+            settings = profile(args.exec_user, args.allowed_root, args.allow_root,
+                               approval_identity=args.approval_ai_identity)
             operation = apply if args.apply else check
             result = operation(args.source, args.head, settings)
         print(json.dumps(result, indent=2, sort_keys=True))

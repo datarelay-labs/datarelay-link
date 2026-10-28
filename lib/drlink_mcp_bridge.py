@@ -14,8 +14,10 @@ public ``test ai-access``. Legacy ai_access_rules are not an authority.
 """
 from __future__ import annotations
 
+from html import escape as html_escape
 import json
 import os
+import re
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, HTTPServer
@@ -95,6 +97,28 @@ def public_rate_source(peer: str, headers) -> str:
         return source
     text = str(peer or "").strip()
     return text or "unknown"
+
+
+def oauth_operator_approval_command(plane: ControlPlane, pending_id: str, *, unbound: bool) -> str:
+    """Display-only operator command; this never grants or approves OAuth access.
+
+    A new DCR/CIMD client has no trustworthy Identity until the operator binds
+    it. An explicit deployment hint is accepted only for an enabled, verified
+    Identity, and is never taken from the untrusted OAuth client request.
+    """
+    if not pending_id:
+        return "sudo drlink system credential approve-oauth <PENDING-ID> <AI-IDENTITY>"
+    command = "sudo drlink system credential approve-oauth %s" % pending_id
+    if not unbound:
+        return command  # Already bound: an Identity argument is unnecessary.
+    name = os.environ.get("DRLINK_MCP_OAUTH_OPERATOR_IDENTITY", "").strip()
+    if re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}", name):
+        principal = plane.get_principal(name)
+        if (principal is not None and int(principal["enabled"] or 0)
+                and str(principal["credential_status"] or "").lower() in ("verified", "active")):
+            return command + " " + principal["name"]
+    return command + " <AI-IDENTITY>"  # No safe default: operator must choose.
+
 
 # name, title, description, props, annotations
 TOOL_DEFS = (
@@ -1517,12 +1541,8 @@ def make_handler(bridge: MCPBridge):
                     self.send_header("Content-Length", "0")
                     self.end_headers()
                     return
-                if pending.get("unbound"):
-                    hint = (
-                        "system credential approve-oauth %s &lt;AI-IDENTITY&gt;" % pending["id"]
-                    )
-                else:
-                    hint = "system credential approve-oauth %s" % pending["id"]
+                hint = html_escape(oauth_operator_approval_command(
+                    bridge.plane, pending["id"], unbound=bool(pending.get("unbound"))))
                 continue_path = "/oauth/continue?%s" % urlencode({"t": pending["completion_token"]})
                 page = (
                     "<!doctype html><html><head><meta charset='utf-8'>"
@@ -1561,11 +1581,8 @@ def make_handler(bridge: MCPBridge):
                 if status == "pending":
                     continue_path = "/oauth/continue?%s" % urlencode({"t": token})
                     pending_id = str(result.get("id") or "").strip()
-                    approval_hint = (
-                        "system credential approve-oauth %s &lt;AI-IDENTITY&gt;" % pending_id
-                        if pending_id
-                        else "system credential approve-oauth &lt;PENDING-ID&gt; &lt;AI-IDENTITY&gt;"
-                    )
+                    approval_hint = html_escape(oauth_operator_approval_command(
+                        bridge.plane, pending_id, unbound=bool(result.get("unbound", True))))
                     page = (
                         "<!doctype html><html><head><meta charset='utf-8'>"
                         "<meta http-equiv='refresh' content='2;url=%s'>"

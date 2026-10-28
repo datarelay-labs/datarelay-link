@@ -144,6 +144,28 @@ checks backup/install hashes, and automatically restores affected files after a
 failed restart. Rollback refuses later file/permission changes. AI Access remains
 unchanged and must be authorized separately; the helper cannot grant tool privileges.
 
+To show a fully executable operator command on **both** `/oauth/authorize` and
+`/oauth/continue`, explicitly configure `--approval-ai-identity plugin-personal-e2e`
+when checking/applying the MCP-only rollout. This sets
+`DRLINK_MCP_OAUTH_OPERATOR_IDENTITY` in the dedicated Bridge drop-in. Example
+for a previously approved administrative profile:
+
+```bash
+sudo python3 tools/operator-native-mcp-full-control.py --apply \
+  --head <qualified-exact-Git-HEAD> --exec-user root --allowed-root / \
+  --allow-root --approval-ai-identity plugin-personal-e2e
+```
+
+For an unbound DCR/CIMD OAuth request, only a currently enabled and
+verified/active operator-configured Identity is displayed. The result looks like
+`sudo drlink system credential approve-oauth oap_<PENDING-ID> plugin-personal-e2e`.
+This is only a **display hint**, never automatic approval or authorization. If
+no verified hint is configured, the page retains `<AI-IDENTITY>` rather than
+guessing. An already-bound OAuth client shows the fully executable command
+without an Identity argument. The operator must still review the client and
+execute the command on the correct DRLink Server. Existing TLS, OAuth consent,
+identity credentials, and AI Access rules are unchanged.
+
 The historical single443, certificate-issuance, Preview, domain and Server-peer
 scripts are not this rollout path. Do not rerun them for full-control enablement.
 A current tool/platform privilege denial must be reported and respected;
