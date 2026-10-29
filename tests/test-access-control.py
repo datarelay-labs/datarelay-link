@@ -651,7 +651,7 @@ class PolicyCacheFailClosedTests(unittest.TestCase):
         proxy = self.RP.expected_proxy_name("alpha-host", self.mid, "ssh")
 
         for source, denied in (("198.51.100.9", False), ("203.0.113.50", True)):
-            for delay in (0.025, 0.25):
+            for delay in (0.025, 0.25, 0.35):
                 with self.subTest(source=source, delay=delay):
                     first_entered = threading.Event()
                     release_first = threading.Event()
@@ -702,8 +702,9 @@ class PolicyCacheFailClosedTests(unittest.TestCase):
                             self.assertTrue(first_entered.wait(3))
                             second = pool.submit(request, source)
                             self.assertTrue(second_arrived.wait(3))
-                            # A short delay exercises a retiring worker, while 250 ms
-                            # covers full-integrity work under a transient load burst.
+                            # A short delay exercises a retiring worker. 250 ms covers
+                            # a typical integrity scan; 350 ms exceeds the 300 ms scan
+                            # measured during F055 and must still fit the bounded queue.
                             time.sleep(delay)
                             release_first.set()
                             first_status, first_body = first.result(timeout=5)
