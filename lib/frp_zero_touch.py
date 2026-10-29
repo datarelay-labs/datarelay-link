@@ -625,7 +625,7 @@ def sha256sums_url_for_installer(installer_url):
         if artifact_path.endswith(suffix):
             return origin + artifact_path[: -len(suffix)] + '/SHA256SUMS'
     # Non-release layouts (tests / custom mirrors): SHA256SUMS beside the installer.
-    if '/' not in artifact_path.lstrip('/'):
+    if not artifact_path or artifact_path == '/':
         raise ValueError('installer URL path is incomplete')
     parent = artifact_path.rsplit('/', 1)[0]
     return origin + parent + '/SHA256SUMS'

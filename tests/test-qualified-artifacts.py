@@ -73,6 +73,14 @@ def test_urls():
     assert zt.sha256sums_url_for_installer(queried_windows) == (
         "https://203.0.113.10:6099/artifacts/SHA256SUMS"
     )
+    # Custom mirrors may place the installer directly at the URL root.
+    root_installer = "https://example.test/bootstrap-client-reloaded.sh?variant=reload"
+    assert zt.sha256sums_url_for_installer(root_installer) == (
+        "https://example.test/SHA256SUMS"
+    )
+    assert zt.linux_installer_sum_names(root_installer) == (
+        "bootstrap-client-reloaded.sh",
+    )
     pass_("ARTIFACT_URLS")
 
 
