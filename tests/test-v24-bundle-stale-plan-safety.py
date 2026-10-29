@@ -129,7 +129,10 @@ class BundleStalePlanSafety(unittest.TestCase):
             "INSERT INTO agent_remote_services "
             "(name,destination,destination_client_id,service_object,enabled,status,endpoint_port,"
             "pending_allocation,updated_at) VALUES (?,?,?,?,?,?,?,?,?)",
-            ("existing", "agent-c", None, "ssh", 1, "HEALTHY", 6018, 0, "now"),
+            # The display selector is unchanged, but old cached identity
+            # metadata differs from the freshly synchronized host identity.
+            # Duplicate detection must compare both effective ID and selector.
+            ("existing", "agent-c", "ffeeddccbbaa99887766554433221100", "ssh", 1, "HEALTHY", 6018, 0, "now"),
         )
         before_revision = self.plane.current_revision()
 
@@ -151,7 +154,7 @@ class BundleStalePlanSafety(unittest.TestCase):
         ).fetchall()
         self.assertEqual(len(rows), 1)
         self.assertEqual(rows[0]["name"], "existing")
-        self.assertIsNone(rows[0]["destination_client_id"])
+        self.assertEqual(rows[0]["destination_client_id"], "ffeeddccbbaa99887766554433221100")
 
     def test_agent_bundle_rejects_cidr_literal_destination_before_planning(self):
         before = self.plane.current_revision()

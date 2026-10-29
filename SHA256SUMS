@@ -537,7 +537,7 @@ d3b8ecf1faa4992cbcec2fb17f02b7c183d64f35f1fb66841a00fcab48546f64  tests/test-v24
 3b1232ce0723a47f332ac532233b9dcb2de9abaef56930ed2c7c4fddead7571a  tests/test-v24-bundle-duplicate-mapping-keys.py
 1c47317943dd992e873a1a5097cb5ce24710a87c42a9f67550113ad4d92317c2  tests/test-v24-bundle-omitted-enabled-preservation.py
 0628f50cc83764e07322b5978b58de4940bf62572ccc266801a8a4eb3182521f  tests/test-v24-bundle-preview-writer-isolation.py
-2a04ff6c42858eb4d62fafaae70380ee1ca7ce75522534b4bbd4ea8381100971  tests/test-v24-bundle-stale-plan-safety.py
+ea7d55ef9f852790780bbe268de93ff0e8534270e6c1d8b1d6cf3031b9b688c2  tests/test-v24-bundle-stale-plan-safety.py
 ddd0d3bf93c2a3034f9bcc4b2c7a17d3968258b14c4ffb37a56bc83f389efb81  tests/test-v24-cli-ai-master-closure.py
 a8fcadeb8487c7ed72c2972f11ad2e95454485afe9a106190361b7de40dbbbe3  tests/test-v24-cli-ai-master.py
 72eda3ae30d6eff3bba98d1de9f117074b930d47e66e9f93f22e53f4832f153a  tests/test-v24-cli-slice-a.py
