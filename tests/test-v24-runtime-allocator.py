@@ -143,6 +143,47 @@ class RuntimeProxyIdentityMigrationTests(unittest.TestCase):
         self.assertIsNone(conn.execute("SELECT runtime_proxy_id FROM remote_service_meta "
                                        "WHERE service_id='pub-new'").fetchone()[0])
 
+    def test_interrupted_identity_backfill_is_atomic_and_retryable(self):
+        import sqlite3
+        conn = sqlite3.connect(":memory:")
+        self.addCleanup(conn.close)
+        conn.row_factory = sqlite3.Row
+        conn.execute("CREATE TABLE published_services(id TEXT PRIMARY KEY, name TEXT)")
+        conn.executescript(v24.V2_SCHEMA_SQL.replace("  runtime_proxy_id TEXT,\n", ""))
+        name = "c27d-f051-interrupted-identity-migration-name"
+        conn.execute("INSERT INTO published_services VALUES ('pub-old', ?)", (name,))
+        conn.execute("INSERT INTO remote_service_meta(service_id) VALUES ('pub-old')")
+        conn.execute(
+            "INSERT INTO agent_remote_services(name,destination,service_object,updated_at) "
+            "VALUES (?, 'target', 'tcp', '2026-10-27T00:00:00Z')",
+            (name,),
+        )
+
+        with mock.patch.object(
+            runtime,
+            "legacy_remote_service_proxy_id",
+            side_effect=RuntimeError("injected interruption after ALTER TABLE"),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "injected interruption"):
+                v24.ensure_v2_schema(conn)
+
+        # A retry must see the legacy column as absent or complete its
+        # backfill; it must never treat an ALTER-only partial migration as done.
+        v24.ensure_v2_schema(conn)
+        legacy = ("rs-" + name)[:32]
+        self.assertEqual(
+            conn.execute(
+                "SELECT runtime_proxy_id FROM remote_service_meta WHERE service_id='pub-old'"
+            ).fetchone()[0],
+            legacy,
+        )
+        self.assertEqual(
+            conn.execute(
+                "SELECT runtime_proxy_id FROM agent_remote_services WHERE name=?", (name,)
+            ).fetchone()[0],
+            legacy,
+        )
+
 
 class FRPAuthenticatedReloadSecurityTests(unittest.TestCase):
     def test_existing_admin_requires_strong_auth_and_loopback_private_file(self):

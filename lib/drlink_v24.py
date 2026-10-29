@@ -370,24 +370,52 @@ def ensure_v2_schema(conn: sqlite3.Connection) -> None:
         conn.execute(
             "ALTER TABLE remote_service_meta ADD COLUMN runtime_verified INTEGER NOT NULL DEFAULT 0"
         )
-    agent_cols = {str(r[1]) for r in conn.execute("PRAGMA table_info(agent_remote_services)")}
     # Preserve old runtime identities once, in canonical state. Re-running
     # schema discovery must not relabel subsequently created publications.
     from drlink_v24_runtime import legacy_remote_service_proxy_id
-    for table, columns in (("remote_service_meta", meta_cols), ("agent_remote_services", agent_cols)):
-        if "runtime_proxy_id" in columns:
-            continue
-        conn.execute("ALTER TABLE " + table + " ADD COLUMN runtime_proxy_id TEXT")
-        if table == "remote_service_meta":
-            rows = conn.execute("SELECT m.service_id, p.name FROM remote_service_meta m "
-                                "JOIN published_services p ON p.id=m.service_id").fetchall()
-            for service_id, name in rows:
-                conn.execute("UPDATE remote_service_meta SET runtime_proxy_id=? WHERE service_id=?",
-                             (legacy_remote_service_proxy_id(name), service_id))
+    def migrate_runtime_proxy_identity(table: str) -> None:
+        # SQLite connections use autocommit in production. A savepoint makes
+        # the additive column and its legacy identity backfill one atomic unit,
+        # while remaining safe when schema setup is called inside a transaction.
+        savepoint = "drlink_runtime_proxy_identity_migration"
+        conn.execute("SAVEPOINT " + savepoint)
+        try:
+            columns = {
+                str(row[1])
+                for row in conn.execute("PRAGMA table_info(" + table + ")")
+            }
+            if "runtime_proxy_id" in columns:
+                conn.execute("RELEASE SAVEPOINT " + savepoint)
+                return
+            conn.execute("ALTER TABLE " + table + " ADD COLUMN runtime_proxy_id TEXT")
+            if table == "remote_service_meta":
+                rows = conn.execute(
+                    "SELECT m.service_id, p.name FROM remote_service_meta m "
+                    "JOIN published_services p ON p.id=m.service_id"
+                ).fetchall()
+                for service_id, name in rows:
+                    conn.execute(
+                        "UPDATE remote_service_meta SET runtime_proxy_id=? WHERE service_id=?",
+                        (legacy_remote_service_proxy_id(name), service_id),
+                    )
+            else:
+                for row in conn.execute("SELECT name FROM agent_remote_services").fetchall():
+                    conn.execute(
+                        "UPDATE agent_remote_services SET runtime_proxy_id=? WHERE name=?",
+                        (legacy_remote_service_proxy_id(row[0]), row[0]),
+                    )
+        except BaseException:
+            conn.execute("ROLLBACK TO SAVEPOINT " + savepoint)
+            conn.execute("RELEASE SAVEPOINT " + savepoint)
+            raise
         else:
-            for row in conn.execute("SELECT name FROM agent_remote_services").fetchall():
-                conn.execute("UPDATE agent_remote_services SET runtime_proxy_id=? WHERE name=?",
-                             (legacy_remote_service_proxy_id(row[0]), row[0]))
+            conn.execute("RELEASE SAVEPOINT " + savepoint)
+
+    for table in ("remote_service_meta", "agent_remote_services"):
+        migrate_runtime_proxy_identity(table)
+    agent_cols = {
+        str(row[1]) for row in conn.execute("PRAGMA table_info(agent_remote_services)")
+    }
     if "destination_client_id" not in agent_cols:
         conn.execute("ALTER TABLE agent_remote_services ADD COLUMN destination_client_id TEXT")
     if "runtime_verified" not in agent_cols:
