@@ -111,17 +111,23 @@ class OfflineTombstoneDuplicate(unittest.TestCase):
             )
 
     def test_deleted_routed_tombstone_does_not_block_new_mapping(self):
-        address = "192.0.2.45"
-        self.set_offline("old-route", destination=address, service="local-ssh")
+        # Public destination selectors use a single-IP Network Object. Keep
+        # this test focused on tombstone duplicate behavior, not raw-literal
+        # destination validation.
+        v24.set_network_object(
+            self.plane, "routed-host", type="ip", value="192.0.2.45", oneshot=True
+        )
+        destination = "routed-host"
+        self.set_offline("old-route", destination=destination, service="local-ssh")
         self.tombstone("old-route")
         candidate = self.set_offline(
-            "new-route", destination=address, service="local-ssh"
+            "new-route", destination=destination, service="local-ssh"
         )
         self.assertEqual(candidate["view"]["status"], "DEGRADED")
         self.assertEqual(candidate["view"]["endpoint"], "Pending allocation")
         with self.assertRaisesRegex(ControlPlaneError, "(?i)already exists"):
             self.set_offline(
-                "third-route", destination=address, service="local-ssh"
+                "third-route", destination=destination, service="local-ssh"
             )
 
 

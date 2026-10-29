@@ -108,6 +108,51 @@ class BundleStalePlanSafety(unittest.TestCase):
             self.assertEqual(self.plane.current_revision(), before)
             self.assertEqual(self.plane.conn.execute('SELECT count(*) FROM agent_remote_services').fetchone()[0], 0)
 
+    def test_agent_bundle_rejects_existing_self_binding_alias_readonly(self):
+        import json
+
+        identity_dir = Path(self.tmp, "etc/frp")
+        identity_dir.mkdir(parents=True, exist_ok=True)
+        machine_id = "aabbccddeeff00112233445566778899"
+        identity_dir.joinpath("client-state.json").write_text(
+            json.dumps({"machine_id": machine_id, "hostname": "agent-c", "label": "agent-c"}) + "\n",
+            encoding="utf-8",
+        )
+        v24.ensure_v2_schema(self.plane.conn)
+        v24.set_service_object(self.plane, "ssh", type="tcp", port=22, oneshot=True)
+        self.plane.conn.execute(
+            "INSERT OR REPLACE INTO agent_object_catalog(kind,name,payload,synced_at) "
+            "VALUES ('managed-host','agent-c',?,?)",
+            (json.dumps({"client_id": machine_id, "hostname": "agent-c", "label": "agent-c"}), "now"),
+        )
+        self.plane.conn.execute(
+            "INSERT INTO agent_remote_services "
+            "(name,destination,destination_client_id,service_object,enabled,status,endpoint_port,"
+            "pending_allocation,updated_at) VALUES (?,?,?,?,?,?,?,?,?)",
+            ("existing", "agent-c", None, "ssh", 1, "HEALTHY", 6018, 0, "now"),
+        )
+        before_revision = self.plane.current_revision()
+
+        raw = '''configurationBundle:
+  context: agent
+  remoteServices:
+    - name: duplicate-alias
+      destination: agent-c
+      service: ssh
+      enabled: true
+'''
+        with self.assertRaisesRegex(BundleError, "already exists for|already uses"):
+            prepare_v24_plan(self.plane, raw, role="agent")
+
+        self.assertEqual(self.plane.current_revision(), before_revision)
+        rows = self.plane.conn.execute(
+            "SELECT name, destination, destination_client_id, service_object "
+            "FROM agent_remote_services ORDER BY name"
+        ).fetchall()
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["name"], "existing")
+        self.assertIsNone(rows[0]["destination_client_id"])
+
     def test_agent_bundle_rejects_cidr_literal_destination_before_planning(self):
         before = self.plane.current_revision()
         raw = '''configurationBundle:
@@ -181,18 +226,40 @@ class BundleStalePlanSafety(unittest.TestCase):
             0,
         )
 
-    def test_agent_bundle_keeps_valid_literal_hostname_destination(self):
+    def test_agent_bundle_rejects_unregistered_literal_destinations(self):
+        import json
+
+        v24.set_network_object(
+            self.plane, "registered-db", type="fqdn", value="db.internal", oneshot=True
+        )
         before = self.plane.current_revision()
-        plan = prepare_v24_plan(self.plane, '''configurationBundle:
+
+        def bundle(name, destination):
+            return '''configurationBundle:
   context: agent
   remoteServices:
-    - name: literal-hostname
-      destination: db.internal
+    - name: %s
+      destination: %s
       service: ssh
       enabled: true
-''', role="agent")
+''' % (json.dumps(name), json.dumps(destination))
 
+        registered = bundle("registered-destination", "registered-db")
+        plan = prepare_v24_plan(self.plane, registered, role="agent")
         self.assertEqual(len(plan.mutating_changes), 1)
+
+        for destination in (
+            "db.internal",
+            "nonexistent.cli100.example.invalid",
+            "203.0.113.77",
+            "123.456.789.012",
+        ):
+            raw = bundle("unregistered-destination", destination)
+            with self.subTest(destination=destination), self.assertRaisesRegex(
+                BundleError, "destination|Network Object|single target"
+            ):
+                prepare_v24_plan(self.plane, raw, role="agent")
+
         self.assertEqual(self.plane.current_revision(), before)
         self.assertEqual(
             self.plane.conn.execute(
@@ -200,6 +267,58 @@ class BundleStalePlanSafety(unittest.TestCase):
             ).fetchone()[0],
             0,
         )
+
+    def test_agent_bundle_can_edit_existing_destination_after_catalog_loss(self):
+        import json
+
+        identity_dir = Path(self.tmp, "etc/frp")
+        identity_dir.mkdir(parents=True, exist_ok=True)
+        identity_dir.joinpath("client-state.json").write_text(
+            json.dumps({
+                "machine_id": "aabbccddeeff00112233445566778899",
+                "hostname": "agent-c",
+                "label": "agent-c",
+            }) + "\n",
+            encoding="utf-8",
+        )
+        v24.ensure_v2_schema(self.plane.conn)
+        v24.set_service_object(self.plane, "ssh", type="tcp", port=22, oneshot=True)
+        self.plane.conn.execute(
+            "INSERT OR REPLACE INTO agent_object_catalog(kind,name,payload,synced_at) "
+            "VALUES ('network-object','legacy-db',?,?)",
+            (json.dumps({"type": "fqdn", "values": ["legacy.example"]}), "now"),
+        )
+        v24.set_remote_service_agent(
+            self.plane,
+            "legacy-service",
+            destination="legacy-db",
+            service="ssh",
+            enabled=True,
+            oneshot=True,
+            root=self.tmp,
+            server_reachable=False,
+        )
+        self.plane.conn.execute(
+            "DELETE FROM agent_object_catalog WHERE kind='network-object' AND name='legacy-db'"
+        )
+        before_revision = self.plane.current_revision()
+
+        plan = prepare_v24_plan(self.plane, '''configurationBundle:
+  context: agent
+  remoteServices:
+    - name: legacy-service
+      enabled: false
+''', role="agent")
+
+        self.assertEqual(len(plan.mutating_changes), 1)
+        self.assertEqual(plan.mutating_changes[0]["item"]["destination"], "legacy-db")
+        self.assertEqual(plan.mutating_changes[0]["item"]["service"], "ssh")
+        self.assertEqual(self.plane.current_revision(), before_revision)
+        row = self.plane.conn.execute(
+            "SELECT destination, enabled FROM agent_remote_services WHERE name='legacy-service'"
+        ).fetchone()
+        self.assertEqual(row["destination"], "legacy-db")
+        self.assertTrue(row["enabled"])
 
     def test_agent_preview_readonly_never_contacts_server_or_activates(self):
         before = self.plane.current_revision()

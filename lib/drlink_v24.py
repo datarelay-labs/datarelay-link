@@ -977,27 +977,6 @@ def _parse_host_port_from_url(url: str) -> Optional[tuple[str, int]]:
     return host, int(port)
 
 
-def _is_remote_destination_literal(value: str) -> bool:
-    """Return whether an unreferenced Agent destination is a valid IP/hostname."""
-    token = str(value or "").strip()
-    if not token or "/" in token:
-        return False
-    try:
-        ipaddress.ip_address(token)
-        return True
-    except ValueError:
-        pass
-
-    hostname = token[:-1] if token.endswith(".") else token
-    if not hostname or len(hostname) > 253:
-        return False
-    for label in hostname.split("."):
-        if (not label or len(label) > 63
-                or not re.fullmatch(r"[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?", label)):
-            return False
-    return True
-
-
 # ---------------------------------------------------------------------------
 # Access policy mode / enforcement
 # ---------------------------------------------------------------------------
@@ -6976,6 +6955,7 @@ def set_remote_service_agent(
 
     # Resolve destination single-target
     dest_token = str(dest).strip()
+    requested_this_host = dest_token.casefold() in ("this-host", "this_host", "self")
     # A literal IP network is a multi-target selector even when the Agent is
     # offline and has no synchronized Network Object metadata to classify it.
     # Keep this guard in the shared mutation path so Bundle preview/apply and
@@ -6998,7 +6978,7 @@ def set_remote_service_agent(
     bound_inventory = None
     destination_identity_reason = None
 
-    if dest_token.lower() in ("this-host", "this_host", "self"):
+    if requested_this_host:
         dest_token = host_name
         relay = False
         target_mode = "self"
@@ -7070,15 +7050,15 @@ def set_remote_service_agent(
                 "CIDR Network Object '%s' is not allowed.\n\n"
                 "No changes were applied." % dest_token
             )
-        preserving_bound_destination = bool(
-            existing_dest_client_id
-            and (destination is None or dest_token.lower() == existing_dest_name.lower())
+        preserving_existing_destination = bool(
+            existing is not None
+            and (destination is None or dest_token.casefold() == existing_dest_name.casefold())
         )
-        if (not preserving_bound_destination and not (grp or obj or catalog_object or catalog_managed_host)
-                and not _is_remote_destination_literal(dest_token)):
+        if (not preserving_existing_destination and not requested_this_host
+                and not (grp or obj or catalog_object or catalog_managed_host)):
             raise ControlPlaneError(
                 "ERROR:\nRemote Service destination '%s' is not a valid single target.\n\n"
-                "Use this-host, an available destination object, or a valid IP/hostname.\n\n"
+                "Use this-host or an available Network Object or Managed Host destination.\n\n"
                 "No changes were applied." % dest_token
             )
         if destination_client_id is None:
@@ -7224,21 +7204,14 @@ def set_remote_service_agent(
     # that tombstone must not prevent the operator from assigning the same
     # destination+service to a new Remote Service. Disabled (not deleted)
     # services still reserve their mapping and remain duplicate-protected.
-    if destination_client_id:
-        dup = plane_db.conn.execute(
-            "SELECT name FROM agent_remote_services WHERE destination_client_id = ? "
-            "AND service_object = ? COLLATE NOCASE AND name != ? COLLATE NOCASE "
-            "AND delete_pending = 0",
-            (destination_client_id, svc_name, name),
-        ).fetchone()
-    else:
-        dup = plane_db.conn.execute(
-            "SELECT name FROM agent_remote_services WHERE destination = ? COLLATE NOCASE "
-            "AND service_object = ? COLLATE NOCASE AND name != ? COLLATE NOCASE "
-            "AND (destination_client_id IS NULL OR destination_client_id = '') "
-            "AND delete_pending = 0",
-            (dest_token, svc_name, name),
-        ).fetchone()
+    dup = plane_db.conn.execute(
+        "SELECT name FROM agent_remote_services "
+        "WHERE service_object = ? COLLATE NOCASE AND name != ? COLLATE NOCASE "
+        "AND delete_pending = 0 AND ("
+        "(destination_client_id IS NOT NULL AND destination_client_id = ?) "
+        "OR destination = ? COLLATE NOCASE)",
+        (svc_name, name, destination_client_id, dest_token),
+    ).fetchone()
     if dup:
         raise ControlPlaneError(
             "ERROR:\nA Remote Service already exists for:\n\n"
