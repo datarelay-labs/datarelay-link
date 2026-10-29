@@ -159,6 +159,48 @@ class BundleStalePlanSafety(unittest.TestCase):
             0,
         )
 
+    def test_agent_bundle_rejects_malformed_destination_before_planning(self):
+        before = self.plane.current_revision()
+        raw = '''configurationBundle:
+  context: agent
+  remoteServices:
+    - name: malformed-destination
+      destination: "not a valid host !"
+      service: ssh
+      enabled: true
+'''
+
+        with self.assertRaisesRegex(BundleError, "destination|host|target"):
+            prepare_v24_plan(self.plane, raw, role="agent")
+
+        self.assertEqual(self.plane.current_revision(), before)
+        self.assertEqual(
+            self.plane.conn.execute(
+                "SELECT count(*) FROM agent_remote_services"
+            ).fetchone()[0],
+            0,
+        )
+
+    def test_agent_bundle_keeps_valid_literal_hostname_destination(self):
+        before = self.plane.current_revision()
+        plan = prepare_v24_plan(self.plane, '''configurationBundle:
+  context: agent
+  remoteServices:
+    - name: literal-hostname
+      destination: db.internal
+      service: ssh
+      enabled: true
+''', role="agent")
+
+        self.assertEqual(len(plan.mutating_changes), 1)
+        self.assertEqual(self.plane.current_revision(), before)
+        self.assertEqual(
+            self.plane.conn.execute(
+                "SELECT count(*) FROM agent_remote_services"
+            ).fetchone()[0],
+            0,
+        )
+
     def test_agent_preview_readonly_never_contacts_server_or_activates(self):
         before = self.plane.current_revision()
         before_audit = self.plane.conn.execute('SELECT count(*) FROM audit_events').fetchone()[0]

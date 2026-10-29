@@ -977,6 +977,27 @@ def _parse_host_port_from_url(url: str) -> Optional[tuple[str, int]]:
     return host, int(port)
 
 
+def _is_remote_destination_literal(value: str) -> bool:
+    """Return whether an unreferenced Agent destination is a valid IP/hostname."""
+    token = str(value or "").strip()
+    if not token or "/" in token:
+        return False
+    try:
+        ipaddress.ip_address(token)
+        return True
+    except ValueError:
+        pass
+
+    hostname = token[:-1] if token.endswith(".") else token
+    if not hostname or len(hostname) > 253:
+        return False
+    for label in hostname.split("."):
+        if (not label or len(label) > 63
+                or not re.fullmatch(r"[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?", label)):
+            return False
+    return True
+
+
 # ---------------------------------------------------------------------------
 # Access policy mode / enforcement
 # ---------------------------------------------------------------------------
@@ -7039,6 +7060,7 @@ def set_remote_service_agent(
             dest_token = members[0]["name"]
         obj = plane_db.get_object(dest_token) if hasattr(plane_db, "get_object") else None
         catalog_object = _catalog_payload(plane_db, "network-object", dest_token)
+        catalog_managed_host = _catalog_payload(plane_db, "managed-host", dest_token)
         if (
             (obj and _row_get(obj, "type") == "network")
             or (catalog_object and str(catalog_object.get("type") or "").lower() == "cidr")
@@ -7046,6 +7068,17 @@ def set_remote_service_agent(
             raise ControlPlaneError(
                 "ERROR:\nRemote Service destination must resolve to a single target.\n\n"
                 "CIDR Network Object '%s' is not allowed.\n\n"
+                "No changes were applied." % dest_token
+            )
+        preserving_bound_destination = bool(
+            existing_dest_client_id
+            and (destination is None or dest_token.lower() == existing_dest_name.lower())
+        )
+        if (not preserving_bound_destination and not (grp or obj or catalog_object or catalog_managed_host)
+                and not _is_remote_destination_literal(dest_token)):
+            raise ControlPlaneError(
+                "ERROR:\nRemote Service destination '%s' is not a valid single target.\n\n"
+                "Use this-host, an available destination object, or a valid IP/hostname.\n\n"
                 "No changes were applied." % dest_token
             )
         if destination_client_id is None:
