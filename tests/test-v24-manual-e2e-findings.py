@@ -2,6 +2,8 @@
 """Targeted regressions for Rick's v2.4.0 manual E2E UX/runtime findings."""
 from __future__ import annotations
 
+from contextlib import redirect_stdout
+import io
 import json
 import os
 import re
@@ -88,7 +90,11 @@ class ZeroTouchCommandSecurityTests(unittest.TestCase):
     def test_short_url_preserves_ticket_and_https(self):
         ticket = "bt1." + ("a" * 16) + "." + ("b" * 64)
         cmd = zt.short_url_command("remote.xdr.ooo", ticket)
-        self.assertEqual(cmd, "curl -fsSL https://remote.xdr.ooo/i/%s|sudo bash" % ticket)
+        self.assertEqual(
+            cmd,
+            "(drlink_bootstrap=$(curl -fsSL https://remote.xdr.ooo/i/%s) && "
+            "printf '%%s\\n' \"$drlink_bootstrap\" | sudo bash)" % ticket,
+        )
         self.assertNotIn("mktemp", cmd)
         self.assertNotIn("--insecure", cmd)
 
@@ -509,6 +515,65 @@ class EnrollmentHostnameContractTests(unittest.TestCase):
 
 
 class RemainingP2UxClosureTests(unittest.TestCase):
+    def test_remote_service_wizard_keeps_draft_after_rejected_apply(self):
+        from drlink_control_db import ControlPlaneError
+        import drlink_v24_wizard as wizard
+
+        tmp = Path(tempfile.mkdtemp(prefix="drlink-rs-draft-recovery-"))
+        self.addCleanup(shutil.rmtree, tmp, ignore_errors=True)
+        (tmp / "etc/frp").mkdir(parents=True)
+        (tmp / "etc/frp/client-state.json").write_text(
+            '{"schema_version":1,"machine_id":"guided-agent","hostname":"agent-a","services":{}}\n',
+            encoding="utf-8",
+        )
+        plane = ControlPlane(str(tmp))
+        self.addCleanup(plane.close)
+        output: list[str] = []
+        wizard.set_wizard_io(
+            ScriptedIO(
+                ["missing-target", "ssh", "y", "1", "this-host", "", "", "1"],
+                out=output,
+            )
+        )
+        self.addCleanup(wizard.set_wizard_io, None)
+        success = {
+            "view": {
+                "name": "draft-recovery",
+                "destination": "agent-a",
+                "service": "ssh",
+                "status": "HEALTHY",
+                "endpoint": "-",
+            }
+        }
+        with mock.patch.object(
+            wizard.v24,
+            "set_remote_service_agent",
+            side_effect=[
+                ControlPlaneError(
+                    "Required Network Object destination is missing.\n\nNo changes were applied."
+                ),
+                success,
+            ],
+        ) as apply, mock.patch.object(
+            wizard.v24, "detect_server_reachable", return_value=True
+        ), \
+                redirect_stdout(io.StringIO()):
+            self.assertEqual(wizard.run_remote_service_wizard(plane, "draft-recovery"), 0)
+
+        self.assertEqual(apply.call_count, 2)
+        first, second = (call.kwargs for call in apply.call_args_list)
+        self.assertEqual(
+            (first["destination"], first["service"], first["enabled"]),
+            ("missing-target", "ssh", True),
+        )
+        self.assertEqual(
+            (second["destination"], second["service"], second["enabled"]),
+            ("this-host", "ssh", True),
+        )
+        transcript = "".join(output)
+        self.assertIn("draft is still available", transcript)
+        self.assertIn("Select [ssh]", transcript)
+
     def test_remote_service_menu_enters_guided_workflow(self):
         row = cli_catalog.navigation_resolve("client.remote_services", "2")
         self.assertIsNotNone(row)
