@@ -130,6 +130,35 @@ class BundleStalePlanSafety(unittest.TestCase):
             0,
         )
 
+    def test_agent_bundle_rejects_catalog_cidr_object_before_planning(self):
+        import json
+
+        self.plane.conn.execute(
+            "INSERT INTO agent_object_catalog(kind, name, payload, synced_at) "
+            "VALUES ('network-object', 'server-cidr', ?, '2026-10-29T00:00:00Z')",
+            (json.dumps({"name": "server-cidr", "type": "cidr", "values": ["10.39.163.1/32"]}),),
+        )
+        before = self.plane.current_revision()
+        raw = '''configurationBundle:
+  context: agent
+  remoteServices:
+    - name: cidr-object-destination
+      destination: server-cidr
+      service: ssh
+      enabled: true
+'''
+
+        with self.assertRaisesRegex(BundleError, "CIDR|single target"):
+            prepare_v24_plan(self.plane, raw, role="agent")
+
+        self.assertEqual(self.plane.current_revision(), before)
+        self.assertEqual(
+            self.plane.conn.execute(
+                "SELECT count(*) FROM agent_remote_services"
+            ).fetchone()[0],
+            0,
+        )
+
     def test_agent_preview_readonly_never_contacts_server_or_activates(self):
         before = self.plane.current_revision()
         before_audit = self.plane.conn.execute('SELECT count(*) FROM audit_events').fetchone()[0]

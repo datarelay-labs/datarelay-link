@@ -7038,7 +7038,11 @@ def set_remote_service_agent(
                 )
             dest_token = members[0]["name"]
         obj = plane_db.get_object(dest_token) if hasattr(plane_db, "get_object") else None
-        if obj and obj["type"] == "network" and destination_client_id is None:
+        catalog_object = _catalog_payload(plane_db, "network-object", dest_token)
+        if (
+            (obj and _row_get(obj, "type") == "network")
+            or (catalog_object and str(catalog_object.get("type") or "").lower() == "cidr")
+        ):
             raise ControlPlaneError(
                 "ERROR:\nRemote Service destination must resolve to a single target.\n\n"
                 "CIDR Network Object '%s' is not allowed.\n\n"
