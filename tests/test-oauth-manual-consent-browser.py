@@ -24,6 +24,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from contextlib import redirect_stderr, redirect_stdout
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "lib"))
@@ -74,6 +75,7 @@ class ManualConsentBrowserTests(unittest.TestCase):
         os.environ["DRLINK_TEST_ROOT"] = self.tmp
         os.environ["DRLINK_CONFIRM"] = "yes"
         os.environ.pop("DRLINK_OAUTH_AUTO_APPROVE", None)
+        os.environ.pop("DRLINK_MCP_OAUTH_OPERATOR_IDENTITY", None)
         self.plane = ControlPlane(self.tmp)
         self.plane.set_ai_principal("agent-a", enabled=True)
         dispatch(
@@ -129,6 +131,7 @@ class ManualConsentBrowserTests(unittest.TestCase):
         os.environ.pop("DRLINK_TEST_ROOT", None)
         os.environ.pop("DRLINK_CONFIRM", None)
         os.environ.pop("DRLINK_OAUTH_AUTO_APPROVE", None)
+        os.environ.pop("DRLINK_MCP_OAUTH_OPERATOR_IDENTITY", None)
 
     def _pkce(self):
         verifier = "V" * 43
@@ -248,6 +251,10 @@ class ManualConsentBrowserTests(unittest.TestCase):
         self.assertIn("Waiting for operator approval", wait_body)
         self.assertIn(auth["pending_id"], wait_body)
         self.assertIn("system credential approve-oauth", wait_body)
+        expected = "sudo drlink system credential approve-oauth " + auth["pending_id"]
+        self.assertIn(expected, auth["page"])
+        self.assertIn(expected, wait_body)
+        self.assertNotIn("AI-IDENTITY", wait_body)  # Already-bound OAuth client.
         # Public CLI approval path only (no DB / plane helper).
         buf = io.StringIO()
         with redirect_stdout(buf):
@@ -568,6 +575,64 @@ class ManualConsentBrowserTests(unittest.TestCase):
         self.assertEqual(status, 200, payload)
         self.assertIn("tools", json.dumps(payload))
         print("FIRST_CHATGPT_PUBLIC_CLI_OAUTH_PKCE_MCP=PASS")
+
+    def test_dcr_operator_identity_hint_shows_executable_command_on_both_pages(self):
+        # A DCR client is not trusted/bound yet. Only the operator-configured,
+        # currently verified Identity may be displayed as an explicit CLI hint.
+        reg = json.loads(urllib.request.urlopen(
+            urllib.request.Request(
+                self.base + "/oauth/register",
+                data=json.dumps({
+                    "redirect_uris": ["http://127.0.0.1/cb-approval-hint"],
+                    "token_endpoint_auth_method": "none",
+                    "grant_types": ["authorization_code", "refresh_token"],
+                    "client_name": "manual-dcr-approval-hint",
+                }).encode("utf-8"),
+                headers={"Content-Type": "application/json"}, method="POST",
+            ), timeout=10).read().decode("utf-8"))
+        _, challenge = self._pkce()
+        with patch.dict(os.environ, {"DRLINK_MCP_OAUTH_OPERATOR_IDENTITY": "agent-a"}):
+            auth = self._authorize(challenge=challenge, state="hint-only",
+                                   client_id=reg["client_id"],
+                                   redirect="http://127.0.0.1/cb-approval-hint")
+            expected = ("sudo drlink system credential approve-oauth "
+                        + auth["pending_id"] + " agent-a")
+            self.assertIn(expected, auth["page"])
+            self.assertNotIn("&lt;AI-IDENTITY&gt;", auth["page"])
+            self.assertEqual(self.plane.conn.execute(
+                "SELECT status FROM ai_oauth_pending WHERE id = ?",
+                (auth["pending_id"],)).fetchone()["status"], "pending")
+            page = urllib.request.urlopen(self.base + auth["continue_path"], timeout=10).read().decode()
+            self.assertIn(expected, page)
+            self.assertNotIn("&lt;AI-IDENTITY&gt;", page)
+        # A missing/unverified or malformed configured Identity cannot become
+        # an accidental suggestion for a privileged OAuth binding.
+        for candidate in ("missing-identity", "agent-a<script>"):
+            with patch.dict(os.environ, {"DRLINK_MCP_OAUTH_OPERATOR_IDENTITY": candidate}):
+                page = urllib.request.urlopen(self.base + auth["continue_path"], timeout=10).read().decode()
+                self.assertIn("sudo drlink system credential approve-oauth", page)
+                self.assertIn("&lt;AI-IDENTITY&gt;", page)
+                self.assertNotIn("<script>", page.split("<pre>", 1)[-1].split("</pre>", 1)[0])
+        # Revoking the suggested Identity withdraws the UI hint immediately;
+        # the operator can no longer be guided to bind this client to it.
+        self.plane.conn.execute(
+            "UPDATE ai_principals SET credential_status='revoked' WHERE name='agent-a'")
+        with patch.dict(os.environ, {"DRLINK_MCP_OAUTH_OPERATOR_IDENTITY": "agent-a"}):
+            page = urllib.request.urlopen(self.base + auth["continue_path"], timeout=10).read().decode()
+            self.assertIn("&lt;AI-IDENTITY&gt;", page)
+            self.assertNotIn(auth["pending_id"] + " agent-a", page)
+        self.plane.conn.execute(
+            "UPDATE ai_principals SET credential_status='verified' WHERE name='agent-a'")
+        # The browser hint is read-only: explicit operator approval is still
+        # mandatory, and the existing OAuth consent binding/redirect works.
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            dispatch(["system", "credential", "approve-oauth", auth["pending_id"], "agent-a"],
+                     root=self.tmp)
+        self.assertIn("Authorization approved", buf.getvalue())
+        exc = open_no_redirect(self.base + auth["continue_path"])
+        self.assertEqual(exc.code, 302)
+        self.assertIn("code=", exc.headers.get("Location") or "")
 
     def test_dcr_unbound_public_cli_identity_approval(self):
         self.plane.set_ai_principal("agent-dcr", enabled=True)

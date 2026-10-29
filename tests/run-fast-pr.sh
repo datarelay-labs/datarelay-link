@@ -108,6 +108,16 @@ python3 tests/test-v24-network-object-remote-reference.py
 python3 tests/test-p013-policy-hotpath.py
 python3 tests/test-v24-offline-tombstone-duplicate.py
 
+echo "=== Native MCP full-control regressions ==="
+python3 tests/test-mcp-server-full-control.py
+python3 tests/test-mcp-server-full-control-public.py
+python3 tests/test-mcp-full-control-rollout.py
+python3 tests/test-mcp-server-self.py
+python3 tests/test-mcp-public-tls-lifecycle.py \
+  McpTlsLifecycleTests.test_stopped_frontend_does_not_block_private_ca_or_import_recovery \
+  McpTlsLifecycleTests.test_http01_publication_still_denies_unavailable_frontend_worker
+bash tests/test-project-file-manifest.sh
+
 echo "=== derived artifact closure ==="
 bash tests/test-change-closure-artifacts.sh
 

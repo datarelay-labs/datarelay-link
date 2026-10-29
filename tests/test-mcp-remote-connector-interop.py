@@ -251,6 +251,63 @@ class RemoteConnectorInteropTests(unittest.TestCase):
         )
         return issued, resource
 
+    def test_public_auth_hints_request_refreshable_connection(self):
+        status, _, headers = rpc(
+            self.url, {"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {}}
+        )
+        self.assertEqual(status, 401)
+        challenge = next(v for k, v in headers.items() if k.lower() == "www-authenticate")
+        self.assertIn('scope="drlink.ai offline_access"', challenge)
+        self.assertEqual(self.bridge.www_authenticate_meta()["mcp/www_authenticate"], [challenge])
+        status, listed, _ = rpc(
+            self.url, {"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}},
+            self.ro_agent_token, method="tools/list",
+        )
+        self.assertEqual(status, 200)
+        for tool in listed["result"]["tools"]:
+            schemes = tool.get("securitySchemes") or []
+            oauth = [x for x in schemes if x.get("type") == "oauth2"]
+            self.assertTrue(oauth, tool["name"])
+            self.assertEqual(oauth[0]["scopes"], ["drlink.ai", "offline_access"], tool["name"])
+        scopes = " ".join(oauth[0]["scopes"])
+        issued, _ = self._auth_code("ro-agent", scope=scopes)
+        self.assertTrue(bool(issued.get("refresh_token")))
+
+    def test_refresh_rotates_after_access_expiry_without_new_consent(self):
+        issued, resource = self._auth_code("ro-agent")
+        initial = issued
+        def call(token):
+            return rpc(
+                self.url, {"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {}},
+                token, method="tools/list",
+            )[0]
+        for _ in range(2):
+            self.plane.conn.execute(
+                "UPDATE ai_oauth_tokens SET expires_at = ? WHERE token_hash = ?",
+                ("2000-01-01T00:00:00Z", hashlib.sha256(issued["access_token"].encode()).hexdigest()),
+            )
+            self.assertEqual(call(issued["access_token"]), 401)
+            previous_refresh = issued["refresh_token"]
+            data = urllib.parse.urlencode({
+                "grant_type": "refresh_token", "refresh_token": previous_refresh,
+                "client_id": "ro-agent", "resource": resource,
+            }).encode()
+            request = urllib.request.Request(
+                self.base + "/oauth/token", data=data,
+                headers={"Content-Type": "application/x-www-form-urlencoded"}, method="POST",
+            )
+            with urllib.request.urlopen(request, timeout=10) as response:
+                issued = json.load(response)
+            self.assertTrue(issued["refresh_token"] != previous_refresh)
+            self.assertEqual(issued["expires_in"], 3600)
+            self.assertEqual(call(issued["access_token"]), 200)
+            with self.assertRaises(urllib.error.HTTPError) as cm:
+                urllib.request.urlopen(request, timeout=10)
+            self.assertEqual(cm.exception.code, 401)
+        self.assertEqual(call(initial["access_token"]), 401)
+        self.assertEqual(call(issued["refresh_token"]), 401)
+        print("OAUTH_EXPIRED_ACCESS_REFRESH_ROTATION=PASS")
+
     def test_oauth_grants_only_requested_optional_scope(self):
         issued, _resource = self._auth_code("ro-agent", scope="drlink.ai")
         self.assertEqual(issued["scope"], "drlink.ai")

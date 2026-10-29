@@ -462,6 +462,40 @@ class McpTlsLifecycleTests(unittest.TestCase):
 
         shutil.rmtree(self.tmp, ignore_errors=True)
 
+    def test_stopped_frontend_does_not_block_private_ca_or_import_recovery(self):
+        host = "mcp.example.test"
+        mcp_tls.configure_intent(self.plane, hostname=host)
+        mcp_tls.configure_intent(self.plane, mode="private-ca")
+        unavailable = mcp_tls.McpTlsError(
+            "frontend stopped", failure_class="ACME_WORKER_IDENTITY_UNAVAILABLE")
+        with mock.patch.object(mcp_tls, "ensure_http01_publish_permissions",
+                               side_effect=unavailable) as publish:
+            state = mcp_tls.issue_and_activate(self.plane, self.tmp, reload=False)
+            self.assertEqual(state["mode"], mcp_tls.MODE_PRIVATE_CA)
+            cert, key = _synth_leaf(host, days=60)
+            cert_path, key_path = Path(self.tmp) / "recovery.crt", Path(self.tmp) / "recovery.key"
+            cert_path.write_bytes(cert)
+            key_path.write_bytes(key)
+            key_path.chmod(0o600)
+            state = mcp_tls.import_user_certificate(
+                self.plane, self.tmp, cert_path=str(cert_path),
+                key_path=str(key_path), reload=False)
+            self.assertEqual(state["mode"], mcp_tls.MODE_USER_CERTIFICATE)
+            self.assertEqual(Path(mcp_tls.read_active_material(self.tmp)["cert_path"]).read_bytes(), cert)
+            publish.assert_not_called()
+        for directory in (mcp_tls.active_dir(self.tmp), mcp_tls.account_dir(self.tmp)):
+            self.assertEqual(stat.S_IMODE(directory.stat().st_mode), 0o700)
+
+    def test_http01_publication_still_denies_unavailable_frontend_worker(self):
+        unavailable = mcp_tls.McpTlsError(
+            "frontend stopped", failure_class="ACME_WORKER_IDENTITY_UNAVAILABLE")
+        with mock.patch.object(mcp_tls, "ensure_http01_publish_permissions",
+                               side_effect=unavailable):
+            with self.assertRaises(mcp_tls.McpTlsError) as denied:
+                mcp_tls._write_http01_challenge(self.tmp, "fixture-token", "fixture-response")
+        self.assertEqual(denied.exception.failure_class, "ACME_WORKER_IDENTITY_UNAVAILABLE")
+        self.assertFalse((mcp_tls.challenges_dir(self.tmp) / "fixture-token").exists())
+
     def test_hostname_validation(self):
         self.assertEqual(mcp_tls.canonicalize_hostname("MCP.Example.COM."), "mcp.example.com")
         with self.assertRaises(mcp_tls.McpTlsError):
@@ -874,10 +908,17 @@ spec:
             mcp_tls.acme_runtime_status = orig
 
     def test_http01_publish_permissions_keep_secrets_closed(self):
-        mcp_tls.ensure_tree(self.tmp)
+        # Reproduces root operator's restrictive umask: mkdir(parents=True)
+        # creates .well-known as 0700 unless the intermediate is chmod'd.
+        previous_umask = os.umask(0o077)
+        try:
+            mcp_tls.ensure_tree(self.tmp)
+        finally:
+            os.umask(previous_umask)
         tree = mcp_tls.tls_tree(self.tmp)
         self.assertEqual(stat.S_IMODE(tree.stat().st_mode), 0o755)
         self.assertEqual(stat.S_IMODE(mcp_tls.acme_webroot(self.tmp).stat().st_mode), 0o755)
+        self.assertEqual(stat.S_IMODE((mcp_tls.acme_webroot(self.tmp) / ".well-known").stat().st_mode), 0o755)
         self.assertEqual(stat.S_IMODE(mcp_tls.challenges_dir(self.tmp).stat().st_mode), 0o755)
         self.assertEqual(stat.S_IMODE(mcp_tls.account_dir(self.tmp).stat().st_mode), 0o700)
         self.assertEqual(stat.S_IMODE(mcp_tls.active_dir(self.tmp).stat().st_mode), 0o700)
@@ -885,6 +926,29 @@ spec:
         parent = Path(self.tmp) / "var" / "lib" / "drlink"
         self.assertTrue(parent.is_dir())
         self.assertTrue(stat.S_IMODE(parent.stat().st_mode) & 0o001)
+
+    def test_http01_acl_uses_actual_frontend_worker_not_distro_nginx_user(self):
+        # Real incident: distro nginx.conf uses 'www-data', but the DRLink
+        # frontend configured without a user directive ran as 'nobody'.
+        master = subprocess.CompletedProcess([], 0, stdout="2412264\\n".replace("\\n", "\n"))
+        worker = subprocess.CompletedProcess([], 0, stdout="65534\\n".replace("\\n", "\n"))
+        with (mock.patch.object(mcp_tls.subprocess, "run", side_effect=[master, worker]) as runner,
+              mock.patch("pwd.getpwuid", return_value=type("User", (), {"pw_name": "nobody"})())):
+            self.assertEqual(mcp_tls._frontend_http_user(), "nobody")
+            self.assertEqual(runner.call_count, 2)
+            self.assertEqual(runner.call_args_list[0].args[0], [
+                "systemctl", "show", "drlink-frontend.service", "--property=MainPID", "--value",
+            ])
+            self.assertEqual(runner.call_args_list[1].args[0], [
+                "ps", "-o", "uid=", "--ppid", "2412264",
+            ])
+
+    def test_http01_unknown_worker_does_not_guess_www_data(self):
+        with mock.patch.object(
+            mcp_tls.subprocess, "run",
+            return_value=subprocess.CompletedProcess([], 0, stdout="0\\n".replace("\\n", "\n")),
+        ):
+            self.assertEqual(mcp_tls._frontend_http_user(), "")
 
     def test_acme_account_conflict_reuses_existing_registration(self):
         host = "mcp.example.test"
