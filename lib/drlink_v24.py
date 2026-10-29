@@ -6955,6 +6955,21 @@ def set_remote_service_agent(
 
     # Resolve destination single-target
     dest_token = str(dest).strip()
+    # A literal IP network is a multi-target selector even when the Agent is
+    # offline and has no synchronized Network Object metadata to classify it.
+    # Keep this guard in the shared mutation path so Bundle preview/apply and
+    # the public Remote Service command enforce the same single-target rule.
+    if "/" in dest_token:
+        try:
+            ipaddress.ip_network(dest_token, strict=False)
+        except ValueError:
+            pass
+        else:
+            raise ControlPlaneError(
+                "ERROR:\nRemote Service destination must resolve to a single target.\n\n"
+                "CIDR destinations are not allowed.\n\n"
+                "No changes were applied."
+            )
     destination_client_id = None
     existing_dest_client_id = str(_row_get(existing, "destination_client_id") or "").strip() or None
     existing_dest_name = str(existing["destination"] if existing else "")

@@ -108,6 +108,28 @@ class BundleStalePlanSafety(unittest.TestCase):
             self.assertEqual(self.plane.current_revision(), before)
             self.assertEqual(self.plane.conn.execute('SELECT count(*) FROM agent_remote_services').fetchone()[0], 0)
 
+    def test_agent_bundle_rejects_cidr_literal_destination_before_planning(self):
+        before = self.plane.current_revision()
+        raw = '''configurationBundle:
+  context: agent
+  remoteServices:
+    - name: cidr-destination
+      destination: 10.39.163.1/32
+      service: ssh
+      enabled: true
+'''
+
+        with self.assertRaisesRegex(BundleError, "CIDR|single target"):
+            prepare_v24_plan(self.plane, raw, role="agent")
+
+        self.assertEqual(self.plane.current_revision(), before)
+        self.assertEqual(
+            self.plane.conn.execute(
+                "SELECT count(*) FROM agent_remote_services"
+            ).fetchone()[0],
+            0,
+        )
+
     def test_agent_preview_readonly_never_contacts_server_or_activates(self):
         before = self.plane.current_revision()
         before_audit = self.plane.conn.execute('SELECT count(*) FROM audit_events').fetchone()[0]
