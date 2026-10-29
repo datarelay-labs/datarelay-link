@@ -38,6 +38,27 @@ ownership and audit remain enforced for every call.
   Bridge's inherited environment. They may use the configured account's own
   files, groups, Git configuration and OS permissions.
 
+## Connection renewal
+
+Public tool security schemes and both HTTP/tool authentication challenges request
+`drlink.ai offline_access`. The token endpoint grants a refresh token only when
+the client requested and was authorized for `offline_access`; an explicitly
+primary-only grant stays primary-only. AI Access and OS execution permissions
+are independent and unchanged.
+
+Access tokens last one hour. Refresh tokens last 30 days and rotate on each
+successful renewal, restarting that 30-day window. A connection with an
+unexpired refresh token can renew without a new operator consent.
+Revoked/expired refresh tokens require a new authorization flow.
+
+A pre-existing ChatGPT connection reporting `oauth_refresh_token_missing`
+cannot be repaired by restarting the server: the host has no refresh token.
+After deploying this fix and refreshing cached tool metadata if needed,
+reconnect that existing app once and complete the normal OAuth/operator
+approval. Do not recreate the app, copy credentials, disable expiry, or
+silently broaden a registered client's scope. Verify the new connection
+renews after access-token expiry before calling host interoperability fixed.
+
 ## Operator settings
 
 Configure settings in the existing MCP Bridge service only after source,

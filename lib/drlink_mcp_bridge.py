@@ -67,7 +67,11 @@ NAME_BEARING = {"tools/call": "name", "resources/read": "uri", "prompts/get": "n
 OAUTH_PRIMARY_SCOPE = "drlink.ai"
 OAUTH_OPTIONAL_SCOPES = ("offline_access",)
 OAUTH_SUPPORTED_SCOPES = (OAUTH_PRIMARY_SCOPE,) + OAUTH_OPTIONAL_SCOPES
-OAUTH_TOOL_SECURITY_SCHEMES = ({"type": "oauth2", "scopes": [OAUTH_PRIMARY_SCOPE]},)
+# Public linking hints request renewal so a normal connection survives access
+# token expiry. This does not widen AI Access or silently upgrade an explicit
+# primary-only OAuth grant; the authorization flow still honors requested scopes.
+OAUTH_CONNECTION_SCOPE = " ".join(OAUTH_SUPPORTED_SCOPES)
+OAUTH_TOOL_SECURITY_SCHEMES = ({"type": "oauth2", "scopes": list(OAUTH_SUPPORTED_SCOPES)},)
 # Public MCP/OAuth rate limits and authorize admission key on a trusted source.
 # Peer address is the source unless the TCP peer is loopback, in which case the
 # local reverse proxy's X-Forwarded-For / X-Real-IP is accepted. Those headers
@@ -711,10 +715,10 @@ class MCPBridge:
         return (
             'Bearer realm="drlink-mcp", '
             'resource_metadata="%s/.well-known/oauth-protected-resource", '
-            'scope="drlink.ai", '
+            'scope="%s", '
             'error="invalid_token", '
             'error_description="Authentication required"'
-        ) % base
+        ) % (base, OAUTH_CONNECTION_SCOPE)
 
     def www_authenticate_meta(self) -> dict:
         return {WWW_AUTHENTICATE_META: [self.www_authenticate_value()]}

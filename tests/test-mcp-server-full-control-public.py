@@ -177,7 +177,7 @@ class NativeFullControlPublicTests(unittest.TestCase):
                      "server_job_input", "server_job_stop", "server_read_file",
                      "server_write_file", "server_delete_file"):
             self.assertIn(name, tools)
-            self.assertIn({"type": "oauth2", "scopes": ["drlink.ai"]}, tools[name]["securitySchemes"])
+            self.assertIn({"type": "oauth2", "scopes": ["drlink.ai", "offline_access"]}, tools[name]["securitySchemes"])
         for name, field in (("server_exec", "command"), ("server_run", "argv"),
                             ("server_git", "argv")):
             schema = tools[name]["inputSchema"]
