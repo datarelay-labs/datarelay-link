@@ -20,6 +20,7 @@ from drlink_control_db import ControlPlaneError
 from drlink_control_plane import ControlPlane
 import drlink_mgmt_sync as mgmt
 import drlink_v24 as v24
+import drlink_v24_runtime as runtime
 from drlink_v24_bundle import apply_v24_plan, prepare_v24_plan
 import frp_mgmt_auth as MGMT
 
@@ -493,6 +494,76 @@ class RemoteServiceDistributedAtomicity(unittest.TestCase):
         ).fetchone()
         self.assertIsNotNone(tomb)
         self.assertEqual(int(tomb["delete_pending"]), 1)
+
+    def test_delete_never_allocated_pending_service_does_not_apply_runtime(self):
+        """A pending service has no published endpoint to deactivate."""
+        created = v24.set_remote_service_agent(
+            self.agent,
+            "never-allocated",
+            destination="this-host",
+            service="ssh",
+            enabled=True,
+            oneshot=True,
+            root=self.agent_tmp,
+            server_reachable=False,
+        )
+        self.assertIsNone(created["view"]["endpoint_port"])
+        row = self.agent.conn.execute(
+            "SELECT endpoint_port, pending_allocation, delete_pending "
+            "FROM agent_remote_services WHERE name='never-allocated'"
+        ).fetchone()
+        self.assertIsNone(row["endpoint_port"])
+        self.assertEqual(int(row["pending_allocation"]), 1)
+        self.assertEqual(int(row["delete_pending"]), 0)
+
+        with mock.patch.object(
+            runtime,
+            "apply_agent_runtime",
+            side_effect=AssertionError("no endpoint was ever allocated"),
+        ) as apply_runtime:
+            result = v24.unset_remote_service_agent(
+                self.agent,
+                "never-allocated",
+                root=self.agent_tmp,
+                server_reachable=False,
+            )
+
+        self.assertEqual(result["operation"], "delete")
+        tombstone = self.agent.conn.execute(
+            "SELECT endpoint_port, pending_allocation, delete_pending "
+            "FROM agent_remote_services WHERE name='never-allocated'"
+        ).fetchone()
+        self.assertIsNotNone(tombstone)
+        self.assertIsNone(tombstone["endpoint_port"])
+        self.assertEqual(int(tombstone["pending_allocation"]), 0)
+        self.assertEqual(int(tombstone["delete_pending"]), 1)
+        apply_runtime.assert_not_called()
+
+    def test_delete_allocated_service_still_requires_runtime_verification(self):
+        created = self._create("allocated-before-delete")
+        self.assertIsNotNone(created["view"]["endpoint_port"])
+        row = self.agent.conn.execute(
+            "SELECT pending_allocation FROM agent_remote_services "
+            "WHERE name='allocated-before-delete'"
+        ).fetchone()
+        self.assertEqual(int(row["pending_allocation"]), 0)
+
+        with mock.patch.object(
+            runtime,
+            "apply_agent_runtime",
+            return_value={"ok": False, "error": "runtime unavailable"},
+        ) as apply_runtime:
+            with self.assertRaisesRegex(
+                ControlPlaneError, "runtime deactivation could not be verified"
+            ):
+                v24.unset_remote_service_agent(
+                    self.agent,
+                    "allocated-before-delete",
+                    root=self.agent_tmp,
+                    server_reachable=True,
+                )
+
+        apply_runtime.assert_called_once()
 
     def test_offline_tombstone_replacement_releases_old_server_port_on_reconnect(self):
         """Deletion must sync before publishing replacement with same target/service."""

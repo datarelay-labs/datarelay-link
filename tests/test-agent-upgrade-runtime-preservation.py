@@ -139,9 +139,13 @@ class UpgradeRuntimePreservationTests(unittest.TestCase):
             (etc / 'client-identity.mac').chmod(0o600)
             (root / 'etc/drlink/version').write_text('PROJECT_VERSION=2.4.0\nFRP_VERSION=0.71.0\nRELEASE_CHANNEL=development\nSOURCE_REF=55aa3042438481a20c77041e306feacba8140545\nSOURCE_HEAD=55aa3042438481a20c77041e306feacba8140545\nBUNDLE_SHA256='+'a'*64+'\n')
             env = {k:v for k,v in os.environ.items() if not k.startswith(('FRP_', 'DRLINK_'))}
+            source_head = subprocess.check_output(
+                ['git', '-C', str(REPO), 'rev-parse', '--verify', 'HEAD'],
+                text=True,
+            ).strip()
             env.update(FRP_CLIENT_TEST_ROOT=str(root),FRP_SKIP_DOWNLOAD='1',
                 FRP_CLIENT_SKIP_SERVER_VERSION_GATE='1',FRP_RELEASE_CHANNEL='development',
-                FRP_EXPECTED_SOURCE_REF='e7639e7fdd20b7e071f0cd6a3da2950de6e41bf4',
+                FRP_EXPECTED_SOURCE_REF=source_head,
                 FRP_BUNDLE_SHA256='b'*64,FRP_MGMT_AUTH_PY=str(REPO/'lib/frp_mgmt_auth.py'))
             prepared=subprocess.run([sys.executable,__file__,'--worker',str(root),'prepare'],env=env,capture_output=True,text=True)
             self.assertEqual(prepared.returncode,0,prepared.stdout+prepared.stderr)

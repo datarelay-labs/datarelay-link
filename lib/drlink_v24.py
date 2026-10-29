@@ -7784,6 +7784,10 @@ def unset_remote_service_agent(plane_db, name: str, *, root: Optional[str] = Non
     ).fetchone()
     if not existing:
         raise ControlPlaneError(cli_error("Remote Service '%s' was not found." % name))
+    never_allocated_pending = (
+        _row_get(existing, "endpoint_port") is None
+        and bool(_row_get(existing, "pending_allocation"))
+    )
     identity = load_agent_identity(root)
     host_name = identity.get("hostname") or identity.get("label") or "this-host"
 
@@ -7883,6 +7887,14 @@ def unset_remote_service_agent(plane_db, name: str, *, root: Optional[str] = Non
         raise
     # Nested synchronize / Bundle Apply defers runtime to one final apply.
     if getattr(plane_db, "_batch_mode", False):
+        return result
+    # A pending allocation has no public listener to deactivate. Avoid making
+    # deletion of that intent depend on a global frpc reload, which can stall
+    # on unrelated runtime failures even though this service never had an
+    # endpoint. Allocated or otherwise uncertain rows still require the
+    # fail-closed runtime verification below.
+    if never_allocated_pending:
+        _clear_agent_mgmt_side_effects(plane_db)
         return result
     # Always remove local runtime proxy immediately (including offline tombstone deletes).
     # The desired-state deletion may already be committed locally and on the
