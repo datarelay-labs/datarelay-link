@@ -321,7 +321,14 @@ def _private_ca_pin_shell(allocator_url, ca_sha256):
 def _qualified_linux_shell(installer_url, allocator_url, ca_file, bundle_file, workdir):
     """Verify the pinned Server's outer candidate before any installer executes."""
     origin = https_origin(allocator_url)
-    if str(installer_url) != origin + '/artifacts/agent/bootstrap-client.sh':
+    installer = str(installer_url or '').strip()
+    parsed_installer = urlsplit(installer)
+    if (
+        not same_https_origin(installer, origin)
+        or parsed_installer.username is not None
+        or parsed_installer.password is not None
+        or parsed_installer.path != '/artifacts/agent/bootstrap-client.sh'
+    ):
         return ''
     validator = '''import hashlib,json,re,sys
 from pathlib import Path

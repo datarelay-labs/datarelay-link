@@ -69,6 +69,19 @@ def test_urls():
     assert zt.linux_installer_sum_names(queried_linux) == (
         "agent/bootstrap-client.sh",
     )
+    queried_qualified_shell = zt._qualified_linux_shell(
+        queried_linux, alloc, "$ca", "$installer", "$workdir"
+    )
+    assert "artifacts/manifest.json" in queried_qualified_shell
+    assert "FRP_EXPECTED_SOURCE_HEAD" in queried_qualified_shell
+    assert zt._qualified_linux_shell(
+        "https://other.example.test/artifacts/agent/bootstrap-client.sh?cli100=a018-linux",
+        alloc, "$ca", "$installer", "$workdir"
+    ) == ""
+    assert zt._qualified_linux_shell(
+        "https://user@203.0.113.10:6099/artifacts/agent/bootstrap-client.sh?cli100=a018-linux",
+        alloc, "$ca", "$installer", "$workdir"
+    ) == ""
     queried_windows = qa.agent_installer_url(alloc, "windows") + "?variant=windows"
     assert zt.sha256sums_url_for_installer(queried_windows) == (
         "https://203.0.113.10:6099/artifacts/SHA256SUMS"
