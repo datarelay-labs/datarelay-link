@@ -874,10 +874,17 @@ spec:
             mcp_tls.acme_runtime_status = orig
 
     def test_http01_publish_permissions_keep_secrets_closed(self):
-        mcp_tls.ensure_tree(self.tmp)
+        # Reproduces root operator's restrictive umask: mkdir(parents=True)
+        # creates .well-known as 0700 unless the intermediate is chmod'd.
+        previous_umask = os.umask(0o077)
+        try:
+            mcp_tls.ensure_tree(self.tmp)
+        finally:
+            os.umask(previous_umask)
         tree = mcp_tls.tls_tree(self.tmp)
         self.assertEqual(stat.S_IMODE(tree.stat().st_mode), 0o755)
         self.assertEqual(stat.S_IMODE(mcp_tls.acme_webroot(self.tmp).stat().st_mode), 0o755)
+        self.assertEqual(stat.S_IMODE((mcp_tls.acme_webroot(self.tmp) / ".well-known").stat().st_mode), 0o755)
         self.assertEqual(stat.S_IMODE(mcp_tls.challenges_dir(self.tmp).stat().st_mode), 0o755)
         self.assertEqual(stat.S_IMODE(mcp_tls.account_dir(self.tmp).stat().st_mode), 0o700)
         self.assertEqual(stat.S_IMODE(mcp_tls.active_dir(self.tmp).stat().st_mode), 0o700)
@@ -885,6 +892,29 @@ spec:
         parent = Path(self.tmp) / "var" / "lib" / "drlink"
         self.assertTrue(parent.is_dir())
         self.assertTrue(stat.S_IMODE(parent.stat().st_mode) & 0o001)
+
+    def test_http01_acl_uses_actual_frontend_worker_not_distro_nginx_user(self):
+        # Real incident: distro nginx.conf uses 'www-data', but the DRLink
+        # frontend configured without a user directive ran as 'nobody'.
+        master = subprocess.CompletedProcess([], 0, stdout="2412264\\n".replace("\\n", "\n"))
+        worker = subprocess.CompletedProcess([], 0, stdout="65534\\n".replace("\\n", "\n"))
+        with (mock.patch.object(mcp_tls.subprocess, "run", side_effect=[master, worker]) as runner,
+              mock.patch("pwd.getpwuid", return_value=type("User", (), {"pw_name": "nobody"})())):
+            self.assertEqual(mcp_tls._frontend_http_user(), "nobody")
+            self.assertEqual(runner.call_count, 2)
+            self.assertEqual(runner.call_args_list[0].args[0], [
+                "systemctl", "show", "drlink-frontend.service", "--property=MainPID", "--value",
+            ])
+            self.assertEqual(runner.call_args_list[1].args[0], [
+                "ps", "-o", "uid=", "--ppid", "2412264",
+            ])
+
+    def test_http01_unknown_worker_does_not_guess_www_data(self):
+        with mock.patch.object(
+            mcp_tls.subprocess, "run",
+            return_value=subprocess.CompletedProcess([], 0, stdout="0\\n".replace("\\n", "\n")),
+        ):
+            self.assertEqual(mcp_tls._frontend_http_user(), "")
 
     def test_acme_account_conflict_reuses_existing_registration(self):
         host = "mcp.example.test"

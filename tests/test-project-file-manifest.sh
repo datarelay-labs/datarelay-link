@@ -7,6 +7,7 @@ pass() { echo "PASS $1"; }
 fail() { echo "FAIL $1" >&2; exit 1; }
 
 python3 - "$ROOT" <<'PY'
+import ast
 import sys
 from pathlib import Path
 
@@ -35,6 +36,22 @@ if "frp_server_upgrade_destinations" not in upgrade:
     raise SystemExit("upgrade destinations helper missing")
 if "server-project-files.manifest" not in (root / "scripts" / "build-bundles.py").read_text():
     raise SystemExit("bundle builder missing canonical manifest")
+
+builder = ast.parse((root / "scripts" / "build-bundles.py").read_text())
+bundle_files = next(ast.literal_eval(node.value) for node in builder.body
+                    if isinstance(node, ast.Assign)
+                    and any(isinstance(target, ast.Name) and target.id == "files"
+                            for target in node.targets))
+native_mcp = {entry.source for entry in frp_project_files.load_entries()
+              if entry.cls == "project" and entry.source.startswith("lib/drlink_mcp_")}
+required_mcp = {"lib/drlink_mcp_bridge.py", "lib/drlink_mcp_server_executor.py",
+                "lib/drlink_mcp_full_control.py"}
+if not required_mcp <= native_mcp:
+    raise SystemExit("Native MCP modules missing from canonical manifest")
+missing_mcp = sorted(native_mcp - set(bundle_files))
+if missing_mcp:
+    raise SystemExit("Native MCP server bundle missing %s" % missing_mcp)
+print("NATIVE_MCP_BUNDLE_MANIFEST_PARITY=PASS")
 
 required = {
     "usr/local/lib/drlink/frp_audit.py",

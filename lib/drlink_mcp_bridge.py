@@ -14,20 +14,24 @@ public ``test ai-access``. Legacy ai_access_rules are not an authority.
 """
 from __future__ import annotations
 
+from html import escape as html_escape
 import json
 import os
+import re
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from socketserver import ThreadingMixIn
 from typing import Any, Optional
-from urllib.parse import parse_qs, urlencode, urlparse
+from urllib.parse import parse_qs, urlencode, urlparse, urlsplit
 
 from drlink_ai_agent import AgentLoop, execute_local
+from drlink_mcp_server_executor import ExecutorDenied, execute_as_unprivileged_user
 from drlink_control_db import ControlPlaneError, resolve_root
 from drlink_control_plane import (
     AI_CAPABILITIES,
     ControlPlane,
+    path_allowed,
     MCP_AUTH_MODEL,
     OAuthPendingCapacityError,
     OAuthScopeError,
@@ -44,9 +48,10 @@ MCP_SERVER_NAME = "data-relay-link"
 MCP_SERVER_VERSION = "2.4.0"
 MCP_SERVER_TITLE = "Data Relay Link"
 MCP_INSTRUCTIONS = (
-    "Data Relay Link MCP Bridge. Tools operate on Managed Hosts authorized by "
-    "AI Access policy. Authenticated does not mean authorized. Every tool requires "
-    "OAuth; DRLink re-evaluates AI Identity and AI Access on each tools/call."
+    "Data Relay Link MCP Bridge. Tools operate on authorized Managed Hosts; "
+    "the Server-self target is optional and separately authorized by AI Access. "
+    "OAuth authenticates the AI Identity but never grants permissions. "
+    "DRLink re-evaluates AI Identity and AI Access on each tools/call."
 )
 SERVER_INFO_META = "io.modelcontextprotocol/serverInfo"
 WWW_AUTHENTICATE_META = "mcp/www_authenticate"
@@ -62,7 +67,11 @@ NAME_BEARING = {"tools/call": "name", "resources/read": "uri", "prompts/get": "n
 OAUTH_PRIMARY_SCOPE = "drlink.ai"
 OAUTH_OPTIONAL_SCOPES = ("offline_access",)
 OAUTH_SUPPORTED_SCOPES = (OAUTH_PRIMARY_SCOPE,) + OAUTH_OPTIONAL_SCOPES
-OAUTH_TOOL_SECURITY_SCHEMES = ({"type": "oauth2", "scopes": [OAUTH_PRIMARY_SCOPE]},)
+# Public linking hints request renewal so a normal connection survives access
+# token expiry. This does not widen AI Access or silently upgrade an explicit
+# primary-only OAuth grant; the authorization flow still honors requested scopes.
+OAUTH_CONNECTION_SCOPE = " ".join(OAUTH_SUPPORTED_SCOPES)
+OAUTH_TOOL_SECURITY_SCHEMES = ({"type": "oauth2", "scopes": list(OAUTH_SUPPORTED_SCOPES)},)
 # Public MCP/OAuth rate limits and authorize admission key on a trusted source.
 # Peer address is the source unless the TCP peer is loopback, in which case the
 # local reverse proxy's X-Forwarded-For / X-Real-IP is accepted. Those headers
@@ -93,8 +102,143 @@ def public_rate_source(peer: str, headers) -> str:
     text = str(peer or "").strip()
     return text or "unknown"
 
+
+def oauth_operator_approval_command(plane: ControlPlane, pending_id: str, *, unbound: bool) -> str:
+    """Display-only operator command; this never grants or approves OAuth access.
+
+    A new DCR/CIMD client has no trustworthy Identity until the operator binds
+    it. An explicit deployment hint is accepted only for an enabled, verified
+    Identity, and is never taken from the untrusted OAuth client request.
+    """
+    if not pending_id:
+        return "sudo drlink system credential approve-oauth <PENDING-ID> <AI-IDENTITY>"
+    command = "sudo drlink system credential approve-oauth %s" % pending_id
+    if not unbound:
+        return command  # Already bound: an Identity argument is unnecessary.
+    name = os.environ.get("DRLINK_MCP_OAUTH_OPERATOR_IDENTITY", "").strip()
+    if re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}", name):
+        principal = plane.get_principal(name)
+        if (principal is not None and int(principal["enabled"] or 0)
+                and str(principal["credential_status"] or "").lower() in ("verified", "active")):
+            return command + " " + principal["name"]
+    return command + " <AI-IDENTITY>"  # No safe default: operator must choose.
+
+
 # name, title, description, props, annotations
 TOOL_DEFS = (
+    (
+        "get_server",
+        "Get Local DRLink Server",
+        "Discover this DRLink Server only when Server-self MCP is enabled and host-info is explicitly authorized",
+        {},
+        {"readOnlyHint": True, "destructiveHint": False, "openWorldHint": False, "idempotentHint": True},
+    ),
+    (
+        "server_read_file",
+        "Read Server-local file",
+        "Read a scoped file through the operator-selected Server execution profile and OS account",
+        {"path": "string"},
+        {"readOnlyHint": True, "destructiveHint": False, "openWorldHint": False, "idempotentHint": True},
+    ),
+    (
+        "server_write_file",
+        "Write Server-local file",
+        "Write a scoped development file; requires file-write AI Access and Server executor opt-in",
+        {"path": "string", "content": "string"},
+        {"readOnlyHint": False, "destructiveHint": True, "openWorldHint": False},
+    ),
+    (
+        "server_delete_file",
+        "Delete Server-local file",
+        "Delete a scoped development file; requires file-write AI Access and Server executor opt-in",
+        {"path": "string"},
+        {"readOnlyHint": False, "destructiveHint": True, "openWorldHint": False},
+    ),
+    (
+        "server_git",
+        "Run Server Git command",
+        "Run Git argv in the selected Server OS account. Full-control supports add, commit, "
+        "push and other Git operations; the restricted profile permits read-only probes. "
+        "Requires current command-exec AI Access and an approved initial cwd. "
+        "Full-control commands have the account's OS authority; cwd is not a sandbox.",
+        {"type": "object", "properties": {
+            "cwd": {"type": "string", "description": "Absolute initial working directory"},
+            "argv": {"type": "array", "items": {"type": "string"}, "minItems": 1,
+                     "description": "Argument vector beginning with git"},
+            "timeout_seconds": {"type": "integer", "minimum": 1, "maximum": 86400, "default": 3600},
+            "wait_ms": {"type": "integer", "minimum": 0, "maximum": 5000, "default": 1000},
+        }, "required": ["cwd", "argv"], "additionalProperties": False},
+        {"readOnlyHint": False, "destructiveHint": True, "openWorldHint": True, "idempotentHint": False},
+    ),
+    (
+        "server_run",
+        "Run Server command",
+        "Run general argv in the operator-selected OS account when full-control is enabled. "
+        "The restricted profile permits selected developer tests only. Requires command-exec "
+        "AI Access for the initial cwd; cwd is not a filesystem sandbox. Returns job_id, "
+        "state and bounded output; use server_job_poll/input/stop for running jobs.",
+        {"type": "object", "properties": {
+            "cwd": {"type": "string", "description": "Absolute initial working directory"},
+            "argv": {"type": "array", "items": {"type": "string"}, "minItems": 1},
+            "timeout_seconds": {"type": "integer", "minimum": 1, "maximum": 86400, "default": 3600},
+            "wait_ms": {"type": "integer", "minimum": 0, "maximum": 5000, "default": 1000},
+        }, "required": ["cwd", "argv"], "additionalProperties": False},
+        {"readOnlyHint": False, "destructiveHint": True, "openWorldHint": True, "idempotentHint": False},
+    ),
+    (
+        "server_exec",
+        "Execute Server shell command",
+        "Execute a shell command in the operator-selected OS account with explicit full-control "
+        "opt-in and current command-exec AI Access. Supports pipelines and service/package/deployment "
+        "commands within that account's OS permissions. Root requires a separate local operator "
+        "opt-in. Initial cwd is not a filesystem sandbox. Returns job_id and bounded output.",
+        {"type": "object", "properties": {
+            "cwd": {"type": "string", "description": "Absolute initial working directory"},
+            "command": {"type": "string", "minLength": 1},
+            "timeout_seconds": {"type": "integer", "minimum": 1, "maximum": 86400, "default": 3600},
+            "wait_ms": {"type": "integer", "minimum": 0, "maximum": 5000, "default": 1000},
+        }, "required": ["cwd", "command"], "additionalProperties": False},
+        {"readOnlyHint": False, "destructiveHint": True, "openWorldHint": True, "idempotentHint": False},
+    ),
+    (
+        "server_job_poll",
+        "Read Server job output",
+        "Read the authenticated identity's job state and output using byte cursors. Every call "
+        "rechecks current AI Access and execution profile. Each stream retains at most 1 MiB; "
+        "pages contain at most 64 KiB and report cursor eviction; data_b64 preserves exact bytes. "
+        "Completed jobs remain for "
+        "up to ten minutes, or until the bounded registry reclaims the oldest completed job.",
+        {"type": "object", "properties": {
+            "job_id": {"type": "string", "minLength": 1},
+            "stdout_cursor": {"type": "integer", "minimum": 0, "maximum": 9223372036854775807, "default": 0},
+            "stderr_cursor": {"type": "integer", "minimum": 0, "maximum": 9223372036854775807, "default": 0},
+            "wait_ms": {"type": "integer", "minimum": 0, "maximum": 5000, "default": 0},
+        }, "required": ["job_id"], "additionalProperties": False},
+        {"readOnlyHint": True, "destructiveHint": False, "openWorldHint": False, "idempotentHint": True},
+    ),
+    (
+        "server_job_input",
+        "Send Server job input",
+        "Send UTF-8 stdin or EOF to the authenticated identity's job after current AI Access "
+        "and profile checks. Input is bounded to 64 KiB; use accepted_bytes to retry unaccepted "
+        "input. EOF closes stdin only after the submitted data has been accepted.",
+        {"type": "object", "properties": {
+            "job_id": {"type": "string", "minLength": 1},
+            "data": {"type": "string", "default": ""},
+            "eof": {"type": "boolean", "default": False},
+        }, "required": ["job_id"], "additionalProperties": False},
+        {"readOnlyHint": False, "destructiveHint": True, "openWorldHint": True, "idempotentHint": False},
+    ),
+    (
+        "server_job_stop",
+        "Stop Server job",
+        "Stop the authenticated identity's Server process job and collect its final state. "
+        "Requires current command-exec AI Access and the same execution profile.",
+        {"type": "object", "properties": {
+            "job_id": {"type": "string", "minLength": 1},
+        }, "required": ["job_id"], "additionalProperties": False},
+        {"readOnlyHint": False, "destructiveHint": True, "openWorldHint": True, "idempotentHint": True},
+    ),
     (
         "list_hosts",
         "List Managed Hosts",
@@ -167,6 +311,57 @@ TOOL_DEFS = (
     ),
 )
 
+def _input_schema(props: dict) -> dict:
+    if props.get("type") == "object" and isinstance(props.get("properties"), dict):
+        return json.loads(json.dumps(props))
+    schema_props = {key: ({"type": "array", "items": {"type": "string"}}
+                          if kind == "array" else {"type": kind})
+                    for key, kind in props.items()}
+    schema = {"type": "object", "properties": schema_props}
+    if props:
+        schema["required"] = list(props)
+    return schema
+
+
+SERVER_TOOLS = frozenset(entry[0] for entry in TOOL_DEFS
+                         if entry[0] == "get_server" or entry[0].startswith("server_"))
+SERVER_ARGUMENT_SCHEMAS = {
+    entry[0]: dict(_input_schema(entry[3]), additionalProperties=False)
+    for entry in TOOL_DEFS if entry[0] in SERVER_TOOLS
+}
+
+
+def _server_argument_error(name: str, arguments: dict) -> Optional[str]:
+    """Validate the published Native process schemas without a new dependency."""
+    if not isinstance(arguments, dict):
+        return "Native tool arguments must be an object"
+    schema = SERVER_ARGUMENT_SCHEMAS.get(name)
+    if schema is None:
+        return None
+    props = schema["properties"]
+    if any(key not in props for key in arguments):
+        return "Unexpected Native tool argument"
+    if any(key not in arguments for key in schema.get("required", [])):
+        return "Required Native tool argument is missing"
+    for key, value in arguments.items():
+        spec = props[key]
+        kind = spec["type"]
+        valid = ((kind == "string" and isinstance(value, str))
+                 or (kind == "integer" and isinstance(value, int) and not isinstance(value, bool))
+                 or (kind == "boolean" and isinstance(value, bool))
+                 or (kind == "array" and isinstance(value, list)
+                     and all(isinstance(item, str) for item in value)))
+        if not valid:
+            return "Invalid Native argument type: " + key
+        if kind == "integer" and not spec.get("minimum", value) <= value <= spec.get("maximum", value):
+            return "Native numeric option is outside its bounds: " + key
+        if kind == "string" and len(value) < spec.get("minLength", 0):
+            return "Native string argument is empty: " + key
+        if kind == "array" and not spec.get("minItems", 0) <= len(value) <= 4096:
+            return "Invalid Native argument vector length"
+    return None
+
+
 ENDPOINT_TOOLS = frozenset(
     {
         "get_system_info",
@@ -231,11 +426,8 @@ def _structured_result(data, *, text: Optional[str] = None, is_error: bool = Fal
 
 
 def _tool_descriptor(name: str, title: str, desc: str, props: dict, annotations: dict) -> dict:
-    schema_props = {k: {"type": v} for k, v in props.items()}
-    required = list(props.keys())
-    input_schema = {"type": "object", "properties": schema_props}
-    if required:
-        input_schema["required"] = required
+    input_schema = (json.loads(json.dumps(SERVER_ARGUMENT_SCHEMAS[name]))
+                    if name in SERVER_ARGUMENT_SCHEMAS else _input_schema(props))
     return {
         "name": name,
         "title": title,
@@ -308,14 +500,63 @@ class MCPBridge:
         # auto_agents is a hermetic test seam only (see refresh_local_agents).
         self.auto_agents = auto_agents
 
+    def _native_public_url(self) -> Optional[str]:
+        """Opt-in public identity for the separately deployed Native Server MCP.
+
+        A direct-mode FRP Server cannot advertise MCP on its FRP TCP/443
+        listener. This *only* selects the authority of an independently
+        routed HTTPS Native MCP preview. The default product URL logic and
+        Direct-mode fail-closed guard are never changed.
+        """
+        if os.environ.get("DRLINK_MCP_SERVER_SELF_ENABLED") != "1":
+            return None
+        raw = str(os.environ.get("DRLINK_MCP_NATIVE_PUBLIC_URL") or "").strip()
+        if not raw:
+            return None
+        try:
+            u = urlsplit(raw)
+            name = u.hostname or ""
+            port = u.port
+            import ipaddress
+            if (u.scheme != "https" or u.username or u.password or
+                    not name or "." not in name or u.path not in ("/mcp", "/access/mcp") or
+                    u.query or u.fragment or u.netloc.endswith("@") or
+                    name in ("localhost", "localhost.localdomain")):
+                raise ValueError("invalid HTTPS MCP authority")
+            try:
+                ipaddress.ip_address(name)
+            except ValueError:
+                pass
+            else:
+                raise ValueError("public MCP authority cannot be an IP address")
+            if (port is not None and port < 1):
+                raise ValueError("invalid public HTTPS port")
+            canonical_host = name.encode("idna").decode("ascii").lower()
+            if not all(
+                len(label) in range(1, 64) and label[0].isalnum() and
+                label[-1].isalnum() and all(c.isalnum() or c == "-" for c in label)
+                for label in canonical_host.split(".")
+            ):
+                raise ValueError("invalid public hostname")
+        except (ValueError, UnicodeError):
+            raise ControlPlaneError("Invalid configured Native Server MCP HTTPS URL") from None
+        suffix = (":%s" % port) if port and port != 443 else ""
+        return "https://" + canonical_host + suffix + u.path
+
     def canonical_public_base(self) -> str:
         """Issuer/resource base from configured control identity, never request Host."""
+        native = self._native_public_url()
+        if native:
+            return native[:-4]
         url = self.plane.mcp_public_url()
         if url and url != "Not configured":
             return url[:-4] if url.endswith("/mcp") else url.rstrip("/")
         return "http://%s:%s" % (self.listen_host, self.listen_port)
 
     def canonical_resource(self) -> str:
+        native = self._native_public_url()
+        if native:
+            return native
         url = self.plane.mcp_public_url()
         if url and url != "Not configured":
             return url
@@ -329,6 +570,9 @@ class MCPBridge:
 
     def close(self) -> None:
         self._agent_stop.set()
+        native = getattr(self, "_native_full", None)
+        if native is not None:
+            native.close()
         for _cid, (_stop, thread) in list(self._agents.items()):
             thread.join(timeout=1)
         self._agents.clear()
@@ -471,10 +715,10 @@ class MCPBridge:
         return (
             'Bearer realm="drlink-mcp", '
             'resource_metadata="%s/.well-known/oauth-protected-resource", '
-            'scope="drlink.ai", '
+            'scope="%s", '
             'error="invalid_token", '
             'error_description="Authentication required"'
-        ) % base
+        ) % (base, OAUTH_CONNECTION_SCOPE)
 
     def www_authenticate_meta(self) -> dict:
         return {WWW_AUTHENTICATE_META: [self.www_authenticate_value()]}
@@ -737,7 +981,168 @@ class MCPBridge:
             return winner.get("name")
         return None
 
+    def _call_server_full(self, principal, name: str, arguments: dict) -> dict:
+        """Authenticated, operator-selected general administration on this Server.
+
+        The execution account comes only from local service configuration.
+        All process-control calls re-evaluate AI Access and job ownership;
+        authentication never substitutes for command or file permission.
+        """
+        import drlink_mcp_full_control as full
+
+        target = v24.SERVER_SELF_TARGET
+        started = time.monotonic()
+        decision = None
+        operand = ""
+        payload = None
+        failure = "Native full-control operation denied"
+        result = "DENY"
+        command_tools = {"exec", "server_exec", "server_run", "server_git"}
+        job_tools = {"server_job_poll", "server_job_input", "server_job_stop"}
+        aliases = {"server_read_file": "read_file", "server_write_file": "write_file",
+                   "server_delete_file": "delete_file"}
+        try:
+            argument_error = _server_argument_error(name, arguments)
+            if argument_error:
+                raise full.FullControlDenied(argument_error)
+            account = full.configured_account()
+            owner = str(principal["id"] or "")
+            with self._lock:
+                if not hasattr(self, "_native_full"):
+                    self._native_full = full.FullControlRuntime()
+                runtime = self._native_full
+            operation = aliases.get(name, name)
+            if name in job_tools:
+                operand = runtime.context(owner, str(arguments.get("job_id") or ""))
+                capability = "exec"
+            elif name in command_tools:
+                operand = str(arguments.get("cwd") or
+                              os.environ.get("DRLINK_MCP_SERVER_DEFAULT_CWD") or account.home)
+                capability = "exec"
+            elif operation in full.FILE_ACTIONS:
+                operand = str(arguments.get("path") or "")
+                capability = operation
+            else:
+                raise full.FullControlDenied("Unsupported full-control operation")
+            decision = self._authorize(principal, target, capability, operand or None)
+            if decision["action"] != "ALLOW":
+                raise full.FullControlDenied("AI Access implicit DENY")
+            patterns = list(decision.get("patterns") or [])
+            if capability == "exec":
+                # Initial working directory authorization is not a sandbox for
+                # a general shell. Full-control grants the selected account's
+                # real OS authority; both fact and user are explicit in tools.
+                full.allowed_path(operand, patterns, account)
+                if name in command_tools:
+                    options = dict(arguments)
+                    options["cwd"] = operand
+                    payload = runtime.start(owner, options, patterns, git=name == "server_git")
+                elif name == "server_job_poll":
+                    payload = runtime.poll(owner, arguments["job_id"],
+                                           stdout_cursor=arguments.get("stdout_cursor", 0),
+                                           stderr_cursor=arguments.get("stderr_cursor", 0),
+                                           wait_ms=arguments.get("wait_ms", 0))
+                elif name == "server_job_input":
+                    payload = runtime.send(owner, arguments["job_id"], arguments.get("data", ""),
+                                           eof=arguments.get("eof", False))
+                else:
+                    payload = runtime.stop(owner, arguments["job_id"])
+            else:
+                payload = full.execute_file_action(operation, dict(arguments), patterns)
+            result = "ALLOW"
+        except (full.FullControlDenied, OSError, ValueError, TypeError, KeyError,
+                ControlPlaneError) as exc:
+            failure = str(exc)
+        self.plane.record_ai_activity(
+            principal=principal["name"], endpoint=target, capability=name, result=result,
+            rule=self._rule_name(decision), operand=operand or None,
+            duration_ms=int((time.monotonic() - started) * 1000),
+        )
+        if result != "ALLOW":
+            return _text_result("DENY: " + failure, is_error=True)
+        return _structured_result(payload)
+
+    def _call_server_self(self, principal, name: str, arguments: dict) -> dict:
+        """Server-target policy is independent of enrolled Managed Host identity."""
+        if (os.environ.get("DRLINK_MCP_SERVER_FULL_CONTROL_ENABLED") == "1"
+                and name not in ("get_server", "get_system_info")):
+            return self._call_server_full(principal, name, arguments)
+        target = v24.SERVER_SELF_TARGET
+        start = time.monotonic()
+        local_actions = {
+            "server_read_file": ("read_file", "read_file"),
+            "server_write_file": ("write_file", "write_file"),
+            "server_delete_file": ("delete_file", "delete_file"),
+            "server_git": ("exec", "run_git"),
+            "server_run": ("exec", "run_dev_test"),
+        }
+        canonical = "get_system_info" if name in ("get_server", "get_system_info") else (
+            local_actions[name][0] if name in local_actions else None
+        )
+        operand = (str(arguments.get("cwd") or "")
+                   if name in ("server_git", "server_run")
+                   else str(arguments.get("path") or ""))
+        decision = None
+        reason = "Server-self MCP disabled or AI Access implicit DENY"
+        result = "DENY"
+        payload = None
+
+        # A caller cannot impersonate a Server by providing a managed endpoint name.
+        if os.environ.get("DRLINK_MCP_SERVER_SELF_ENABLED") == "1" and canonical:
+            decision = self._authorize(principal, target, canonical, operand or None)
+            if decision["action"] == "ALLOW":
+                if name in ("get_server", "get_system_info"):
+                    uname = os.uname()
+                    if name == "get_server":
+                        payload = {"target": target, "type": "server",
+                                   "status": "available", "nodename": uname.nodename}
+                    else:
+                        payload = {"sysname": uname.sysname, "nodename": uname.nodename,
+                                   "release": uname.release, "machine": uname.machine}
+                    result = "ALLOW"
+                elif os.environ.get("DRLINK_MCP_SERVER_LOCAL_EXEC_ENABLED") != "1":
+                    reason = "Server-local executor is disabled"
+                elif name in ("server_git", "server_run") and not path_allowed(
+                    os.path.join(operand, ".drlink-mcp-git-scope"
+                                 if name == "server_git" else ".drlink-mcp-dev-command-scope"),
+                    list(decision.get("patterns") or []),
+                ):
+                    # For Server-local git, command-exec permission alone is
+                    # insufficient: the selected worktree needs an explicit
+                    # AI Access path scope just like file operations.
+                    reason = "Server-local cwd is outside AI Access path scopes"
+                else:
+                    action = local_actions[name][1]
+                    request = {"action": action}
+                    if name in ("server_git", "server_run"):
+                        request.update({"cwd": arguments.get("cwd"), "argv": arguments.get("argv")})
+                    else:
+                        request["path"] = arguments.get("path")
+                        if name == "server_write_file":
+                            request["content"] = arguments.get("content")
+                    try:
+                        payload = execute_as_unprivileged_user(request)
+                        result = "ALLOW"
+                    except (ExecutorDenied, OSError, ValueError, TypeError):
+                        reason = "Server-local executor denied or could not complete operation"
+            else:
+                reason = "AI Access implicit DENY"
+        self.plane.record_ai_activity(
+            principal=principal["name"],
+            endpoint=target,
+            capability=name,
+            result=result,
+            rule=self._rule_name(decision),
+            operand=operand or None,
+            duration_ms=int((time.monotonic() - start) * 1000),
+        )
+        if result != "ALLOW":
+            return _text_result("DENY: " + reason, is_error=True)
+        return _structured_result(payload)
+
     def call_tool(self, principal, name: str, arguments: dict) -> dict:
+        if name in SERVER_TOOLS:
+            return self._call_server_self(principal, name, arguments)
         if name not in AI_CAPABILITIES:
             self.plane.record_ai_activity(
                 principal=principal["name"],
@@ -783,6 +1188,8 @@ class MCPBridge:
             )
             return _structured_result({"hosts": hosts}, text=json.dumps(hosts, indent=2))
         endpoint = str(arguments.get("endpoint") or arguments.get("host") or "")
+        if endpoint == v24.SERVER_SELF_TARGET:
+            return self._call_server_self(principal, name, arguments)
         if not endpoint:
             raise ControlPlaneError("endpoint is required")
         operand = arguments.get("path") or arguments.get("command") or arguments.get("operand")
@@ -1138,12 +1545,8 @@ def make_handler(bridge: MCPBridge):
                     self.send_header("Content-Length", "0")
                     self.end_headers()
                     return
-                if pending.get("unbound"):
-                    hint = (
-                        "system credential approve-oauth %s &lt;AI-IDENTITY&gt;" % pending["id"]
-                    )
-                else:
-                    hint = "system credential approve-oauth %s" % pending["id"]
+                hint = html_escape(oauth_operator_approval_command(
+                    bridge.plane, pending["id"], unbound=bool(pending.get("unbound"))))
                 continue_path = "/oauth/continue?%s" % urlencode({"t": pending["completion_token"]})
                 page = (
                     "<!doctype html><html><head><meta charset='utf-8'>"
@@ -1182,11 +1585,8 @@ def make_handler(bridge: MCPBridge):
                 if status == "pending":
                     continue_path = "/oauth/continue?%s" % urlencode({"t": token})
                     pending_id = str(result.get("id") or "").strip()
-                    approval_hint = (
-                        "system credential approve-oauth %s &lt;AI-IDENTITY&gt;" % pending_id
-                        if pending_id
-                        else "system credential approve-oauth &lt;PENDING-ID&gt; &lt;AI-IDENTITY&gt;"
-                    )
+                    approval_hint = html_escape(oauth_operator_approval_command(
+                        bridge.plane, pending_id, unbound=bool(result.get("unbound", True))))
                     page = (
                         "<!doctype html><html><head><meta charset='utf-8'>"
                         "<meta http-equiv='refresh' content='2;url=%s'>"

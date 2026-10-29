@@ -56,6 +56,9 @@ PERMISSION_TO_CAPS = {
 FILE_PERMISSIONS = frozenset(
     {"file-read", "file-write", "file-upload", "file-download"}
 )
+SERVER_SELF_TARGET = "server:self"
+SERVER_SELF_REF_ID = "local"
+
 CAP_TO_PERMISSION = {}
 for _perm, _caps in PERMISSION_TO_CAPS.items():
     for _cap in _caps:
@@ -1382,6 +1385,8 @@ def ai_access_rule_update_security_impact(
             (existing["destination_ref_id"],),
         ).fetchone()
         cur_dst = row["name"] if row else None
+    elif dkind == "server" and existing["destination_ref_id"] == SERVER_SELF_REF_ID:
+        cur_dst = SERVER_SELF_TARGET
     cur_perm = None
     pkind = existing["permission_ref_kind"]
     if pkind == "permission_object":
@@ -1600,6 +1605,8 @@ def _expand_network_group_semantics(
 
 def _semantic_network_ref(conn: sqlite3.Connection, kind: str, ref_id: str) -> str:
     kind_l = str(kind or "").lower()
+    if kind_l == "server":
+        return SERVER_SELF_TARGET if ref_id == SERVER_SELF_REF_ID else _unresolvable_semantic(kind_l, ref_id)
     if kind_l == "object":
         leaves = _object_value_semantics(conn, ref_id)
         return "{%s}" % ",".join(leaves)
@@ -4498,6 +4505,9 @@ def evaluate_selector_policy(
 
 
 def _ref_name_match(plane_db, ref_kind: str, ref_id: str, name: str) -> bool:
+    # Built-in Server target is never resolved through a user-created Network Object.
+    if ref_kind == "server":
+        return ref_id == SERVER_SELF_REF_ID and name == SERVER_SELF_TARGET
     if ref_kind == "object":
         obj = plane_db.conn.execute("SELECT name FROM objects WHERE id = ?", (ref_id,)).fetchone()
         return bool(obj and obj["name"].lower() == name.lower())
@@ -4839,7 +4849,7 @@ def set_ai_access_rule(
                 "Authentication is required before AI Access authorization.\n\n"
                 "No changes were applied." % source
             )
-    if destination is not None:
+    if destination is not None and destination != SERVER_SELF_TARGET:
         try:
             plane_db.resolve_ref(destination)
         except ControlPlaneError:
@@ -4878,10 +4888,14 @@ def set_ai_access_rule(
                 (principal["id"], now, rule_id),
             )
         if destination is not None:
-            kind, ref = plane_db.resolve_ref(destination)
+            if destination == SERVER_SELF_TARGET:
+                kind, ref_id = "server", SERVER_SELF_REF_ID
+            else:
+                kind, ref = plane_db.resolve_ref(destination)
+                ref_id = ref["id"]
             plane_db.conn.execute(
                 "UPDATE ai_policy_rules SET destination_ref_kind = ?, destination_ref_id = ?, updated_at = ? WHERE id = ?",
-                (kind, ref["id"], now, rule_id),
+                (kind, ref_id, now, rule_id),
             )
         if permission is not None:
             kind, pref = resolve_permission_ref(plane_db, permission)
@@ -4989,8 +5003,16 @@ def evaluate_ai_access_v24(
     for row in plane_db.conn.execute("SELECT * FROM ai_policy_rules WHERE enabled = 1 ORDER BY name"):
         if row["source_identity_id"] != principal["id"]:
             continue
-        if not _ref_name_match(plane_db, row["destination_ref_kind"], row["destination_ref_id"], destination):
-            continue
+        if destination == SERVER_SELF_TARGET:
+            # Imported/legacy Network Objects sharing this reserved name must
+            # never confer privileges on the local DRLink Server.
+            if row["destination_ref_kind"] != "server" or row["destination_ref_id"] != SERVER_SELF_REF_ID:
+                continue
+        else:
+            if row["destination_ref_kind"] == "server" or not _ref_name_match(
+                plane_db, row["destination_ref_kind"], row["destination_ref_id"], destination
+            ):
+                continue
         if row["permission_ref_kind"] == "permission_object":
             perms = {
                 r["permission"]

@@ -4718,10 +4718,17 @@ class ControlPlane:
             raise ControlPlaneError("OAuth request expired")
         status = str(row["status"] or "pending")
         if status == "pending":
+            # The waiting page must distinguish an unbound DCR/CIMD request
+            # from a client already bound to an AI Identity. This is only
+            # display metadata, never a consent or authorization decision.
+            principal = self.conn.execute(
+                "SELECT name FROM ai_principals WHERE id = ?", (row["principal_id"],)
+            ).fetchone()
             return {
                 "status": "pending",
                 "id": row["id"],
                 "expires_at": row["expires_at"],
+                "unbound": principal is None or principal["name"] == OAUTH_UNBOUND_PRINCIPAL,
             }
         now = utc_now_iso()
         # Statement-scoped claim: RETURNING proves this request owns the row.
@@ -6842,7 +6849,10 @@ def path_allowed(operand: str, patterns: list[str]) -> bool:
     text = str(walked)
     for kind, prefix in _pattern_prefixes(patterns):
         if kind == "tree":
-            if text == prefix or text.startswith(prefix + "/"):
+            # '/**' is an explicit operator-selected filesystem-wide tree.
+            # Joining '/' + '/' otherwise yields '//' and matches nothing.
+            boundary = prefix if prefix == "/" else prefix + "/"
+            if text == prefix or text.startswith(boundary):
                 return True
         elif text == prefix or fnmatch(text, prefix):
             return True
