@@ -50,6 +50,67 @@ class ServerSelfMCPTest(unittest.TestCase):
                  "mode", "whitelist", "source", self.principal["name"],
                  "destination", "server:self", "permission", "server-host-info", "enabled")
 
+    def test_server_self_bundle_export_restore_and_reapply_preserve_authorization(self):
+        import json
+        import yaml
+        from drlink_v24_bundle import apply_v24_plan, export_configuration_v24, prepare_v24_plan
+        config = Path(self.root) / "etc/drlink/config.json"
+        config.parent.mkdir(parents=True, exist_ok=True)
+        config.write_text(json.dumps({"role": "server"}))
+        self.authorize_host_info()
+        scopes = [self.root + "/**"]
+        v24.set_ai_policy_path_scopes(self.plane, "self-read-only", scopes)
+        exported = export_configuration_v24(self.plane)
+        body = yaml.safe_load(exported)["configurationBundle"]
+        self.assertEqual(body["aiAccess"]["rules"][0]["destination"], "server:self")
+        plan = prepare_v24_plan(self.plane, exported)
+        self.assertFalse(any(change["op"] not in ("NO_CHANGE",) for change in plan.changes),
+                         plan.changes)
+        with tempfile.TemporaryDirectory(prefix="drlink-server-self-restore-") as target:
+            cfg = Path(target) / "etc/drlink/config.json"
+            cfg.parent.mkdir(parents=True)
+            cfg.write_text(json.dumps({"role": "server"}))
+            restored = ControlPlane(target)
+            self.addCleanup(restored.close)
+            restored.set_ai_principal(self.principal["name"], enabled=True)
+            restored.conn.execute(
+                "UPDATE ai_principals SET credential_status='verified' WHERE name=?",
+                (self.principal["name"],))
+            # Cross-server restore is reviewed against the target's current
+            # revision; keep the public optimistic-concurrency guard intact.
+            body["sourceRevision"] = int(restored.current_revision())
+            target_bundle = yaml.safe_dump({"configurationBundle": body}, sort_keys=False)
+            with patch.dict(os.environ, {"DRLINK_SKIP_ACTIVATION": "1"}):
+                result = apply_v24_plan(restored, prepare_v24_plan(restored, target_bundle))
+            self.assertEqual(result["status"], "APPLIED")
+            row = restored.conn.execute(
+                "SELECT * FROM ai_policy_rules WHERE name='self-read-only'").fetchone()
+            self.assertEqual((row["destination_ref_kind"], row["destination_ref_id"]),
+                             ("server", "local"))
+            self.assertEqual(v24.list_ai_policy_path_scopes(restored, "self-read-only"), scopes)
+            decision = v24.authorize_ai_capability_v24(
+                restored, identity=self.principal["name"], destination="server:self",
+                capability="get_system_info")
+            self.assertEqual(decision["action"], "ALLOW")
+            denied = v24.authorize_ai_capability_v24(
+                restored, identity=self.principal["name"], destination="server:self",
+                capability="exec", operand=self.root)
+            self.assertEqual(denied["action"], "DENY")
+
+    def test_bundle_unknown_server_target_does_not_bypass_reference_validation(self):
+        from drlink_v24_bundle import BundleError, prepare_v24_plan
+        self.authorize_host_info()
+        with self.assertRaises(BundleError):
+            prepare_v24_plan(self.plane, """configurationBundle:
+  context: server
+  aiAccess:
+    rules:
+      - name: unknown-self
+        source: mcp-self-test
+        destination: server:self-other
+        permission: server-host-info
+""")
+
     def test_native_public_https_identity_is_separate_from_frp_direct_mode(self):
         from drlink_control_db import ControlPlaneError
         self.assertNotIn("https://native.xdr.ooo/mcp", self.bridge.canonical_resource())
@@ -259,6 +320,11 @@ class ServerSelfMCPTest(unittest.TestCase):
             self.plane, identity=self.principal["name"],
             destination="server:self", capability="get_system_info")
         self.assertEqual(actual["action"], "DENY")
+        # Export/restore must not translate a legacy object with this reserved
+        # name into a privileged Server reference.
+        from drlink_v24_bundle import BundleError, export_configuration_v24
+        with self.assertRaisesRegex(BundleError, "reserved Server"):
+            export_configuration_v24(self.plane)
         with patch.dict(os.environ, {"DRLINK_MCP_SERVER_SELF_ENABLED": "1"}):
             self.assertTrue(self.bridge.call_tool(self.principal, "get_server", {}).get("isError"))
 

@@ -165,6 +165,13 @@ checks backup/install hashes, and automatically restores affected files after a
 failed restart. Rollback refuses later file/permission changes. AI Access remains
 unchanged and must be authorized separately; the helper cannot grant tool privileges.
 
+The MCP-only helper is not a full Server project upgrade. Both `--check` and
+`--apply` verify the installed `drlink_mcp_server_executor.py` and
+`drlink_v24.py` against the selected committed candidate before any replacement
+or restart. A Server missing those modules or running different dependency
+bytes must complete the Server project update first. Dependency mismatches
+fail closed; the helper does not silently replace unrelated runtime modules.
+
 To show a fully executable operator command on **both** `/oauth/authorize` and
 `/oauth/continue`, explicitly configure `--approval-ai-identity plugin-personal-e2e`
 when checking/applying the MCP-only rollout. This sets

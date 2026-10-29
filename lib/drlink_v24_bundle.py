@@ -529,12 +529,19 @@ def _ai_rule_view(plane: ControlPlane, row) -> dict:
             "SELECT name FROM object_groups WHERE id = ?", (row["destination_ref_id"],)
         ).fetchone()
         dest = g["name"] if g else dest
+    elif kind == "server" and row["destination_ref_id"] == v24.SERVER_SELF_REF_ID:
+        dest = v24.SERVER_SELF_TARGET
     elif kind == "client":
         c = plane.conn.execute(
             "SELECT COALESCE(label, hostname, id) AS name FROM clients WHERE id = ?",
             (row["destination_ref_id"],),
         ).fetchone()
         dest = c["name"] if c else dest
+    if dest == v24.SERVER_SELF_TARGET and kind != "server":
+        _bundle_error(
+            "Cannot serialize a legacy Network Object using the reserved Server "
+            "target name 'server:self'. Rename that Object before exporting or "
+            "patching its AI Access Rule.")
     perm = "-"
     pkind = row["permission_ref_kind"]
     if pkind == "permission_object":
@@ -1530,7 +1537,8 @@ def prepare_v24_plan(plane: ControlPlane, raw_text: str, *, role: Optional[str] 
                                     "Create the AI Identity before applying the Rule." % rule["source"]
                                 )
                             dest = rule["destination"]
-                            if dest.lower() not in no_names and dest.lower() not in ng_names:
+                            if (dest != v24.SERVER_SELF_TARGET
+                                    and dest.lower() not in no_names and dest.lower() not in ng_names):
                                 client = None
                                 try:
                                     client = plane.get_client(dest)

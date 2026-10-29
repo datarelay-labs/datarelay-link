@@ -4,6 +4,8 @@
 Default --check only reads state. --apply requires root, an exact clean source
 HEAD, and an explicitly selected account/roots. This installs three Python
 modules and one dedicated drop-in; it never edits TLS, OAuth, AI Access or DBs.
+Required installed runtime dependencies must match the candidate exactly;
+use a full Server project update first when they are absent or incompatible.
 Only drlink-mcp-bridge.service is restarted. Keep the receipt for --rollback.
 """
 from __future__ import annotations
@@ -25,6 +27,7 @@ import tempfile
 
 UNIT = "drlink-mcp-bridge.service"
 MODULES = ("drlink_mcp_bridge.py", "drlink_mcp_full_control.py", "drlink_control_plane.py")
+DEPENDENCIES = ("drlink_mcp_server_executor.py", "drlink_v24.py")
 TARGETS = tuple("usr/local/lib/drlink/" + name for name in MODULES) + (
     "etc/systemd/system/drlink-mcp-bridge.service.d/zz-native-full-control.conf",
 )
@@ -145,7 +148,13 @@ def candidate(source, expected_head=None, *, clean_required=False):
         data = git_read(source, "show", head + ":lib/" + name)
         compile(data, name, "exec")
         files[target] = data
-    return {"head": head, "source": str(source), "clean": not dirty, "files": files}
+    dependencies = {}
+    for name in DEPENDENCIES:
+        data = git_read(source, "show", head + ":lib/" + name)
+        compile(data, name, "exec")
+        dependencies["usr/local/lib/drlink/" + name] = data
+    return {"head": head, "source": str(source), "clean": not dirty,
+            "files": files, "dependencies": dependencies}
 
 
 def safe_path(path, layout):
@@ -170,6 +179,20 @@ def state(path, layout):
         raise RolloutError("Rollout target must be a regular file")
     return {"sha256": digest(path.read_bytes()), "mode": stat.S_IMODE(info.st_mode),
             "uid": info.st_uid, "gid": info.st_gid}
+
+
+def verify_runtime_dependencies(selected, layout):
+    result = []
+    for name, data in selected["dependencies"].items():
+        installed = state(layout.root / name, layout)
+        expected = digest(data)
+        if installed is None or installed["sha256"] != expected:
+            raise RolloutError(
+                "Incompatible installed runtime dependency: " + name
+                + "; complete the Server project update before this MCP-only rollout")
+        result.append({"path": str(layout.root / name),
+                       "candidate_sha256": expected, "installed": installed})
+    return result
 
 
 def atomic_write(path, data, *, mode=0o644, uid=None, gid=None):
@@ -213,10 +236,12 @@ def restart_bridge():
 
 def check(source, head, settings, layout=Layout()):
     selected = candidate(source, head)
+    dependencies = verify_runtime_dependencies(selected, layout)
     blobs = dict(selected["files"])
     blobs[TARGETS[-1]] = dropin(settings)
     return {"mode": "check", "head": selected["head"], "clean": selected["clean"],
             "source": selected["source"], "profile": settings,
+            "dependencies": dependencies,
             "service": UNIT, "changes": [
                 {"path": str(layout.target(name)), "candidate_sha256": digest(data),
                  "installed": state(layout.target(name), layout)} for name, data in blobs.items()],
@@ -280,6 +305,7 @@ def rollback(path, layout=Layout()):
 def apply(source, head, settings, layout=Layout()):
     require_root()
     selected = candidate(source, head, clean_required=True)
+    verify_runtime_dependencies(selected, layout)
     files = dict(selected["files"])
     files[TARGETS[-1]] = dropin(settings)
     previous = {name: state(layout.target(name), layout) for name in TARGETS}
@@ -302,6 +328,7 @@ def apply(source, head, settings, layout=Layout()):
         receipt["files"][name] = {"before": previous[name], "after": digest(files[name]), "backup": backup}
     save_receipt(receipt_path, receipt)
     try:
+        verify_runtime_dependencies(selected, layout)
         if any(state(layout.target(name), layout) != previous[name] for name in TARGETS):
             raise RolloutError("Installed state changed after rollout preparation")
         for name in TARGETS:
@@ -314,6 +341,7 @@ def apply(source, head, settings, layout=Layout()):
         if any(state(layout.target(name), layout)["sha256"] != receipt["files"][name]["after"]
                for name in TARGETS):
             raise RolloutError("Installed module or drop-in checksum mismatch")
+        verify_runtime_dependencies(selected, layout)
         restart_bridge()
         receipt["status"] = "applied"
         save_receipt(receipt_path, receipt)

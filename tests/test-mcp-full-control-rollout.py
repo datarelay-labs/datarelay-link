@@ -35,7 +35,16 @@ class RolloutTests(unittest.TestCase):
         self.files = {name: ("# candidate module\nVALUE = " + str(i) + "\n").encode()
                       for i, name in enumerate(rollout.TARGETS[:-1])}
         self.head = "a" * 40
-        self.selected = {"head": self.head, "source": str(self.root), "clean": True, "files": self.files}
+        self.dependencies = {
+            "usr/local/lib/drlink/" + name: b"# compatible installed dependency\n"
+            for name in ("drlink_mcp_server_executor.py", "drlink_v24.py")
+        }
+        self.selected = {"head": self.head, "source": str(self.root), "clean": True,
+                         "files": self.files, "dependencies": self.dependencies}
+        for name, data in self.dependencies.items():
+            target = self.layout.root / name
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(data)
         self.patches = [patch.object(rollout, "OWNER_UID", os.geteuid()),
                         patch.object(rollout, "OWNER_GID", os.getegid()),
                         patch.object(rollout, "require_root"),
@@ -79,6 +88,26 @@ class RolloutTests(unittest.TestCase):
         self.assertEqual(before, after)
         self.assertEqual({item["path"] for item in result["changes"]},
                          {str(self.layout.target(name)) for name in rollout.TARGETS})
+        self.mocks[-1].assert_not_called()
+        self.assertFalse(self.layout.backups.exists())
+
+    def test_check_rejects_missing_runtime_dependency_without_mutation(self):
+        dependency = self.layout.root / next(iter(self.dependencies))
+        dependency.unlink()
+        before = self.layout.target(rollout.TARGETS[0]).read_bytes()
+        with self.assertRaisesRegex(rollout.RolloutError, "dependency"):
+            rollout.check(self.root, self.head, self.settings, self.layout)
+        self.assertEqual(self.layout.target(rollout.TARGETS[0]).read_bytes(), before)
+        self.mocks[-1].assert_not_called()
+        self.assertFalse(self.layout.backups.exists())
+
+    def test_apply_rejects_incompatible_runtime_dependency_before_restart(self):
+        dependency = self.layout.root / "usr/local/lib/drlink/drlink_v24.py"
+        dependency.write_bytes(b"# older Server without Server-self authorization\n")
+        before = self.layout.target(rollout.TARGETS[0]).read_bytes()
+        with self.assertRaisesRegex(rollout.RolloutError, "dependency"):
+            self.install()
+        self.assertEqual(self.layout.target(rollout.TARGETS[0]).read_bytes(), before)
         self.mocks[-1].assert_not_called()
         self.assertFalse(self.layout.backups.exists())
 
@@ -220,7 +249,7 @@ class RolloutTests(unittest.TestCase):
         self.patches[-2].stop()
         source = self.root / "source"
         (source / "lib").mkdir(parents=True)
-        for name in rollout.MODULES:
+        for name in (*rollout.MODULES, "drlink_mcp_server_executor.py", "drlink_v24.py"):
             (source / "lib" / name).write_text("VALUE = 1\n")
         def git(*args):
             return subprocess.check_output(["git", "-C", str(source), *args], stderr=subprocess.DEVNULL).decode().strip()

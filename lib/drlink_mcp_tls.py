@@ -176,7 +176,7 @@ def challenges_dir(root: Optional[str | Path] = None) -> Path:
 def ensure_tree(root: Optional[str | Path] = None) -> Path:
     tree = tls_tree(root)
     secret_dirs = {active_dir(root), previous_dir(root), staging_dir(root), account_dir(root)}
-    public_dirs = {acme_webroot(root), challenges_dir(root)}
+    public_dirs = {acme_webroot(root), acme_webroot(root) / ".well-known", challenges_dir(root)}
     for path in (
         tree,
         active_dir(root),
@@ -184,6 +184,7 @@ def ensure_tree(root: Optional[str | Path] = None) -> Path:
         staging_dir(root),
         account_dir(root),
         acme_webroot(root),
+        acme_webroot(root) / ".well-known",
         challenges_dir(root),
     ):
         path.mkdir(parents=True, exist_ok=True)
@@ -195,7 +196,8 @@ def ensure_tree(root: Optional[str | Path] = None) -> Path:
             os.chmod(path, 0o755)
         else:
             os.chmod(path, 0o700)
-    ensure_http01_publish_permissions(root)
+    # Certificate storage/recovery must work with a stopped frontend.
+    # Verify the running worker only when publishing an HTTP-01 challenge.
     return tree
 
 
@@ -1072,6 +1074,7 @@ def _classify_acme_messages_error(exc, *, default: str) -> str:
 
 def _write_http01_challenge(root, token: str, validation: str) -> Path:
     ensure_tree(root)
+    ensure_http01_publish_permissions(root)
     # ACME HTTP-01 token path is /.well-known/acme-challenge/<token>
     dest = challenges_dir(root) / token
     # Challenge responses are not private keys but must be world-readable for nginx.

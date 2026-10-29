@@ -462,6 +462,40 @@ class McpTlsLifecycleTests(unittest.TestCase):
 
         shutil.rmtree(self.tmp, ignore_errors=True)
 
+    def test_stopped_frontend_does_not_block_private_ca_or_import_recovery(self):
+        host = "mcp.example.test"
+        mcp_tls.configure_intent(self.plane, hostname=host)
+        mcp_tls.configure_intent(self.plane, mode="private-ca")
+        unavailable = mcp_tls.McpTlsError(
+            "frontend stopped", failure_class="ACME_WORKER_IDENTITY_UNAVAILABLE")
+        with mock.patch.object(mcp_tls, "ensure_http01_publish_permissions",
+                               side_effect=unavailable) as publish:
+            state = mcp_tls.issue_and_activate(self.plane, self.tmp, reload=False)
+            self.assertEqual(state["mode"], mcp_tls.MODE_PRIVATE_CA)
+            cert, key = _synth_leaf(host, days=60)
+            cert_path, key_path = Path(self.tmp) / "recovery.crt", Path(self.tmp) / "recovery.key"
+            cert_path.write_bytes(cert)
+            key_path.write_bytes(key)
+            key_path.chmod(0o600)
+            state = mcp_tls.import_user_certificate(
+                self.plane, self.tmp, cert_path=str(cert_path),
+                key_path=str(key_path), reload=False)
+            self.assertEqual(state["mode"], mcp_tls.MODE_USER_CERTIFICATE)
+            self.assertEqual(Path(mcp_tls.read_active_material(self.tmp)["cert_path"]).read_bytes(), cert)
+            publish.assert_not_called()
+        for directory in (mcp_tls.active_dir(self.tmp), mcp_tls.account_dir(self.tmp)):
+            self.assertEqual(stat.S_IMODE(directory.stat().st_mode), 0o700)
+
+    def test_http01_publication_still_denies_unavailable_frontend_worker(self):
+        unavailable = mcp_tls.McpTlsError(
+            "frontend stopped", failure_class="ACME_WORKER_IDENTITY_UNAVAILABLE")
+        with mock.patch.object(mcp_tls, "ensure_http01_publish_permissions",
+                               side_effect=unavailable):
+            with self.assertRaises(mcp_tls.McpTlsError) as denied:
+                mcp_tls._write_http01_challenge(self.tmp, "fixture-token", "fixture-response")
+        self.assertEqual(denied.exception.failure_class, "ACME_WORKER_IDENTITY_UNAVAILABLE")
+        self.assertFalse((mcp_tls.challenges_dir(self.tmp) / "fixture-token").exists())
+
     def test_hostname_validation(self):
         self.assertEqual(mcp_tls.canonicalize_hostname("MCP.Example.COM."), "mcp.example.com")
         with self.assertRaises(mcp_tls.McpTlsError):
