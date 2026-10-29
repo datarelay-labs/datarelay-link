@@ -1200,6 +1200,53 @@ frpctl_nav_workflow manage_host
         self.assertFalse(enabled.call_args.kwargs["default"])
         self.assertEqual(self.plane.conn.execute("SELECT enabled FROM agent_remote_services WHERE name='http'").fetchone()[0], 0)
 
+    def test_remote_service_apply_error_keeps_name_and_draft_fields_for_correction(self):
+        import drlink_v24_wizard as wizard
+        from drlink_control_db import ControlPlaneError
+
+        out = []
+        # First Apply gets the same fail-closed destination rejection seen in
+        # U-010; the operator then edits only the bad destination and accepts
+        # the retained Service Object and Enabled defaults.
+        answers = ["missing-destination", "http", "y", "1",
+                   "this-host", "", "", "1"]
+        wizard.set_wizard_io(wizard.ScriptedIO(answers, out=out))
+        try:
+            with patch.object(v24, "detect_server_reachable", return_value=False), \
+                    patch.object(v24, "set_remote_service_agent", side_effect=[
+                        ControlPlaneError("ERROR: destination not found. No changes were applied."),
+                        {"view": {"name": "kept-name", "destination": "this-host",
+                                  "service": "http", "status": "HEALTHY", "endpoint": "-"}},
+                    ]) as apply:
+                self.assertEqual(wizard.run_remote_service_wizard(self.plane, "kept-name"), 0)
+        finally:
+            wizard.set_wizard_io(None)
+
+        self.assertEqual(apply.call_count, 2)
+        self.assertEqual(apply.call_args_list[0].kwargs["destination"], "missing-destination")
+        self.assertEqual(apply.call_args_list[1].kwargs["destination"], "this-host")
+        for invocation in apply.call_args_list:
+            self.assertEqual(invocation.kwargs["service"], "http")
+            self.assertTrue(invocation.kwargs["enabled"])
+        transcript = "".join(out)
+        self.assertIn("draft is still available", transcript)
+        self.assertGreaterEqual(transcript.count("Service Object"), 2)
+
+    def test_remote_service_wizard_does_not_retry_ambiguous_partial_apply(self):
+        import drlink_v24_wizard as wizard
+        from drlink_control_db import ControlPlaneError
+
+        wizard.set_wizard_io(wizard.ScriptedIO(["this-host", "http", "y", "1"]))
+        try:
+            with patch.object(v24, "detect_server_reachable", return_value=False), \
+                    patch.object(v24, "set_remote_service_agent", side_effect=ControlPlaneError(
+                        "ERROR: PARTIAL: Server state could not be restored.\nRECOVERY_REQUIRED")) as apply:
+                with self.assertRaisesRegex(ControlPlaneError, "RECOVERY_REQUIRED"):
+                    wizard.run_remote_service_wizard(self.plane, "uncertain-service")
+        finally:
+            wizard.set_wizard_io(None)
+        apply.assert_called_once()
+
     def test_codex_audit_retired_parser_and_menu_help_routes_fail_closed(self):
         retired = (
             ["set", "access-assign"],

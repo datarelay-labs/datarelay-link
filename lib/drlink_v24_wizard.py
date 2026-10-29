@@ -177,7 +177,10 @@ def _menu_selection_error(io: WizardIO, raw: str, lo: int, hi: int) -> None:
     _emit(io, "ERROR: Invalid selection. Stay on this step.")
 
 
-def _ask_choice(io: WizardIO, title: str, options: list[str], *, allow_create: list[tuple[str, str]] = None) -> str:
+def _ask_choice(
+    io: WizardIO, title: str, options: list[str], *,
+    allow_create: list[tuple[str, str]] = None, default: Optional[str] = None,
+) -> str:
     """Return selected option text, or '+create:<kind>' for inline create markers."""
     while True:
         _emit(io, "")
@@ -195,9 +198,12 @@ def _ask_choice(io: WizardIO, title: str, options: list[str], *, allow_create: l
             mapping[str(idx)] = token
             idx += 1
         _emit(io, "c) Cancel")
-        raw = io.ask("Select: ").strip()
+        hint = " [%s]" % default if default in options else ""
+        raw = io.ask("Select%s: " % hint).strip()
         if _is_cancel(raw):
             raise WizardCancelled()
+        if not raw and default in options:
+            return default
         if raw in mapping:
             return mapping[raw]
         # allow typing the option name directly
@@ -1147,8 +1153,14 @@ def run_remote_service_wizard(plane: ControlPlane, name: str) -> int:
             ):
                 if row["name"] not in svc_options:
                     svc_options.append(row["name"])
-            service = _ask_choice(io, "Service Object", svc_options or ["ssh"])
-            enabled = _ask_yes_no(io, "Enabled", default=session.before.get("Enabled", "YES") == "YES")
+            service_default = session.draft.get("service") or session.before.get("Service")
+            service = _ask_choice(
+                io, "Service Object", svc_options or ["ssh"], default=service_default
+            )
+            enabled_default = session.draft.get("enabled")
+            if enabled_default is None:
+                enabled_default = session.before.get("Enabled", "YES") == "YES"
+            enabled = _ask_yes_no(io, "Enabled", default=enabled_default)
             session.draft = {"destination": dest, "service": service, "enabled": enabled}
             action = _review_menu(
                 io,
@@ -1166,16 +1178,28 @@ def run_remote_service_wizard(plane: ControlPlane, name: str) -> int:
             if action == "edit":
                 continue
             reachable = v24.detect_server_reachable(plane)
-            result = v24.set_remote_service_agent(
-                plane,
-                name,
-                destination=dest,
-                service=service,
-                enabled=enabled,
-                oneshot=True,
-                root=plane.root,
-                server_reachable=reachable,
-            )
+            try:
+                result = v24.set_remote_service_agent(
+                    plane,
+                    name,
+                    destination=dest,
+                    service=service,
+                    enabled=enabled,
+                    oneshot=True,
+                    root=plane.root,
+                    server_reachable=reachable,
+                )
+            except ControlPlaneError as exc:
+                message = str(exc)
+                if (
+                    "No changes were applied." not in message
+                    or "PARTIAL" in message
+                    or "RECOVERY_REQUIRED" in message
+                ):
+                    raise
+                _emit(io, message)
+                _emit(io, "The Remote Service draft is still available. Correct a value and review again.")
+                continue
             sys.stdout.write(
                 v24.format_remote_service_view(
                     result.get("view")

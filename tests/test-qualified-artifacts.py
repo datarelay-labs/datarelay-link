@@ -59,6 +59,20 @@ def test_urls():
     assert zt.linux_installer_sum_names(qa.agent_installer_url(alloc)) == (
         "agent/bootstrap-client.sh",
     )
+    # Query parameters may select an installer variant or correlate a native
+    # bootstrap. They are part of the download URL, never the artifact path in
+    # SHA256SUMS.
+    queried_linux = qa.agent_installer_url(alloc) + "?cli100=a018-linux"
+    assert zt.sha256sums_url_for_installer(queried_linux) == (
+        "https://203.0.113.10:6099/artifacts/SHA256SUMS"
+    )
+    assert zt.linux_installer_sum_names(queried_linux) == (
+        "agent/bootstrap-client.sh",
+    )
+    queried_windows = qa.agent_installer_url(alloc, "windows") + "?variant=windows"
+    assert zt.sha256sums_url_for_installer(queried_windows) == (
+        "https://203.0.113.10:6099/artifacts/SHA256SUMS"
+    )
     pass_("ARTIFACT_URLS")
 
 

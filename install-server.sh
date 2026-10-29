@@ -1903,9 +1903,45 @@ frp_server_health_frontend() {
   frp_wait_unit_active drlink-frontend
 }
 
+frp_server_migrate_legacy_pki() {
+  local legacy canonical name
+  legacy="$(frp_server_fs /etc/frp-auto-deploy/pki)"
+  canonical="$(frp_pki_dir)"
+  [[ -f "$canonical/ca.crt" ]] && return 0
+  [[ -d "$legacy" ]] || return 0
+
+  # A partially initialized canonical tree can exist before the product path
+  # migration runs. Preserve the legacy trust root in that case; silently
+  # generating a new CA strands already enrolled Agents on the old root.
+  for name in ca.key ca.crt server.key server.crt; do
+    if [[ ! -f "$legacy/$name" || -L "$legacy/$name" ]]; then
+      echo "ERROR: legacy allocator PKI is incomplete; refusing to replace its trust root." >&2
+      echo "Expected regular file: $legacy/$name" >&2
+      return 1
+    fi
+  done
+  for name in ca.key ca.crt server.key server.crt ca.srl; do
+    [[ -f "$legacy/$name" && ! -L "$legacy/$name" && -e "$canonical/$name" ]] || continue
+    if ! cmp -s -- "$legacy/$name" "$canonical/$name"; then
+      echo "ERROR: conflicting canonical and legacy allocator PKI file: $name" >&2
+      echo "Refusing to replace either copy." >&2
+      return 1
+    fi
+  done
+  mkdir -p "$canonical" || return 1
+  chmod 700 "$canonical" || return 1
+  for name in ca.key ca.crt server.key server.crt ca.srl; do
+    [[ -f "$legacy/$name" && ! -L "$legacy/$name" ]] || continue
+    if [[ ! -e "$canonical/$name" ]]; then
+      cp -p -- "$legacy/$name" "$canonical/$name" || return 1
+    fi
+  done
+}
+
 frp_ensure_server_pki() {
   local pki url_host extra
   pki="$(frp_pki_dir)"
+  frp_server_migrate_legacy_pki || return 1
   mkdir -p "$pki"
   chmod 700 "$pki"
   url_host="$(python3 - "$FRP_ALLOCATOR_PUBLIC_URL" <<'PY'

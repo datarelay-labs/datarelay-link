@@ -542,5 +542,44 @@ print('ok')
 PY
 pass "ZT_SHORT_URL_REQUIRES_BOOTSTRAP_HOST"
 
+# A partially initialized canonical tree must not cause an installed legacy
+# allocator CA to be silently replaced during the normal installer path.
+PKI_MIGRATION_ROOT="$WORKDIR/pki-migration"
+LEGACY_PKI="$PKI_MIGRATION_ROOT/etc/frp-auto-deploy/pki"
+CANONICAL_PKI="$PKI_MIGRATION_ROOT/etc/drlink/pki"
+mkdir -p "$LEGACY_PKI" "$CANONICAL_PKI"
+python3 "$ROOT/lib/frp_pki.py" ensure --pki-dir "$LEGACY_PKI" \
+  --public-host "legacy-ca.example.test" >/dev/null || fail "legacy PKI fixture"
+OLD_CA_FP="$(python3 "$ROOT/lib/frp_pki.py" fingerprint --cert "$LEGACY_PKI/ca.crt")"
+PKI_RESULT="$(FRP_SERVER_TEST_ROOT="$PKI_MIGRATION_ROOT" \
+  FRP_PKI_DIR="$CANONICAL_PKI" \
+  FRP_PUBLIC_HOST="legacy-ca.example.test" \
+  FRP_ALLOCATOR_PUBLIC_URL="https://legacy-ca.example.test:6099/enroll" \
+  frp_ensure_server_pki)" || fail "preserve legacy CA during canonical PKI initialization"
+NEW_CA_FP="$(python3 "$ROOT/lib/frp_pki.py" fingerprint --cert "$CANONICAL_PKI/ca.crt")"
+[[ "$NEW_CA_FP" == "$OLD_CA_FP" ]] || fail "canonical PKI must retain legacy CA trust"
+pass "LEGACY_PKI_TRUST_PRESERVED_WHEN_CANONICAL_PARENT_EXISTS"
+
+CONFLICT_PKI_ROOT="$WORKDIR/pki-conflict"
+CONFLICT_LEGACY="$CONFLICT_PKI_ROOT/etc/frp-auto-deploy/pki"
+CONFLICT_CANONICAL="$CONFLICT_PKI_ROOT/etc/drlink/pki"
+mkdir -p "$CONFLICT_LEGACY" "$CONFLICT_CANONICAL"
+python3 "$ROOT/lib/frp_pki.py" ensure --pki-dir "$CONFLICT_LEGACY" \
+  --public-host "legacy-ca.example.test" >/dev/null || fail "conflict legacy PKI fixture"
+printf 'operator-owned-conflict\n' >"$CONFLICT_CANONICAL/server.crt"
+if FRP_SERVER_TEST_ROOT="$CONFLICT_PKI_ROOT" \
+  FRP_PKI_DIR="$CONFLICT_CANONICAL" \
+  FRP_PUBLIC_HOST="legacy-ca.example.test" \
+  FRP_ALLOCATOR_PUBLIC_URL="https://legacy-ca.example.test:6099/enroll" \
+  frp_ensure_server_pki >"$WORKDIR/pki-conflict.log" 2>&1; then
+  fail "conflicting canonical PKI must fail closed"
+fi
+grep -q 'conflicting canonical and legacy allocator PKI file' "$WORKDIR/pki-conflict.log" \
+  || fail "canonical PKI conflict diagnosis"
+[[ ! -e "$CONFLICT_CANONICAL/ca.crt" ]] || fail "conflicting migration must not partially copy a CA"
+[[ "$(cat "$CONFLICT_CANONICAL/server.crt")" == 'operator-owned-conflict' ]] \
+  || fail "conflicting canonical PKI must remain untouched"
+pass "LEGACY_PKI_CONFLICT_FAILS_CLOSED_WITHOUT_PARTIAL_COPY"
+
 echo
 echo "SERVER_INSTALL_CONFIG_TEST=PASS"

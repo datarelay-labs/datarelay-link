@@ -12,7 +12,7 @@ import ipaddress
 import json
 import re
 import shlex
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urlsplit
 
 ZERO_TOUCH_PACKAGE_PREFIX = 'zt1'
 BOOTSTRAP_TICKET_RE = re.compile(
@@ -614,27 +614,32 @@ def sha256sums_url_for_installer(installer_url):
     installer = str(installer_url or '').strip()
     if not installer.lower().startswith('https://'):
         raise ValueError('installer URL must be HTTPS')
+    parsed = urlsplit(installer)
+    artifact_path = parsed.path
+    origin = '%s://%s' % (parsed.scheme, parsed.netloc)
     marker = '/artifacts/'
-    if marker in installer:
-        return installer.split(marker, 1)[0] + '/artifacts/SHA256SUMS'
+    if marker in artifact_path:
+        artifact_prefix = artifact_path.split(marker, 1)[0]
+        return origin + artifact_prefix + '/artifacts/SHA256SUMS'
     for suffix in ('/dist/bootstrap-client.ps1', '/dist/bootstrap-client.sh'):
-        if installer.endswith(suffix):
-            return installer[: -len(suffix)] + '/SHA256SUMS'
+        if artifact_path.endswith(suffix):
+            return origin + artifact_path[: -len(suffix)] + '/SHA256SUMS'
     # Non-release layouts (tests / custom mirrors): SHA256SUMS beside the installer.
-    if '/' not in installer[8:]:
+    if '/' not in artifact_path.lstrip('/'):
         raise ValueError('installer URL path is incomplete')
-    parent = installer.rsplit('/', 1)[0]
-    return parent + '/SHA256SUMS'
+    parent = artifact_path.rsplit('/', 1)[0]
+    return origin + parent + '/SHA256SUMS'
 
 
 def linux_installer_sum_names(installer_url):
     """Return candidate SHA256SUMS pathnames for the Linux installer artifact."""
     installer = str(installer_url or '').strip()
-    if installer.endswith('/artifacts/agent/bootstrap-client.sh'):
+    path = urlsplit(installer).path
+    if path.endswith('/artifacts/agent/bootstrap-client.sh'):
         return ('agent/bootstrap-client.sh',)
-    if installer.endswith('/dist/bootstrap-client.sh'):
+    if path.endswith('/dist/bootstrap-client.sh'):
         return ('dist/bootstrap-client.sh',)
-    name = installer.rsplit('/', 1)[-1]
+    name = path.rsplit('/', 1)[-1]
     if not name:
         raise ValueError('Linux installer URL must include a filename')
     if name == 'bootstrap-client.sh':
