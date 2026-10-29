@@ -94,10 +94,10 @@ if _BOUNDED is not None:
         # bursts wait for TCP retransmission before policy code even runs.
         request_queue_size = ACCESS_MAX_CONCURRENT
         request_timeout = 30.0
-        # Full integrity validation remains per authorization. During a brief
-        # burst let a retiring worker finish before rejecting a user connection;
-        # sustained overload still fails closed within this bounded budget.
-        admission_wait_seconds = 0.1
+        # Full integrity validation remains per authorization. A one-second
+        # bounded admission window absorbs the measured integrity-scan latency
+        # during short mixed-traffic bursts; sustained overload still fails closed.
+        admission_wait_seconds = 1.0
         daemon_threads = True
         reject_callback = staticmethod(_reject_busy)
 else:

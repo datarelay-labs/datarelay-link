@@ -651,78 +651,79 @@ class PolicyCacheFailClosedTests(unittest.TestCase):
         proxy = self.RP.expected_proxy_name("alpha-host", self.mid, "ssh")
 
         for source, denied in (("198.51.100.9", False), ("203.0.113.50", True)):
-            with self.subTest(source=source):
-                first_entered = threading.Event()
-                release_first = threading.Event()
-                second_arrived = threading.Event()
-                calls = []
+            for delay in (0.025, 0.25):
+                with self.subTest(source=source, delay=delay):
+                    first_entered = threading.Event()
+                    release_first = threading.Event()
+                    second_arrived = threading.Event()
+                    calls = []
 
-                class BlockingFirstCache:
-                    def open_isolated(self):
-                        result = real_cache.open_isolated()
-                        calls.append(result[0])
-                        if len(calls) == 1:
-                            first_entered.set()
-                            if not release_first.wait(5):
-                                raise RuntimeError("fixture release timed out")
-                        return result
+                    class BlockingFirstCache:
+                        def open_isolated(self):
+                            result = real_cache.open_isolated()
+                            calls.append(result[0])
+                            if len(calls) == 1:
+                                first_entered.set()
+                                if not release_first.wait(5):
+                                    raise RuntimeError("fixture release timed out")
+                            return result
 
-                class OneSlotServer(self.plugin.AccessServer):
-                    max_concurrent = 1
-                    accepted = 0
+                    class OneSlotServer(self.plugin.AccessServer):
+                        max_concurrent = 1
+                        accepted = 0
 
-                    def process_request(server, request, address):
-                        server.accepted += 1
-                        if server.accepted == 2:
-                            second_arrived.set()
-                        return super().process_request(request, address)
+                        def process_request(server, request, address):
+                            server.accepted += 1
+                            if server.accepted == 2:
+                                second_arrived.set()
+                            return super().process_request(request, address)
 
-                handler = self.plugin.make_handler(BlockingFirstCache(), "/access-auth")
-                server = OneSlotServer(("127.0.0.1", 0), handler)
-                thread = threading.Thread(target=server.serve_forever, daemon=True)
-                thread.start()
+                    handler = self.plugin.make_handler(BlockingFirstCache(), "/access-auth")
+                    server = OneSlotServer(("127.0.0.1", 0), handler)
+                    thread = threading.Thread(target=server.serve_forever, daemon=True)
+                    thread.start()
 
-                def request(address):
-                    body = json.dumps({"op": "NewUserConn", "content": {
-                        "proxy_name": proxy, "remote_addr": address + ":12000",
-                    }}).encode()
-                    conn = HTTPConnection("127.0.0.1", server.server_address[1], timeout=5)
+                    def request(address):
+                        body = json.dumps({"op": "NewUserConn", "content": {
+                            "proxy_name": proxy, "remote_addr": address + ":12000",
+                        }}).encode()
+                        conn = HTTPConnection("127.0.0.1", server.server_address[1], timeout=5)
+                        try:
+                            conn.request("POST", "/access-auth?op=NewUserConn", body=body,
+                                         headers={"Content-Type": "application/json"})
+                            response = conn.getresponse()
+                            return response.status, json.loads(response.read())
+                        finally:
+                            conn.close()
+
                     try:
-                        conn.request("POST", "/access-auth?op=NewUserConn", body=body,
-                                     headers={"Content-Type": "application/json"})
-                        response = conn.getresponse()
-                        return response.status, json.loads(response.read())
+                        with redirect_stderr(io.StringIO()), ThreadPoolExecutor(2) as pool:
+                            first = pool.submit(request, "198.51.100.9")
+                            self.assertTrue(first_entered.wait(3))
+                            second = pool.submit(request, source)
+                            self.assertTrue(second_arrived.wait(3))
+                            # A short delay exercises a retiring worker, while 250 ms
+                            # covers full-integrity work under a transient load burst.
+                            time.sleep(delay)
+                            release_first.set()
+                            first_status, first_body = first.result(timeout=5)
+                            second_status, second_body = second.result(timeout=5)
+                        self.assertEqual(first_status, 200, first_body)
+                        self.assertFalse(first_body["reject"], first_body)
+                        self.assertEqual(second_status, 200, second_body)
+                        self.assertEqual(second_body["reject"], denied, second_body)
+                        self.assertEqual(len(calls), 2, "queued request must run real DB authorization")
+                        # Reading the final response byte can precede the worker's
+                        # finally-close; require bounded cleanup, not that race.
+                        deadline = time.monotonic() + 3
+                        while any(p.conn is not None for p in calls) and time.monotonic() < deadline:
+                            time.sleep(0.005)
+                        self.assertTrue(all(p.conn is None for p in calls), "readers must close")
                     finally:
-                        conn.close()
-
-                try:
-                    with redirect_stderr(io.StringIO()), ThreadPoolExecutor(2) as pool:
-                        first = pool.submit(request, "198.51.100.9")
-                        self.assertTrue(first_entered.wait(3))
-                        second = pool.submit(request, source)
-                        self.assertTrue(second_arrived.wait(3))
-                        # Release inside the small admission budget, after the
-                        # real second TCP request reached the full listener.
-                        time.sleep(0.025)
                         release_first.set()
-                        first_status, first_body = first.result(timeout=5)
-                        second_status, second_body = second.result(timeout=5)
-                    self.assertEqual(first_status, 200, first_body)
-                    self.assertFalse(first_body["reject"], first_body)
-                    self.assertEqual(second_status, 200, second_body)
-                    self.assertEqual(second_body["reject"], denied, second_body)
-                    self.assertEqual(len(calls), 2, "queued request must run real DB authorization")
-                    # Reading the final response byte can precede the worker's
-                    # finally-close; require bounded cleanup, not that race.
-                    deadline = time.monotonic() + 3
-                    while any(p.conn is not None for p in calls) and time.monotonic() < deadline:
-                        time.sleep(0.005)
-                    self.assertTrue(all(p.conn is None for p in calls), "readers must close")
-                finally:
-                    release_first.set()
-                    server.shutdown()
-                    server.server_close()
-                    thread.join(timeout=3)
+                        server.shutdown()
+                        server.server_close()
+                        thread.join(timeout=3)
 
     def test_production_access_server_busy_recovery_and_fd_bound(self):
         """The production server must reject overload, recover slots, and not leak FDs."""
