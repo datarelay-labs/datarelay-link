@@ -670,6 +670,17 @@ configurationBundle:
                 self.assertEqual(self.plane.current_revision(), rev_before)
                 self.assertIsNotNone(self.plane.get_object("dst-p0d"))
 
+    def test_AR_ai_access_missing_destination_error_has_next_step(self):
+        """AUD-06: the AI Access dependency error must say how to proceed, like Remote/Internet Access."""
+        rev_before = self.plane.current_revision()
+        with self.assertRaises(Exception) as ctx:
+            v24.set_ai_access_rule(self.plane, "rule-ar", destination="no-such-dst-ar")
+        msg = str(ctx.exception)
+        self.assertIn("Required Network Object 'no-such-dst-ar' does not exist", msg)
+        self.assertIn("No changes were applied.", msg)
+        self.assertIn("Create the required Network Object first", msg)
+        self.assertEqual(self.plane.current_revision(), rev_before)
+
     def test_AQ_internal_network_storage_types_rejected_by_bundle_validator(self):
         rev_before = self.plane.current_revision()
         for token, value in (
