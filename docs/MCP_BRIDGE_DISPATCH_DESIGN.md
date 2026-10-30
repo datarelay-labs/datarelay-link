@@ -1,7 +1,8 @@
 # MCP Bridge dispatch and concurrency — design proposal (AUD-21)
 
-> **Status: proposal, non-normative.** Not implemented and not deployed. It needs
-> owner approval before any code change. It does not override `PRODUCT_MASTER.md`,
+> **Status: proposal, non-normative.** Steps 1 and 2 are implemented on draft/merged PRs
+> (see section 5); steps 3 and 4 are not. Nothing is deployed. Each further step needs
+> owner approval. It does not override `PRODUCT_MASTER.md`,
 > `SECURITY.md` or `AI_ACCESS_MCP.md`.
 > Tracking: Issue #230 (AUD-21). Cause logging is proposed in PR #240.
 
@@ -61,6 +62,11 @@ audit write 0.73 ms, one result poll 0.02 ms, about 2 ms in total.
   the `AgentLoop` library default stays at 0 so existing callers and tests are unchanged.
   The Agent's request timeout is raised above the hold (it is 8 s today, and a timed-out
   management POST is reported as an ambiguous write).
+  **Implemented in step 2 (2b management API, 2c Bridge, 2d Agent).** Empty claims park their
+  request slot (`frp_bounded_server.parked_slot`, cap 128) and re-take it before touching the
+  database; above the cap the claim answers empty at once and the Agent falls back to its 2 s
+  idle poll. The Agent sends `wait_ms=25000` with a request timeout of hold + 10 s; the library
+  default stays 0.
 - **D2a Cross-process wake-up.** A `DbChangeWatcher` thread per process polls
   `PRAGMA data_version` on its own connection every 10 ms (about 100 trivial local
   checks per second) and wakes waiters when any other connection, in any process,
@@ -104,11 +110,35 @@ Each step ships on its own, RED to GREEN, with no deployment while Issue #165 is
 | Step | Change | Fixes |
 |---|---|---|
 | 1 | D1 and the listen backlog (PR #242, draft) | Errors under concurrency |
-| 2 | D2 and D3 | Pickup delay and idle load |
+| 2 | D2 and D3 (implemented, draft PR) | Pickup delay and idle load |
 | 3 | D4 | Executed-but-failed results |
 | 4 | D5 and D6 | Overload behaviour and visibility |
 
 Rollback: revert the step. Agents are upgraded together with the Server for steps 2 and later.
+
+## 5a. Step 2 results (measured, loopback, 100 real Agent workers)
+
+| Measure | Before | After step 2 | Goal | Met |
+|---|---|---|---|---|
+| Pickup of a new job by an idle Agent | median 1,675 ms | 28-55 ms | p95 <= 100 ms | yes |
+| Idle claim requests from 100 Agents | 46.7 per second | about 4 per second (100 / 25 s) | <= 10 per second | yes |
+| 30 simultaneous calls: failures | 34 and 50 of 90 | 0 | 0 | yes |
+| 30 simultaneous calls to one host: p95 | not measurable (failures) | 100-Agent run: median 2.47 s, p95 3.53 s; 2-host harness: median 1.1-1.3 s, p95 1.4-1.7 s | <= 500 ms | **NO** |
+
+The 30-call latency goal is **not met** and is not claimed as fixed. Per-command execution is
+3-8 ms and CPU is about 74 ms per call in the shared test interpreter, so neither explains
+seconds. The cause is **not established**. Candidates, not yet separated by measurement:
+the Agent runs one host's jobs serially in batches of 4 with one completion round trip per job,
+and GIL contention in the single-process test harness. The production topology (separate
+Bridge, allocator and Agent processes) was not measured separately. Parallel job execution on
+the Agent or larger batches would change execution semantics, so it needs an owner decision
+(section 8, question 4). `tests/test-mcp-bridge-scale-target.py` therefore stays unregistered
+in the suites (allowlisted) and reports this one failure.
+
+Known risk: if an Agent exits while it holds a claim, the Server can claim a job and answer a
+dead socket. The job then stays `running` until the stale/fail-closed handling takes it. It is
+bounded by that existing handling and is not new in kind, but the window is larger than with 2 s
+polling.
 
 ## 6. Verification
 
@@ -142,3 +172,5 @@ Rollback: revert the step. Agents are upgraded together with the Server for step
 1. Agents and Server are upgraded together from step 2 on; is that acceptable for the deployment window?
 2. Starting thread budgets of 128 held claims and 64 calls; adjust after the load test?
 3. Agree to revisit the database only above about 500 sustained writes per second?
+4. The 30-simultaneous-call p95 (<= 500 ms) is not met after step 2. Allow parallel job execution
+   (or larger claim batches) on the Agent, or relax the target for 30 calls to a single host?
