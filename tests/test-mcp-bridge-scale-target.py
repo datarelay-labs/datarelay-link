@@ -22,9 +22,15 @@ is switched on for the test only). No service or credential is touched.
 By default the Bridge and all 100 Agents share ONE Python process (one GIL), which
 production never does. `SCALE_AGENT_PROCS=N` hosts the Agent fleet in N child
 processes instead (they still talk to the Bridge over loopback HTTP), so the
-Bridge process is measured on its own. Every run prints one `SCALE_METRICS` line
-with the latency percentiles and the CPU the test process (Bridge + the 30 callers)
-used while the calls ran.
+Bridge process is measured on its own. `SCALE_SERVER_PROCS=M` (needs SCALE_AGENT_PROCS)
+additionally serves the Agent-facing `/agent/v1/*` endpoints from M child processes on the
+same database, like production where the Agents talk to the allocator and not to the Bridge;
+the caller-facing Bridge stays in the test process. `SCALE_BRIDGE_PROCS=K` instead serves
+Bridge requests (callers and Agents) from K worker processes sharing one port (SO_REUSEPORT)
+and one database; this is the prototype measurement for a multi-process Bridge, not product
+code. Every run prints one `SCALE_METRICS` line
+with the latency percentiles and the CPU the test process (Bridge + the callers)
+used while the calls ran. `SCALE_CALLS=N` changes the number of simultaneous calls (default 30).
 """
 from __future__ import annotations
 
@@ -38,6 +44,7 @@ import sys
 import threading
 import time
 import unittest
+import urllib.request
 from pathlib import Path
 from unittest import mock
 
@@ -69,8 +76,37 @@ def _agent_child_main() -> None:
         thread.join(timeout=int(spec["held_wait_ms"]) / 1000.0 + 5.0)
 
 
+def _agent_server_child_main() -> None:
+    """Serve the Agent-facing endpoints from this process on the shared test database."""
+    spec = json.loads(sys.stdin.readline())
+    os.environ["DRLINK_TEST_ROOT"] = spec["root"]
+    os.environ["DRLINK_CONFIRM"] = "yes"
+    from drlink_control_plane import ControlPlane
+    from drlink_mcp_bridge import MCPBridge, ThreadingHTTPServer, make_handler
+
+    class _Server(ThreadingHTTPServer):
+        allow_reuse_port = bool(spec.get("port"))
+
+    plane = ControlPlane(spec["root"])
+    bridge = MCPBridge(root=spec["root"], plane=plane, auto_agents=False)
+    httpd = _Server(("127.0.0.1", int(spec.get("port") or 0)), make_handler(bridge))
+    bridge.listen_host = "127.0.0.1"
+    bridge.listen_port = httpd.server_address[1]
+    serving = threading.Thread(target=httpd.serve_forever, daemon=True)
+    serving.start()
+    print("PORT %d" % httpd.server_address[1], flush=True)
+    sys.stdin.read()  # the parent closing the pipe is the stop signal
+    httpd.shutdown()
+    httpd.server_close()
+    bridge.close()
+    plane.close()
+
+
 if __name__ == "__main__" and len(sys.argv) > 1 and sys.argv[1] == "--agent-child":
     _agent_child_main()
+    sys.exit(0)
+if __name__ == "__main__" and len(sys.argv) > 1 and sys.argv[1] == "--agent-server-child":
+    _agent_server_child_main()
     sys.exit(0)
 
 
@@ -85,11 +121,13 @@ def _load_e2e_harness():
 _E2E = _load_e2e_harness()
 
 TARGET_AGENTS = 100
-TARGET_CONCURRENT_CALLS = 30
+TARGET_CONCURRENT_CALLS = int(os.environ.get("SCALE_CALLS", "30") or 30)  # SCALE_CALLS=N: measure fewer simultaneous calls
 ROUNDS = 3
 MAX_IDLE_CLAIMS_PER_SECOND = 10.0
 MAX_P95_SECONDS = 0.5
 AGENT_PROCS = int(os.environ.get("SCALE_AGENT_PROCS", "0") or 0)
+SERVER_PROCS = int(os.environ.get("SCALE_SERVER_PROCS", "0") or 0)
+BRIDGE_PROCS = int(os.environ.get("SCALE_BRIDGE_PROCS", "0") or 0)
 
 
 class MCPBridgeScaleTargetTests(unittest.TestCase):
@@ -114,6 +152,18 @@ class MCPBridgeScaleTargetTests(unittest.TestCase):
         for proc in procs:
             try:
                 proc.wait(timeout=self.HELD_WAIT_MS / 1000.0 + 15.0)
+            except Exception:
+                proc.kill()
+                proc.wait(timeout=10)
+        server_procs = getattr(self, "_server_procs", [])
+        for proc in server_procs:  # the fleet is gone, so the Agent-facing servers can stop
+            try:
+                proc.stdin.close()
+            except Exception:
+                pass
+        for proc in server_procs:
+            try:
+                proc.wait(timeout=20)
             except Exception:
                 proc.kill()
                 proc.wait(timeout=10)
@@ -162,6 +212,47 @@ class MCPBridgeScaleTargetTests(unittest.TestCase):
             for client in plane.connected_clients()
         ]
         self.assertEqual(len(tokens), TARGET_AGENTS)
+        self._server_procs = []
+        if BRIDGE_PROCS:
+            import socket
+
+            probe = socket.socket()
+            probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
+            probe.bind(("127.0.0.1", 0))
+            shared_port = probe.getsockname()[1]
+            probe.close()
+            for _ in range(BRIDGE_PROCS):
+                worker = subprocess.Popen(
+                    [sys.executable, os.path.abspath(__file__), "--agent-server-child"],
+                    stdin=subprocess.PIPE,
+                    stdout=subprocess.PIPE,
+                    text=True,
+                    env=dict(os.environ, PYTHONDONTWRITEBYTECODE="1"),
+                )
+                self._server_procs.append(worker)
+                worker.stdin.write(json.dumps({"root": self.tmp, "port": shared_port}) + "\n")
+                worker.stdin.flush()
+                line = worker.stdout.readline().strip()
+                self.assertEqual(line, "PORT %d" % shared_port)
+            self.base = "http://127.0.0.1:%d" % shared_port  # callers and Agents use the workers
+            self.url = self.base + "/mcp"
+        bases = [self.base]
+        if SERVER_PROCS:
+            bases = []
+            for _ in range(SERVER_PROCS):
+                server = subprocess.Popen(
+                    [sys.executable, os.path.abspath(__file__), "--agent-server-child"],
+                    stdin=subprocess.PIPE,
+                    stdout=subprocess.PIPE,
+                    text=True,
+                    env=dict(os.environ, PYTHONDONTWRITEBYTECODE="1"),
+                )
+                self._server_procs.append(server)
+                server.stdin.write(json.dumps({"root": self.tmp}) + "\n")
+                server.stdin.flush()
+                line = server.stdout.readline().strip()
+                self.assertTrue(line.startswith("PORT "), line)
+                bases.append("http://127.0.0.1:%s" % line.split()[1])
         self._agent_procs = []
         for index in range(AGENT_PROCS):
             share = tokens[index::AGENT_PROCS]
@@ -173,7 +264,7 @@ class MCPBridgeScaleTargetTests(unittest.TestCase):
                 env=dict(os.environ, PYTHONDONTWRITEBYTECODE="1"),
             )
             self._agent_procs.append(proc)
-            spec = {"base": self.base, "tokens": share, "held_wait_ms": self.HELD_WAIT_MS}
+            spec = {"base": bases[index % len(bases)], "tokens": share, "held_wait_ms": self.HELD_WAIT_MS}
             proc.stdin.write(json.dumps(spec) + "\n")
             proc.stdin.flush()
         for proc in self._agent_procs:
@@ -231,6 +322,7 @@ class MCPBridgeScaleTargetTests(unittest.TestCase):
 
     def _simultaneous_calls(self, endpoint_of):
         results = []
+        by_round = {}
         guard = threading.Lock()
         barrier = threading.Barrier(TARGET_CONCURRENT_CALLS)
 
@@ -253,11 +345,21 @@ class MCPBridgeScaleTargetTests(unittest.TestCase):
                     outcome = (None, "transport:%s" % type(exc).__name__)
                 with guard:
                     results.append(outcome)
+                    if outcome[0] is not None:
+                        by_round.setdefault(rnd, []).append(outcome[0])
 
+        # urllib builds its default opener (and loads the system CA bundle, about 100 ms of CPU)
+        # on the first urlopen() of the process. 30 callers released at the same instant each
+        # built their own, which made the first round look slow. Real clients keep their opener,
+        # so build it once before the burst and measure the Server only.
+        urllib.request.install_opener(urllib.request.build_opener())
         threads = [
             threading.Thread(target=worker, args=(i,), daemon=True)
             for i in range(TARGET_CONCURRENT_CALLS)
         ]
+        mark = os.environ.get("SCALE_BURST_MARK")
+        if mark:  # lets a profiler attach exactly for the burst
+            Path(mark).write_text("start\n")
         cpu_started = time.process_time()
         ru_started = resource.getrusage(resource.RUSAGE_SELF)
         wall_started = time.perf_counter()
@@ -266,6 +368,8 @@ class MCPBridgeScaleTargetTests(unittest.TestCase):
         for thread in threads:
             thread.join(timeout=180)
         cpu_used = time.process_time() - cpu_started
+        if mark:
+            Path(mark).write_text("end\n")
         ru_ended = resource.getrusage(resource.RUSAGE_SELF)
         wall_used = time.perf_counter() - wall_started
         total = TARGET_CONCURRENT_CALLS * ROUNDS
@@ -278,12 +382,22 @@ class MCPBridgeScaleTargetTests(unittest.TestCase):
         )
         durations = sorted(d for d, _ in results if d is not None)
         p95 = durations[min(len(durations) - 1, int(round(0.95 * (len(durations) - 1))))]
+        def _pct(values, q):
+            values = sorted(values)
+            return values[min(len(values) - 1, int(round(q * (len(values) - 1))))] * 1000
+
+        rounds_text = " ".join(
+            "r%d=%.0f/%.0f" % (rnd + 1, _pct(vals, 0.5), _pct(vals, 0.95)) for rnd, vals in sorted(by_round.items())
+        )
         print(
-            "SCALE_METRICS agent_procs=%d calls=%d median_ms=%.0f p95_ms=%.0f max_ms=%.0f "
+            "SCALE_METRICS rounds(median/p95 ms)[%s] agent_procs=%d server_procs=%d bridge_procs=%d calls=%d median_ms=%.0f p95_ms=%.0f max_ms=%.0f "
             "test_process_cpu_s=%.2f (user %.2f sys %.2f) wall_s=%.2f cpu_per_call_ms=%.0f "
             "ctx_voluntary=%d ctx_involuntary=%d"
             % (
+                rounds_text,
                 AGENT_PROCS,
+                SERVER_PROCS,
+                BRIDGE_PROCS,
                 len(durations),
                 statistics.median(durations) * 1000,
                 p95 * 1000,
