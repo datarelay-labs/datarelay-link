@@ -26,6 +26,8 @@ from functools import wraps
 from pathlib import Path
 from typing import Any, Callable, Iterable, Optional
 
+from drlink_db_watch import get_watcher
+from frp_bounded_server import parked_slot
 from drlink_control_db import (
     SCHEMA_VERSION,
     ControlPlaneError,
@@ -136,6 +138,23 @@ MANAGED_HOST_LIVENESS_SECONDS = 120
 # Persist liveness well inside the TTL so claim polls do not rewrite the row
 # on every poll. 30s is safely inside the 120s freshness bound.
 MANAGED_HOST_LIVENESS_REFRESH_SECONDS = 30
+# Held claim (AUD-21 step 2): an Agent may ask the Server to hold an empty claim
+# for up to this long and answer the moment a job is queued for that host. It
+# fits inside MANAGED_HOST_LIVENESS_SECONDS (120 s) and a front end's default
+# 60 s read timeout.
+MAX_CLAIM_WAIT_MS = 25000
+# A held claim re-reads the database at least this often even if no change
+# signal arrives, so a missed signal costs latency, never a lost job.
+CLAIM_HOLD_FALLBACK_POLL_SECONDS = 1.0
+
+
+def clamp_claim_wait_ms(value: Any) -> int:
+    """Return a usable ``wait_ms``: an integer in [0, MAX_CLAIM_WAIT_MS]."""
+    try:
+        number = int(value)
+    except (TypeError, ValueError):
+        return 0
+    return max(0, min(number, MAX_CLAIM_WAIT_MS))
 # Independent Agent lifecycle heartbeat. This is transport/product presence,
 # not AI executor activity; macOS and other Agents without an AI worker use it.
 AGENT_HEARTBEAT_SECONDS = 120
@@ -5445,6 +5464,50 @@ class ControlPlane:
                 )
         self.commit_if_autonomous()
         return claimed
+
+    def claim_ai_jobs_held(self, client_id: str, limit: int = 4, wait_ms: int = 0) -> list[dict]:
+        """Claim like ``claim_ai_jobs``, but hold an empty claim for ``wait_ms``.
+
+        With no job queued the call waits for a change to the Control DB (any
+        connection, any process) and answers as soon as a job is queued for this
+        host, so an idle Agent picks work up in milliseconds instead of at its
+        next poll. The database stays the source of truth: the generation is
+        read before each look, so a commit between the look and the wait is
+        never missed, and the wait itself is bounded by a fallback poll.
+        """
+        jobs = self.claim_ai_jobs(client_id, limit)
+        wait_s = clamp_claim_wait_ms(wait_ms) / 1000.0
+        if jobs or wait_s <= 0:
+            return jobs
+        watcher = get_watcher(self.db_file)
+        deadline = time.monotonic() + wait_s
+        # A connection of its own: this thread may sit here for 25 s and must not
+        # share (or pin) the request connection while it waits.
+        probe = connect_worker(path=self.db_file)
+        try:
+            while True:
+                generation = watcher.generation
+                queued = probe.execute(
+                    "SELECT 1 FROM ai_jobs WHERE status = 'queued' AND client_id = ? LIMIT 1",
+                    (client_id,),
+                ).fetchone()
+                if queued is not None:
+                    jobs = self.claim_ai_jobs(client_id, limit)
+                    if jobs:
+                        return jobs
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    return []
+                with parked_slot() as parked:
+                    if not parked:
+                        # Too many held requests: answer empty now, the Agent asks again.
+                        return []
+                    watcher.wait(generation, min(remaining, CLAIM_HOLD_FALLBACK_POLL_SECONDS))
+        finally:
+            try:
+                probe.close()
+            except sqlite3.Error:
+                pass
 
     def _store_ai_job_result_blob(self, job_id: str, result: dict) -> None:
         """Persist the full in-memory result so MCP Bridge can return file bytes."""
