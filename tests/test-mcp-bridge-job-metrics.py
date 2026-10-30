@@ -56,5 +56,28 @@ class JobMetricsTests(DispatchFixture):
         self.assertIsNone(job["total_ms"])
 
 
+class ExistingDatabaseMigrationTests(unittest.TestCase):
+    """A fresh DB gets the columns from the base schema; an existing one through the migration."""
+
+    def test_existing_tables_gain_the_d4_and_d6_columns(self):
+        import sqlite3
+
+        from drlink_control_db import (ensure_ai_activity_correlation_schema,
+                                       ensure_ai_jobs_safety_schema)
+
+        conn = sqlite3.connect(":memory:")
+        conn.execute("CREATE TABLE ai_activity (id INTEGER PRIMARY KEY, capability TEXT NOT NULL, "
+                     "result TEXT NOT NULL)")
+        conn.execute("CREATE TABLE ai_jobs (id TEXT PRIMARY KEY, capability TEXT NOT NULL, "
+                     "payload_json TEXT NOT NULL, status TEXT NOT NULL, created_at TEXT NOT NULL, "
+                     "updated_at TEXT NOT NULL)")
+        ensure_ai_jobs_safety_schema(conn)
+        ensure_ai_activity_correlation_schema(conn)
+        jobs = {row[1] for row in conn.execute("PRAGMA table_info(ai_jobs)")}
+        activity = {row[1] for row in conn.execute("PRAGMA table_info(ai_activity)")}
+        self.assertTrue({"correlation_id", "enqueued_ms", "queue_ms", "run_ms", "total_ms"} <= jobs)
+        self.assertIn("correlation_id", activity)
+
+
 if __name__ == "__main__":
     unittest.main()

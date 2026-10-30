@@ -589,6 +589,7 @@ CREATE TABLE ai_activity (
   duration_ms INTEGER,
   revision INTEGER,
   operand_summary TEXT,
+  correlation_id TEXT,
   FOREIGN KEY (principal_id) REFERENCES ai_principals(id)
 );
 
@@ -607,7 +608,12 @@ CREATE TABLE ai_jobs (
   deadline_at TEXT,
   claim_token TEXT,
   attempt_id TEXT,
-  claimed_at TEXT
+  claimed_at TEXT,
+  correlation_id TEXT,
+  enqueued_ms INTEGER,
+  queue_ms INTEGER,
+  run_ms INTEGER,
+  total_ms INTEGER
 );
 
 CREATE INDEX IF NOT EXISTS idx_ai_jobs_claim
