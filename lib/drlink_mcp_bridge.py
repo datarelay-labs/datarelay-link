@@ -15,11 +15,16 @@ public ``test ai-access``. Legacy ai_access_rules are not an authority.
 from __future__ import annotations
 
 from html import escape as html_escape
+import contextlib
+import functools
 import json
+import logging
 import os
 import re
+import sqlite3
 import threading
 import time
+import traceback
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from socketserver import ThreadingMixIn
 from typing import Any, Optional
@@ -397,6 +402,42 @@ def _jsonrpc_error(req_id, code, message, data=None):
     if data is not None:
         err["data"] = data
     return {"jsonrpc": "2.0", "id": req_id, "error": err}
+
+
+LOG = logging.getLogger("drlink.mcp_bridge")
+# Exception types whose message is safe to log (no caller-controlled secrets).
+_LOGGABLE_DETAIL_TYPES = (sqlite3.Error, OSError, TimeoutError)
+
+
+def _log_internal_error(exc: BaseException, *, tool: str) -> str:
+    """Record why a tools/call became `internal error`; return a correlation id.
+
+    The JSON-RPC response stays generic. The log carries the exception class,
+    the innermost frames and, only for DB/OS errors, a short message. Arguments,
+    tokens and caller-supplied text are never logged, and the tool name is
+    reduced to a known value so it cannot inject log lines.
+    """
+    correlation_id = "mcp-" + os.urandom(6).hex()
+    known_tools = {entry[0] for entry in TOOL_DEFS}
+    safe_tool = tool if tool in known_tools else "unknown"
+    frames = traceback.extract_tb(exc.__traceback__)[-6:]
+    where = " <- ".join(
+        "%s:%s:%s" % (os.path.basename(frame.filename), frame.lineno, frame.name)
+        for frame in reversed(frames)
+    ) or "-"
+    detail = ""
+    if isinstance(exc, _LOGGABLE_DETAIL_TYPES):
+        detail = " detail=%r" % (str(exc)[:200],)
+    LOG.error(
+        "mcp tools/call internal error cid=%s tool=%s exc=%s.%s%s where=%s",
+        correlation_id,
+        safe_tool,
+        type(exc).__module__,
+        type(exc).__name__,
+        detail,
+        where,
+    )
+    return correlation_id
 
 
 def _jsonrpc_result(req_id, result):
@@ -961,8 +1002,11 @@ class MCPBridge:
                 return 200, _jsonrpc_result(req_id, result)
             except ControlPlaneError as exc:
                 return 200, _jsonrpc_result(req_id, _text_result("DENY: %s" % exc, is_error=True))
-            except Exception:
-                return 200, _jsonrpc_error(req_id, -32603, "internal error")
+            except Exception as exc:
+                correlation_id = _log_internal_error(exc, tool=name)
+                return 200, _jsonrpc_error(
+                    req_id, -32603, "internal error", {"correlation_id": correlation_id}
+                )
         return 404, _jsonrpc_error(req_id, -32601, "Method not found")
 
     def _authorize(self, principal, endpoint: str, capability: str, operand=None) -> dict:
@@ -1374,10 +1418,23 @@ class MCPBridge:
 
 class ThreadingHTTPServer(ThreadingMixIn, HTTPServer):
     daemon_threads = True
+    # Python's default of 5 resets bursts of simultaneous connects (AUD-21).
+    request_queue_size = 128
     allow_reuse_address = True
 
 
 def make_handler(bridge: MCPBridge):
+    def _scoped(method):
+        """Run one HTTP request on its own pooled SQLite connection (AUD-21)."""
+
+        @functools.wraps(method)
+        def wrapper(self, *args, **kwargs):
+            scope = getattr(bridge.plane, "request_scope", None)
+            with (scope() if scope is not None else contextlib.nullcontext()):
+                return method(self, *args, **kwargs)
+
+        return wrapper
+
     class Handler(BaseHTTPRequestHandler):
         protocol_version = "HTTP/1.1"
 
@@ -1446,6 +1503,7 @@ def make_handler(bridge: MCPBridge):
         def _www_auth(self):
             return bridge.www_authenticate_value()
 
+        @_scoped
         def do_GET(self):
             if self._origin_denied():
                 return
@@ -1635,6 +1693,7 @@ def make_handler(bridge: MCPBridge):
                 return
             self._send(404, {"error": "not found"})
 
+        @_scoped
         def do_DELETE(self):
             # 2026-07-28 removed protocol-level sessions; DELETE is not a session
             # terminator. Answer 405 so official SDKs fail closed rather than hang.
@@ -1643,6 +1702,7 @@ def make_handler(bridge: MCPBridge):
             self.send_header("Content-Length", "0")
             self.end_headers()
 
+        @_scoped
         def do_OPTIONS(self):
             parsed = urlparse(self.path)
             if parsed.path.startswith("/.well-known/") or parsed.path.startswith("/oauth/") or parsed.path in (
@@ -1656,6 +1716,7 @@ def make_handler(bridge: MCPBridge):
             self.send_header("Content-Length", "0")
             self.end_headers()
 
+        @_scoped
         def do_POST(self):
             if self._origin_denied():
                 return

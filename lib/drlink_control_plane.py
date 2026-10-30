@@ -6,9 +6,11 @@ SQLite is the SSOT. Runtime artifacts under /var/lib/drlink/runtime/ are derived
 from __future__ import annotations
 
 import base64
+import contextlib
 import hashlib
 import ipaddress
 import json
+import logging
 import os
 import re
 import secrets
@@ -29,6 +31,7 @@ from drlink_control_db import (
     ControlPlaneError,
     DatabaseCorruptError,
     SchemaTooNewError,
+    connect_worker,
     db_path,
     ensure_ai_jobs_safety_schema,
     integrity_check,
@@ -352,7 +355,13 @@ def coherent_read(function):
     return read
 
 
+LOG = logging.getLogger("drlink.control_plane")
+
+
 class ControlPlane:
+    # Idle pooled request connections kept for reuse (opening one costs ~1.7 ms).
+    WORKER_POOL_IDLE_MAX = 32
+
     def __init__(
         self,
         root: Optional[str] = None,
@@ -364,6 +373,14 @@ class ControlPlane:
         self.db_file = db_path(root)
         self.runtime = runtime_dir(root)
         self._read_only = bool(read_only and conn is None)
+        # A caller-supplied connection (doctor, support bundle, in-memory preview)
+        # is the only connection this plane may use. Pooled request connections
+        # apply only to planes that opened the on-disk Control DB themselves.
+        self._injected_conn = conn is not None
+        self._tls = threading.local()
+        self._worker_pool: list = []
+        self._worker_pool_lock = threading.Lock()
+        self._worker_generation = 0
         self.conn = conn or (
             open_control_db_readonly(root) if self._read_only else open_control_db(root)
         )
@@ -377,12 +394,106 @@ class ControlPlane:
         # reverse if the local transaction rolls back. Not a distributed txn.
         self._agent_mgmt_side_effects: list = []
 
+    # --- connection ownership ---------------------------------------------
+    # One sqlite3 connection must never be used by two threads at once: that
+    # produced SQLITE_MISUSE and interleaved cursors under concurrent MCP calls
+    # (AUD-21). `conn` resolves to the calling thread's request-scoped connection
+    # when inside request_scope(), otherwise to the primary connection, so the
+    # existing `plane.conn` call sites keep working unchanged.
+    @property
+    def conn(self):
+        scoped = getattr(self.__dict__.get("_tls"), "conn", None)
+        if scoped is not None:
+            return scoped
+        return self.__dict__.get("_primary_conn")
+
+    @conn.setter
+    def conn(self, value) -> None:
+        self.__dict__["_primary_conn"] = value
+
+    @staticmethod
+    def _close_quietly(conn) -> None:
+        if conn is None:
+            return
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+    def _open_worker_conn(self):
+        if getattr(self, "_read_only", False):
+            return open_control_db_readonly(self.root)
+        return connect_worker(root=self.root)
+
+    def _borrow_worker_conn(self):
+        with self._worker_pool_lock:
+            generation = self._worker_generation
+            while self._worker_pool:
+                conn, conn_generation = self._worker_pool.pop()
+                if conn_generation == generation:
+                    return conn, generation
+                self._close_quietly(conn)
+        return self._open_worker_conn(), generation
+
+    def _return_worker_conn(self, conn, generation) -> None:
+        keep = True
+        try:
+            if conn.in_transaction:
+                # Work left open by a request must not leak to the next borrower.
+                LOG.warning("request ended with an open transaction; rolled back")
+                conn.execute("ROLLBACK")
+        except sqlite3.Error:
+            keep = False
+        with self._worker_pool_lock:
+            if (
+                keep
+                and generation == self._worker_generation
+                and len(self._worker_pool) < self.WORKER_POOL_IDLE_MAX
+            ):
+                self._worker_pool.append((conn, generation))
+                return
+        self._close_quietly(conn)
+
+    def _invalidate_worker_pool(self) -> None:
+        """Drop idle pooled connections (database replaced, or plane closing)."""
+        with self._worker_pool_lock:
+            self._worker_generation += 1
+            stale, self._worker_pool = self._worker_pool, []
+        for conn, _generation in stale:
+            self._close_quietly(conn)
+
+    @contextlib.contextmanager
+    def request_scope(self):
+        """Lend the calling thread a pooled connection for one request.
+
+        No-op for a plane built on a caller-supplied connection and when this
+        thread is already inside a scope.
+        """
+        tls = self._tls
+        if self.__dict__.get("_injected_conn") or getattr(tls, "conn", None) is not None:
+            yield self
+            return
+        conn, generation = self._borrow_worker_conn()
+        tls.conn = conn
+        tls.generation = generation
+        try:
+            yield self
+        finally:
+            # _ensure_live_conn may have swapped the connection mid-request.
+            conn_now = getattr(tls, "conn", None) or conn
+            generation_now = getattr(tls, "generation", generation)
+            tls.conn = None
+            tls.generation = None
+            self._return_worker_conn(conn_now, generation_now)
+
     def close(self) -> None:
         releaser = getattr(self, "_release_isolated_conn_lock", None)
         self._release_isolated_conn_lock = None
         try:
-            if self.conn is not None:
-                self.conn.close()
+            self._invalidate_worker_pool()
+            primary = self.__dict__.get("_primary_conn")
+            if primary is not None:
+                primary.close()
                 self.conn = None
         finally:
             if releaser is not None:
@@ -405,17 +516,20 @@ class ControlPlane:
         ident = self._db_file_ident()
         if ident is None or ident == getattr(self, "_db_ident", None):
             return
-        try:
-            if self.conn is not None:
-                self.conn.close()
-        except Exception:
-            pass
+        self._close_quietly(self.__dict__.get("_primary_conn"))
         self.conn = (
             open_control_db_readonly(self.root)
             if getattr(self, "_read_only", False)
             else open_control_db(self.root)
         )
         self._db_ident = ident
+        # Pooled connections still point at the replaced file.
+        self._invalidate_worker_pool()
+        tls = self._tls
+        if getattr(tls, "conn", None) is not None:
+            self._close_quietly(tls.conn)
+            tls.conn = self._open_worker_conn()
+            tls.generation = self._worker_generation
 
     # --- revision / audit -------------------------------------------------
     def current_revision(self) -> int:
@@ -625,12 +739,9 @@ class ControlPlane:
             if db_member is None:
                 raise ControlPlaneError("backup drlink.db unreadable")
             payload = db_member.read()
-        # Close live connection so the on-disk DB can be replaced safely.
-        try:
-            if self.conn is not None:
-                self.conn.close()
-        except Exception:
-            pass
+        # Close live connections so the on-disk DB can be replaced safely.
+        self._invalidate_worker_pool()
+        self._close_quietly(self.__dict__.get("_primary_conn"))
         self.conn = None
         db_file = Path(self.db_file)
         db_file.parent.mkdir(parents=True, exist_ok=True)
