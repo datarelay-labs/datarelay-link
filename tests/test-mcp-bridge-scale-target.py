@@ -120,8 +120,24 @@ def _load_e2e_harness():
 _E2E = _load_e2e_harness()
 
 TARGET_AGENTS = 100
+def descendant_cpu_seconds(root_pid: int) -> float:
+    """User+system CPU seconds used so far by the direct children of ``root_pid`` (Bridge workers)."""
+    tick = os.sysconf("SC_CLK_TCK")
+    total = 0.0
+    for entry in os.listdir("/proc"):
+        if not entry.isdigit():
+            continue
+        try:
+            fields = Path("/proc/%s/stat" % entry).read_text().rsplit(")", 1)[1].split()
+        except (OSError, IndexError):
+            continue
+        if int(fields[1]) == root_pid:
+            total += (int(fields[11]) + int(fields[12])) / tick
+    return total
+
+
 TARGET_CONCURRENT_CALLS = int(os.environ.get("SCALE_CALLS", "30") or 30)  # SCALE_CALLS=N: measure fewer simultaneous calls
-ROUNDS = 3
+ROUNDS = int(os.environ.get("SCALE_ROUNDS", "3") or 3)  # SCALE_ROUNDS=N: more rounds give a profiler a longer burst
 MAX_IDLE_CLAIMS_PER_SECOND = 10.0
 MAX_P95_SECONDS = 0.5
 AGENT_PROCS = int(os.environ.get("SCALE_AGENT_PROCS", "0") or 0)
@@ -388,6 +404,8 @@ class MCPBridgeScaleTargetTests(unittest.TestCase):
         mark = os.environ.get("SCALE_BURST_MARK")
         if mark:  # lets a profiler attach exactly for the burst
             Path(mark).write_text("start\n")
+        supervisor_proc = getattr(self, "_bridge_supervisor", None)
+        worker_cpu_started = descendant_cpu_seconds(supervisor_proc.pid) if supervisor_proc else 0.0
         cpu_started = time.process_time()
         ru_started = resource.getrusage(resource.RUSAGE_SELF)
         wall_started = time.perf_counter()
@@ -396,6 +414,7 @@ class MCPBridgeScaleTargetTests(unittest.TestCase):
         for thread in threads:
             thread.join(timeout=180)
         cpu_used = time.process_time() - cpu_started
+        worker_cpu_used = (descendant_cpu_seconds(supervisor_proc.pid) - worker_cpu_started) if supervisor_proc else 0.0
         if mark:
             Path(mark).write_text("end\n")
         ru_ended = resource.getrusage(resource.RUSAGE_SELF)
@@ -420,7 +439,7 @@ class MCPBridgeScaleTargetTests(unittest.TestCase):
         print(
             "SCALE_METRICS rounds(median/p95 ms)[%s] agent_procs=%d server_procs=%d bridge_procs=%d calls=%d median_ms=%.0f p95_ms=%.0f max_ms=%.0f "
             "test_process_cpu_s=%.2f (user %.2f sys %.2f) wall_s=%.2f cpu_per_call_ms=%.0f "
-            "ctx_voluntary=%d ctx_involuntary=%d"
+            "ctx_voluntary=%d ctx_involuntary=%d bridge_worker_cpu_per_call_ms=%.1f"
             % (
                 rounds_text,
                 AGENT_PROCS,
@@ -437,6 +456,7 @@ class MCPBridgeScaleTargetTests(unittest.TestCase):
                 cpu_used / max(1, len(durations)) * 1000,
                 ru_ended.ru_nvcsw - ru_started.ru_nvcsw,
                 ru_ended.ru_nivcsw - ru_started.ru_nivcsw,
+                worker_cpu_used / max(1, len(durations)) * 1000,
             ),
             file=sys.stderr,
             flush=True,
