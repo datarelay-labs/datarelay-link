@@ -151,6 +151,7 @@ python3 tests/test-restore-readiness.py
 python3 tests/test-chatgpt-owner-acceptance.py
 python3 tests/test-ai-access-mcp-e2e.py
 python3 tests/test-mcp-server-self.py
+python3 tests/test-mcp-bridge-internal-error-logging.py
 python3 tests/test-mcp-server-local-executor.py
 python3 tests/test-mcp-server-full-control.py
 python3 tests/test-mcp-server-full-control-public.py
