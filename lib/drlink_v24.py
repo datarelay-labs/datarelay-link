@@ -1691,6 +1691,65 @@ def _semantic_service_ref(conn: sqlite3.Connection, kind: str, ref_id: str) -> s
     return _unresolvable_semantic(kind_l, ref_id, "unknown-kind")
 
 
+def _effective_access_rule_binding(conn: sqlite3.Connection, plane: str, rule_id: str):
+    """Return the canonical source/destination/service binding for one rule."""
+    def network_refs(table: str) -> tuple[str, ...]:
+        return tuple(sorted(
+            _semantic_network_ref(conn, row["ref_kind"], row["ref_id"])
+            for row in conn.execute(
+                "SELECT ref_kind, ref_id FROM %s WHERE rule_id = ?" % table,
+                (rule_id,),
+            )
+        ))
+
+    sources = network_refs("rule_sources")
+    destinations = network_refs("rule_destinations")
+    service_refs = list(conn.execute(
+        "SELECT ref_kind, ref_id FROM rule_service_refs WHERE rule_id = ?",
+        (rule_id,),
+    ))
+    if service_refs:
+        services = tuple(sorted(
+            _semantic_service_ref(conn, row["ref_kind"], row["ref_id"])
+            for row in service_refs
+        ))
+    else:
+        services = tuple(sorted(
+            "{%s:%s}" % (row["protocol"], int(row["port"]))
+            for row in conn.execute(
+                "SELECT protocol, port FROM rule_services WHERE rule_id = ?",
+                (rule_id,),
+            )
+        ))
+    return plane, sources, destinations, services
+
+
+def _ensure_unique_access_rule_binding(conn: sqlite3.Connection, plane: str, rule_id: str) -> None:
+    """Reject a duplicate enabled Internet Access binding."""
+    if plane != "internet":
+        return
+    candidate = conn.execute(
+        "SELECT id, name, enabled FROM policy_rules WHERE id = ? AND plane = ?",
+        (rule_id, plane),
+    ).fetchone()
+    if candidate is None or not bool(candidate["enabled"]):
+        return
+    binding = _effective_access_rule_binding(conn, plane, rule_id)
+    for other in conn.execute(
+        "SELECT id, name FROM policy_rules WHERE plane = ? AND enabled = 1 AND id <> ? "
+        "ORDER BY name COLLATE NOCASE",
+        (plane, rule_id),
+    ):
+        if _effective_access_rule_binding(conn, plane, other["id"]) == binding:
+            raise ControlPlaneError(
+                "ERROR:\n%s Access rule '%s' already has the same effective "
+                "source, destination, and service as enabled rule '%s'.\n\n"
+                "Choose a different effective binding or disable the existing rule.\n\n"
+                "No changes were applied."
+                % ("Internet", candidate["name"], other["name"])
+            )
+
+
 def _permission_object_semantics(conn: sqlite3.Connection, object_id: str) -> list[str]:
     obj = conn.execute(
         "SELECT id FROM permission_objects WHERE id = ?", (object_id,)
@@ -4060,6 +4119,7 @@ def set_access_rule(
                         "INSERT OR IGNORE INTO rule_services(rule_id, protocol, port) VALUES (?, ?, ?)",
                         (rule_id, proto, int(member["port"])),
                     )
+        _ensure_unique_access_rule_binding(plane_db.conn, plane, rule_id)
         return {"entity": {"type": "%s-access" % plane, "id": rule_id, "name": name}, "operation": op}
 
     impact = None

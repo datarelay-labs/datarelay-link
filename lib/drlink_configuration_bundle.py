@@ -1527,6 +1527,11 @@ def _plan_policy_rule(plane: ControlPlane, plan: ChangePlan, family: str, plane_
         if d:
             pl.set_rule_description(pn, n, d)
         pl.set_rule_enabled(pn, n, en)
+        # Match the public one-shot rule invariant after the complete binding
+        # has been assembled; Bundle apply's enclosing transaction rolls back
+        # every preceding row if an effective duplicate is found.
+        import drlink_v24 as v24
+        v24._ensure_unique_access_rule_binding(pl.conn, pn, rule["id"])
         return {"operation": "set-rule", "entity": {"type": "%s-access" % pn, "name": n}}
 
     plan.changes.append(

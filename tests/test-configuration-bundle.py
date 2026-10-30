@@ -450,6 +450,40 @@ class ConfigurationBundleTests(unittest.TestCase):
         self.assertEqual(view["destinations"], ["dst"])
         self.assertIn("tcp/443", view["services"])
 
+    def test_duplicate_effective_internet_rule_rolls_back_bundle_apply(self):
+        import drlink_v24 as v24
+
+        v24.set_network_object(
+            self.plane, "dup-source", type="ip", value="10.20.0.10", oneshot=True
+        )
+        v24.set_network_object(
+            self.plane, "dup-destination", type="fqdn", value="duplicate.example",
+            oneshot=True,
+        )
+        v24.set_service_object(
+            self.plane, "dup-https", type="tcp", port=443, oneshot=True
+        )
+        v24.set_access_rule(
+            self.plane, "internet", "dup-original", mode="whitelist",
+            source="dup-source", destination="dup-destination", service="dup-https",
+            enabled=True, oneshot=True,
+        )
+        raw = _bundle(internetAccess=[{
+            "name": "dup-bundle",
+            "source": "dup-source",
+            "destination": "dup-destination",
+            "service": {"protocol": "https", "port": 443},
+            "action": "ALLOW",
+            "enabled": True,
+        }])
+        plan = prepare_plan(self.plane, raw)
+        before_revision = self.plane.current_revision()
+        before = "\n".join(self.plane.conn.iterdump())
+        with self.assertRaisesRegex(Exception, "same effective"):
+            apply_change_plan(self.plane, plan, confirm=True)
+        self.assertEqual(self.plane.current_revision(), before_revision)
+        self.assertEqual("\n".join(self.plane.conn.iterdump()), before)
+
     def test_export_roundtrip_managed_endpoint_and_idempotent(self):
         # Enrollment-owned Managed Endpoint must export as reference-only and
         # re-apply as NO_CHANGE (never reject the whole export).

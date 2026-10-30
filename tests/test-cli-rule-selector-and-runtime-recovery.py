@@ -70,6 +70,13 @@ class RuleSelectorAndRuntimeRecovery(unittest.TestCase):
         for family, mode in [('remote', 'blacklist'), ('internet', 'whitelist')]:
             for selector in ('chosen-service', 'chosen-group'):
                 with self.subTest(family=family, selector=selector):
+                    if selector == 'chosen-group':
+                        # Keep the selector comparison isolated: the Internet
+                        # contract rejects two simultaneously enabled rules
+                        # with the same effective source/destination/service.
+                        v24.unset_access_rule(
+                            self.plane, family, family + '-chosen-service', confirm=True
+                        )
                     name = family + '-' + selector
                     v24.set_access_rule(self.plane, family, name, mode=mode,
                                         source='source', destination='destination',

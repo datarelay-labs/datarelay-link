@@ -142,7 +142,7 @@ class RuleMutationSecurityImpact(unittest.TestCase):
             self.plane,
             "remote",
             "allow-ssh-2",
-            source="src1",
+            source="src2",
             destination="dst",
             service="svc",
             enabled=False,
@@ -156,7 +156,7 @@ class RuleMutationSecurityImpact(unittest.TestCase):
   remoteAccess:
     rules:
       - name: allow-ssh-2
-        source: src1
+        source: src2
         destination: dst
         service: svc
         enabled: true
@@ -203,6 +203,64 @@ class RuleMutationSecurityImpact(unittest.TestCase):
 """,
         )
         self.assertTrue(any("broadens" in t.lower() for t in plan.security_impact))
+
+    def test_duplicate_effective_internet_rule_is_rejected_atomically(self):
+        self._seed_internet_objects()
+        v24.set_network_object(
+            self.plane, "lan-alias", type="ip", value="10.10.10.20", oneshot=True
+        )
+        v24.set_network_object(
+            self.plane, "web-alias", type="fqdn", value="EXAMPLE.COM", oneshot=True
+        )
+        v24.set_service_object(
+            self.plane, "https-alias", type="tcp", port=443, oneshot=True
+        )
+        v24.set_access_rule(
+            self.plane, "internet", "allow-https-a", mode="whitelist",
+            source="lan", destination="web", service="https", enabled=True,
+            oneshot=True,
+        )
+        before_revision = self.plane.current_revision()
+        before = "\n".join(self.plane.conn.iterdump())
+        with self.assertRaisesRegex(v24.ControlPlaneError, "already has the same effective"):
+            v24.set_access_rule(
+                self.plane, "internet", "allow-https-b", source="lan-alias",
+                destination="web-alias", service="https-alias", enabled=True, oneshot=True,
+            )
+        self.assertEqual(self.plane.current_revision(), before_revision)
+        self.assertEqual("\n".join(self.plane.conn.iterdump()), before)
+
+        # A different source remains a distinct policy binding.
+        v24.set_access_rule(
+            self.plane, "internet", "allow-https-other-source", source="lan2",
+            destination="web", service="https", enabled=True, oneshot=True,
+        )
+
+    def test_bundle_rejects_duplicate_effective_internet_rule_atomically(self):
+        self._seed_internet_objects()
+        v24.set_access_rule(
+            self.plane, "internet", "allow-https-a", mode="whitelist",
+            source="lan", destination="web", service="https", enabled=True,
+            oneshot=True,
+        )
+        before_revision = self.plane.current_revision()
+        before = "\n".join(self.plane.conn.iterdump())
+        with self.assertRaisesRegex(v24.ControlPlaneError, "already has the same effective"):
+            prepare_v24_plan(
+                self.plane,
+                """configurationBundle:
+  context: server
+  internetAccess:
+    rules:
+      - name: allow-https-b
+        source: lan
+        destination: web
+        service: https
+        enabled: true
+""",
+            )
+        self.assertEqual(self.plane.current_revision(), before_revision)
+        self.assertEqual("\n".join(self.plane.conn.iterdump()), before)
 
     def test_ai_whitelist_enable_parity(self):
         self._seed_ai()
