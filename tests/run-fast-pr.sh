@@ -115,6 +115,7 @@ python3 tests/test-mcp-full-control-rollout.py
 python3 tests/test-mcp-server-self.py
 python3 tests/test-mcp-bridge-internal-error-logging.py
 python3 tests/test-mcp-bridge-db-ownership.py
+python3 tests/test-db-change-watcher.py
 python3 tests/test-mcp-bridge-concurrent-calls.py
 python3 tests/test-mcp-public-tls-lifecycle.py \
   McpTlsLifecycleTests.test_stopped_frontend_does_not_block_private_ca_or_import_recovery \
