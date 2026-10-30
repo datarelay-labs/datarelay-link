@@ -17,6 +17,3 @@ test-egress-schema-v3.sh
 # - workflow: public set surface includes enrollment ahead of freeze
 test-navigation-target-parity.py
 test-workflow-cli-ux-closure.py
-# AUD-21 known-RED characterization tests (fail on purpose until the fix lands).
-# Each is moved into run-all.sh/run-fast-pr.sh by the change that turns it GREEN.
-test-mcp-bridge-concurrent-calls.py
