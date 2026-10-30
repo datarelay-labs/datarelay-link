@@ -400,8 +400,10 @@ if grep -q bootstrap_redeem "$WORKDIR/t5-b.out.hook"; then
 fi
 pass "SAME_EXPLICIT_ACTIVE_TICKET_KEEPS_EXACT_REPLAY"
 
-# Revoked and removed grants are terminal too. The new ticket must still
-# authenticate normally, and replacing authorization must not rotate keys.
+# Revoked and removed grants are terminal too. An explicit fresh
+# Zero-Touch ticket must replace the stale redeemed transaction only after
+# that ticket itself is accepted, and replacing authorization must not rotate
+# the management key.
 for terminal in revoked missing; do
   issue_ticket "customer-terminal-${terminal}" >"$WORKDIR/t6-${terminal}-old.out"
   OLD_TICKET="$(extract_bootstrap_ticket "$WORKDIR/t6-${terminal}-old.out")"
@@ -460,6 +462,38 @@ if grep -qE '^(bootstrap_redeem|enroll)$' "$WORKDIR/t7-b.out.hook"; then
   fail "cached response resume consumed a fresh ticket or called enrollment"
 fi
 pass "CACHED_COMMITTED_RESPONSE_WITH_EXPLICIT_TICKET_REMAINS_LOCAL"
+
+# Used authorization is the F058 terminal-recovery case. Keep it last among
+# allocator-backed scenarios because this fixture marks the old enrollment as
+# consumed without creating the other machine's client projection.
+issue_ticket customer-terminal-used >"$WORKDIR/t8-used-old.out"
+T8_OLD="$(extract_bootstrap_ticket "$WORKDIR/t8-used-old.out")"
+T8_TREE="$WORKDIR/client-terminal-used"
+T8_MACHINE='99990000111122223333444455556666'
+if run_client "$T8_TREE" "$T8_OLD" "$T8_MACHINE" "$WORKDIR/t8-used-a.out" \
+    "FRP_CLIENT_HOOK_ENROLL_FAIL=1"; then
+  fail "used-code fixture unexpectedly committed"
+fi
+T8_KEY_BEFORE="$(sha256sum "$T8_TREE/etc/frp/client-identity.key" | awk '{print $1}')"
+python3 - "$(pending_path "$T8_TREE")" "$ALLOC_ROOT/enrollments" <<'PYUSED'
+import json, sys
+from pathlib import Path
+pending = json.loads(Path(sys.argv[1]).read_text())
+record_path = Path(sys.argv[2]) / (pending['enroll_id'] + '.json')
+record = json.loads(record_path.read_text())
+record['used_at'] = '2026-10-30T00:00:00Z'
+record_path.write_text(json.dumps(record))
+PYUSED
+issue_ticket customer-terminal-used-fresh >"$WORKDIR/t8-used-new.out"
+T8_NEW="$(extract_bootstrap_ticket "$WORKDIR/t8-used-new.out")"
+if ! run_client "$T8_TREE" "$T8_NEW" "$T8_MACHINE" "$WORKDIR/t8-used-b.out"; then
+  cat "$WORKDIR/t8-used-b.out" "$WORKDIR/t8-used-b.err" "$WORKDIR/alloc.log" >&2
+  fail "fresh command could not replace used pending authorization"
+fi
+[[ "$(sha256sum "$T8_TREE/etc/frp/client-identity.key" | awk '{print $1}')" == "$T8_KEY_BEFORE" ]] \
+  || fail "used recovery rotated the management key"
+[[ ! -f "$(pending_path "$T8_TREE")" ]] || fail "used recovery left pending state"
+pass "FRESH_ZERO_TOUCH_RECOVERS_USED_PENDING_WITH_SAME_KEY"
 
 # The live allocator is only needed by scenarios 1-3. Reap it here instead
 # of relying solely on the script EXIT trap so later helper-only scenarios

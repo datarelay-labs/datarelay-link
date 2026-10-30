@@ -968,14 +968,15 @@ def test_compact_redaction_and_command_length():
         return
     url = zt.short_url_for_ticket('remote.xdr.ooo', compact)
     cmd = zt.short_url_command('remote.xdr.ooo', compact)
-    if len(url) != 47 or cmd != 'curl -fsSL %s|sudo bash' % url:
+    expected = '(drlink_bootstrap=$(curl -fsSL %s) && printf \'%%s\\n\' "$drlink_bootstrap" | sudo bash)' % url
+    if len(url) != 47 or cmd != expected:
         fail('compact command shape', '%s %s' % (len(url), cmd))
         return
-    if len(cmd) != 68:
+    if len(cmd) > 200:
         fail('compact command length', len(cmd))
         return
     quoted = zt.short_url_command('bad host.example', compact)
-    if compact not in quoted or not quoted.startswith("curl -fsSL '"):
+    if compact not in quoted or not quoted.startswith("(drlink_bootstrap=$(curl -fsSL '"):
         fail('unsafe host not quoted', quoted)
         return
     sb_spec = importlib.util.spec_from_file_location(
@@ -1081,45 +1082,59 @@ def test_shell_safety_floor():
     compact = 'A' * 22
     cmd = zt.short_url_command('remote.xdr.ooo', compact)
     url = 'https://remote.xdr.ooo/i/%s' % compact
-    if cmd != 'curl -fsSL %s|sudo bash' % url or len(cmd) != 68:
-        fail('68-char target', '%s %s' % (len(cmd), cmd))
+    expected = '(drlink_bootstrap=$(curl -fsSL %s) && printf \'%%s\\n\' "$drlink_bootstrap" | sudo bash)' % url
+    if cmd != expected or len(cmd) > 200:
+        fail('200-char target bound', '%s %s' % (len(cmd), cmd))
         return
-    if not cmd.startswith('curl -fsSL https://') or '/i/' not in cmd or not cmd.endswith('|sudo bash'):
+    if (not cmd.startswith('(drlink_bootstrap=$(curl -fsSL https://')
+            or '/i/' not in cmd or '&& printf ' not in cmd
+            or not cmd.endswith('| sudo bash)')):
         fail('safety model flags removed', cmd)
         return
     if set(url) & unsafe:
         fail('url metacharacter', url)
         return
-    tokens = _pipeline_tokens(cmd)
-    if tokens != ['curl', '-fsSL', url, '|', 'sudo', 'bash']:
-        fail('shell tokens', tokens)
-        return
     sample = MOD.generate_compact_bootstrap_credential()
     sample_cmd = zt.short_url_command('remote.xdr.ooo', sample)
     sample_url = 'https://remote.xdr.ooo/i/%s' % sample
-    if _pipeline_tokens(sample_cmd) != ['curl', '-fsSL', sample_url, '|', 'sudo', 'bash']:
-        fail('random credential tokens', sample_cmd)
+    if sample_url not in sample_cmd or len(sample_cmd) > 200:
+        fail('random credential command bound', sample_cmd)
         return
     quoted = zt.short_url_command('bad host.example', compact)
     quoted_tokens = _pipeline_tokens(quoted)
-    if '|' not in quoted_tokens or any('bad' in part and 'host' in part and ' ' not in part for part in quoted_tokens):
+    if any('bad' in part and 'host' in part and ' ' not in part for part in quoted_tokens):
         fail('unsafe host split', quoted_tokens)
         return
     if not any('bad host.example' in part for part in quoted_tokens):
         fail('unsafe host not kept as one word', quoted_tokens)
         return
-    proc = subprocess.run(
-        ['bash', '-c', 'set -f; left=${1%%|*}; right=${1#*|}; set -- $left; printf "%s\\n" "$#" "$@"; set -- $right; printf "%s\\n" "$#" "$@"', 'bash', cmd],
-        capture_output=True, text=True, check=False,
-    )
-    if proc.returncode != 0:
-        fail('bash tokenize', proc.stderr)
-        return
-    lines = proc.stdout.splitlines()
-    if lines != ['3', 'curl', '-fsSL', url, '2', 'sudo', 'bash']:
-        fail('bash pipeline split', lines)
-        return
-    pass_('SHELL_SAFETY_68_CHAR_FLOOR')
+    with tempfile.TemporaryDirectory(prefix='drlink-short-command-') as tmp:
+        bindir = Path(tmp) / 'bin'
+        bindir.mkdir()
+        capture = Path(tmp) / 'installer-input'
+        curl = bindir / 'curl'
+        curl.write_text("#!/bin/sh\n[ \"${CURL_FAIL:-}\" = 1 ] && exit 22\nprintf 'installer payload\\n'\n")
+        curl.chmod(0o755)
+        sudo = bindir / 'sudo'
+        sudo.write_text("#!/bin/sh\nprintf '%s\\n' \"$*\" > \"$SUDO_ARGS\"\ncat > \"$SUDO_CAPTURE\"\n")
+        sudo.chmod(0o755)
+        env = dict(os.environ, PATH=str(bindir) + os.pathsep + os.environ.get('PATH', ''),
+                   SUDO_ARGS=str(Path(tmp) / 'sudo-args'), SUDO_CAPTURE=str(capture))
+        proc = subprocess.run(['bash', '-c', cmd], env=env, capture_output=True, text=True)
+        if proc.returncode != 0 or not capture.is_file():
+            fail('fetch-before-execute success path', '%s %s' % (proc.returncode, proc.stderr))
+            return
+        if capture.read_text() != 'installer payload\n' or (Path(tmp) / 'sudo-args').read_text().strip() != 'bash':
+            fail('installer stdin or sudo argv', capture.read_text())
+            return
+        capture.unlink()
+        (Path(tmp) / 'sudo-args').unlink()
+        env['CURL_FAIL'] = '1'
+        proc = subprocess.run(['bash', '-c', cmd], env=env, capture_output=True, text=True)
+        if proc.returncode == 0 or capture.exists() or (Path(tmp) / 'sudo-args').exists():
+            fail('fetch failure must not execute sudo', '%s %s' % (proc.returncode, proc.stderr))
+            return
+    pass_('SHELL_SAFETY_FETCH_BEFORE_EXECUTE')
 
 
 def test_windows_renderer_frozen_and_launcher():

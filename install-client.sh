@@ -760,7 +760,7 @@ frp_client_main() {
         :
       else
         case "${FRP_ENROLLMENT_PREFLIGHT_ERROR_CLASS:-}" in
-          ENROLLMENT_CODE_EXPIRED|ENROLLMENT_CODE_REVOKED|AUTH_FAILED)
+          ENROLLMENT_CODE_USED|ENROLLMENT_CODE_EXPIRED|ENROLLMENT_CODE_REVOKED|AUTH_FAILED)
             echo "The previous enrollment authorization is no longer usable." >&2
             echo "Validating the supplied new one-time setup command." >&2
             FRP_RESUME_PENDING=0
