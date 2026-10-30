@@ -141,27 +141,49 @@ subscribes to a key (`claim`/host, `job`/job id); the watcher runs one query per
 subscribers and signals only those the change concerns. The 1 s fallback re-read and the
 per-call policy re-evaluation are unchanged, and a missed signal still costs latency only.
 
-The next bottleneck was measured, not guessed. Thread sampling put nearly all waiting on one
-lock, `MCPBridge._lock`. Timing it per call site (hold times, spread run):
+**Correction (2f, 2026-10-30).** An earlier revision of this section said the remaining time was
+mostly `fsync`'d write transactions serialized under `MCPBridge._lock`. That was wrong. Six
+experiment variants (fsync removed with `synchronous = NORMAL`, `last_seen` write coalesced, and a
+crude prototype without the lock) all stayed at about 1.7 s median for 30 calls spread over 30
+hosts, and a single fsync costs about 0.7 ms here. The lock hold times that were reported (about
+51 ms per call) are wall-clock times and are inflated by CPU contention; they are not evidence of
+slow writes. Group commit and `last_seen` coalescing are therefore **not** recommended on this
+data.
 
-| Section under the lock | Held per call (mean) | Max |
+What was measured instead (30 calls spread over 30 hosts, 3 rounds = 90 calls, 100 Agent threads,
+10-core machine, one run each unless stated):
+
+| Measure | Spread over 30 hosts | All 30 to one host |
 |---|---|---|
-| `enqueue_ai_job` (INSERT, commit) | about 23 ms | 138 ms |
-| `authenticate_principal` (token lookup and `last_seen` UPDATE) | about 16 ms | 68 ms |
-| `complete` request (`complete_ai_job`) | about 7 ms | 35 ms |
-| Agent bearer check (2 per call) | about 2.6 ms each | 20 ms |
+| Idle 100-Agent fleet, CPU / wall | 0.04-0.07 | 0.07 |
+| Process CPU during the burst | 9.9-10.3 s (user 3.8-4.0, sys 6.1-6.3) | 3.0 s (user 1.6, sys 1.4) |
+| CPU per call | about 110 ms | about 33 ms |
+| CPU in short-lived request threads | about 9.0 of 10.3 s | about 2.2 of 3.0 s |
+| Caller moved to a separate process: p95 | 3.25-3.27 s (no better; server CPU 9.7 s) | 2.07 s (one run) |
 
-That is about 51 ms of serialized time per call, so 30 calls queue for roughly 1.5 s. Most of it
-is write transactions committed with `synchronous = FULL` (an fsync each), one of them only to
-update `last_seen` on every call. This is the database write rate named in section 4, not CPU.
-Reducing it means changing durability or audit behaviour (coalescing the `last_seen` write,
-per-thread connections instead of the shared lock, or group commit), so it needs an owner
-decision (section 8, question 5) and was not changed. The single-host case also contains the
-Agent running that host's jobs one after another (question 4). The production topology
-(separate Bridge, allocator and Agent processes) was still not measured; all numbers are one
-interpreter and a single run each unless a range is given.
-`tests/test-mcp-bridge-scale-target.py` stays unregistered in the suites (allowlisted) and
-reports this one failure; it now also has the 30-hosts case.
+- The caller threads in the same interpreter are not the cause: moving them to a separate process
+  did not reduce server CPU or latency.
+- CPU is not bounded by one core (cpu/wall 1.3-1.7), but kernel time is high (43 % of samples in a
+  `perf` run): thread wake-ups, context switches and futex calls, which is what many runnable
+  threads in one interpreter cost.
+- `perf` with Python frames (`python -X perf`, one run, setup included). Of the Bridge request
+  threads (8.0 CPU-s): per-call policy evaluation (`evaluate_ai_access_v24`) 3.6 CPU-s, of which
+  `_ref_name_match` 1.35 CPU-s; Agent claim handling (`claim_ai_jobs_held`) 2.5 CPU-s, of which
+  opening a new worker connection (`connect_worker`) 0.8 CPU-s, almost all of it
+  `ensure_ai_jobs_safety_schema` running on every new connection.
+- The spread case costs about 3 times the CPU per call of the single-host case because it adds 30
+  AI Access rules; the per-call evaluation grows with the number of rules.
+
+Budget: 30 calls through one interpreter in 500 ms leaves about 15 ms of CPU per call. Today a
+call costs about 33 ms (one host) to about 110 ms (spread). The 500 ms goal is **still not met**.
+Candidate changes, none implemented and each needing owner approval because the evaluation path is
+security relevant (section 8, question 5): cache the compiled, revision-keyed lookup structures
+used by the evaluation and still evaluate every call against the current revision (one-shot
+consumption and principal state stay per call); run the AI-jobs schema check once per database
+file instead of on every new connection; and, if that is not enough, serve the Bridge from several
+processes. The production topology (separate Bridge, allocator and Agent processes) is still not
+measured. `tests/test-mcp-bridge-scale-target.py` stays unregistered in the suites (allowlisted)
+and reports this one failure; it also has the 30-hosts case.
 
 Known risk: if an Agent exits while it holds a claim, the Server can claim a job and answer a
 dead socket. The job then stays `running` until the stale/fail-closed handling takes it. It is
@@ -202,8 +224,10 @@ polling.
 3. Agree to revisit the database only above about 500 sustained writes per second?
 4. The 30-simultaneous-call p95 (<= 500 ms) is not met after step 2. Allow parallel job execution
    (or larger claim batches) on the Agent, or relax the target for 30 calls to a single host?
-5. After step 2e the serialized part of a call is about 51 ms of write transactions under one
-   Bridge lock (section 5a). May we (a) write `last_seen` at most once per N seconds per
-   principal instead of on every call, (b) replace the shared lock with per-thread database
-   connections, and/or (c) group-commit job writes? Each keeps the policy re-evaluation on every
-   call, but (a) changes what `last_seen` means and (b)/(c) change the commit/durability pattern.
+5. Measurements after step 2e (section 5a, correction 2f) show the limit is per-call CPU in one
+   interpreter, not database writes. May we (a) cache the compiled, revision-keyed lookup
+   structures of the AI Access evaluation, keeping the full evaluation on every call against the
+   current revision (one-shot consumption and principal state stay per call), (b) run the AI-jobs
+   schema check once per database file instead of on every new connection, and (c) if (a) and (b)
+   are not enough, serve the Bridge from several processes? (a) touches the authorization path and
+   needs a review of what may be cached; (b) and (c) do not change what is authorized.
