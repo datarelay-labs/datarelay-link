@@ -26,9 +26,8 @@ Bridge process is measured on its own. `SCALE_SERVER_PROCS=M` (needs SCALE_AGENT
 additionally serves the Agent-facing `/agent/v1/*` endpoints from M child processes on the
 same database, like production where the Agents talk to the allocator and not to the Bridge;
 the caller-facing Bridge stays in the test process. `SCALE_BRIDGE_PROCS=K` instead serves
-Bridge requests (callers and Agents) from K worker processes sharing one port (SO_REUSEPORT)
-and one database; this is the prototype measurement for a multi-process Bridge, not product
-code. Every run prints one `SCALE_METRICS` line
+Bridge requests (callers and Agents) with the product code `drlink_mcp_bridge.serve(workers=K)`:
+K worker processes sharing one port (SO_REUSEPORT) and one database. Every run prints one `SCALE_METRICS` line
 with the latency percentiles and the CPU the test process (Bridge + the callers)
 used while the calls ran. `SCALE_CALLS=N` changes the number of simultaneous calls (default 30).
 """
@@ -155,6 +154,21 @@ class MCPBridgeScaleTargetTests(unittest.TestCase):
             except Exception:
                 proc.kill()
                 proc.wait(timeout=10)
+        supervisor = getattr(self, "_bridge_supervisor", None)
+        if supervisor is not None:
+            for proc in getattr(self, "_agent_procs", []):
+                try:
+                    proc.wait(timeout=self.HELD_WAIT_MS / 1000.0 + 15.0)
+                except Exception:
+                    proc.kill()
+            try:
+                os.killpg(supervisor.pid, 15)
+                supervisor.wait(timeout=20)
+            except Exception:
+                try:
+                    os.killpg(supervisor.pid, 9)
+                except OSError:
+                    pass
         server_procs = getattr(self, "_server_procs", [])
         for proc in server_procs:  # the fleet is gone, so the Agent-facing servers can stop
             try:
@@ -214,26 +228,40 @@ class MCPBridgeScaleTargetTests(unittest.TestCase):
         self.assertEqual(len(tokens), TARGET_AGENTS)
         self._server_procs = []
         if BRIDGE_PROCS:
+            # The product code: serve(workers=K) forks K Bridge workers (and the full-control
+            # process) on one port and the same database as this test.
             import socket
+            import urllib.error
 
             probe = socket.socket()
-            probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
             probe.bind(("127.0.0.1", 0))
             shared_port = probe.getsockname()[1]
             probe.close()
-            for _ in range(BRIDGE_PROCS):
-                worker = subprocess.Popen(
-                    [sys.executable, os.path.abspath(__file__), "--agent-server-child"],
-                    stdin=subprocess.PIPE,
-                    stdout=subprocess.PIPE,
-                    text=True,
-                    env=dict(os.environ, PYTHONDONTWRITEBYTECODE="1"),
-                )
-                self._server_procs.append(worker)
-                worker.stdin.write(json.dumps({"root": self.tmp, "port": shared_port}) + "\n")
-                worker.stdin.flush()
-                line = worker.stdout.readline().strip()
-                self.assertEqual(line, "PORT %d" % shared_port)
+            code = (
+                "import sys; sys.path.insert(0, %r); import drlink_mcp_bridge as b; "
+                "b.serve('127.0.0.1', %d, root=%r, workers=%d)"
+                % (str(ROOT / "lib"), shared_port, self.tmp, BRIDGE_PROCS)
+            )
+            supervisor = subprocess.Popen(
+                [sys.executable, "-c", code],
+                env=dict(os.environ, PYTHONDONTWRITEBYTECODE="1"),
+                start_new_session=True,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            self._bridge_supervisor = supervisor
+            deadline = time.monotonic() + 60
+            while True:
+                try:
+                    with urllib.request.urlopen("http://127.0.0.1:%d/healthz" % shared_port, timeout=2) as resp:
+                        if resp.status == 200:
+                            break
+                except (OSError, urllib.error.URLError):
+                    pass
+                self.assertIsNone(supervisor.poll(), "the Bridge supervisor exited")
+                self.assertLess(time.monotonic(), deadline, "the Bridge workers did not start")
+                time.sleep(0.2)
+            time.sleep(2.0)  # let every worker finish its warm-up and bind
             self.base = "http://127.0.0.1:%d" % shared_port  # callers and Agents use the workers
             self.url = self.base + "/mcp"
         bases = [self.base]
