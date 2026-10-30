@@ -41,9 +41,14 @@ audit write 0.73 ms, one result poll 0.02 ms, about 2 ms in total.
 
 ## 3. Design
 
-- **D1 One database owner.** Request threads use thread-local read connections (WAL,
-  `query_only`). All writes go through one writer with short `BEGIN IMMEDIATE`
-  transactions and a single busy-retry policy. The shared connection is removed.
+- **D1 One connection per request.** Each request borrows its own pooled SQLite
+  connection (about 1.7 ms to open, 0.017 ms to reuse), so no connection is ever used
+  by two threads. Writers are serialized by SQLite's own write lock (WAL,
+  `busy_timeout` 5 s); a separate writer thread is not needed at this write rate
+  (section 4). Connections supplied by a caller (doctor, support bundle, in-memory
+  preview) are never replaced. **Implemented in step 1 (PR #242, draft):** 90
+  simultaneous calls with 100 Agents ran with 0 failures and no busy or locked
+  error; scope entry costs about 9 us.
 - **D2 Held claim instead of polling.** An Agent keeps one claim request open; the
   Server holds it for up to 25 s and answers the moment a job is queued for that
   host. Idle load becomes about 100 / 25 = 4 requests per second and pickup takes
@@ -78,7 +83,7 @@ Each step ships on its own, RED to GREEN, with no deployment while Issue #165 is
 
 | Step | Change | Fixes |
 |---|---|---|
-| 1 | D1 and the listen backlog | Errors under concurrency |
+| 1 | D1 and the listen backlog (PR #242, draft) | Errors under concurrency |
 | 2 | D2 and D3 | Pickup delay and idle load |
 | 3 | D4 | Executed-but-failed results |
 | 4 | D5 and D6 | Overload behaviour and visibility |
