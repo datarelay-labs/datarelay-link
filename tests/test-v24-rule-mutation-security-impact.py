@@ -10,6 +10,8 @@ import os
 import sys
 import tempfile
 import unittest
+from contextlib import redirect_stderr, redirect_stdout
+import io
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -18,6 +20,7 @@ sys.path.insert(0, str(ROOT / "lib"))
 from drlink_control_plane import ConfirmationRequired, ControlPlane
 import drlink_v24 as v24
 from drlink_v24_bundle import apply_v24_plan, prepare_v24_plan
+import drlink_control_cli as cli
 
 
 def _server_root(tmp: str) -> None:
@@ -259,6 +262,29 @@ class RuleMutationSecurityImpact(unittest.TestCase):
         enabled: true
 """,
             )
+        self.assertEqual(self.plane.current_revision(), before_revision)
+        self.assertEqual("\n".join(self.plane.conn.iterdump()), before)
+
+    def test_public_cli_reports_duplicate_effective_internet_rule_atomically(self):
+        self._seed_internet_objects()
+        v24.set_access_rule(
+            self.plane, "internet", "allow-https-a", mode="whitelist",
+            source="lan", destination="web", service="https", enabled=True,
+            oneshot=True,
+        )
+        before_revision = self.plane.current_revision()
+        before = "\n".join(self.plane.conn.iterdump())
+        out, err = io.StringIO(), io.StringIO()
+        with redirect_stdout(out), redirect_stderr(err):
+            rc = cli.dispatch(
+                ["set", "internet-access", "allow-https-b", "source", "lan",
+                 "destination", "web", "service", "https", "enabled"],
+                root=self.tmp,
+                plane=self.plane,
+            )
+        self.assertNotEqual(rc, 0, out.getvalue() + err.getvalue())
+        self.assertIn("same effective", out.getvalue() + err.getvalue())
+        self.assertIn("No changes were applied", out.getvalue() + err.getvalue())
         self.assertEqual(self.plane.current_revision(), before_revision)
         self.assertEqual("\n".join(self.plane.conn.iterdump()), before)
 
