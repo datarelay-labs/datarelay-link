@@ -12,9 +12,12 @@ real bridge in a disposable temp root and checks two things.
    rounds, must all succeed quickly. On main 34 and 50 of 90 failed in two runs
    (`-32603` and connection resets) and the successful ones took about 2.1 s.
 
-Known RED on main; not registered in run-fast-pr.sh/run-all.sh on purpose. It is
-registered by the change that fixes the concurrency and dispatch model (see
-docs/MCP_BRIDGE_DISPATCH_DESIGN.md). No service or credential is touched.
+Not registered in run-fast-pr.sh/run-all.sh (orphan allowlist) on purpose: after
+steps 1 and 2 the idle-load test is GREEN (100 Agents, held claim) and the 30
+simultaneous calls all succeed, but their p95 is still above the 500 ms target
+(see docs/MCP_BRIDGE_DISPATCH_DESIGN.md). It is registered when that test is GREEN.
+The Agents run with the held claim the production Agent uses (`DEFAULT_CLAIM_WAIT_MS`
+is switched on for the test only). No service or credential is touched.
 """
 from __future__ import annotations
 
@@ -25,11 +28,13 @@ import threading
 import time
 import unittest
 from pathlib import Path
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "lib"))
 sys.path.insert(0, str(ROOT / "tests"))
 
+import drlink_ai_agent  # noqa: E402
 from drlink_ai_agent import AgentLoop  # noqa: E402
 
 
@@ -53,12 +58,28 @@ MAX_P95_SECONDS = 0.5
 class MCPBridgeScaleTargetTests(unittest.TestCase):
     # Borrow the harness plumbing without inheriting (and re-running) its tests.
     _harness_setup = _E2E.MCPBridgeE2ETests.setUp
-    tearDown = _E2E.MCPBridgeE2ETests.tearDown
+    _harness_teardown = _E2E.MCPBridgeE2ETests.tearDown
     _token = _E2E.MCPBridgeE2ETests._token
     call = _E2E.MCPBridgeE2ETests.call
     text_of = _E2E.MCPBridgeE2ETests.text_of
 
+    # The Agents hold each empty claim for this long (production holds 25 s).
+    # 100 Agents / 15 s is about 6.7 claim requests per second.
+    HELD_WAIT_MS = 15000
+
+    def tearDown(self):
+        # Workers sit inside a held claim; let them finish it before the harness
+        # joins them with its own short timeout.
+        for stop in getattr(self, "_agent_stops", []):
+            stop.set()
+        for thread in getattr(self, "_agent_threads", []):
+            thread.join(timeout=self.HELD_WAIT_MS / 1000.0 + 5.0)
+        self._harness_teardown()
+
     def setUp(self):
+        patcher = mock.patch.object(drlink_ai_agent, "DEFAULT_CLAIM_WAIT_MS", self.HELD_WAIT_MS)
+        patcher.start()
+        self.addCleanup(patcher.stop)
         self._harness_setup()
         plane = self.bridge.plane
         # The harness already runs two hosts; add the rest of the target fleet.
@@ -89,7 +110,9 @@ class MCPBridgeScaleTargetTests(unittest.TestCase):
         time.sleep(3.0)  # let every Agent settle into its idle behaviour
         counter["claims"] = 0
         started = time.perf_counter()
-        time.sleep(6.0)
+        # One full hold period, so every Agent's re-claim is counted exactly once
+        # whatever the phase of its hold.
+        time.sleep(self.HELD_WAIT_MS / 1000.0 + 1.0)
         rate = counter["claims"] / (time.perf_counter() - started)
         self.assertLessEqual(
             rate,

@@ -19,12 +19,17 @@ from __future__ import annotations
 import logging
 import sqlite3
 import threading
+import time
 from pathlib import Path
 from typing import Dict, Optional, Union
 
 LOG = logging.getLogger("drlink.dbwatch")
 
 DEFAULT_INTERVAL_SECONDS = 0.01
+START_BASELINE_WAIT_SECONDS = 0.2
+# How often the loop checks that the database file still exists (a restore or a
+# deleted test root replaces or removes it).
+FILE_CHECK_EVERY_SECONDS = 1.0
 
 
 class DbChangeWatcher:
@@ -34,6 +39,7 @@ class DbChangeWatcher:
         self._cond = threading.Condition()
         self._generation = 0
         self._stop = threading.Event()
+        self._ready = threading.Event()
         self._thread: Optional[threading.Thread] = None
 
     # -- state -------------------------------------------------------------
@@ -41,6 +47,16 @@ class DbChangeWatcher:
     def generation(self) -> int:
         with self._cond:
             return self._generation
+
+    @property
+    def ready(self) -> bool:
+        """True once a baseline was read, so a commit can no longer go unnoticed.
+
+        Callers that need millisecond wake-ups use ``wait`` only when this is
+        true and otherwise keep their own short poll (missing or in-memory
+        database, watcher not started yet).
+        """
+        return self._ready.is_set() and self.running
 
     @property
     def running(self) -> bool:
@@ -53,10 +69,15 @@ class DbChangeWatcher:
             if self._thread and self._thread.is_alive():
                 return self
             self._stop.clear()
+            self._ready.clear()
             self._thread = threading.Thread(
                 target=self._run, name="drlink-db-watch", daemon=True
             )
             self._thread.start()
+        # Let the first baseline be taken before the caller looks at the database,
+        # so a commit right after start() is seen. Bounded: a missing database
+        # simply leaves the watcher not ready.
+        self._ready.wait(START_BASELINE_WAIT_SECONDS)
         return self
 
     def stop(self) -> None:
@@ -114,13 +135,27 @@ class DbChangeWatcher:
     def _run(self) -> None:
         conn: Optional[sqlite3.Connection] = None
         last: Optional[int] = None
+        next_file_check = 0.0
         try:
             while not self._stop.is_set():
                 if conn is None:
                     conn = self._open()
                     last = None
                     if conn is None:
+                        self._ready.clear()
                         self._stop.wait(max(self.interval, 0.25))
+                        continue
+                now = time.monotonic()
+                if now >= next_file_check:
+                    next_file_check = now + FILE_CHECK_EVERY_SECONDS
+                    if not self.db_path.exists():
+                        try:
+                            conn.close()
+                        except sqlite3.Error:
+                            pass
+                        conn = None
+                        self._ready.clear()
+                        self._bump()
                         continue
                 try:
                     current = self._data_version(conn)
@@ -139,6 +174,7 @@ class DbChangeWatcher:
                 if last is not None and current != last:
                     self._bump()
                 last = current
+                self._ready.set()
                 self._stop.wait(self.interval)
         except Exception:  # pragma: no cover - last-resort guard, never kill the process
             LOG.exception("DbChangeWatcher stopped unexpectedly")

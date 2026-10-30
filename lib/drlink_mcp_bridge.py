@@ -31,9 +31,11 @@ from typing import Any, Optional
 from urllib.parse import parse_qs, urlencode, urlparse, urlsplit
 
 from drlink_ai_agent import AgentLoop, execute_local
+from drlink_db_watch import get_watcher
 from drlink_mcp_server_executor import ExecutorDenied, execute_as_unprivileged_user
 from drlink_control_db import ControlPlaneError, resolve_root
 from drlink_control_plane import (
+    clamp_claim_wait_ms,
     AI_CAPABILITIES,
     ControlPlane,
     path_allowed,
@@ -45,6 +47,10 @@ from frp_client_registry import request_source_ip
 import drlink_v24 as v24
 
 MCP_PROTOCOL_VERSION = "2026-07-28"
+# A result wait wakes on the completion commit (AUD-21 step 2). When no change
+# signal arrives it rereads the database at least this often, so a missed signal
+# costs latency and never a result.
+RESULT_WAIT_FALLBACK_SECONDS = 1.0
 # Handshake-era versions accepted via classic initialize (OpenAI Plugin / older MCP hosts).
 HANDSHAKE_PROTOCOL_VERSIONS = ("2024-11-05", "2025-03-26", "2025-06-18", "2025-11-25")
 LATEST_HANDSHAKE_VERSION = "2025-11-25"
@@ -1352,7 +1358,11 @@ class MCPBridge:
             if os.environ.get("DRLINK_TEST_ROOT") and os.environ.get("DRLINK_AI_TEST_LOCAL_EXEC") != "1":
                 wait_for = min(wait_for, 5.0)
         deadline = time.monotonic() + wait_for
+        watcher = get_watcher(self.plane.db_file)
         while time.monotonic() < deadline:
+            # Read the generation BEFORE looking, so a completion that commits
+            # between the look and the wait is never missed (AUD-21 step 2, D3).
+            generation = watcher.generation
             with self._lock:
                 if job_id in self._job_results:
                     return self._job_results.pop(job_id)
@@ -1375,7 +1385,14 @@ class MCPBridge:
                     "result": str(job.get("status") or "TIMEOUT").upper(),
                     "error": result.get("error") or "agent did not complete the job",
                 }
-            time.sleep(0.05)
+            remaining = deadline - time.monotonic()
+            if watcher.ready:
+                # Wake on the completion commit; the bounded wait is the fallback
+                # that rereads the database if a signal is ever missed.
+                watcher.wait(generation, max(0.0, min(remaining, RESULT_WAIT_FALLBACK_SECONDS)))
+            else:
+                # No change feed (in-memory or missing database): keep the short poll.
+                time.sleep(min(0.05, max(0.0, remaining)))
         with self._lock:
             if job_id in self._job_results:
                 return self._job_results.pop(job_id)
@@ -1825,8 +1842,16 @@ def make_handler(bridge: MCPBridge):
                     return
                 try:
                     if parsed.path.endswith("/claim"):
-                        with bridge._lock:
-                            jobs = bridge.plane.claim_ai_jobs(client_id, int(body.get("limit") or 4))
+                        limit = int(body.get("limit") or 4)
+                        wait_ms = clamp_claim_wait_ms(body.get("wait_ms"))
+                        if wait_ms:
+                            # Held claim (AUD-21 step 2): answer the moment a job is
+                            # queued for this host. It must not hold the Bridge lock
+                            # while it waits.
+                            jobs = bridge.plane.claim_ai_jobs_held(client_id, limit, wait_ms)
+                        else:
+                            with bridge._lock:
+                                jobs = bridge.plane.claim_ai_jobs(client_id, limit)
                         self._send(200, {"jobs": jobs})
                         return
                     full = body.get("result") or {}

@@ -155,6 +155,9 @@ python3 tests/test-mcp-bridge-internal-error-logging.py
 python3 tests/test-mcp-bridge-db-ownership.py
 python3 tests/test-db-change-watcher.py
 python3 tests/test-held-claim-wake.py
+python3 tests/test-agent-held-claim.py
+python3 tests/test-mcp-bridge-held-claim.py
+python3 tests/test-mcp-agent-dispatch-latency.py
 python3 tests/test-mcp-bridge-concurrent-calls.py
 python3 tests/test-mcp-server-local-executor.py
 python3 tests/test-mcp-server-full-control.py
