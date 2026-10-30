@@ -247,6 +247,35 @@ class SharedRateLimiterTests(unittest.TestCase):
             # another source has its own budget
             self.assertFalse(workers[0].limited("post:other", limit=30, window_s=60))
 
+    def test_workers_opening_a_new_file_at_once_all_start(self):
+        # Workers start together and open the new shared file at the same moment. Switching it to
+        # WAL raced: about one open in eight failed with "database is locked", the worker died at
+        # startup and the supervisor restarted it a second later (seen as 3 != 4 children).
+        import multiprocessing
+
+        ctx = multiprocessing.get_context("fork")
+
+        def opener(path, barrier, out):
+            barrier.wait()
+            try:
+                bridge_mod.SharedRateLimiter(path)
+                out.put("")
+            except Exception as exc:  # noqa: BLE001 - report every failure to the parent
+                out.put("%s: %s" % (type(exc).__name__, exc))
+
+        failures = []
+        for _ in range(15):
+            with tempfile.TemporaryDirectory() as directory:
+                path = os.path.join(directory, "rate.sqlite")
+                barrier, out = ctx.Barrier(6), ctx.Queue()
+                procs = [ctx.Process(target=opener, args=(path, barrier, out)) for _ in range(6)]
+                for proc in procs:
+                    proc.start()
+                failures += [r for r in (out.get(timeout=30) for _ in procs) if r]
+                for proc in procs:
+                    proc.join(timeout=30)
+        self.assertEqual(failures, [])
+
     def test_window_expires(self):
         with tempfile.TemporaryDirectory() as directory:
             limiter = bridge_mod.SharedRateLimiter(os.path.join(directory, "rate.sqlite"))

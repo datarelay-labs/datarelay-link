@@ -573,12 +573,23 @@ class SharedRateLimiter:
         self._connection = sqlite3.connect(
             path, timeout=5.0, isolation_level=None, check_same_thread=False
         )
-        self._connection.execute("PRAGMA journal_mode=WAL")
-        self._connection.execute("PRAGMA synchronous=OFF")
-        self._connection.execute(
-            "CREATE TABLE IF NOT EXISTS rate_hits("
-            "key TEXT PRIMARY KEY, window_start REAL NOT NULL, hits INTEGER NOT NULL)"
-        )
+        # The workers start together and open the new file at the same moment. Switching it to
+        # WAL can answer "database is locked" at once instead of waiting (about one open in
+        # eight), which killed the worker at startup; retry within the same 5 s budget.
+        deadline = time.monotonic() + 5.0
+        while True:
+            try:
+                self._connection.execute("PRAGMA journal_mode=WAL")
+                self._connection.execute("PRAGMA synchronous=OFF")
+                self._connection.execute(
+                    "CREATE TABLE IF NOT EXISTS rate_hits("
+                    "key TEXT PRIMARY KEY, window_start REAL NOT NULL, hits INTEGER NOT NULL)"
+                )
+                break
+            except sqlite3.OperationalError as exc:
+                if "locked" not in str(exc) or time.monotonic() >= deadline:
+                    raise
+                time.sleep(0.01)
 
     def limited(self, key: str, *, limit: int, window_s: float, now: Optional[float] = None) -> bool:
         """Count one hit for ``key``; True when this hit is over ``limit`` in the current window."""

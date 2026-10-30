@@ -550,6 +550,16 @@ Each choice changes what a client sees under overload and how refusals are audit
 already rejects a thread limit in the Bridge for latency reasons. Per the instruction not to guess,
 it is left for an owner decision (section 8, question 6).
 
+**D7 startup race (found while verifying, fixed).** The unexplained `3 != 4` child counts in
+`tests/test-mcp-bridge-workers.py` (5d, NOT_RUN list; seen again here in
+`test_a_killed_worker_is_restarted`) were a worker dying at startup: the workers open the new
+shared rate-limit file together, and `PRAGMA journal_mode=WAL` answered `database is locked` at
+once for about one open in eight (31 of 240 opens with 6 processes; 1 of 30 supervisor starts
+with K = 3), so the supervisor restarted that worker a second later. `SharedRateLimiter` now retries
+its one-time setup within the same 5 s budget; counting is unchanged. After the fix: 0 of 240, 0 of
+30, and the workers test file passed 3 of 3 runs. Test:
+`test_workers_opening_a_new_file_at_once_all_start` (RED before).
+
 **Overhead (K = 4 on 4 cores, 30 simultaneous calls, 3 rounds, interleaved with the D7 HEAD
 `3000ae3f`).** D4 adds one `ai_activity` and one `audit_events` insert (one more autocommit write)
 per dispatched call; D6 adds a few integer columns to existing statements.
