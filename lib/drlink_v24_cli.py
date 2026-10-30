@@ -763,7 +763,10 @@ def handle_show(plane: ControlPlane, rest: list[str]) -> Optional[int]:
             "SELECT * FROM agent_remote_services WHERE name = ? COLLATE NOCASE", (rest[1],)
         ).fetchone()
         if not row or row["delete_pending"]:
-            raise ControlPlaneError(v24.cli_error("Remote Service '%s' was not found." % rest[1]))
+            raise ControlPlaneError(v24.cli_error(
+                "Remote Service '%s' was not found." % rest[1],
+                next_step="Find an identifier: show remote-services",
+            ))
         endpoint = (
             "Pending allocation"
             if row["pending_allocation"] or row["endpoint_port"] is None

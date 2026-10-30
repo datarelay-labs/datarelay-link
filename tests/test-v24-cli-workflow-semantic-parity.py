@@ -653,6 +653,22 @@ class ServiceObjectPortInputRecovery(_Base):
 
 
 class AgentShowStatusRuntime(_Base):
+    def test_missing_agent_remote_service_suggests_inventory_recovery(self):
+        self.plane.close()
+        Path(self.tmp, 'etc/drlink/config.json').unlink()
+        _agent_root(self.tmp)
+        self.plane = ControlPlane(self.tmp)
+        before = list(self.plane.conn.iterdump())
+
+        rc, out, err = self._run('show', 'remote-service', 'missing-service')
+
+        self.assertNotEqual(rc, 0)
+        message = out + err
+        self.assertIn("Remote Service 'missing-service' was not found.", message)
+        self.assertIn('Find an identifier: show remote-services', message)
+        self.assertIn('No changes were applied.', message)
+        self.assertEqual(list(self.plane.conn.iterdump()), before)
+
     def test_paused_inventory_and_offline_endpoint_remain_truthful(self):
         self.plane.close()
         Path(self.tmp, 'etc/drlink/config.json').unlink()
