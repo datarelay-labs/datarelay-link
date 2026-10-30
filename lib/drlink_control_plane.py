@@ -26,8 +26,6 @@ from functools import wraps
 from pathlib import Path
 from typing import Any, Callable, Iterable, Optional
 
-from drlink_db_watch import get_watcher
-from frp_bounded_server import parked_slot
 from drlink_control_db import (
     SCHEMA_VERSION,
     ControlPlaneError,
@@ -5479,6 +5477,11 @@ class ControlPlane:
         wait_s = clamp_claim_wait_ms(wait_ms) / 1000.0
         if jobs or wait_s <= 0:
             return jobs
+        # Server-only helpers, imported here so the Agent-only client bundle (which
+        # carries this module but not these two) never needs them.
+        from drlink_db_watch import get_watcher
+        from frp_bounded_server import parked_slot
+
         watcher = get_watcher(self.db_file)
         deadline = time.monotonic() + wait_s
         # A connection of its own: this thread may sit here for 25 s and must not

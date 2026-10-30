@@ -13,7 +13,10 @@ No network, service or credential is touched.
 """
 from __future__ import annotations
 
+import shutil
+import subprocess
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -136,6 +139,33 @@ class AgentHeldClaimTests(unittest.TestCase):
                 mock.patch.dict(agent.os.environ, {"DRLINK_AI_AGENT_TOKEN": ""}, clear=False):
             agent.main(["--agent-root", "/nonexistent", "--token-file", "/nonexistent/token"])
         self.assertEqual(created[0].get("wait_ms"), 25000)
+
+
+class ClientBundleIsolationTests(unittest.TestCase):
+    SERVER_ONLY = ("drlink_db_watch.py", "frp_bounded_server.py")
+
+    def test_agent_modules_import_without_the_server_only_helpers(self):
+        """The client bundle carries drlink_control_plane but not the held-claim helpers."""
+        tmp = Path(tempfile.mkdtemp(prefix="drlink-client-lib-"))
+        self.addCleanup(shutil.rmtree, tmp, True)
+        for src in (ROOT / "lib").glob("*.py"):
+            if src.name not in self.SERVER_ONLY:
+                shutil.copy(src, tmp / src.name)
+        code = "import drlink_ai_agent, drlink_mgmt_sync, drlink_control_plane; print('IMPORT_OK')"
+        proc = subprocess.run(
+            [sys.executable, "-c", code], cwd=str(tmp), capture_output=True, text=True,
+            env={"PYTHONPATH": str(tmp), "PATH": "/usr/bin:/bin", "PYTHONDONTWRITEBYTECODE": "1"},
+        )
+        self.assertIn("IMPORT_OK", proc.stdout, proc.stderr[-800:])
+
+    def test_server_packaging_lists_carry_the_new_module(self):
+        for rel, needle in (
+            ("scripts/build-bundles.py", "'lib/drlink_db_watch.py'"),
+            ("lib/server-project-files.manifest", "usr/local/lib/drlink/drlink_db_watch.py"),
+            ("install-server.sh", "lib/drlink_db_watch.py"),
+        ):
+            text = (ROOT / rel).read_text(encoding="utf-8")
+            self.assertIn(needle, text, "%s must list drlink_db_watch.py" % rel)
 
 
 if __name__ == "__main__":
