@@ -57,7 +57,7 @@ def seed_tree(root: Path, retention_days: int | None) -> None:
             "--pki-dir",
             str(root / "etc/drlink/pki"),
             "--public-host",
-            "example.test",
+            "203.0.113.10",
         ],
         check=True,
         capture_output=True,
@@ -74,7 +74,12 @@ def seed_tree(root: Path, retention_days: int | None) -> None:
         "bootstrap_dir": "/var/lib/drlink/bootstrap",
         "token_file": "/etc/frp/server_token",
         "tls_ca_cert": "/etc/drlink/pki/ca.crt",
-        "allocator_public_url": "https://example.test/enroll",
+        # Match the allocator URL to the locally generated Private CA leaf's
+        # numeric-IP SAN. Zero-Touch now fails closed before issuing a ticket
+        # when a fixture uses an unqualified DNS name with no trusted public
+        # hostname.
+        "allocator_public_url": "https://203.0.113.10:8443/enroll",
+        "tls_server_cert": "/etc/drlink/pki/server.crt",
         "client_installer_url": "https://example.test/dist/bootstrap-client.sh",
     }
     if retention_days is not None:
