@@ -136,6 +136,68 @@ def descendant_cpu_seconds(root_pid: int) -> float:
     return total
 
 
+def cpu_set(spec: str) -> set:
+    """"0-3,6" -> {0, 1, 2, 3, 6}"""
+    cpus = set()
+    for part in spec.split(","):
+        part = part.strip()
+        if not part:
+            continue
+        low, _, high = part.partition("-")
+        cpus.update(range(int(low), int(high or low) + 1))
+    return cpus
+
+
+def descendant_cpu_split(root_pid: int):
+    """(user s, system s, voluntary ctx switches, involuntary ctx switches) of the children of ``root_pid``."""
+    tick = os.sysconf("SC_CLK_TCK")
+    user = system = 0.0
+    voluntary = involuntary = 0
+    for entry in os.listdir("/proc"):
+        if not entry.isdigit():
+            continue
+        try:
+            fields = Path("/proc/%s/stat" % entry).read_text().rsplit(")", 1)[1].split()
+            if int(fields[1]) != root_pid:
+                continue
+            user += int(fields[11]) / tick
+            system += int(fields[12]) / tick
+            for line in Path("/proc/%s/status" % entry).read_text().splitlines():
+                if line.startswith("voluntary_ctxt_switches:"):
+                    voluntary += int(line.split()[1])
+                elif line.startswith("nonvoluntary_ctxt_switches:"):
+                    involuntary += int(line.split()[1])
+        except (OSError, IndexError, ValueError):
+            continue
+    return user, system, voluntary, involuntary
+
+
+def descendant_memory_mb(root_pid: int):
+    """(proportional set size total, largest peak RSS) in MB of the direct children of ``root_pid``."""
+    pss_kb = 0
+    peak_kb = 0
+    for entry in os.listdir("/proc"):
+        if not entry.isdigit():
+            continue
+        try:
+            fields = Path("/proc/%s/stat" % entry).read_text().rsplit(")", 1)[1].split()
+            if int(fields[1]) != root_pid:
+                continue
+            for line in Path("/proc/%s/smaps_rollup" % entry).read_text().splitlines():
+                if line.startswith("Pss:"):
+                    pss_kb += int(line.split()[1])
+            for line in Path("/proc/%s/status" % entry).read_text().splitlines():
+                if line.startswith("VmHWM:"):
+                    peak_kb = max(peak_kb, int(line.split()[1]))
+        except (OSError, IndexError, ValueError):
+            continue
+    return pss_kb / 1024.0, peak_kb / 1024.0
+
+
+# SCALE_BRIDGE_CPUS="0-3" pins the Bridge workers to those CPUs and SCALE_LOAD_CPUS="4-9" pins the
+# callers and the Agent fleet to the others, so a 4-core Server can be measured on a larger machine.
+BRIDGE_CPUS = os.environ.get("SCALE_BRIDGE_CPUS", "")
+LOAD_CPUS = os.environ.get("SCALE_LOAD_CPUS", "")
 TARGET_CONCURRENT_CALLS = int(os.environ.get("SCALE_CALLS", "30") or 30)  # SCALE_CALLS=N: measure fewer simultaneous calls
 ROUNDS = int(os.environ.get("SCALE_ROUNDS", "3") or 3)  # SCALE_ROUNDS=N: more rounds give a profiler a longer burst
 MAX_IDLE_CLAIMS_PER_SECOND = 10.0
@@ -206,6 +268,8 @@ class MCPBridgeScaleTargetTests(unittest.TestCase):
         self._harness_teardown()
 
     def setUp(self):
+        if LOAD_CPUS:
+            os.sched_setaffinity(0, cpu_set(LOAD_CPUS))
         patcher = mock.patch.object(drlink_ai_agent, "DEFAULT_CLAIM_WAIT_MS", self.HELD_WAIT_MS)
         patcher.start()
         self.addCleanup(patcher.stop)
@@ -259,7 +323,7 @@ class MCPBridgeScaleTargetTests(unittest.TestCase):
                 % (str(ROOT / "lib"), shared_port, self.tmp, BRIDGE_PROCS)
             )
             supervisor = subprocess.Popen(
-                [sys.executable, "-c", code],
+                (["taskset", "-c", BRIDGE_CPUS] if BRIDGE_CPUS else []) + [sys.executable, "-c", code],
                 env=dict(os.environ, PYTHONDONTWRITEBYTECODE="1"),
                 start_new_session=True,
                 stdout=subprocess.DEVNULL,
@@ -406,6 +470,7 @@ class MCPBridgeScaleTargetTests(unittest.TestCase):
             Path(mark).write_text("start\n")
         supervisor_proc = getattr(self, "_bridge_supervisor", None)
         worker_cpu_started = descendant_cpu_seconds(supervisor_proc.pid) if supervisor_proc else 0.0
+        split_started = descendant_cpu_split(supervisor_proc.pid) if supervisor_proc else (0.0, 0.0, 0, 0)
         cpu_started = time.process_time()
         ru_started = resource.getrusage(resource.RUSAGE_SELF)
         wall_started = time.perf_counter()
@@ -433,13 +498,22 @@ class MCPBridgeScaleTargetTests(unittest.TestCase):
             values = sorted(values)
             return values[min(len(values) - 1, int(round(q * (len(values) - 1))))] * 1000
 
+        pss_mb, peak_mb = descendant_memory_mb(supervisor_proc.pid) if supervisor_proc else (0.0, 0.0)
+        split_ended = descendant_cpu_split(supervisor_proc.pid) if supervisor_proc else (0.0, 0.0, 0, 0)
+        per_call = max(1, len(durations))
+        split_text = "bridge_user_ms=%.1f bridge_sys_ms=%.1f bridge_ctx_per_call=%.0f" % (
+            (split_ended[0] - split_started[0]) / per_call * 1000,
+            (split_ended[1] - split_started[1]) / per_call * 1000,
+            ((split_ended[2] - split_started[2]) + (split_ended[3] - split_started[3])) / per_call,
+        )
         rounds_text = " ".join(
             "r%d=%.0f/%.0f" % (rnd + 1, _pct(vals, 0.5), _pct(vals, 0.95)) for rnd, vals in sorted(by_round.items())
         )
         print(
             "SCALE_METRICS rounds(median/p95 ms)[%s] agent_procs=%d server_procs=%d bridge_procs=%d calls=%d median_ms=%.0f p95_ms=%.0f max_ms=%.0f "
             "test_process_cpu_s=%.2f (user %.2f sys %.2f) wall_s=%.2f cpu_per_call_ms=%.0f "
-            "ctx_voluntary=%d ctx_involuntary=%d bridge_worker_cpu_per_call_ms=%.1f"
+            "ctx_voluntary=%d ctx_involuntary=%d bridge_worker_cpu_per_call_ms=%.1f "
+            "bridge_pss_mb=%.0f bridge_worker_peak_rss_mb=%.0f bridge_cpus=%s %s"
             % (
                 rounds_text,
                 AGENT_PROCS,
@@ -457,6 +531,10 @@ class MCPBridgeScaleTargetTests(unittest.TestCase):
                 ru_ended.ru_nvcsw - ru_started.ru_nvcsw,
                 ru_ended.ru_nivcsw - ru_started.ru_nivcsw,
                 worker_cpu_used / max(1, len(durations)) * 1000,
+                pss_mb,
+                peak_mb,
+                BRIDGE_CPUS or "all",
+                split_text,
             ),
             file=sys.stderr,
             flush=True,
