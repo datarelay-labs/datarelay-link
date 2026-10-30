@@ -828,6 +828,12 @@ def ensure_ai_jobs_safety_schema(conn: sqlite3.Connection) -> bool:
         ("claim_token", "ALTER TABLE ai_jobs ADD COLUMN claim_token TEXT"),
         ("attempt_id", "ALTER TABLE ai_jobs ADD COLUMN attempt_id TEXT"),
         ("claimed_at", "ALTER TABLE ai_jobs ADD COLUMN claimed_at TEXT"),
+        # Per-job latency (AUD-21 D6): epoch ms at enqueue, then the three spans.
+        ("correlation_id", "ALTER TABLE ai_jobs ADD COLUMN correlation_id TEXT"),
+        ("enqueued_ms", "ALTER TABLE ai_jobs ADD COLUMN enqueued_ms INTEGER"),
+        ("queue_ms", "ALTER TABLE ai_jobs ADD COLUMN queue_ms INTEGER"),
+        ("run_ms", "ALTER TABLE ai_jobs ADD COLUMN run_ms INTEGER"),
+        ("total_ms", "ALTER TABLE ai_jobs ADD COLUMN total_ms INTEGER"),
     ):
         if name not in cols:
             conn.execute(ddl)

@@ -180,6 +180,11 @@ class ConcurrencyError(ControlPlaneError):
     pass
 
 
+def _epoch_ms() -> int:
+    """Wall-clock milliseconds; comparable across the Bridge and allocator processes."""
+    return int(time.time() * 1000)
+
+
 def _new_id(prefix: str) -> str:
     return "%s_%s" % (prefix, secrets.token_hex(8))
 
@@ -5238,6 +5243,7 @@ class ControlPlane:
         arguments: dict,
         patterns: list[str],
         timeout: Optional[int],
+        correlation_id: Optional[str] = None,
     ) -> str:
         ensure_ai_jobs_safety_schema_once(self.conn)
         job_id = _new_id("job")
@@ -5256,8 +5262,8 @@ class ControlPlane:
         self.conn.execute(
             "INSERT INTO ai_jobs(id, principal_id, endpoint_object_id, capability, payload_json, "
             "status, result_json, created_at, updated_at, timeout_seconds, client_id, deadline_at, "
-            "claim_token, attempt_id, claimed_at) "
-            "VALUES (?, ?, ?, ?, ?, 'queued', NULL, ?, ?, ?, ?, ?, NULL, NULL, NULL)",
+            "claim_token, attempt_id, claimed_at, correlation_id, enqueued_ms) "
+            "VALUES (?, ?, ?, ?, ?, 'queued', NULL, ?, ?, ?, ?, ?, NULL, NULL, NULL, ?, ?)",
             (
                 job_id,
                 principal_id,
@@ -5269,6 +5275,8 @@ class ControlPlane:
                 timeout_seconds,
                 client_id,
                 deadline_at,
+                correlation_id,
+                _epoch_ms(),
             ),
         )
         return job_id
@@ -5471,8 +5479,9 @@ class ControlPlane:
             attempt_id = _new_id("att")
             self.conn.execute(
                 "UPDATE ai_jobs SET status = 'running', claim_token = ?, attempt_id = ?, "
-                "claimed_at = ?, updated_at = ? WHERE id = ? AND status = 'queued'",
-                (claim_token, attempt_id, now, now, row["id"]),
+                "claimed_at = ?, updated_at = ?, queue_ms = MAX(0, ? - enqueued_ms) "
+                "WHERE id = ? AND status = 'queued'",
+                (claim_token, attempt_id, now, now, _epoch_ms(), row["id"]),
             )
             if self.conn.execute("SELECT changes()").fetchone()[0]:
                 claimed.append(
@@ -5640,10 +5649,12 @@ class ControlPlane:
             safe["stderr"] = stderr[:256]
             safe["stderr_truncated"] = True
         now = utc_now_iso()
+        done_ms = _epoch_ms()
         self.conn.execute(
-            "UPDATE ai_jobs SET status = 'done', result_json = ?, updated_at = ? "
+            "UPDATE ai_jobs SET status = 'done', result_json = ?, updated_at = ?, "
+            "total_ms = MAX(0, ? - enqueued_ms), run_ms = MAX(0, ? - enqueued_ms - queue_ms) "
             "WHERE id = ? AND status = 'running' AND claim_token = ?",
-            (json.dumps(safe, sort_keys=True)[:8000], now, job_id, expected_token),
+            (json.dumps(safe, sort_keys=True)[:8000], now, done_ms, done_ms, job_id, expected_token),
         )
         if not self.conn.execute("SELECT changes()").fetchone()[0]:
             raise ControlPlaneError("AI job completion lost the claim race")

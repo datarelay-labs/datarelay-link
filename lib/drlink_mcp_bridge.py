@@ -1489,6 +1489,7 @@ class MCPBridge:
                 arguments=arguments,
                 patterns=patterns,
                 timeout=timeout,
+                correlation_id=correlation_id,
             )
         try:
             return job_id, self._await_job_result(job_id, client_id, capability, arguments,
