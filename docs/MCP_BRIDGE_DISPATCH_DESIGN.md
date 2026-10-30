@@ -357,6 +357,142 @@ Not measured: the production topology (separate allocator with management-signed
 memory per worker, hosts with fewer cores, the single-host worst case with the product workers (5b
 measured it with the prototype: 411 ms with 6 workers).
 
+## 5d. 4-core budget (AUD-21 P1): measured, adopted and rejected optimizations (2026-10-30)
+
+Owner direction: optimize the software for a 4-core, 8 GB host; the production core count is still
+undecided, so the service units and the default worker count (1) stay as they are. This section is
+performance only (no D4/D5/D6). Authorization, audit and rate-limit semantics and the SQLite
+durability settings (`synchronous`) were not touched.
+
+**Setup.** `tests/test-mcp-bridge-scale-target.py` with `SCALE_BRIDGE_CPUS=0-3` (the K Bridge workers
+and the full-control process share 4 cores), `SCALE_LOAD_CPUS=4-9` (callers and the 100 real
+Agents in 5 processes on the other cores of the 10-core development server), `SCALE_BRIDGE_PROCS=K`,
+`SCALE_CALLS=30`, `SCALE_ROUNDS=3`, client opener warmed. One run is 30 simultaneous `exec` calls
+over 30 hosts, 3 rounds (90 calls); "p95" is the p95 of those 90 calls. The server carried other
+jobs, so every comparison below is **interleaved** (A, B, A, B, ...) and every run records the load
+average; tables show medians over the runs, with the range of p95 in brackets. "CPU/call" is the
+CPU of all Bridge worker processes divided by the calls. Baseline = `2b532e9f` (PR #244 before this
+section), after = `c8584c77`.
+
+### Where the time goes at K = 4 (perf, 999 Hz, 40 rounds, 14,781 samples)
+
+- By leaf: kernel 39.9 %, Python interpreter 28.6 %, SQLite 16.6 %, libc 14.5 %. The 11-12 ms of
+  system time per call (of about 30 ms CPU) is the kernel share: futex (GIL and lock hand-offs
+  between the many short-lived request threads of a worker, about 13 % of all samples), socket
+  I/O, and about 2 % `fsync`/`fdatasync` (about 0.5 per call; `synchronous=FULL` is therefore not
+  the bottleneck and stays).
+- Largest Python frames (exclusive): `connect_worker` 10.5 % (almost all of it the probe
+  connection that `claim_ai_jobs_held` opened for every held claim of the 100 Agents),
+  `DbChangeWatcher._dispatch_topics` 5.2 %, `evaluate_ai_access_v24` 4.3 % (contention-inflated;
+  1 ms when run alone, see 5b), `claim_ai_jobs_held` 3.4 %, `Condition.wait` 3.1 %,
+  `record_ai_activity` 3.0 %, `Thread.start` 2.2 % (3.2 % inclusive), `canonical_resource` ->
+  `mcp_public_url` 3.8 % inclusive, `SharedRateLimiter._count` 1.7 %.
+
+### Adopted
+
+1. **`perf(mcp-bridge): borrow the held-claim probe connection from the request pool`
+   (`c8584c77`).** `claim_ai_jobs_held` opened (and closed) a fresh SQLite connection, with its
+   PRAGMAs, to probe for an enqueued job on every held claim. It now borrows a connection from
+   the same per-process pool as every other request and returns it; planes built on an injected
+   or read-only connection keep a private one as before. RED/GREEN:
+   `test_held_claims_borrow_their_probe_connection_from_the_pool` (9 connection opens for 8
+   claims before, at most 2 after). No change of what a claim sees or returns.
+   Result, K = 4, 5 interleaved pairs (load average 3.3-7.7): CPU per call
+   fell from 30.6 to 26.8 ms (median; lower in 5 of 5 pairs); median latency and p95 are not distinguishable from noise in this
+   setup (median 286 against 283 ms, p95 432 against 431 ms; one of the five baseline runs was over the 500 ms line, none of the five after).
+
+### Results, baseline against after (interleaved, 30 simultaneous calls)
+
+Medians over the runs; the bracket is the range of the per-run p95. "Before" is `2b532e9f`,
+"after" is `c8584c77` (the only code change). The K = 4 pairs are the 5-pair run described above;
+K = 2, 3 and 6 are 3 pairs each. A run is "over" when its p95 is above the 500 ms line.
+
+| K | Build | Runs | Load average | Median ms | p95 ms | Runs over 500 ms | CPU per call ms | User / system ms per call | PSS MB (all workers) |
+|---|---|---|---|---|---|---|---|---|---|
+| 2 | before | 3 | 2.3-6.2 | 436 | 638 (578-683) | 3 of 3 | 35.1 | 19.2 / 17.2 | 140 |
+| 2 | after | 3 | 2.5-6.5 | 447 | 601 (564-749) | 3 of 3 | 34.7 | 17.7 / 17.0 | 138 |
+| 3 | before | 3 | 4.0-6.0 | 347 | 557 (518-598) | 3 of 3 | 33.0 | 19.3 / 13.7 | 157 |
+| 3 | after | 3 | 3.8-5.4 | 339 | 466 (457-494) | 0 of 3 | 31.3 | 17.4 / 13.9 | 158 |
+| 4 | before | 5 | 3.3-6.4 | 286 | 432 (409-516) | 1 of 5 | 30.6 | 18.4 / 11.9 | 179 |
+| 4 | after | 5 | 3.6-7.7 | 283 | 431 (383-475) | 0 of 5 | 26.8 | 15.8 / 11.0 | 176 |
+| 6 | before | 3 | 4.0-5.8 | 239 | 383 (352-425) | 0 of 3 | 27.2 | 17.7 / 9.8 | 213 |
+| 6 | after | 3 | 4.5-7.9 | 242 | 383 (336-387) | 0 of 3 | 25.4 | 16.3 / 9.6 | 212 |
+
+Reading the table:
+
+- CPU per call fell by 12 % at K = 4 (lower in 5 of 5 pairs), 7 % at K = 6 (3 of 3), 5 % at K = 3
+  (2 of 3) and not measurably at K = 2 (2 of 3, one pair 41.6 against 34.4 ms under load 6.5).
+- p95 did not move at K = 4 and K = 6 (431 against 432 ms and 383 against 383 ms). At K = 3 all
+  three "after" runs passed the 500 ms line and all three "before" runs failed it, but three pairs
+  on a shared machine are not proof. The scale test passes (p95 <= 500 ms) in 5 of 5 runs at K = 4
+  after (4 of 5 before) and in every run at K = 6.
+- **The 350 ms goal at K = 4 is not reached**: the median p95 is 431 ms (best run 383 ms). At K = 6 the
+  median p95 is 383 ms (best 336 ms, 1 run of 3 below 350 ms).
+- System time per call falls as workers are added (17.2, 13.7, 11.9, 9.8 ms at K = 2, 3, 4, 6 before):
+  it is the cost of many threads sharing one interpreter (futex hand-offs of the GIL and of the
+  locks), so it shrinks with fewer concurrent requests per worker. Memory is not a constraint:
+  all workers together use 138-213 MB PSS (K = 2-6), far inside 8 GB.
+
+### Not adopted (measured, with the reason)
+
+| Experiment | Evidence | Decision |
+|---|---|---|
+| `SharedRateLimiter`: one atomic `INSERT ... ON CONFLICT DO UPDATE ... RETURNING` instead of `BEGIN IMMEDIATE`/`SELECT`/write/`COMMIT` | exactness kept (4 processes x 1,000 hits, limit 1,000: exactly 1,000 accepted, old and new); cost per hit 102.6/74.3/76.9 us before and 76.7/74.4/76.3 us after, 4 processes 224-251 us before and 216-252 us after. The limiter is about 0.25 % of the 30 ms CPU per call even when it is free | no effect, reverted before commit |
+| One listening socket bound by the supervisor and inherited by the workers, instead of `SO_REUSEPORT` | busiest worker of 30 simultaneous connections (20 bursts, `list_hosts`): K = 4: 10.2 with `SO_REUSEPORT` (max 13) and 9.8 shared (max 13); K = 6: 8.1 and 8.8; an even spread would be 7.5 and 5.0. The worker that wins an accept race is not the least loaded one | no effect, prototype discarded |
+| `sys.setswitchinterval` 1 / 20 / 100 ms (patch kept outside the repository) | K = 4, 3 interleaved rounds, load 2.9-9.6: p95 median 523 (default; 2 of 3 runs > 500 ms) / 454 / 465 / 380 ms, CPU per call 31.9 / 30.4 / 29.2 / 27.0 ms. The default code alone gave p95 409-526 ms over its 8 runs (3 here, 5 in the baseline pairs above), so the 3-run difference is inside the noise | not reproducible at this sample size; not adopted. Needs 10 or more interleaved runs per setting before a knob is worth shipping |
+
+Not tried, because the stop rule of this task (two experiments in a row without effect) applied:
+reuse of request threads (drafted: it would also make the thread-local state of the control
+plane and of the v24 lock state outlive a request, which needs its own review), a cheaper
+`DbChangeWatcher._dispatch_topics`, a stat-validated cache for `canonical_resource` /
+`mcp_public_url` (revocation and permission changes do not depend on it; only the public URL
+setting does), removing the duplicate `get_principal` / `_ai_ref_names_by_id` / `get_ai_job`
+round trips, and `DRLINK_MCP_WORKERS=auto`. Their perf shares (2-5 % each) are small next to the
+imbalance below.
+
+### The remaining bottleneck: uneven spread of connections over the workers
+
+Measured with 20 bursts of 30 simultaneous `list_hosts` connections (the server answers with the
+worker that served it in `X-DRLink-Worker`), K workers on one port, no CPU pinning:
+
+| Workers | Even spread | Busiest worker, `SO_REUSEPORT` (mean / max of 20 bursts) | Busiest worker, one shared listening socket |
+|---|---|---|---|
+| 4 | 7.5 | 10.2 / 13 | 9.8 / 13 |
+| 6 | 5.0 | 8.1 / 12 | 8.8 / 12 |
+
+p95 follows the busiest worker, not the average one: the 30 calls are spread by the kernel
+(a hash of the connection) over the workers before any worker looks at them. With 4 workers the
+busiest one gets 10.2 of 30 calls on average (13 at most) where an even spread is 7.5, so p95
+carries about 36 % more work than the CPU per call suggests. Reducing the CPU per call by 12 % (the
+adopted change) therefore moves the average but hardly the p95. A shared accept queue does not
+fix it (rejected above). Closing the gap needs load-aware dispatch: the supervisor accepts and
+hands each connection to the worker with the fewest requests in flight (file descriptor passing),
+or each worker stops accepting while it is busier than the least busy one. Both are changes to
+the process model, and a fixed cap on a worker's requests is unsafe because the Agent-facing
+held claims occupy a connection for up to 25 s. This is an owner decision (see below), not a
+micro-optimization.
+
+### Conclusion and decisions for the owner
+
+- **The goal was not reached.** At K = 4 on 4 cores the 30-call p95 is 431 ms (best of 5 runs
+  383 ms), 14 % better than the 500 ms line and 23 % above the 350 ms goal; at K = 6 it is 383 ms.
+  The adopted change cuts CPU per call by 5-12 % at K = 3-6 and is a strict resource saving, but p95
+  is set by the busiest worker, not by the average one.
+- **Decision 1 (setting).** For a 4-core host the measured recommendation is K = 6 workers (p95
+  336-387 ms, 3 of 3 runs, 212 MB PSS) with K = 4 as the floor (borderline: 383-475 ms). The
+  default stays at 1 and no service unit was changed; the choice of the production worker count
+  belongs to the owner together with the production core count.
+- **Decision 2 (process model).** Closing the gap to 350 ms at K = 4 needs load-aware dispatch of
+  connections (see above), which changes the process model and makes the supervisor a hot path.
+  If p95 scales with the busiest worker's share, an even spread would take K = 4 from about 430 ms
+  to about 320-340 ms (an estimate from the share 7.5 / 10.2, not a measurement). It is only worth
+  doing if 350 ms matters more than the simplicity of the present design.
+- **Decision 3 (follow-up).** The untried candidates above, and 10 or more interleaved runs per
+  setting for `sys.setswitchinterval`, were not run because of the stop rule. They are each a few
+  per cent of CPU; none addresses the imbalance.
+- Not measured: the production topology (separate allocator with management-signed claims), a soak,
+  the single-host worst case, and the full `tests/run-all.sh`.
+
 ## 6. Verification
 
 - `tests/test-mcp-bridge-concurrent-calls.py` (PR #240): 48 simultaneous calls, RED
