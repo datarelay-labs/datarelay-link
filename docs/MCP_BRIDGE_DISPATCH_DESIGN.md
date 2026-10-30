@@ -1,6 +1,6 @@
 # MCP Bridge dispatch and concurrency — design proposal (AUD-21)
 
-> **Status: proposal, non-normative.** Steps 1 and 2 are implemented on draft/merged PRs
+> **Status: proposal, non-normative.** Steps 1 and 2 (incl. 2e) are implemented on draft/merged PRs
 > (see section 5); steps 3 and 4 are not. Nothing is deployed. Each further step needs
 > owner approval. It does not override `PRODUCT_MASTER.md`,
 > `SECURITY.md` or `AI_ACCESS_MCP.md`.
@@ -125,15 +125,43 @@ Rollback: revert the step. Agents are upgraded together with the Server for step
 | 30 simultaneous calls: failures | 34 and 50 of 90 | 0 | 0 | yes |
 | 30 simultaneous calls to one host: p95 | not measurable (failures) | 100-Agent run: median 2.47 s, p95 3.53 s; 2-host harness: median 1.1-1.3 s, p95 1.4-1.7 s | <= 500 ms | **NO** |
 
-The 30-call latency goal is **not met** and is not claimed as fixed. Per-command execution is
-3-8 ms and CPU is about 74 ms per call in the shared test interpreter, so neither explains
-seconds. The cause is **not established**. Candidates, not yet separated by measurement:
-the Agent runs one host's jobs serially in batches of 4 with one completion round trip per job,
-and GIL contention in the single-process test harness. The production topology (separate
-Bridge, allocator and Agent processes) was not measured separately. Parallel job execution on
-the Agent or larger batches would change execution semantics, so it needs an owner decision
-(section 8, question 4). `tests/test-mcp-bridge-scale-target.py` therefore stays unregistered
-in the suites (allowlisted) and reports this one failure.
+The 30-call latency goal is **still not met** and is not claimed as fixed. What was found and
+changed since the first measurement (step 2e, targeted wake-ups):
+
+| Measure (30 simultaneous calls, 3 rounds, in-process harness) | Before 2e | After 2e |
+|---|---|---|
+| Watcher wake-ups in one 11 s burst | 19,311 (215 per call) | not applicable (waiters are signalled by key) |
+| CPU per call (whole process) | about 209 ms | not re-measured |
+| All 30 to ONE host: median / p95 | 2.68 s / 3.93 s | 0.52 s / 0.75 s |
+| 30 calls spread over 30 hosts: median / p95 | 3.27 s / 3.82 s | 1.7-2.4 s / 1.9-2.8 s (3 runs) |
+
+Cause that was confirmed: the change watcher (2a) woke every waiter on every commit, so one
+enqueue made about 100 held claims and 30 result waits each run a database look. Now a waiter
+subscribes to a key (`claim`/host, `job`/job id); the watcher runs one query per change for all
+subscribers and signals only those the change concerns. The 1 s fallback re-read and the
+per-call policy re-evaluation are unchanged, and a missed signal still costs latency only.
+
+The next bottleneck was measured, not guessed. Thread sampling put nearly all waiting on one
+lock, `MCPBridge._lock`. Timing it per call site (hold times, spread run):
+
+| Section under the lock | Held per call (mean) | Max |
+|---|---|---|
+| `enqueue_ai_job` (INSERT, commit) | about 23 ms | 138 ms |
+| `authenticate_principal` (token lookup and `last_seen` UPDATE) | about 16 ms | 68 ms |
+| `complete` request (`complete_ai_job`) | about 7 ms | 35 ms |
+| Agent bearer check (2 per call) | about 2.6 ms each | 20 ms |
+
+That is about 51 ms of serialized time per call, so 30 calls queue for roughly 1.5 s. Most of it
+is write transactions committed with `synchronous = FULL` (an fsync each), one of them only to
+update `last_seen` on every call. This is the database write rate named in section 4, not CPU.
+Reducing it means changing durability or audit behaviour (coalescing the `last_seen` write,
+per-thread connections instead of the shared lock, or group commit), so it needs an owner
+decision (section 8, question 5) and was not changed. The single-host case also contains the
+Agent running that host's jobs one after another (question 4). The production topology
+(separate Bridge, allocator and Agent processes) was still not measured; all numbers are one
+interpreter and a single run each unless a range is given.
+`tests/test-mcp-bridge-scale-target.py` stays unregistered in the suites (allowlisted) and
+reports this one failure; it now also has the 30-hosts case.
 
 Known risk: if an Agent exits while it holds a claim, the Server can claim a job and answer a
 dead socket. The job then stays `running` until the stale/fail-closed handling takes it. It is
@@ -174,3 +202,8 @@ polling.
 3. Agree to revisit the database only above about 500 sustained writes per second?
 4. The 30-simultaneous-call p95 (<= 500 ms) is not met after step 2. Allow parallel job execution
    (or larger claim batches) on the Agent, or relax the target for 30 calls to a single host?
+5. After step 2e the serialized part of a call is about 51 ms of write transactions under one
+   Bridge lock (section 5a). May we (a) write `last_seen` at most once per N seconds per
+   principal instead of on every call, (b) replace the shared lock with per-thread database
+   connections, and/or (c) group-commit job writes? Each keeps the policy re-evaluation on every
+   call, but (a) changes what `last_seen` means and (b)/(c) change the commit/durability pattern.

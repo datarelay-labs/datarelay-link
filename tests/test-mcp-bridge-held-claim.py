@@ -40,6 +40,34 @@ _E2E = _load_e2e_harness()
 HELD_CLIENT = "client-held-claim-xxxxxxxx"
 
 
+class _SilentSubscription:
+    """A subscription whose signal never arrives (lost signals): only the
+    bounded fallback wait ends the sleep."""
+
+    def clear(self):
+        pass
+
+    def wait(self, timeout):
+        time.sleep(timeout)
+        return False
+
+    def close(self):
+        pass
+
+
+class _UnusedSubscription:
+    """For a feed that is not ready: the caller must poll, never wait."""
+
+    def clear(self):
+        pass
+
+    def wait(self, timeout):  # pragma: no cover - must not be used
+        raise AssertionError("wait() must not be used when the feed is not ready")
+
+    def close(self):
+        pass
+
+
 class BridgeHeldClaimTests(unittest.TestCase):
     _harness_setup = _E2E.MCPBridgeE2ETests.setUp
     _harness_teardown = _E2E.MCPBridgeE2ETests.tearDown
@@ -138,6 +166,9 @@ class BridgeHeldClaimTests(unittest.TestCase):
                 time.sleep(timeout)
                 return since
 
+            def subscribe(self, kind, key):
+                return _SilentSubscription()
+
         with mock.patch.object(drlink_mcp_bridge, "get_watcher", return_value=Silent()):
             started = time.monotonic()
             status, payload = self.call(
@@ -157,6 +188,9 @@ class BridgeHeldClaimTests(unittest.TestCase):
 
             def wait(self, since, timeout):  # pragma: no cover - must not be used
                 raise AssertionError("wait() must not be used when the feed is not ready")
+
+            def subscribe(self, kind, key):
+                return _UnusedSubscription()
 
         with mock.patch.object(drlink_mcp_bridge, "get_watcher", return_value=NotReady()):
             status, payload = self.call(

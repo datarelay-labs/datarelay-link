@@ -5487,9 +5487,13 @@ class ControlPlane:
         # A connection of its own: this thread may sit here for 25 s and must not
         # share (or pin) the request connection while it waits.
         probe = connect_worker(path=self.db_file)
+        # Subscribe BEFORE the first look: a job queued after this point wakes
+        # only this host's claim (not every held claim), and one queued before it
+        # is seen by the look itself.
+        sub = watcher.subscribe("claim", client_id)
         try:
             while True:
-                generation = watcher.generation
+                sub.clear()
                 queued = probe.execute(
                     "SELECT 1 FROM ai_jobs WHERE status = 'queued' AND client_id = ? LIMIT 1",
                     (client_id,),
@@ -5505,8 +5509,9 @@ class ControlPlane:
                     if not parked:
                         # Too many held requests: answer empty now, the Agent asks again.
                         return []
-                    watcher.wait(generation, min(remaining, CLAIM_HOLD_FALLBACK_POLL_SECONDS))
+                    sub.wait(min(remaining, CLAIM_HOLD_FALLBACK_POLL_SECONDS))
         finally:
+            sub.close()
             try:
                 probe.close()
             except sqlite3.Error:

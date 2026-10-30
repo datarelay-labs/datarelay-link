@@ -122,6 +122,31 @@ class MCPBridgeScaleTargetTests(unittest.TestCase):
         )
 
     def test_thirty_simultaneous_calls_all_succeed_quickly(self):
+        """Worst case: all 30 calls target ONE host (served one after another)."""
+        self._simultaneous_calls(lambda index: "lab1")
+
+    def test_thirty_calls_spread_over_thirty_hosts_all_succeed_quickly(self):
+        """Expected load: 30 simultaneous calls, each to a different host."""
+        v24 = _E2E.v24
+        for index in range(TARGET_CONCURRENT_CALLS):
+            label = "scale%03d" % index
+            rule = "mcp-scale-%03d" % index
+            v24.set_ai_access_rule(
+                self.plane,
+                rule,
+                mode="whitelist",
+                source="cursor-dev",
+                destination=label,
+                permission="lab-maintenance-perms",
+                enabled=True,
+                oneshot=True,
+            )
+            v24.set_ai_policy_path_scopes(
+                self.plane, rule, [self.etc_glob, self.opt_glob, self.vendor_glob]
+            )
+        self._simultaneous_calls(lambda index: "scale%03d" % index)
+
+    def _simultaneous_calls(self, endpoint_of):
         results = []
         guard = threading.Lock()
         barrier = threading.Barrier(TARGET_CONCURRENT_CALLS)
@@ -135,7 +160,7 @@ class MCPBridgeScaleTargetTests(unittest.TestCase):
                     status, payload = self.call(
                         self.cursor,
                         "exec",
-                        {"endpoint": "lab1", "command": "echo %s" % marker},
+                        {"endpoint": endpoint_of(index), "command": "echo %s" % marker},
                         req_id=index * 100 + rnd,
                     )
                     elapsed = time.perf_counter() - started

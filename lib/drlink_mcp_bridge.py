@@ -1359,40 +1359,46 @@ class MCPBridge:
                 wait_for = min(wait_for, 5.0)
         deadline = time.monotonic() + wait_for
         watcher = get_watcher(self.plane.db_file)
-        while time.monotonic() < deadline:
-            # Read the generation BEFORE looking, so a completion that commits
-            # between the look and the wait is never missed (AUD-21 step 2, D3).
-            generation = watcher.generation
-            with self._lock:
-                if job_id in self._job_results:
-                    return self._job_results.pop(job_id)
-            job = self.plane.get_ai_job(job_id)
-            if job and job.get("status") == "done":
+        # Wake only for THIS job reaching a terminal status, not for every
+        # commit in the Control DB (a herd of waits made 30 calls take seconds).
+        sub = watcher.subscribe("job", job_id)
+        try:
+            while time.monotonic() < deadline:
+                # Clear the signal BEFORE looking, so a completion that commits
+                # between the look and the wait is never missed (AUD-21 step 2, D3).
+                sub.clear()
                 with self._lock:
                     if job_id in self._job_results:
                         return self._job_results.pop(job_id)
-                consumed = self.plane.consume_ai_job_result(job_id)
-                if consumed is not None:
-                    return consumed
-            if job and job.get("status") in (
-                "timeout",
-                "cancelled",
-                "expired",
-                "recovery_required",
-            ):
-                result = (job.get("result") or {}) if isinstance(job.get("result"), dict) else {}
-                return {
-                    "result": str(job.get("status") or "TIMEOUT").upper(),
-                    "error": result.get("error") or "agent did not complete the job",
-                }
-            remaining = deadline - time.monotonic()
-            if watcher.ready:
-                # Wake on the completion commit; the bounded wait is the fallback
-                # that rereads the database if a signal is ever missed.
-                watcher.wait(generation, max(0.0, min(remaining, RESULT_WAIT_FALLBACK_SECONDS)))
-            else:
-                # No change feed (in-memory or missing database): keep the short poll.
-                time.sleep(min(0.05, max(0.0, remaining)))
+                job = self.plane.get_ai_job(job_id)
+                if job and job.get("status") == "done":
+                    with self._lock:
+                        if job_id in self._job_results:
+                            return self._job_results.pop(job_id)
+                    consumed = self.plane.consume_ai_job_result(job_id)
+                    if consumed is not None:
+                        return consumed
+                if job and job.get("status") in (
+                    "timeout",
+                    "cancelled",
+                    "expired",
+                    "recovery_required",
+                ):
+                    result = (job.get("result") or {}) if isinstance(job.get("result"), dict) else {}
+                    return {
+                        "result": str(job.get("status") or "TIMEOUT").upper(),
+                        "error": result.get("error") or "agent did not complete the job",
+                    }
+                remaining = deadline - time.monotonic()
+                if watcher.ready:
+                    # Wake on the completion commit; the bounded wait is the fallback
+                    # that rereads the database if a signal is ever missed.
+                    sub.wait(max(0.0, min(remaining, RESULT_WAIT_FALLBACK_SECONDS)))
+                else:
+                    # No change feed (in-memory or missing database): keep the short poll.
+                    time.sleep(min(0.05, max(0.0, remaining)))
+        finally:
+            sub.close()
         with self._lock:
             if job_id in self._job_results:
                 return self._job_results.pop(job_id)
