@@ -18,11 +18,22 @@ simultaneous calls all succeed, but their p95 is still above the 500 ms target
 (see docs/MCP_BRIDGE_DISPATCH_DESIGN.md). It is registered when that test is GREEN.
 The Agents run with the held claim the production Agent uses (`DEFAULT_CLAIM_WAIT_MS`
 is switched on for the test only). No service or credential is touched.
+
+By default the Bridge and all 100 Agents share ONE Python process (one GIL), which
+production never does. `SCALE_AGENT_PROCS=N` hosts the Agent fleet in N child
+processes instead (they still talk to the Bridge over loopback HTTP), so the
+Bridge process is measured on its own. Every run prints one `SCALE_METRICS` line
+with the latency percentiles and the CPU the test process (Bridge + the 30 callers)
+used while the calls ran.
 """
 from __future__ import annotations
 
 import importlib.util
+import json
+import os
+import resource
 import statistics
+import subprocess
 import sys
 import threading
 import time
@@ -36,6 +47,31 @@ sys.path.insert(0, str(ROOT / "tests"))
 
 import drlink_ai_agent  # noqa: E402
 from drlink_ai_agent import AgentLoop  # noqa: E402
+
+
+def _agent_child_main() -> None:
+    """Host a slice of the Agent fleet in this process (spec arrives on stdin)."""
+    spec = json.loads(sys.stdin.readline())
+    drlink_ai_agent.DEFAULT_CLAIM_WAIT_MS = int(spec["held_wait_ms"])
+    stops, threads = [], []
+    for token in spec["tokens"]:
+        stop = threading.Event()
+        loop = AgentLoop(spec["base"], token, stop_event=stop)
+        thread = threading.Thread(target=loop.run, daemon=True)
+        thread.start()
+        stops.append(stop)
+        threads.append(thread)
+    print("READY %d" % len(threads), flush=True)
+    sys.stdin.read()  # the parent closing the pipe is the stop signal
+    for stop in stops:
+        stop.set()
+    for thread in threads:
+        thread.join(timeout=int(spec["held_wait_ms"]) / 1000.0 + 5.0)
+
+
+if __name__ == "__main__" and len(sys.argv) > 1 and sys.argv[1] == "--agent-child":
+    _agent_child_main()
+    sys.exit(0)
 
 
 def _load_e2e_harness():
@@ -53,6 +89,7 @@ TARGET_CONCURRENT_CALLS = 30
 ROUNDS = 3
 MAX_IDLE_CLAIMS_PER_SECOND = 10.0
 MAX_P95_SECONDS = 0.5
+AGENT_PROCS = int(os.environ.get("SCALE_AGENT_PROCS", "0") or 0)
 
 
 class MCPBridgeScaleTargetTests(unittest.TestCase):
@@ -68,6 +105,18 @@ class MCPBridgeScaleTargetTests(unittest.TestCase):
     HELD_WAIT_MS = 15000
 
     def tearDown(self):
+        procs = getattr(self, "_agent_procs", [])
+        for proc in procs:  # stop signal to every child first, so they wind down in parallel
+            try:
+                proc.stdin.close()
+            except Exception:
+                pass
+        for proc in procs:
+            try:
+                proc.wait(timeout=self.HELD_WAIT_MS / 1000.0 + 15.0)
+            except Exception:
+                proc.kill()
+                proc.wait(timeout=10)
         # Workers sit inside a held claim; let them finish it before the harness
         # joins them with its own short timeout.
         for stop in getattr(self, "_agent_stops", []):
@@ -80,11 +129,20 @@ class MCPBridgeScaleTargetTests(unittest.TestCase):
         patcher = mock.patch.object(drlink_ai_agent, "DEFAULT_CLAIM_WAIT_MS", self.HELD_WAIT_MS)
         patcher.start()
         self.addCleanup(patcher.stop)
+        if AGENT_PROCS:
+            # The harness would start its two endpoint Agents as threads of this
+            # process; they join the external fleet below instead.
+            external = mock.patch.object(_E2E, "start_endpoint_workers", lambda bridge, base: ([], []))
+            external.start()
+            self.addCleanup(external.stop)
         self._harness_setup()
         plane = self.bridge.plane
         # The harness already runs two hosts; add the rest of the target fleet.
         for index in range(TARGET_AGENTS - 2):
             plane.upsert_client("client-scale-%03d-xxxxxxxx" % index, label="scale%03d" % index)
+        if AGENT_PROCS:
+            self._start_agent_processes()
+            return
         for client in plane.connected_clients():
             if "client-scale-" not in client["id"]:
                 continue
@@ -96,6 +154,31 @@ class MCPBridgeScaleTargetTests(unittest.TestCase):
             self._agent_stops.append(stop)
             self._agent_threads.append(thread)
         self.assertEqual(len(self._agent_threads), TARGET_AGENTS)
+
+    def _start_agent_processes(self):
+        plane = self.bridge.plane
+        tokens = [
+            plane.issue_agent_credential(client["id"], rotate=True)
+            for client in plane.connected_clients()
+        ]
+        self.assertEqual(len(tokens), TARGET_AGENTS)
+        self._agent_procs = []
+        for index in range(AGENT_PROCS):
+            share = tokens[index::AGENT_PROCS]
+            proc = subprocess.Popen(
+                [sys.executable, os.path.abspath(__file__), "--agent-child"],
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                text=True,
+                env=dict(os.environ, PYTHONDONTWRITEBYTECODE="1"),
+            )
+            self._agent_procs.append(proc)
+            spec = {"base": self.base, "tokens": share, "held_wait_ms": self.HELD_WAIT_MS}
+            proc.stdin.write(json.dumps(spec) + "\n")
+            proc.stdin.flush()
+        for proc in self._agent_procs:
+            self.assertTrue(proc.stdout.readline().startswith("READY"))
+        time.sleep(3.0)  # let every Agent settle into its held claim
 
     def test_idle_fleet_does_not_flood_the_server_with_claims(self):
         plane = self.bridge.plane
@@ -175,10 +258,16 @@ class MCPBridgeScaleTargetTests(unittest.TestCase):
             threading.Thread(target=worker, args=(i,), daemon=True)
             for i in range(TARGET_CONCURRENT_CALLS)
         ]
+        cpu_started = time.process_time()
+        ru_started = resource.getrusage(resource.RUSAGE_SELF)
+        wall_started = time.perf_counter()
         for thread in threads:
             thread.start()
         for thread in threads:
             thread.join(timeout=180)
+        cpu_used = time.process_time() - cpu_started
+        ru_ended = resource.getrusage(resource.RUSAGE_SELF)
+        wall_used = time.perf_counter() - wall_started
         total = TARGET_CONCURRENT_CALLS * ROUNDS
         failures = [code for _, code in results if code is not None]
         self.assertEqual(
@@ -189,6 +278,27 @@ class MCPBridgeScaleTargetTests(unittest.TestCase):
         )
         durations = sorted(d for d, _ in results if d is not None)
         p95 = durations[min(len(durations) - 1, int(round(0.95 * (len(durations) - 1))))]
+        print(
+            "SCALE_METRICS agent_procs=%d calls=%d median_ms=%.0f p95_ms=%.0f max_ms=%.0f "
+            "test_process_cpu_s=%.2f (user %.2f sys %.2f) wall_s=%.2f cpu_per_call_ms=%.0f "
+            "ctx_voluntary=%d ctx_involuntary=%d"
+            % (
+                AGENT_PROCS,
+                len(durations),
+                statistics.median(durations) * 1000,
+                p95 * 1000,
+                durations[-1] * 1000,
+                cpu_used,
+                ru_ended.ru_utime - ru_started.ru_utime,
+                ru_ended.ru_stime - ru_started.ru_stime,
+                wall_used,
+                cpu_used / max(1, len(durations)) * 1000,
+                ru_ended.ru_nvcsw - ru_started.ru_nvcsw,
+                ru_ended.ru_nivcsw - ru_started.ru_nivcsw,
+            ),
+            file=sys.stderr,
+            flush=True,
+        )
         self.assertLessEqual(
             p95,
             MAX_P95_SECONDS,
