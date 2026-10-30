@@ -273,7 +273,7 @@ def handle_show(plane: ControlPlane, rest: list[str]) -> Optional[int]:
                 expected="  show network-object <OBJECT> [references]",
             ))
         if len(rest) < 2:
-            raise ControlPlaneError("Usage: show network-object <OBJECT>\\nFind an identifier: show network-objects")
+            raise ControlPlaneError("Usage: show network-object <OBJECT>\nFind an identifier: show network-objects")
         name = rest[1]
         obj = plane.get_object(name)
         if not obj:
@@ -331,7 +331,7 @@ def handle_show(plane: ControlPlane, rest: list[str]) -> Optional[int]:
                 expected="  show network-group <GROUP> [references]",
             ))
         if len(rest) < 2:
-            raise ControlPlaneError("Usage: show network-group <GROUP>\\nFind an identifier: show network-groups")
+            raise ControlPlaneError("Usage: show network-group <GROUP>\nFind an identifier: show network-groups")
         g = plane.get_object_group(rest[1])
         if not g:
             raise ControlPlaneError(v24.cli_error("Network Group '%s' was not found." % rest[1]))
@@ -364,7 +364,7 @@ def handle_show(plane: ControlPlane, rest: list[str]) -> Optional[int]:
                 expected="  show service-object <SERVICE> [references]",
             ))
         if len(rest) < 2:
-            raise ControlPlaneError("Usage: show service-object <SERVICE>\\nFind an identifier: show service-objects")
+            raise ControlPlaneError("Usage: show service-object <SERVICE>\nFind an identifier: show service-objects")
         sobj = v24.get_service_object(plane, rest[1])
         if not sobj:
             raise ControlPlaneError(v24.cli_error("Service Object '%s' was not found." % rest[1]))
@@ -400,7 +400,7 @@ def handle_show(plane: ControlPlane, rest: list[str]) -> Optional[int]:
                 expected="  show service-group <GROUP> [references]",
             ))
         if len(rest) < 2:
-            raise ControlPlaneError("Usage: show service-group <GROUP>\\nFind an identifier: show service-groups")
+            raise ControlPlaneError("Usage: show service-group <GROUP>\nFind an identifier: show service-groups")
         g = v24.get_service_group(plane, rest[1])
         if not g:
             raise ControlPlaneError(v24.cli_error("Service Group '%s' was not found." % rest[1]))
@@ -434,7 +434,7 @@ def handle_show(plane: ControlPlane, rest: list[str]) -> Optional[int]:
     if res == "permission-object":
         _require_server(plane, "Permission Objects")
         if len(rest) < 2:
-            raise ControlPlaneError("Usage: show permission-object <PERMISSION>\\nFind an identifier: show permission-objects")
+            raise ControlPlaneError("Usage: show permission-object <PERMISSION>\nFind an identifier: show permission-objects")
         pobj = v24.get_permission_object(plane, rest[1])
         if not pobj:
             raise ControlPlaneError(v24.cli_error("Permission Object '%s' was not found." % rest[1]))
@@ -457,7 +457,7 @@ def handle_show(plane: ControlPlane, rest: list[str]) -> Optional[int]:
     if res == "permission-group":
         _require_server(plane, "Permission Groups")
         if len(rest) < 2:
-            raise ControlPlaneError("Usage: show permission-group <GROUP>\\nFind an identifier: show permission-groups")
+            raise ControlPlaneError("Usage: show permission-group <GROUP>\nFind an identifier: show permission-groups")
         g = v24.get_permission_group(plane, rest[1])
         if not g:
             raise ControlPlaneError(v24.cli_error("Permission Group '%s' was not found." % rest[1]))
@@ -651,7 +651,7 @@ def handle_show(plane: ControlPlane, rest: list[str]) -> Optional[int]:
     if res == "enrollment":
         _require_server(plane, "Enrollments")
         if len(rest) != 2:
-            raise ControlPlaneError("Usage: show enrollment <ENROLLMENT>\\nFind an identifier: show enrollments")
+            raise ControlPlaneError("Usage: show enrollment <ENROLLMENT>\nFind an identifier: show enrollments")
         row = plane.conn.execute(
             "SELECT id, kind, status, created_at, expires_at FROM enrollments WHERE id = ?",
             (rest[1],),
@@ -690,7 +690,7 @@ def handle_show(plane: ControlPlane, rest: list[str]) -> Optional[int]:
     if res == "ai-identity":
         _require_server(plane, "AI Identities")
         if len(rest) < 2:
-            raise ControlPlaneError("Usage: show ai-identity <IDENTITY>\\nFind an identifier: show ai-identities")
+            raise ControlPlaneError("Usage: show ai-identity <IDENTITY>\nFind an identifier: show ai-identities")
         p = plane.get_principal(rest[1])
         if not p:
             raise ControlPlaneError(v24.cli_error("AI Identity '%s' was not found." % rest[1]))
@@ -758,7 +758,7 @@ def handle_show(plane: ControlPlane, rest: list[str]) -> Optional[int]:
     if res == "remote-service":
         _require_agent(plane)
         if len(rest) < 2:
-            raise ControlPlaneError("Usage: show remote-service <NAME>\\nFind an identifier: show remote-services")
+            raise ControlPlaneError("Usage: show remote-service <NAME>\nFind an identifier: show remote-services")
         row = plane.conn.execute(
             "SELECT * FROM agent_remote_services WHERE name = ? COLLATE NOCASE", (rest[1],)
         ).fetchone()

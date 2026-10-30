@@ -653,6 +653,22 @@ class ServiceObjectPortInputRecovery(_Base):
 
 
 class AgentShowStatusRuntime(_Base):
+    def test_missing_agent_remote_service_argument_uses_multiline_recovery(self):
+        self.plane.close()
+        Path(self.tmp, 'etc/drlink/config.json').unlink()
+        _agent_root(self.tmp)
+        self.plane = ControlPlane(self.tmp)
+
+        rc, out, err = self._run('show', 'remote-service')
+
+        self.assertNotEqual(rc, 0)
+        message = out + err
+        self.assertIn(
+            'Usage: show remote-service <NAME>\nFind an identifier: show remote-services',
+            message,
+        )
+        self.assertNotIn(r'\nFind an identifier:', message)
+
     def test_missing_agent_remote_service_suggests_inventory_recovery(self):
         self.plane.close()
         Path(self.tmp, 'etc/drlink/config.json').unlink()
