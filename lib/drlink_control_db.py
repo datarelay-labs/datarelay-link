@@ -934,6 +934,17 @@ def ensure_ai_auth_schema(conn: sqlite3.Connection) -> None:
     ensure_oauth_pending_completion_schema(conn)
     ensure_enrollment_plans_schema(conn)
     ensure_ai_jobs_safety_schema(conn)
+    ensure_ai_activity_correlation_schema(conn)
+
+
+def ensure_ai_activity_correlation_schema(conn: sqlite3.Connection) -> None:
+    """Additive ai_activity.correlation_id (AUD-21 D4) without SCHEMA_VERSION bump.
+
+    The intent row and the completion row of one dispatched call share it.
+    """
+    cols = {str(row[1]) for row in conn.execute("PRAGMA table_info(ai_activity)")}
+    if cols and "correlation_id" not in cols:
+        conn.execute("ALTER TABLE ai_activity ADD COLUMN correlation_id TEXT")
 
 
 def ensure_oauth_pending_completion_schema(conn: sqlite3.Connection) -> None:

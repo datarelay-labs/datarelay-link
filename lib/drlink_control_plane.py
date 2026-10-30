@@ -6153,29 +6153,41 @@ class ControlPlane:
         rule: Optional[str] = None,
         duration_ms: Optional[int] = None,
         operand: Optional[str] = None,
+        correlation_id: Optional[str] = None,
     ) -> None:
         p = self.get_principal(principal)
         summary = str(operand or "")
         if len(summary) > 200:
             summary = summary[:197] + "..."
-        self.conn.execute(
-            "INSERT INTO ai_activity(timestamp, principal_id, principal_name, endpoint_id, endpoint_name, "
-            "capability, matched_rule, result, duration_ms, revision, operand_summary) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (
-                utc_now_iso(),
-                p["id"] if p else None,
-                principal,
-                None,
-                endpoint,
-                capability,
-                rule or "",
-                result,
-                duration_ms,
-                self.current_revision(),
-                summary,
-            ),
+        values = (
+            utc_now_iso(),
+            p["id"] if p else None,
+            principal,
+            None,
+            endpoint,
+            capability,
+            rule or "",
+            result,
+            duration_ms,
+            self.current_revision(),
+            summary,
         )
+        # Only dispatched calls carry a correlation id (AUD-21 D4); every other
+        # audit row keeps the original statement.
+        if correlation_id is None:
+            self.conn.execute(
+                "INSERT INTO ai_activity(timestamp, principal_id, principal_name, endpoint_id, endpoint_name, "
+                "capability, matched_rule, result, duration_ms, revision, operand_summary) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                values,
+            )
+        else:
+            self.conn.execute(
+                "INSERT INTO ai_activity(timestamp, principal_id, principal_name, endpoint_id, endpoint_name, "
+                "capability, matched_rule, result, duration_ms, revision, operand_summary, correlation_id) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                values + (correlation_id,),
+            )
         self.conn.execute(
             "INSERT INTO audit_events(timestamp, revision, actor, action, entity_type, "
             "entity_id, operation, before_summary, after_summary, impact_summary, result) "
