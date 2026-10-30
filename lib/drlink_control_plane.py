@@ -5059,6 +5059,17 @@ class ControlPlane:
         wanted = str(resource or stored)
         if wanted != stored:
             return None
+        # Claim the presented refresh token atomically before anything is issued. The SELECT
+        # above only validates; two requests (threads or Bridge worker processes) can both
+        # pass it, and only one of them may redeem the token (AUD-21 D7).
+        claimed = self.conn.execute(
+            "UPDATE ai_oauth_tokens SET revoked_at = ? "
+            "WHERE token_hash = ? AND kind = 'refresh' AND revoked_at IS NULL "
+            "RETURNING token_hash",
+            (now, digest),
+        ).fetchone()
+        if claimed is None:
+            return None
         # Rotate: revoke presented refresh (+ sibling access tokens for same client/resource).
         self.conn.execute(
             "UPDATE ai_oauth_tokens SET revoked_at = ? WHERE client_id = ? AND resource = ? "
