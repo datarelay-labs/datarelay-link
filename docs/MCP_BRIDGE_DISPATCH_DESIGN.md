@@ -166,11 +166,14 @@ What was measured instead (30 calls spread over 30 hosts, 3 rounds = 90 calls, 1
 - CPU is not bounded by one core (cpu/wall 1.3-1.7), but kernel time is high (43 % of samples in a
   `perf` run): thread wake-ups, context switches and futex calls, which is what many runnable
   threads in one interpreter cost.
-- `perf` with Python frames (`python -X perf`, one run, setup included). Of the Bridge request
-  threads (8.0 CPU-s): per-call policy evaluation (`evaluate_ai_access_v24`) 3.6 CPU-s, of which
-  `_ref_name_match` 1.35 CPU-s; Agent claim handling (`claim_ai_jobs_held`) 2.5 CPU-s, of which
-  opening a new worker connection (`connect_worker`) 0.8 CPU-s, almost all of it
-  `ensure_ai_jobs_safety_schema` running on every new connection.
+- `perf` with Python frames (`python -X perf`), recorded **only while the 90 calls run** (the
+  first revision of this correction profiled the whole run including the 100 Agents' start-up
+  claims and overstated claim handling; the figures below replace it). One spread-over-30-hosts
+  run, 8.9 CPU-s in total: request handling (`do_POST`) 77 %; `call_tool` 48 %; per-call policy
+  evaluation (`evaluate_ai_access_v24`) 35 % (3.14 CPU-s, `_ref_name_match` alone 14 %); Agent
+  claim handling (`claim_ai_jobs_held`) 18 % (1.63 CPU-s); `ensure_ai_jobs_safety_schema`
+  7.2 % (0.64 CPU-s); opening a worker connection (`connect_worker`) 5.3 % (0.47 CPU-s); the
+  change watcher 6 %; the harness' own client threads 7-8 %.
 - The spread case costs about 3 times the CPU per call of the single-host case because it adds 30
   AI Access rules; the per-call evaluation grows with the number of rules.
 
@@ -189,6 +192,34 @@ Known risk: if an Agent exits while it holds a claim, the Server can claim a job
 dead socket. The job then stays `running` until the stale/fail-closed handling takes it. It is
 bounded by that existing handling and is not new in kind, but the window is larger than with 2 s
 polling.
+
+**Step 2g (2026-10-30): per-evaluation batching of the AI Access lookups.**
+`evaluate_ai_access_v24` ran one database lookup per enabled rule of the identity (about three
+per rule). It now reads the destinations of all of the identity's rules together
+(`IN (...)`), and memoizes group expansion and permission sets *inside that one evaluation*.
+Nothing is kept between calls: every `tools/call` still reads the current rules, identity status
+and group membership and evaluates all of them, so the "re-evaluate on each call" property is
+unchanged. `tests/test-ai-access-eval-equivalence.py` compares the decision with a verbatim copy
+of the previous implementation for 920 identity/destination/permission combinations and asserts
+that the number of SQL statements no longer grows with the number of rules (before the change:
+29 statements with 12 rules and 69 with 52 rules; the test now requires at most 4 more statements
+after 40 more rules are added).
+
+| Measure (30 simultaneous calls, 3 rounds, same harness, 3 runs each) | Before 2g (from 2e) | After 2g |
+|---|---|---|
+| 30 calls spread over 30 hosts: median | 1.7-2.4 s | 1.42, 1.44, 1.49 s |
+| 30 calls spread over 30 hosts: p95 | 1.9-2.8 s | 1.58, 1.72, 1.76 s |
+| All 30 to ONE host: median | 0.52 s | 0.48, 0.51, 0.51 s |
+| All 30 to ONE host: p95 | 0.75 s | 0.66, 0.73, 0.77 s |
+
+The before and after runs were taken at different times on the same machine, so differences of
+about 10 % are within noise; the spread case improved by roughly a quarter, the single-host case
+(one rule) did not change, as expected. **The p95 <= 500 ms goal is still not met in either case.**
+Remaining per-call CPU is in the many short-lived request threads (thread start, kernel
+scheduling) and in `ensure_ai_jobs_safety_schema`/`connect_worker` on each Agent claim; reaching
+500 ms for 30 calls through one interpreter needs about 15 ms CPU per call, i.e. a structural
+change (several Bridge processes, or fewer per-call thread/connection set-ups) rather than more
+micro-optimization.
 
 ## 6. Verification
 
