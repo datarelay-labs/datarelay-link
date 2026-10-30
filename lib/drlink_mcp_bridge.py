@@ -15,6 +15,8 @@ public ``test ai-access``. Legacy ai_access_rules are not an authority.
 from __future__ import annotations
 
 from html import escape as html_escape
+import contextlib
+import functools
 import json
 import logging
 import os
@@ -1416,10 +1418,23 @@ class MCPBridge:
 
 class ThreadingHTTPServer(ThreadingMixIn, HTTPServer):
     daemon_threads = True
+    # Python's default of 5 resets bursts of simultaneous connects (AUD-21).
+    request_queue_size = 128
     allow_reuse_address = True
 
 
 def make_handler(bridge: MCPBridge):
+    def _scoped(method):
+        """Run one HTTP request on its own pooled SQLite connection (AUD-21)."""
+
+        @functools.wraps(method)
+        def wrapper(self, *args, **kwargs):
+            scope = getattr(bridge.plane, "request_scope", None)
+            with (scope() if scope is not None else contextlib.nullcontext()):
+                return method(self, *args, **kwargs)
+
+        return wrapper
+
     class Handler(BaseHTTPRequestHandler):
         protocol_version = "HTTP/1.1"
 
@@ -1488,6 +1503,7 @@ def make_handler(bridge: MCPBridge):
         def _www_auth(self):
             return bridge.www_authenticate_value()
 
+        @_scoped
         def do_GET(self):
             if self._origin_denied():
                 return
@@ -1677,6 +1693,7 @@ def make_handler(bridge: MCPBridge):
                 return
             self._send(404, {"error": "not found"})
 
+        @_scoped
         def do_DELETE(self):
             # 2026-07-28 removed protocol-level sessions; DELETE is not a session
             # terminator. Answer 405 so official SDKs fail closed rather than hang.
@@ -1685,6 +1702,7 @@ def make_handler(bridge: MCPBridge):
             self.send_header("Content-Length", "0")
             self.end_headers()
 
+        @_scoped
         def do_OPTIONS(self):
             parsed = urlparse(self.path)
             if parsed.path.startswith("/.well-known/") or parsed.path.startswith("/oauth/") or parsed.path in (
@@ -1698,6 +1716,7 @@ def make_handler(bridge: MCPBridge):
             self.send_header("Content-Length", "0")
             self.end_headers()
 
+        @_scoped
         def do_POST(self):
             if self._origin_denied():
                 return
