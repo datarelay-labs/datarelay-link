@@ -121,6 +121,7 @@ python3 tests/test-held-claim-wake.py
 python3 tests/test-agent-held-claim.py
 python3 tests/test-mcp-bridge-held-claim.py
 python3 tests/test-ai-access-eval-equivalence.py
+python3 tests/test-ai-jobs-schema-once.py
 python3 tests/test-mcp-agent-dispatch-latency.py
 python3 tests/test-mcp-bridge-concurrent-calls.py
 python3 tests/test-mcp-public-tls-lifecycle.py \

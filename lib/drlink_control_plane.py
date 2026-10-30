@@ -33,7 +33,7 @@ from drlink_control_db import (
     SchemaTooNewError,
     connect_worker,
     db_path,
-    ensure_ai_jobs_safety_schema,
+    ensure_ai_jobs_safety_schema_once,
     integrity_check,
     open_control_db,
     open_control_db_readonly,
@@ -5212,7 +5212,7 @@ class ControlPlane:
         patterns: list[str],
         timeout: Optional[int],
     ) -> str:
-        ensure_ai_jobs_safety_schema(self.conn)
+        ensure_ai_jobs_safety_schema_once(self.conn)
         job_id = _new_id("job")
         now = utc_now_iso()
         timeout_seconds = int(timeout or 30)
@@ -5419,7 +5419,7 @@ class ControlPlane:
         return True
 
     def claim_ai_jobs(self, client_id: str, limit: int = 4) -> list[dict]:
-        ensure_ai_jobs_safety_schema(self.conn)
+        ensure_ai_jobs_safety_schema_once(self.conn)
         self.assert_ai_job_claimant(client_id)
         self.refresh_managed_host_liveness(client_id)
         now = utc_now_iso()
@@ -5553,7 +5553,7 @@ class ControlPlane:
 
     def terminalize_ai_job(self, job_id: str, status: str = "timeout") -> dict:
         """Move a non-terminal job to a fail-closed terminal status."""
-        ensure_ai_jobs_safety_schema(self.conn)
+        ensure_ai_jobs_safety_schema_once(self.conn)
         terminal = str(status or "timeout").strip().lower()
         if terminal not in ("timeout", "cancelled", "expired", "recovery_required"):
             raise ControlPlaneError("invalid AI job terminal status")
@@ -5576,7 +5576,7 @@ class ControlPlane:
         claim_token: Optional[str] = None,
         attempt_id: Optional[str] = None,
     ) -> None:
-        ensure_ai_jobs_safety_schema(self.conn)
+        ensure_ai_jobs_safety_schema_once(self.conn)
         self.assert_ai_job_claimant(client_id)
         self.refresh_managed_host_liveness(client_id)
         row = self.conn.execute("SELECT * FROM ai_jobs WHERE id = ?", (job_id,)).fetchone()
@@ -6599,7 +6599,7 @@ class ControlPlane:
         Mutating in-flight work becomes recovery_required; other nonterminal work
         becomes expired.
         """
-        ensure_ai_jobs_safety_schema(self.conn)
+        ensure_ai_jobs_safety_schema_once(self.conn)
         now = utc_now_iso()
         rows = list(
             self.conn.execute(
