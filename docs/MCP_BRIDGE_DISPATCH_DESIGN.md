@@ -29,9 +29,13 @@ audit write 0.73 ms, one result poll 0.02 ms, about 2 ms in total.
    `sqlite3.Connection` (`check_same_thread=False`); `ControlPlane._db_lock` covers
    only three OAuth paths. Logged results: 9x `sqlite3.InterfaceError` (SQLITE_MISUSE)
    in read paths and 1x `TypeError` from an interleaved cursor.
-2. **Polling Agents.** The Agent claims every `AI_AGENT_IDLE_POLL_SECONDS` (2.0 s) and
-   `/agent/v1/claim` answers immediately. This gives the 1.7 s pickup delay and a
-   constant request stream that grows with the number of Agents.
+2. **Polling Agents.** The Agent claims every `AI_AGENT_IDLE_POLL_SECONDS` (2.0 s) and the
+   claim answers immediately. This gives the 1.7 s pickup delay and a constant request
+   stream that grows with the number of Agents. In production the claim goes to the
+   **management API** (`/v1/ai-jobs/claim`, served by the allocator process); the Bridge
+   `/agent/v1/claim` is the bearer-token path used by tests. The Bridge and the allocator
+   are separate processes that share only the SQLite file, so a wake-up cannot rely on an
+   in-process event.
 3. **Listen backlog of 5.** `ThreadingHTTPServer` does not override
    `request_queue_size`, so Python's default of 5 applies. Likely cause of the
    connection resets under 30 simultaneous connects (to be confirmed after the change).
@@ -49,20 +53,34 @@ audit write 0.73 ms, one result poll 0.02 ms, about 2 ms in total.
   preview) are never replaced. **Implemented in step 1 (PR #242, draft):** 90
   simultaneous calls with 100 Agents ran with 0 failures and no busy or locked
   error; scope entry costs about 9 us.
-- **D2 Held claim instead of polling.** An Agent keeps one claim request open; the
-  Server holds it for up to 25 s and answers the moment a job is queued for that
-  host. Idle load becomes about 100 / 25 = 4 requests per second and pickup takes
-  milliseconds. The 25 s hold fits inside `MANAGED_HOST_LIVENESS_SECONDS` (120 s).
-- **D3 Event-based result wait.** `/agent/v1/complete` signals a per-job event and the
-  Bridge waits on it. The database stays the source of truth: on timeout or a missed
-  signal the Bridge reads it at 1 s intervals.
+- **D2 Held claim instead of polling.** The claim request takes an optional `wait_ms`
+  (at most 25,000). With no job the Server holds the request and answers the moment a job
+  is queued for that host. Idle load becomes about 100 / 25 = 4 requests per second and
+  pickup takes milliseconds. The 25 s hold fits inside `MANAGED_HOST_LIVENESS_SECONDS`
+  (120 s) and the front end's default 60 s read timeout. The production Agent enables it;
+  the `AgentLoop` library default stays at 0 so existing callers and tests are unchanged.
+  The Agent's request timeout is raised above the hold (it is 8 s today, and a timed-out
+  management POST is reported as an ambiguous write).
+- **D2a Cross-process wake-up.** A `DbChangeWatcher` thread per process polls
+  `PRAGMA data_version` on its own connection every 10 ms (about 100 trivial local
+  checks per second) and wakes waiters when any other connection, in any process,
+  committed. The Bridge enqueue therefore wakes a held claim in the allocator, and the
+  allocator's completion wakes the Bridge's result wait, with no new IPC surface.
+- **D3 Event-based result wait.** The Bridge waits on the watcher instead of reading
+  `get_ai_job` every 0.05 s, and rereads the job only after a database change. The
+  database stays the source of truth: on timeout or a missed signal the Bridge reads it
+  at 1 s intervals. The in-memory handoff for the bearer-token path stays as it is.
 - **D4 Intent-first audit.** Write an intent row (`dispatching`, correlation id) before
   enqueue and fail closed if it cannot be written. A failed completion write never
   replaces the execution result: return it with `audit_status: failed` and log at
   ERROR. Any error after enqueue carries `job_id` and `retryable: false`.
-- **D5 Listener and worker budgets.** Listen backlog of at least 128. Held claims and
-  calls use separate thread budgets (start: 128 and 64) so held claims cannot starve
-  calls. Over a budget, answer an explicit `busy` before dispatch.
+- **D5 Listener and worker budgets.** Listen backlog of at least 128 on the Bridge. The
+  allocator already bounds requests (`max_concurrent` = 32, slot taken at accept time), so
+  100 held claims would use every slot and block `complete` and enrollment. A held claim
+  therefore parks its slot while it waits and takes a slot again before touching the
+  database; parked claims have their own cap (start: 128) and fall back to an immediate
+  empty answer above it. The Bridge keeps a separate call budget (start: 64) with an
+  explicit `busy` before dispatch.
 - **D6 Metrics.** Record `queue_ms`, `run_ms` and `total_ms` per job; keep the
   correlation id from PR #240.
 
@@ -72,8 +90,10 @@ audit write 0.73 ms, one result poll 0.02 ms, about 2 ms in total.
   (0.73 ms each with `synchronous=FULL`). Thirty calls in flight at about one
   second each is roughly 30 calls per second with about four writes each, so
   around 120 writes per second (estimate), about a tenth of that capacity.
-- With held claims, 100 Agents add 100 waiting threads and 30 calls add 30 more;
-  this is far below what Python threads handle.
+- With held claims, 100 Agents add 100 parked threads and 30 calls add 30 more; this is
+  far below what Python threads handle. The management API opens a control-plane
+  connection per request (about 6.6 ms with schema checks); at 44-47 idle claims per
+  second that is about a third of a core today and about 4 per second with held claims.
 - Revisit the database if sustained writes exceed about 500 per second or the fleet
   grows well beyond 100 Agents.
 
@@ -98,9 +118,11 @@ Rollback: revert the step. Agents are upgraded together with the Server for step
   GREEN after step 2.
 - `tests/test-mcp-bridge-scale-target.py`: 100 Agents; idle claims <= 10 per second
   and 30 simultaneous calls with 0 failures and p95 <= 500 ms; RED today.
-- New tests per step: lost completion signal falls back to a database read; audit write
-  failure after execution returns the result with `audit_status: failed`; intent write
-  failure rejects without enqueue; `busy` at a budget limit.
+- New tests per step: the watcher wakes on a commit made by another process; a held
+  claim on the management API returns as soon as another connection enqueues; a held claim
+  does not consume a request slot; a lost completion signal falls back to a database
+  read; audit write failure after execution returns the result with `audit_status: failed`;
+  intent write failure rejects without enqueue; `busy` at a budget limit.
 - The 12 existing MCP and OAuth test files and the derived-artifact closure check stay GREEN.
 - Each RED test is registered in `run-fast-pr.sh` and `run-all.sh` when its fix lands.
 
