@@ -5414,7 +5414,6 @@ if problems:
     for item in problems:
         sys.stderr.write("  %s\n" % item)
     raise SystemExit(1)
-print("AGENT_RUNTIME_LINEAGE_MATCH=PASS")
 PY
 }
 
