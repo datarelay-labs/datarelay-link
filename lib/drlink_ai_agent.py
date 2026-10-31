@@ -254,6 +254,21 @@ def _agent_post(url: str, token: str, body: dict, timeout: float = 10) -> dict:
 AI_AGENT_IDLE_POLL_SECONDS = 2.0
 AI_AGENT_BUSY_POLL_SECONDS = 0.05
 
+# Held claim (AUD-21 step 2): the production Agent asks the Server to hold an
+# empty claim for this long and answer the moment a job is queued. Idle load
+# becomes about fleet_size / 25 requests per second instead of fleet_size / 2.
+AI_AGENT_CLAIM_WAIT_MS = 25000
+# The library default stays 0 (a plain poll) so existing callers and tests are
+# unchanged; the production entry point below opts in.
+DEFAULT_CLAIM_WAIT_MS = 0
+# The request timeout sits this far above the hold: a client that gave up on a
+# claim the Server then answers would strand the claimed job.
+AI_AGENT_CLAIM_TIMEOUT_MARGIN_SECONDS = 10.0
+# A held claim that came back empty after at least this share of its hold was
+# honoured by the Server; a much faster empty answer means the Server did not
+# hold (older Server, parked-claim cap), so fall back to the idle poll.
+AI_AGENT_HOLD_HONOURED_FRACTION = 0.5
+
 
 class AgentLoop:
     """Poll the Server for authorized jobs and execute them locally on this host.
@@ -270,6 +285,7 @@ class AgentLoop:
         stop_event: Optional[threading.Event] = None,
         *,
         agent_root: Optional[str] = None,
+        wait_ms: Optional[int] = None,
     ):
         self.base_url = (base_url or "").rstrip("/")
         self.token = token or ""
@@ -277,14 +293,23 @@ class AgentLoop:
         self.stop_event = stop_event or threading.Event()
         if not self.token and not self.agent_root:
             raise ValueError("AgentLoop requires bearer token or agent_root")
+        chosen = DEFAULT_CLAIM_WAIT_MS if wait_ms is None else wait_ms
+        self.wait_ms = max(0, min(int(chosen or 0), AI_AGENT_CLAIM_WAIT_MS))
 
     def _claim(self) -> list:
         if self.agent_root:
             import drlink_mgmt_sync as mgmt
 
-            payload = mgmt.claim_ai_jobs_on_server(root=self.agent_root, limit=4)
+            payload = mgmt.claim_ai_jobs_on_server(
+                root=self.agent_root, limit=4, wait_ms=self.wait_ms
+            )
             return list(payload.get("jobs") or [])
-        payload = _agent_post(self.base_url + "/agent/v1/claim", self.token, {"limit": 4})
+        body = {"limit": 4}
+        timeout = 10
+        if self.wait_ms:
+            body["wait_ms"] = self.wait_ms
+            timeout = self.wait_ms / 1000.0 + AI_AGENT_CLAIM_TIMEOUT_MARGIN_SECONDS
+        payload = _agent_post(self.base_url + "/agent/v1/claim", self.token, body, timeout=timeout)
         return list(payload.get("jobs") or [])
 
     def _complete(
@@ -407,12 +432,32 @@ class AgentLoop:
     def run(self) -> None:
         while not self.stop_event.is_set():
             found = 0
+            failed = False
+            started = time.monotonic()
             try:
                 found = int(self.run_once() or 0)
             except Exception:
                 found = 0
-            delay = AI_AGENT_BUSY_POLL_SECONDS if found else AI_AGENT_IDLE_POLL_SECONDS
-            self.stop_event.wait(delay)
+                failed = True
+            delay = self._next_delay(found, failed, time.monotonic() - started)
+            if delay > 0:
+                self.stop_event.wait(delay)
+
+    def _next_delay(self, found: int, failed: bool, claim_seconds: float) -> float:
+        """Seconds to wait before the next claim."""
+        if found:
+            # With a held claim the next claim returns at once when more jobs are
+            # queued and otherwise waits for work, so no pause is needed between
+            # batches (it only delays queued jobs).
+            return 0.0 if self.wait_ms else AI_AGENT_BUSY_POLL_SECONDS
+        if (
+            self.wait_ms
+            and not failed
+            and claim_seconds >= (self.wait_ms / 1000.0) * AI_AGENT_HOLD_HONOURED_FRACTION
+        ):
+            # The Server held the claim for (about) the whole wait: ask again at once.
+            return 0.0
+        return AI_AGENT_IDLE_POLL_SECONDS
 
 
 def main(argv=None):
@@ -442,11 +487,11 @@ def main(argv=None):
     if not token:
         if agent_root is None:
             agent_root = "/"
-        AgentLoop(agent_root=agent_root).run()
+        AgentLoop(agent_root=agent_root, wait_ms=AI_AGENT_CLAIM_WAIT_MS).run()
         return
     if not args.url:
         raise SystemExit("ERROR: bearer-token mode requires --url / DRLINK_MCP_URL")
-    AgentLoop(args.url, token, agent_root=None).run()
+    AgentLoop(args.url, token, agent_root=None, wait_ms=AI_AGENT_CLAIM_WAIT_MS).run()
 
 
 if __name__ == "__main__":

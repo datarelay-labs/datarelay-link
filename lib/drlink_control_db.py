@@ -813,11 +813,15 @@ def _ai_job_client_id_from_payload(payload_json: object) -> Optional[str]:
     return value or None
 
 
-def ensure_ai_jobs_safety_schema(conn: sqlite3.Connection) -> None:
-    """Additive AI job fairness/attempt columns without bumping SCHEMA_VERSION."""
+def ensure_ai_jobs_safety_schema(conn: sqlite3.Connection) -> bool:
+    """Additive AI job fairness/attempt columns without bumping SCHEMA_VERSION.
+
+    Returns True once the ai_jobs table exists and carries the full schema,
+    False when there is no ai_jobs table yet (nothing was applied).
+    """
     cols = {str(row[1]) for row in conn.execute("PRAGMA table_info(ai_jobs)")}
     if not cols:
-        return
+        return False
     for name, ddl in (
         ("client_id", "ALTER TABLE ai_jobs ADD COLUMN client_id TEXT"),
         ("deadline_at", "ALTER TABLE ai_jobs ADD COLUMN deadline_at TEXT"),
@@ -850,6 +854,55 @@ def ensure_ai_jobs_safety_schema(conn: sqlite3.Connection) -> None:
         "CREATE INDEX IF NOT EXISTS idx_ai_jobs_claim "
         "ON ai_jobs(status, client_id, created_at)"
     )
+    return True
+
+
+class MarkableConnection(sqlite3.Connection):
+    """sqlite3.Connection that can carry per-connection marks.
+
+    The stock class has no instance dictionary, so nothing can be attached to
+    it. A mark lives exactly as long as the connection does: a new connection
+    (pool refill, database replaced, restore) starts without one.
+    """
+
+
+_AI_JOBS_SCHEMA_MARK = "_drlink_ai_jobs_schema_cookie"
+
+
+def _schema_cookie(conn) -> Optional[int]:
+    """SQLite schema cookie: changes whenever the database schema changes."""
+    try:
+        row = conn.execute("PRAGMA schema_version").fetchone()
+    except sqlite3.Error:
+        return None
+    return int(row[0]) if row is not None else None
+
+
+def ensure_ai_jobs_safety_schema_once(conn) -> None:
+    """Run ``ensure_ai_jobs_safety_schema`` unless this connection already did.
+
+    claim/enqueue/complete call this on every request; re-inspecting an
+    unchanged schema each time was a measurable share of Bridge CPU (AUD-21).
+    The connection is marked only after a complete, committed pass and the
+    mark records the schema cookie, so it never outlives a schema change. It
+    stays unmarked (full check every time) when the table is missing, a
+    transaction is open (the DDL could still be rolled back), or the
+    connection cannot carry a mark (stock sqlite3.Connection, test doubles).
+    """
+    mark = getattr(conn, _AI_JOBS_SCHEMA_MARK, None)
+    if mark is not None and _schema_cookie(conn) == mark:
+        return
+    if not ensure_ai_jobs_safety_schema(conn):
+        return
+    if getattr(conn, "in_transaction", True):
+        return
+    cookie = _schema_cookie(conn)
+    if cookie is None:
+        return
+    try:
+        setattr(conn, _AI_JOBS_SCHEMA_MARK, cookie)
+    except AttributeError:
+        pass
 
 
 def ensure_ai_auth_schema(conn: sqlite3.Connection) -> None:
@@ -1043,6 +1096,7 @@ def connect_worker(path: Optional[Path] = None, root: Optional[str] = None) -> s
         isolation_level=None,
         timeout=BUSY_TIMEOUT_MS / 1000.0,
         check_same_thread=False,
+        factory=MarkableConnection,
     )
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")

@@ -61,6 +61,7 @@ for f in \
   "$BASE_DIR/lib/frp_ctl_repl.py" \
   "$BASE_DIR/lib/frp_machine_id.py" \
   "$BASE_DIR/lib/frp_bounded_server.py" \
+  "$BASE_DIR/lib/drlink_db_watch.py" \
   "$BASE_DIR/lib/frp_public_suffix.py" \
   "$BASE_DIR/lib/frp_policy_fingerprint.py" \
   "$BASE_DIR/lib/drlink_qualified_artifacts.py" \

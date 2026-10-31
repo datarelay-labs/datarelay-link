@@ -4974,6 +4974,88 @@ def unset_ai_access_rule(
     )
 
 
+_AI_REF_QUERY_CHUNK = 400
+_AI_REF_MISSING = object()
+
+
+def _ai_ref_names_by_id(plane_db, table: str, ids: list) -> dict:
+    """Names of the referenced rows of one table, read in as few statements as
+    possible. ``table`` is one of two fixed literals, never caller input."""
+    if table not in ("objects", "object_groups"):
+        raise ValueError(table)
+    names: dict = {}
+    for start in range(0, len(ids), _AI_REF_QUERY_CHUNK):
+        chunk = ids[start : start + _AI_REF_QUERY_CHUNK]
+        marks = ",".join("?" * len(chunk))
+        for row in plane_db.conn.execute(
+            "SELECT id, name FROM %s WHERE id IN (%s)" % (table, marks), chunk
+        ):
+            names[row["id"]] = row["name"]
+    return names
+
+
+class _AiDestinationMatcher:
+    """Answers ``_ref_name_match`` for the rules of one evaluation.
+
+    The destinations of all candidate rules are read together once per
+    evaluation instead of one query per rule. Nothing outlives the evaluation,
+    so every tools/call still reads the current database. The answer is the one
+    ``_ref_name_match`` gives for the same data.
+    """
+
+    def __init__(self, plane_db, rows, destination: str):
+        self._plane_db = plane_db
+        self._wanted = destination.lower()
+        self._objects = _ai_ref_names_by_id(
+            plane_db, "objects",
+            sorted({r["destination_ref_id"] for r in rows if r["destination_ref_kind"] == "object"}),
+        )
+        self._groups = _ai_ref_names_by_id(
+            plane_db, "object_groups",
+            sorted({
+                r["destination_ref_id"] for r in rows
+                if r["destination_ref_kind"] not in ("server", "object")
+            }),
+        )
+        self._group_members: dict = {}
+
+    def matches(self, ref_kind: str, ref_id: str) -> bool:
+        if ref_kind == "object":
+            name = self._objects.get(ref_id, _AI_REF_MISSING)
+            return name is not _AI_REF_MISSING and name.lower() == self._wanted
+        name = self._groups.get(ref_id, _AI_REF_MISSING)
+        if name is not _AI_REF_MISSING and name.lower() == self._wanted:
+            return True
+        hit = self._group_members.get(ref_id)
+        if hit is None:
+            members = self._plane_db._expand_group_members(ref_id, set())
+            hit = any(m["name"].lower() == self._wanted for m in members)
+            self._group_members[ref_id] = hit
+        return hit
+
+
+def _ai_rule_permissions(plane_db, row) -> set:
+    if row["permission_ref_kind"] == "permission_object":
+        return {
+            r["permission"]
+            for r in plane_db.conn.execute(
+                "SELECT permission FROM permission_object_members WHERE permission_object_id = ?",
+                (row["permission_ref_id"],),
+            )
+        }
+    perms: set = set()
+    for mid in plane_db.conn.execute(
+        "SELECT permission_object_id FROM permission_group_members WHERE group_id = ?",
+        (row["permission_ref_id"],),
+    ):
+        for r in plane_db.conn.execute(
+            "SELECT permission FROM permission_object_members WHERE permission_object_id = ?",
+            (mid["permission_object_id"],),
+        ):
+            perms.add(r["permission"])
+    return perms
+
+
 def evaluate_ai_access_v24(
     plane_db,
     *,
@@ -5006,38 +5088,31 @@ def evaluate_ai_access_v24(
         }
     wanted_perms = expand_permissions(plane_db, permission) if get_permission_object(plane_db, permission) or get_permission_group(plane_db, permission) else {permission}
     matched = []
-    for row in plane_db.conn.execute("SELECT * FROM ai_policy_rules WHERE enabled = 1 ORDER BY name"):
-        if row["source_identity_id"] != principal["id"]:
-            continue
+    # Every call evaluates the current rules. Only reads made for this one
+    # evaluation are shared between its rules; nothing is kept for later calls.
+    mine = [
+        row
+        for row in plane_db.conn.execute("SELECT * FROM ai_policy_rules WHERE enabled = 1 ORDER BY name")
+        if row["source_identity_id"] == principal["id"]
+    ]
+    matcher = None if destination == SERVER_SELF_TARGET else _AiDestinationMatcher(plane_db, mine, destination)
+    perms_by_ref: dict = {}
+    for row in mine:
         if destination == SERVER_SELF_TARGET:
             # Imported/legacy Network Objects sharing this reserved name must
             # never confer privileges on the local DRLink Server.
             if row["destination_ref_kind"] != "server" or row["destination_ref_id"] != SERVER_SELF_REF_ID:
                 continue
         else:
-            if row["destination_ref_kind"] == "server" or not _ref_name_match(
-                plane_db, row["destination_ref_kind"], row["destination_ref_id"], destination
+            if row["destination_ref_kind"] == "server" or not matcher.matches(
+                row["destination_ref_kind"], row["destination_ref_id"]
             ):
                 continue
-        if row["permission_ref_kind"] == "permission_object":
-            perms = {
-                r["permission"]
-                for r in plane_db.conn.execute(
-                    "SELECT permission FROM permission_object_members WHERE permission_object_id = ?",
-                    (row["permission_ref_id"],),
-                )
-            }
-        else:
-            perms = set()
-            for mid in plane_db.conn.execute(
-                "SELECT permission_object_id FROM permission_group_members WHERE group_id = ?",
-                (row["permission_ref_id"],),
-            ):
-                for r in plane_db.conn.execute(
-                    "SELECT permission FROM permission_object_members WHERE permission_object_id = ?",
-                    (mid["permission_object_id"],),
-                ):
-                    perms.add(r["permission"])
+        perm_key = (row["permission_ref_kind"], row["permission_ref_id"])
+        perms = perms_by_ref.get(perm_key)
+        if perms is None:
+            perms = _ai_rule_permissions(plane_db, row)
+            perms_by_ref[perm_key] = perms
         if wanted_perms & perms or permission.lower() in {p.lower() for p in perms}:
             matched.append(row["name"])
     # AI Access is deny-by-default; authentication is necessary but never sufficient.

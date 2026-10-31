@@ -13,10 +13,12 @@ is longer than the busy poll and shorter than the idle poll, so the Agent is
 always inside its idle wait. A connected Agent should pick the job up in well
 under a second regardless of that wait.
 
-Known RED on main. Not registered in run-fast-pr.sh/run-all.sh on purpose; it is
-registered by the change that makes claim wake on enqueue (see
-docs/MCP_BRIDGE_DISPATCH_DESIGN.md). Disposable temp root, real ControlPlane,
-real HTTP server and real AgentLoop worker; no service or credential is touched.
+Registered in run-fast-pr.sh/run-all.sh with the change that makes the claim
+wait for work (docs/MCP_BRIDGE_DISPATCH_DESIGN.md, step 2). The Agents run with
+the held claim the production Agent uses (`DEFAULT_CLAIM_WAIT_MS` is switched on
+for the test only; the library default stays a plain poll). Disposable temp root,
+real ControlPlane, real HTTP server and real AgentLoop worker; no service or
+credential is touched.
 """
 from __future__ import annotations
 
@@ -26,6 +28,7 @@ import sys
 import time
 import unittest
 from pathlib import Path
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "lib"))
@@ -47,11 +50,30 @@ _E2E = _load_e2e_harness()
 
 class MCPAgentDispatchLatencyTests(unittest.TestCase):
     # Borrow the harness plumbing without inheriting (and re-running) its tests.
-    setUp = _E2E.MCPBridgeE2ETests.setUp
-    tearDown = _E2E.MCPBridgeE2ETests.tearDown
+    _harness_setup = _E2E.MCPBridgeE2ETests.setUp
+    _harness_teardown = _E2E.MCPBridgeE2ETests.tearDown
     _token = _E2E.MCPBridgeE2ETests._token
     call = _E2E.MCPBridgeE2ETests.call
     text_of = _E2E.MCPBridgeE2ETests.text_of
+
+    # A held claim cannot be interrupted, so the test uses a short hold; the
+    # production Agent holds for AI_AGENT_CLAIM_WAIT_MS.
+    HELD_WAIT_MS = 3000
+
+    def setUp(self):
+        patcher = mock.patch.object(drlink_ai_agent, "DEFAULT_CLAIM_WAIT_MS", self.HELD_WAIT_MS)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        self._harness_setup()
+
+    def tearDown(self):
+        # Workers sit inside a held claim; let them finish it before the harness
+        # joins them with its own short timeout.
+        for stop in getattr(self, "_agent_stops", []):
+            stop.set()
+        for thread in getattr(self, "_agent_threads", []):
+            thread.join(timeout=self.HELD_WAIT_MS / 1000.0 + 5.0)
+        self._harness_teardown()
 
     CALLS = 6
     WARMUP_CALLS = 2
