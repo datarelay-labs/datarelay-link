@@ -3796,7 +3796,12 @@ def check_client(report, paths, facts, skip_network):
         cls = net.get('error_class') or 'unreachable'
         if cls in ('UNKNOWN_CA', 'HOSTNAME_MISMATCH', 'EXPIRED_CERT'):
             rec = {
-                'UNKNOWN_CA': 'the local allocator-ca.crt does not match the server; re-enroll or copy the server CA fingerprint',
+                'UNKNOWN_CA': (
+                    're-enroll this Agent with a fresh Server Enrollment Code and its '
+                    'FRP_ALLOCATOR_CA_SHA256 fingerprint; the installer fetches and '
+                    'verifies the CA certificate before trusting it. Do not copy a '
+                    'fingerprint into allocator-ca.crt or disable TLS verification'
+                ),
                 'HOSTNAME_MISMATCH': 'allocator certificate hostname does not match the configured URL; re-run the server installer to reissue the server cert under the existing CA',
                 'EXPIRED_CERT': 'allocator certificate is expired; re-run the server installer to reissue under the existing CA',
             }.get(cls, '')

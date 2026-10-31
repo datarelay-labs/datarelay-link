@@ -498,6 +498,36 @@ pass "DISABLED_SERVICE_LEGITIMATE"
 pass "DOCTOR_JSON"
 pass "LINUX_DOCTOR_DISTRO_AND_SYSTEMD_LABELS"
 
+# A mismatched Agent CA must explain the supported, fingerprint-pinned repair.
+CA_MISMATCH="$WORKDIR/ca-mismatch"
+cp -a "$CL" "$CA_MISMATCH"
+cat >"$WORKDIR/ca-mismatch-facts.json" <<'JSON'
+{"network":{"allocator_healthz":{"ok":false,"error_class":"UNKNOWN_CA","detail":"unable to get local issuer certificate"}}}
+JSON
+rc=0
+python3 "$ROOT/lib/frp_doctor.py" --root "$CA_MISMATCH" --format json \
+  --facts "$WORKDIR/ca-mismatch-facts.json" >"$WORKDIR/ca-mismatch.json" 2>"$WORKDIR/ca-mismatch.err" || rc=$?
+[[ "$rc" -eq 1 ]] || fail "CA mismatch should fail closed, got exit $rc"
+python3 - "$WORKDIR/ca-mismatch.json" <<'PY' || fail "CA mismatch repair guidance"
+import json, sys
+from pathlib import Path
+data = json.loads(Path(sys.argv[1]).read_text(encoding='utf-8'))
+check = next(c for c in data.get('checks', []) if c.get('id') == 'allocator_health')
+assert check.get('status') == 'FAIL', check
+text = check.get('recommendation', '')
+assert 'Enrollment Code' in text and 'FRP_ALLOCATOR_CA_SHA256' in text, text
+assert 'fingerprint' in text.lower(), text
+assert 'copy the server CA fingerprint' not in text, text
+assert 'disable TLS' in text, text
+PY
+pass "UNKNOWN_CA_FINGERPRINT_PINNED_RECOVERY_GUIDANCE"
+rc=0
+python3 "$ROOT/lib/frp_doctor.py" --root "$CA_MISMATCH" \
+  --facts "$WORKDIR/ca-mismatch-facts.json" >"$WORKDIR/ca-mismatch.human" 2>"$WORKDIR/ca-mismatch-human.err" || rc=$?
+[[ "$rc" -eq 1 ]] || fail "human CA mismatch should fail closed, got exit $rc"
+grep -q 'FRP_ALLOCATOR_CA_SHA256' "$WORKDIR/ca-mismatch.human" || fail "human CA guidance missing fingerprint pin"
+grep -q 'Do not copy a fingerprint into allocator-ca.crt' "$WORKDIR/ca-mismatch.human" || fail "human CA guidance still ambiguous"
+
 # ---------------------------------------------------------------------------
 # WARN only: missing access-info
 # ---------------------------------------------------------------------------
