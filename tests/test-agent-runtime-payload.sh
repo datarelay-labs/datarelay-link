@@ -84,4 +84,22 @@ PY
 pass AGENT_UPGRADE_MODULE_COMPLETENESS
 pass AGENT_STALE_MODULE_REPLACEMENT
 
+# AUD-03: operator-facing output of a successful lineage write must not leak internal PASS markers.
+lineage_err="$WORKDIR/lineage.err"
+lineage_out="$(frp_client_write_runtime_lineage "$ROOT/lib" 2>"$lineage_err")" \
+  || fail "AGENT_LINEAGE_WRITE_SUCCESS_EXIT"
+if [[ "$lineage_out" == *AGENT_RUNTIME_LINEAGE_MATCH* ]]; then
+  fail "AGENT_LINEAGE_NO_INTERNAL_MARKER_ON_STDOUT"
+fi
+[[ ! -s "$lineage_err" ]] || fail "AGENT_LINEAGE_SUCCESS_NO_STDERR"
+pass AGENT_LINEAGE_NO_INTERNAL_MARKER_ON_STDOUT
+
+# A real mismatch must still fail loudly on stderr with a non-zero exit.
+printf 'STALE_MODULE_FROM_OLD_HEAD\n' > "$FRP_CLIENT_TEST_ROOT/usr/local/lib/drlink/drlink_control_cli.py"
+if frp_client_write_runtime_lineage "$ROOT/lib" >/dev/null 2>"$lineage_err"; then
+  fail "AGENT_LINEAGE_MISMATCH_MUST_FAIL"
+fi
+grep -q "Agent runtime lineage mismatch" "$lineage_err" || fail "AGENT_LINEAGE_MISMATCH_MESSAGE"
+pass AGENT_LINEAGE_MISMATCH_STILL_FAILS
+
 echo "AGENT_RUNTIME_PAYLOAD=PASS"
