@@ -432,6 +432,30 @@ class _DispatchedJobError(Exception):
         self.correlation_id = correlation_id
 
 
+# AUD-21 D5: how many endpoint dispatches one Bridge worker process lets run at once.
+DEFAULT_DISPATCH_BUDGET = 64
+BUSY_RETRY_AFTER_MS = 1000
+_BUSY_LOG_EVERY = 100
+
+
+def _dispatch_budget_from_env() -> int:
+    raw = os.environ.get("DRLINK_MCP_DISPATCH_BUDGET", "").strip()
+    if not raw:
+        return DEFAULT_DISPATCH_BUDGET
+    try:
+        value = int(raw)
+    except ValueError:
+        value = 0
+    if value < 1:
+        LOG.warning("DRLINK_MCP_DISPATCH_BUDGET must be an integer >= 1; using %d", DEFAULT_DISPATCH_BUDGET)
+        return DEFAULT_DISPATCH_BUDGET
+    return value
+
+
+class _BusyError(Exception):
+    """The worker is at its dispatch budget: nothing was audited or enqueued, so a retry is safe."""
+
+
 def _log_internal_error(exc: BaseException, *, tool: str, correlation_id: Optional[str] = None,
                         job_id: Optional[str] = None, what: str = "internal error") -> str:
     """Record why a tools/call became `internal error`; return a correlation id.
@@ -642,6 +666,39 @@ class MCPBridge:
         self.worker_index = 0
         self.worker_count = 1
         self._shared_rate: Optional[SharedRateLimiter] = None
+        # AUD-21 D5: per-process call budget for endpoint (Agent queue) dispatches.
+        self.dispatch_budget = _dispatch_budget_from_env()
+        self.inflight = 0
+        self.busy_refused = 0
+        self._budget_lock = threading.Lock()
+
+    @contextlib.contextmanager
+    def _dispatch_slot(self, tool: str):
+        """Hold one dispatch slot for the whole call, or refuse with `_BusyError`.
+
+        Counted: only calls that reach the Agent job queue. A refusal happens before the
+        intent row and the enqueue, so it leaves no audit row and no job; it is only
+        counted and logged (first refusal, then every 100th; never with arguments).
+        """
+        with self._budget_lock:
+            if self.inflight >= self.dispatch_budget:
+                self.busy_refused += 1
+                refused = self.busy_refused
+                inflight = self.inflight
+                refuse = True
+            else:
+                self.inflight += 1
+                refuse = False
+        if refuse:
+            if refused == 1 or refused % _BUSY_LOG_EVERY == 0:
+                LOG.warning("mcp dispatch busy: refused=%d budget=%d inflight=%d tool=%s",
+                            refused, self.dispatch_budget, inflight, tool)
+            raise _BusyError()
+        try:
+            yield
+        finally:
+            with self._budget_lock:
+                self.inflight -= 1
 
     def warm_up(self) -> None:
         """Build lazily created state once, so the first real calls do not pay for it."""
@@ -1137,6 +1194,12 @@ class MCPBridge:
                     req_id, -32603, "internal error",
                     {"correlation_id": correlation_id, "job_id": exc.job_id, "retryable": False},
                 )
+            except _BusyError:
+                # Refused before any audit row or job exists, so the caller may retry (D5).
+                return 200, _jsonrpc_error(
+                    req_id, -32001, "busy",
+                    {"retryable": True, "retry_after_ms": BUSY_RETRY_AFTER_MS},
+                )
             except ControlPlaneError as exc:
                 return 200, _jsonrpc_result(req_id, _text_result("DENY: %s" % exc, is_error=True))
             except Exception as exc:
@@ -1436,47 +1499,50 @@ class MCPBridge:
         if decision.get("winner") and not patterns:
             patterns = list(decision["winner"].get("paths") or [])
         timeout = decision.get("exec_timeout") or 30
-        # Intent first (AUD-21 D4): if this row cannot be written the call fails
-        # closed here, before anything is enqueued.
-        correlation_id = _new_correlation_id()
-        self.plane.record_ai_activity(
-            principal=principal["name"],
-            endpoint=endpoint,
-            capability=name,
-            result="DISPATCHING",
-            rule=self._rule_name(decision),
-            operand=operand,
-            correlation_id=correlation_id,
-        )
-        job_id, payload = self._dispatch_endpoint(
-            principal=principal,
-            client_id=client["id"],
-            endpoint_object_id=ep["id"],
-            capability=name,
-            arguments=arguments,
-            patterns=patterns,
-            timeout=int(timeout),
-            correlation_id=correlation_id,
-        )
-        duration_ms = int((time.monotonic() - start) * 1000)
-        op_result = payload.get("result") or "ALLOW"
-        audit_failed = False
-        try:
+        # Budget (AUD-21 D5): taken after authorization and availability, before the
+        # intent row; held until the completion audit has been attempted.
+        with self._dispatch_slot(name):
+            # Intent first (AUD-21 D4): if this row cannot be written the call fails
+            # closed here, before anything is enqueued.
+            correlation_id = _new_correlation_id()
             self.plane.record_ai_activity(
                 principal=principal["name"],
                 endpoint=endpoint,
                 capability=name,
-                result=op_result,
+                result="DISPATCHING",
                 rule=self._rule_name(decision),
                 operand=operand,
-                duration_ms=duration_ms,
                 correlation_id=correlation_id,
             )
-        except Exception as exc:
-            # The command has run: a failed completion write never replaces its result.
-            _log_internal_error(exc, tool=name, correlation_id=correlation_id, job_id=job_id,
-                                what="completion audit write failed")
-            audit_failed = True
+            job_id, payload = self._dispatch_endpoint(
+                principal=principal,
+                client_id=client["id"],
+                endpoint_object_id=ep["id"],
+                capability=name,
+                arguments=arguments,
+                patterns=patterns,
+                timeout=int(timeout),
+                correlation_id=correlation_id,
+            )
+            duration_ms = int((time.monotonic() - start) * 1000)
+            op_result = payload.get("result") or "ALLOW"
+            audit_failed = False
+            try:
+                self.plane.record_ai_activity(
+                    principal=principal["name"],
+                    endpoint=endpoint,
+                    capability=name,
+                    result=op_result,
+                    rule=self._rule_name(decision),
+                    operand=operand,
+                    duration_ms=duration_ms,
+                    correlation_id=correlation_id,
+                )
+            except Exception as exc:
+                # The command has run: a failed completion write never replaces its result.
+                _log_internal_error(exc, tool=name, correlation_id=correlation_id, job_id=job_id,
+                                    what="completion audit write failed")
+                audit_failed = True
         safe = dict(payload)
         if audit_failed:
             safe.update({"audit_status": "failed", "job_id": job_id, "retryable": False})
