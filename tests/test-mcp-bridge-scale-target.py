@@ -26,9 +26,8 @@ Bridge process is measured on its own. `SCALE_SERVER_PROCS=M` (needs SCALE_AGENT
 additionally serves the Agent-facing `/agent/v1/*` endpoints from M child processes on the
 same database, like production where the Agents talk to the allocator and not to the Bridge;
 the caller-facing Bridge stays in the test process. `SCALE_BRIDGE_PROCS=K` instead serves
-Bridge requests (callers and Agents) from K worker processes sharing one port (SO_REUSEPORT)
-and one database; this is the prototype measurement for a multi-process Bridge, not product
-code. Every run prints one `SCALE_METRICS` line
+Bridge requests (callers and Agents) with the product code `drlink_mcp_bridge.serve(workers=K)`:
+K worker processes sharing one port (SO_REUSEPORT) and one database. Every run prints one `SCALE_METRICS` line
 with the latency percentiles and the CPU the test process (Bridge + the callers)
 used while the calls ran. `SCALE_CALLS=N` changes the number of simultaneous calls (default 30).
 """
@@ -121,8 +120,86 @@ def _load_e2e_harness():
 _E2E = _load_e2e_harness()
 
 TARGET_AGENTS = 100
+def descendant_cpu_seconds(root_pid: int) -> float:
+    """User+system CPU seconds used so far by the direct children of ``root_pid`` (Bridge workers)."""
+    tick = os.sysconf("SC_CLK_TCK")
+    total = 0.0
+    for entry in os.listdir("/proc"):
+        if not entry.isdigit():
+            continue
+        try:
+            fields = Path("/proc/%s/stat" % entry).read_text().rsplit(")", 1)[1].split()
+        except (OSError, IndexError):
+            continue
+        if int(fields[1]) == root_pid:
+            total += (int(fields[11]) + int(fields[12])) / tick
+    return total
+
+
+def cpu_set(spec: str) -> set:
+    """"0-3,6" -> {0, 1, 2, 3, 6}"""
+    cpus = set()
+    for part in spec.split(","):
+        part = part.strip()
+        if not part:
+            continue
+        low, _, high = part.partition("-")
+        cpus.update(range(int(low), int(high or low) + 1))
+    return cpus
+
+
+def descendant_cpu_split(root_pid: int):
+    """(user s, system s, voluntary ctx switches, involuntary ctx switches) of the children of ``root_pid``."""
+    tick = os.sysconf("SC_CLK_TCK")
+    user = system = 0.0
+    voluntary = involuntary = 0
+    for entry in os.listdir("/proc"):
+        if not entry.isdigit():
+            continue
+        try:
+            fields = Path("/proc/%s/stat" % entry).read_text().rsplit(")", 1)[1].split()
+            if int(fields[1]) != root_pid:
+                continue
+            user += int(fields[11]) / tick
+            system += int(fields[12]) / tick
+            for line in Path("/proc/%s/status" % entry).read_text().splitlines():
+                if line.startswith("voluntary_ctxt_switches:"):
+                    voluntary += int(line.split()[1])
+                elif line.startswith("nonvoluntary_ctxt_switches:"):
+                    involuntary += int(line.split()[1])
+        except (OSError, IndexError, ValueError):
+            continue
+    return user, system, voluntary, involuntary
+
+
+def descendant_memory_mb(root_pid: int):
+    """(proportional set size total, largest peak RSS) in MB of the direct children of ``root_pid``."""
+    pss_kb = 0
+    peak_kb = 0
+    for entry in os.listdir("/proc"):
+        if not entry.isdigit():
+            continue
+        try:
+            fields = Path("/proc/%s/stat" % entry).read_text().rsplit(")", 1)[1].split()
+            if int(fields[1]) != root_pid:
+                continue
+            for line in Path("/proc/%s/smaps_rollup" % entry).read_text().splitlines():
+                if line.startswith("Pss:"):
+                    pss_kb += int(line.split()[1])
+            for line in Path("/proc/%s/status" % entry).read_text().splitlines():
+                if line.startswith("VmHWM:"):
+                    peak_kb = max(peak_kb, int(line.split()[1]))
+        except (OSError, IndexError, ValueError):
+            continue
+    return pss_kb / 1024.0, peak_kb / 1024.0
+
+
+# SCALE_BRIDGE_CPUS="0-3" pins the Bridge workers to those CPUs and SCALE_LOAD_CPUS="4-9" pins the
+# callers and the Agent fleet to the others, so a 4-core Server can be measured on a larger machine.
+BRIDGE_CPUS = os.environ.get("SCALE_BRIDGE_CPUS", "")
+LOAD_CPUS = os.environ.get("SCALE_LOAD_CPUS", "")
 TARGET_CONCURRENT_CALLS = int(os.environ.get("SCALE_CALLS", "30") or 30)  # SCALE_CALLS=N: measure fewer simultaneous calls
-ROUNDS = 3
+ROUNDS = int(os.environ.get("SCALE_ROUNDS", "3") or 3)  # SCALE_ROUNDS=N: more rounds give a profiler a longer burst
 MAX_IDLE_CLAIMS_PER_SECOND = 10.0
 MAX_P95_SECONDS = 0.5
 AGENT_PROCS = int(os.environ.get("SCALE_AGENT_PROCS", "0") or 0)
@@ -155,6 +232,21 @@ class MCPBridgeScaleTargetTests(unittest.TestCase):
             except Exception:
                 proc.kill()
                 proc.wait(timeout=10)
+        supervisor = getattr(self, "_bridge_supervisor", None)
+        if supervisor is not None:
+            for proc in getattr(self, "_agent_procs", []):
+                try:
+                    proc.wait(timeout=self.HELD_WAIT_MS / 1000.0 + 15.0)
+                except Exception:
+                    proc.kill()
+            try:
+                os.killpg(supervisor.pid, 15)
+                supervisor.wait(timeout=20)
+            except Exception:
+                try:
+                    os.killpg(supervisor.pid, 9)
+                except OSError:
+                    pass
         server_procs = getattr(self, "_server_procs", [])
         for proc in server_procs:  # the fleet is gone, so the Agent-facing servers can stop
             try:
@@ -176,6 +268,8 @@ class MCPBridgeScaleTargetTests(unittest.TestCase):
         self._harness_teardown()
 
     def setUp(self):
+        if LOAD_CPUS:
+            os.sched_setaffinity(0, cpu_set(LOAD_CPUS))
         patcher = mock.patch.object(drlink_ai_agent, "DEFAULT_CLAIM_WAIT_MS", self.HELD_WAIT_MS)
         patcher.start()
         self.addCleanup(patcher.stop)
@@ -214,26 +308,40 @@ class MCPBridgeScaleTargetTests(unittest.TestCase):
         self.assertEqual(len(tokens), TARGET_AGENTS)
         self._server_procs = []
         if BRIDGE_PROCS:
+            # The product code: serve(workers=K) forks K Bridge workers (and the full-control
+            # process) on one port and the same database as this test.
             import socket
+            import urllib.error
 
             probe = socket.socket()
-            probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
             probe.bind(("127.0.0.1", 0))
             shared_port = probe.getsockname()[1]
             probe.close()
-            for _ in range(BRIDGE_PROCS):
-                worker = subprocess.Popen(
-                    [sys.executable, os.path.abspath(__file__), "--agent-server-child"],
-                    stdin=subprocess.PIPE,
-                    stdout=subprocess.PIPE,
-                    text=True,
-                    env=dict(os.environ, PYTHONDONTWRITEBYTECODE="1"),
-                )
-                self._server_procs.append(worker)
-                worker.stdin.write(json.dumps({"root": self.tmp, "port": shared_port}) + "\n")
-                worker.stdin.flush()
-                line = worker.stdout.readline().strip()
-                self.assertEqual(line, "PORT %d" % shared_port)
+            code = (
+                "import sys; sys.path.insert(0, %r); import drlink_mcp_bridge as b; "
+                "b.serve('127.0.0.1', %d, root=%r, workers=%d)"
+                % (str(ROOT / "lib"), shared_port, self.tmp, BRIDGE_PROCS)
+            )
+            supervisor = subprocess.Popen(
+                (["taskset", "-c", BRIDGE_CPUS] if BRIDGE_CPUS else []) + [sys.executable, "-c", code],
+                env=dict(os.environ, PYTHONDONTWRITEBYTECODE="1"),
+                start_new_session=True,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            self._bridge_supervisor = supervisor
+            deadline = time.monotonic() + 60
+            while True:
+                try:
+                    with urllib.request.urlopen("http://127.0.0.1:%d/healthz" % shared_port, timeout=2) as resp:
+                        if resp.status == 200:
+                            break
+                except (OSError, urllib.error.URLError):
+                    pass
+                self.assertIsNone(supervisor.poll(), "the Bridge supervisor exited")
+                self.assertLess(time.monotonic(), deadline, "the Bridge workers did not start")
+                time.sleep(0.2)
+            time.sleep(2.0)  # let every worker finish its warm-up and bind
             self.base = "http://127.0.0.1:%d" % shared_port  # callers and Agents use the workers
             self.url = self.base + "/mcp"
         bases = [self.base]
@@ -360,6 +468,9 @@ class MCPBridgeScaleTargetTests(unittest.TestCase):
         mark = os.environ.get("SCALE_BURST_MARK")
         if mark:  # lets a profiler attach exactly for the burst
             Path(mark).write_text("start\n")
+        supervisor_proc = getattr(self, "_bridge_supervisor", None)
+        worker_cpu_started = descendant_cpu_seconds(supervisor_proc.pid) if supervisor_proc else 0.0
+        split_started = descendant_cpu_split(supervisor_proc.pid) if supervisor_proc else (0.0, 0.0, 0, 0)
         cpu_started = time.process_time()
         ru_started = resource.getrusage(resource.RUSAGE_SELF)
         wall_started = time.perf_counter()
@@ -368,6 +479,7 @@ class MCPBridgeScaleTargetTests(unittest.TestCase):
         for thread in threads:
             thread.join(timeout=180)
         cpu_used = time.process_time() - cpu_started
+        worker_cpu_used = (descendant_cpu_seconds(supervisor_proc.pid) - worker_cpu_started) if supervisor_proc else 0.0
         if mark:
             Path(mark).write_text("end\n")
         ru_ended = resource.getrusage(resource.RUSAGE_SELF)
@@ -386,13 +498,22 @@ class MCPBridgeScaleTargetTests(unittest.TestCase):
             values = sorted(values)
             return values[min(len(values) - 1, int(round(q * (len(values) - 1))))] * 1000
 
+        pss_mb, peak_mb = descendant_memory_mb(supervisor_proc.pid) if supervisor_proc else (0.0, 0.0)
+        split_ended = descendant_cpu_split(supervisor_proc.pid) if supervisor_proc else (0.0, 0.0, 0, 0)
+        per_call = max(1, len(durations))
+        split_text = "bridge_user_ms=%.1f bridge_sys_ms=%.1f bridge_ctx_per_call=%.0f" % (
+            (split_ended[0] - split_started[0]) / per_call * 1000,
+            (split_ended[1] - split_started[1]) / per_call * 1000,
+            ((split_ended[2] - split_started[2]) + (split_ended[3] - split_started[3])) / per_call,
+        )
         rounds_text = " ".join(
             "r%d=%.0f/%.0f" % (rnd + 1, _pct(vals, 0.5), _pct(vals, 0.95)) for rnd, vals in sorted(by_round.items())
         )
         print(
             "SCALE_METRICS rounds(median/p95 ms)[%s] agent_procs=%d server_procs=%d bridge_procs=%d calls=%d median_ms=%.0f p95_ms=%.0f max_ms=%.0f "
             "test_process_cpu_s=%.2f (user %.2f sys %.2f) wall_s=%.2f cpu_per_call_ms=%.0f "
-            "ctx_voluntary=%d ctx_involuntary=%d"
+            "ctx_voluntary=%d ctx_involuntary=%d bridge_worker_cpu_per_call_ms=%.1f "
+            "bridge_pss_mb=%.0f bridge_worker_peak_rss_mb=%.0f bridge_cpus=%s %s"
             % (
                 rounds_text,
                 AGENT_PROCS,
@@ -409,6 +530,11 @@ class MCPBridgeScaleTargetTests(unittest.TestCase):
                 cpu_used / max(1, len(durations)) * 1000,
                 ru_ended.ru_nvcsw - ru_started.ru_nvcsw,
                 ru_ended.ru_nivcsw - ru_started.ru_nivcsw,
+                worker_cpu_used / max(1, len(durations)) * 1000,
+                pss_mb,
+                peak_mb,
+                BRIDGE_CPUS or "all",
+                split_text,
             ),
             file=sys.stderr,
             flush=True,

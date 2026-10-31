@@ -21,7 +21,10 @@ import json
 import logging
 import os
 import re
+import shutil
+import signal
 import sqlite3
+import tempfile
 import threading
 import time
 import traceback
@@ -68,6 +71,7 @@ SERVER_INFO_META = "io.modelcontextprotocol/serverInfo"
 WWW_AUTHENTICATE_META = "mcp/www_authenticate"
 DEFAULT_LISTEN = "127.0.0.1"
 DEFAULT_PORT = 6103
+MAX_WORKERS = 32
 HEADER_MISMATCH = -32020
 UNSUPPORTED_PROTOCOL_VERSION = -32022
 INVALID_PARAMS = -32602
@@ -532,6 +536,67 @@ def _negotiate_handshake_version(requested: Optional[str]) -> Optional[str]:
         return requested
     return None
 
+class SharedRateLimiter:
+    """Per-source request budgets shared by the Bridge worker processes (AUD-21 D7).
+
+    Each worker used to count in its own memory, which would multiply every limit by the number
+    of workers; dividing the limit by the number of workers would reject legitimate bursts when
+    the kernel spreads connections unevenly. The counters live in a private SQLite file that is
+    not durable (``synchronous=OFF``) and is removed with the supervisor, so they reset with the
+    service exactly as the in-memory counters did.
+    """
+
+    _PRUNE_EVERY = 500
+
+    def __init__(self, path: str):
+        self.path = path
+        # One connection per limiter, used by one thread at a time (the lock is held for a
+        # few microseconds); BEGIN IMMEDIATE serializes the worker processes with each other.
+        self._lock = threading.Lock()
+        self._calls = 0
+        self._connection = sqlite3.connect(
+            path, timeout=5.0, isolation_level=None, check_same_thread=False
+        )
+        self._connection.execute("PRAGMA journal_mode=WAL")
+        self._connection.execute("PRAGMA synchronous=OFF")
+        self._connection.execute(
+            "CREATE TABLE IF NOT EXISTS rate_hits("
+            "key TEXT PRIMARY KEY, window_start REAL NOT NULL, hits INTEGER NOT NULL)"
+        )
+
+    def limited(self, key: str, *, limit: int, window_s: float, now: Optional[float] = None) -> bool:
+        """Count one hit for ``key``; True when this hit is over ``limit`` in the current window."""
+        now = time.time() if now is None else now
+        with self._lock:
+            return self._count(self._connection, key, limit, window_s, now)
+
+    def _count(self, connection, key: str, limit: int, window_s: float, now: float) -> bool:
+        connection.execute("BEGIN IMMEDIATE")
+        try:
+            row = connection.execute(
+                "SELECT window_start, hits FROM rate_hits WHERE key = ?", (key,)
+            ).fetchone()
+            if row is None or now - row[0] >= window_s:
+                connection.execute(
+                    "INSERT INTO rate_hits(key, window_start, hits) VALUES (?, ?, 1) "
+                    "ON CONFLICT(key) DO UPDATE SET window_start = excluded.window_start, hits = 1",
+                    (key, now),
+                )
+                over = False
+            else:
+                hits = int(row[1]) + 1
+                connection.execute("UPDATE rate_hits SET hits = ? WHERE key = ?", (hits, key))
+                over = hits > limit
+            self._calls += 1
+            if self._calls % self._PRUNE_EVERY == 0:
+                connection.execute("DELETE FROM rate_hits WHERE ? - window_start > 3600", (now,))
+            connection.execute("COMMIT")
+        except Exception:
+            connection.execute("ROLLBACK")
+            raise
+        return over
+
+
 class MCPBridge:
     def __init__(self, root: Optional[str] = None, plane: Optional[ControlPlane] = None, *, auto_agents: bool = False):
         self.root = root or resolve_root()
@@ -546,6 +611,35 @@ class MCPBridge:
         # Production default is False: Managed Host workers claim jobs themselves.
         # auto_agents is a hermetic test seam only (see refresh_local_agents).
         self.auto_agents = auto_agents
+        # Set by serve() in worker processes (AUD-21 D7); a single process keeps these defaults.
+        self.worker_index = 0
+        self.worker_count = 1
+        self._shared_rate: Optional[SharedRateLimiter] = None
+
+    def warm_up(self) -> None:
+        """Build lazily created state once, so the first real calls do not pay for it."""
+        try:
+            import drlink_mcp_full_control  # noqa: F401
+
+            with self.plane.request_scope():
+                v24.evaluate_ai_access_v24(self.plane, identity="", destination="", permission="")
+                self.plane.status()
+                self.canonical_resource()
+        except Exception:  # warm-up never decides anything and must not stop a worker
+            logging.getLogger(__name__).debug("warm-up skipped", exc_info=True)
+
+    def _full_control_runtime(self, full):
+        """The one runtime: in this process, or the shared one when workers are running."""
+        path = os.environ.get("DRLINK_MCP_FULLCONTROL_SOCKET", "")
+        with self._lock:
+            if path:
+                remote = getattr(self, "_remote_full", None)
+                if remote is None or remote.path != path:
+                    remote = self._remote_full = full.RemoteFullControlRuntime(path)
+                return remote
+            if not hasattr(self, "_native_full"):
+                self._native_full = full.FullControlRuntime()
+            return self._native_full
 
     def _native_public_url(self) -> Optional[str]:
         """Opt-in public identity for the separately deployed Native Server MCP.
@@ -1057,10 +1151,7 @@ class MCPBridge:
                 raise full.FullControlDenied(argument_error)
             account = full.configured_account()
             owner = str(principal["id"] or "")
-            with self._lock:
-                if not hasattr(self, "_native_full"):
-                    self._native_full = full.FullControlRuntime()
-                runtime = self._native_full
+            runtime = self._full_control_runtime(full)
             operation = aliases.get(name, name)
             if name in job_tools:
                 operand = runtime.context(owner, str(arguments.get("job_id") or ""))
@@ -1464,6 +1555,12 @@ def make_handler(bridge: MCPBridge):
         def log_message(self, fmt, *args):
             return
 
+        def end_headers(self):
+            # Name the worker so operators and tests can tell which process answered.
+            if getattr(bridge, "worker_count", 1) > 1:
+                self.send_header("X-DRLink-Worker", str(bridge.worker_index))
+            super().end_headers()
+
         def _send(self, code, payload, extra_headers=None, raw=None):
             if raw is None:
                 raw = b"" if payload == {} and code == 202 else json.dumps(payload).encode("utf-8")
@@ -1503,6 +1600,13 @@ def make_handler(bridge: MCPBridge):
             if source is None:
                 source = public_rate_source(self._client_addr(), self.headers)
             key = "%s:%s" % (bucket, source)
+            shared = getattr(bridge, "_shared_rate", None)
+            if shared is not None:
+                try:
+                    return shared.limited(key, limit=limit, window_s=window_s)
+                except Exception:
+                    logging.getLogger(__name__).warning(
+                        "shared rate limiter unavailable; this worker counts on its own")
             now = time.time()
             with bridge._lock:
                 hits = getattr(bridge, "_rate_hits", None)
@@ -1908,7 +2012,128 @@ def make_handler(bridge: MCPBridge):
     return Handler
 
 
-def serve(host=DEFAULT_LISTEN, port=DEFAULT_PORT, root=None):
+class _ReusePortServer(ThreadingHTTPServer):
+    """Lets several worker processes listen on one port; the kernel spreads new connections."""
+
+    allow_reuse_port = True
+
+
+def _clamp_workers(value) -> int:
+    try:
+        count = int(value)
+    except (TypeError, ValueError):
+        count = 1
+    return max(1, min(count, MAX_WORKERS))
+
+
+def _run_worker(host, port, root, index, count, rundir) -> None:
+    signal.signal(signal.SIGTERM, signal.SIG_DFL)
+    signal.signal(signal.SIGINT, signal.SIG_DFL)
+    bridge = MCPBridge(root=root, auto_agents=False)
+    bridge.listen_host = host
+    bridge.listen_port = int(port)
+    bridge.worker_index = index
+    bridge.worker_count = count
+    bridge._shared_rate = SharedRateLimiter(os.path.join(rundir, "rate.sqlite"))
+    bridge.warm_up()
+    _ReusePortServer((host, int(port)), make_handler(bridge)).serve_forever()
+
+
+def _run_full_control(path) -> None:
+    signal.signal(signal.SIGTERM, signal.SIG_DFL)
+    signal.signal(signal.SIGINT, signal.SIG_DFL)
+    import drlink_mcp_full_control as full
+
+    full.serve_full_control(path)
+    threading.Event().wait()
+
+
+def _supervise(host, port, root, count) -> None:
+    """Run ``count`` Bridge workers and the one full-control process; restart what dies.
+
+    Nothing below opens a database, a socket or a thread in this process before it forks,
+    so every child starts clean. SIGTERM/SIGINT stop the children and then this process.
+    """
+    rundir = tempfile.mkdtemp(prefix="drlink-mcp-")
+    os.chmod(rundir, 0o700)
+    full_control_path = os.path.join(rundir, "fullcontrol.sock")
+    os.environ["DRLINK_MCP_FULLCONTROL_SOCKET"] = full_control_path
+    resolved_root = root or resolve_root()
+    slots: dict = {}
+    started: dict = {}
+    state = {"stopping": False}
+
+    def spawn(slot: str) -> None:
+        pid = os.fork()
+        if pid == 0:
+            code = 0
+            try:
+                if slot == "full-control":
+                    _run_full_control(full_control_path)
+                else:
+                    _run_worker(host, port, resolved_root, int(slot), count, rundir)
+            except BaseException:
+                traceback.print_exc()
+                code = 1
+            finally:
+                os._exit(code)
+        slots[slot] = pid
+        started[slot] = time.monotonic()
+
+    def request_stop(_signum, _frame) -> None:
+        state["stopping"] = True
+
+    signal.signal(signal.SIGTERM, request_stop)
+    signal.signal(signal.SIGINT, request_stop)
+    try:
+        spawn("full-control")
+        for index in range(count):
+            spawn(str(index))
+        while not state["stopping"]:
+            try:
+                pid, _status = os.waitpid(-1, os.WNOHANG)
+            except ChildProcessError:
+                break
+            if pid == 0:
+                time.sleep(0.2)
+                continue
+            slot = next((name for name, child in slots.items() if child == pid), None)
+            if slot is None:
+                continue
+            # At most one restart per second per slot, so a worker that cannot start does not spin.
+            time.sleep(max(0.0, 1.0 - (time.monotonic() - started[slot])))
+            if not state["stopping"]:
+                spawn(slot)
+    finally:
+        for pid in list(slots.values()):
+            try:
+                os.kill(pid, signal.SIGTERM)
+            except OSError:
+                pass
+        deadline = time.monotonic() + 5.0
+        for pid in list(slots.values()):
+            while time.monotonic() < deadline:
+                try:
+                    done, _ = os.waitpid(pid, os.WNOHANG)
+                except ChildProcessError:
+                    break
+                if done:
+                    break
+                time.sleep(0.05)
+            else:
+                try:
+                    os.kill(pid, signal.SIGKILL)
+                    os.waitpid(pid, 0)
+                except OSError:
+                    pass
+        shutil.rmtree(rundir, ignore_errors=True)
+
+
+def serve(host=DEFAULT_LISTEN, port=DEFAULT_PORT, root=None, workers=None):
+    count = _clamp_workers(os.environ.get("DRLINK_MCP_WORKERS", "1") if workers is None else workers)
+    if count > 1:
+        _supervise(host, int(port), root, count)
+        return
     # Production bridge never starts Server-local Managed Host impersonation loops.
     bridge = MCPBridge(root=root, auto_agents=False)
     bridge.listen_host = host
@@ -1923,8 +2148,14 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description="Data Relay Link MCP Bridge")
     parser.add_argument("--listen", default=os.environ.get("DRLINK_MCP_LISTEN", DEFAULT_LISTEN))
     parser.add_argument("--port", type=int, default=int(os.environ.get("DRLINK_MCP_PORT", DEFAULT_PORT)))
+    parser.add_argument(
+        "--workers",
+        type=int,
+        default=_clamp_workers(os.environ.get("DRLINK_MCP_WORKERS", "1")),
+        help="Bridge worker processes sharing the port (1 = a single process, the default)",
+    )
     args = parser.parse_args(argv)
-    serve(args.listen, args.port)
+    serve(args.listen, args.port, workers=args.workers)
 
 
 if __name__ == "__main__":

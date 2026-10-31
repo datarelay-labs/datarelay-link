@@ -471,6 +471,22 @@ class ControlPlane:
                 return
         self._close_quietly(conn)
 
+    def _borrow_probe_conn(self):
+        """A connection for a held claim's wake-up probe: pooled, or private when it cannot be.
+
+        A plane built on a caller-supplied or read-only connection has no request pool, so it
+        keeps opening a private connection (``generation`` None marks that case).
+        """
+        if self.__dict__.get("_injected_conn") or getattr(self, "_read_only", False):
+            return connect_worker(path=self.db_file), None
+        return self._borrow_worker_conn()
+
+    def _return_probe_conn(self, conn, generation) -> None:
+        if generation is None:
+            self._close_quietly(conn)
+        else:
+            self._return_worker_conn(conn, generation)
+
     def _invalidate_worker_pool(self) -> None:
         """Drop idle pooled connections (database replaced, or plane closing)."""
         with self._worker_pool_lock:
@@ -5059,6 +5075,17 @@ class ControlPlane:
         wanted = str(resource or stored)
         if wanted != stored:
             return None
+        # Claim the presented refresh token atomically before anything is issued. The SELECT
+        # above only validates; two requests (threads or Bridge worker processes) can both
+        # pass it, and only one of them may redeem the token (AUD-21 D7).
+        claimed = self.conn.execute(
+            "UPDATE ai_oauth_tokens SET revoked_at = ? "
+            "WHERE token_hash = ? AND kind = 'refresh' AND revoked_at IS NULL "
+            "RETURNING token_hash",
+            (now, digest),
+        ).fetchone()
+        if claimed is None:
+            return None
         # Rotate: revoke presented refresh (+ sibling access tokens for same client/resource).
         self.conn.execute(
             "UPDATE ai_oauth_tokens SET revoked_at = ? WHERE client_id = ? AND resource = ? "
@@ -5485,8 +5512,10 @@ class ControlPlane:
         watcher = get_watcher(self.db_file)
         deadline = time.monotonic() + wait_s
         # A connection of its own: this thread may sit here for 25 s and must not
-        # share (or pin) the request connection while it waits.
-        probe = connect_worker(path=self.db_file)
+        # share the request connection while it waits. It comes from the request pool
+        # and goes back to it: opening one per claim cost about 11 % of the Bridge CPU
+        # under 30 simultaneous calls (AUD-21 5d, perf).
+        probe, probe_generation = self._borrow_probe_conn()
         # Subscribe BEFORE the first look: a job queued after this point wakes
         # only this host's claim (not every held claim), and one queued before it
         # is seen by the look itself.
@@ -5512,10 +5541,7 @@ class ControlPlane:
                     sub.wait(min(remaining, CLAIM_HOLD_FALLBACK_POLL_SECONDS))
         finally:
             sub.close()
-            try:
-                probe.close()
-            except sqlite3.Error:
-                pass
+            self._return_probe_conn(probe, probe_generation)
 
     def _store_ai_job_result_blob(self, job_id: str, result: dict) -> None:
         """Persist the full in-memory result so MCP Bridge can return file bytes."""

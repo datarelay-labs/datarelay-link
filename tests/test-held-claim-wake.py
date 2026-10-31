@@ -120,6 +120,30 @@ class HeldClaimPlaneTests(unittest.TestCase):
         thread.join(2.0)
         self.assertEqual(jobs, [])
 
+    def test_held_claims_borrow_their_probe_connection_from_the_pool(self):
+        """AUD-21 5d: a held claim must not open a new SQLite connection for every claim.
+
+        perf on 4 Bridge workers under 30 simultaneous calls attributed 11 % of all CPU to
+        opening and closing the per-claim probe connection (``connect_worker``). The probe now
+        comes from the request pool, so repeated claims reuse one connection.
+        """
+        opened = []
+        real = CP.connect_worker
+
+        def counting(*args, **kwargs):
+            opened.append(1)
+            return real(*args, **kwargs)
+
+        CP.connect_worker = counting
+        try:
+            with self.plane.request_scope():
+                for _ in range(8):
+                    self.assertEqual(self.plane.claim_ai_jobs_held(MACHINE_A, 4, wait_ms=50), [])
+        finally:
+            CP.connect_worker = real
+        # One connection for the request scope and one probe, borrowed again by the later claims.
+        self.assertLessEqual(len(opened), 2, "opened %d connections for 8 held claims" % len(opened))
+
     def test_zero_wait_is_the_old_immediate_claim(self):
         started = time.monotonic()
         self.assertEqual(self.plane.claim_ai_jobs_held(MACHINE_A, 4, wait_ms=0), [])
