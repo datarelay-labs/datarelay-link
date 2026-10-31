@@ -8,8 +8,9 @@
 > Section 5b (2026-10-30) corrects parts of 5a and withdraws the authorization-cache candidate.
 > Section 5c: D7 (several Bridge worker processes) is implemented on a draft PR; the default stays
 > one process. Nothing is deployed.
-> Section 5e (2026-10-30): D4 and D6 are implemented on a draft PR stacked on the D7 PR; the
-> remaining part of D5 (the call budget with an explicit `busy`) is not implemented, see 5e.
+> Section 5e (2026-10-30): D4 and D6 are implemented on a draft PR stacked on the D7 PR.
+> Section 5e (2026-10-31): the remaining part of D5 (the per-worker call budget with an explicit
+> `busy`) is implemented on a further draft PR stacked on the D4/D6 PR. Nothing is deployed.
 
 ## 1. Target and where main stands
 
@@ -94,8 +95,8 @@ audit write 0.73 ms, one result poll 0.02 ms, about 2 ms in total.
   database; parked claims have their own cap (start: 128) and fall back to an immediate
   empty answer above it. The Bridge keeps a separate call budget (start: 64) with an
   explicit `busy` before dispatch.
-  **Partly implemented.** The backlog (step 1) and the parked-claim cap (step 2) are in place. The
-  call budget with `busy` is **not implemented**: its definition is incomplete (5e).
+  **Implemented.** The backlog (step 1), the parked-claim cap (step 2) and the call budget with
+  `busy` (5e, 2026-10-31) are in place.
 - **D6 Metrics.** Record `queue_ms`, `run_ms` and `total_ms` per job; keep the
   correlation id from PR #240.
   **Implemented (5e)** as additive `ai_jobs` columns, with the job's `correlation_id`.
@@ -160,7 +161,7 @@ Each step ships on its own, RED to GREEN, with no deployment while Issue #165 is
 | 1 | D1 and the listen backlog (PR #242, draft) | Errors under concurrency |
 | 2 | D2 and D3 (implemented, draft PR) | Pickup delay and idle load |
 | 3 | D4 (implemented, draft PR, 5e) | Executed-but-failed results |
-| 4 | D6 (implemented, draft PR, 5e); D5 call budget not implemented (5e) | Overload behaviour and visibility |
+| 4 | D6 and the D5 call budget (implemented, draft PRs, 5e) | Overload behaviour and visibility |
 | 5 | D7 several Bridge worker processes (implemented, draft PR, default 1 worker) | Latency of 30 simultaneous calls |
 
 Rollback: revert the step. Agents are upgraded together with the Server for steps 2 and later.
@@ -500,7 +501,7 @@ micro-optimization.
 - Not measured: the production topology (separate allocator with management-signed claims), a soak,
   the single-host worst case, and the full `tests/run-all.sh`.
 
-## 5e. D4, D5 and D6 (implemented D4 and D6; D5 call budget not implemented, 2026-10-30)
+## 5e. D4, D5 and D6 (D4 and D6 implemented 2026-10-30; D5 call budget implemented 2026-10-31)
 
 Draft PR stacked on the D7 PR (#244). Nothing is deployed and no service unit changed. Authorization,
 denial auditing and rate limits are unchanged; the only audit change is the one D4 specifies.
@@ -536,19 +537,39 @@ expired, cancelled) keep `run_ms` and `total_ms` NULL. The correlation id is the
 call can be followed from `ai_activity` to its job. Test: `tests/test-mcp-bridge-job-metrics.py`
 (3 tests, all RED before).
 
-**D5 call budget (not implemented).** The listen backlog (step 1) and the parked-claim cap (step 2)
-are implemented. The remaining sentence, "a separate call budget (start: 64) with an explicit `busy`
-before dispatch", does not define:
+**D5 call budget (implemented 2026-10-31, draft PR stacked on the D4/D6 PR).** The listen backlog
+(step 1) and the parked-claim cap (step 2) were already in place. The sentence "a separate call budget
+(start: 64) with an explicit `busy` before dispatch" left four points open. They were answered by the
+owner's instruction of 2026-10-31 ("proceed with the recommendations"); the choice below is the
+recommended one:
 
-1. the response: JSON-RPC error or tool result, error code, HTTP status, `retryable` or a retry hint;
-2. whether a `busy` refusal is audited, and whether it is decided before or after authorization;
-3. the scope after D7: per Bridge worker (64 x K in total) or one budget shared by the workers;
-4. which calls count: endpoint dispatch only, or also `server_*` full-control calls, including a
-   held `server_job_poll` with `wait_ms`.
+1. *Response.* A JSON-RPC error inside HTTP 200, like every other `tools/call` error:
+   `{"code": -32001, "message": "busy", "data": {"retryable": true, "retry_after_ms": 1000}}`. It
+   carries no job id because nothing was enqueued, so a client may retry safely (unlike the
+   post-enqueue error of D4, which says `retryable: false`).
+2. *Audit and order.* The budget is checked after authorization allowed the call and the host was
+   found available, and before the `DISPATCHING` intent row and the enqueue. A denied or unavailable
+   call is therefore audited as before and never hidden by `busy`. A `busy` refusal writes no
+   `ai_activity` row (an audit row per refusal would let an overload amplify itself into database
+   writes); it is counted (`busy_refused`) and logged once for the first refusal and then once per 100,
+   without arguments.
+3. *Scope after D7.* Per Bridge worker process: every worker is its own `MCPBridge` with its own
+   budget, so K workers admit up to 64 x K calls in total. A shared budget would need a shared counter
+   that survives a worker dying mid-call; the allocator slots and the parked-claim cap already bound
+   the total.
+4. *Which calls count.* Only endpoint dispatch (calls that reach the Agent job queue). `server_*`
+   full-control calls (including a held `server_job_poll` with `wait_ms`), `list_hosts` and `get_host`
+   are not counted: they do not queue behind an Agent and have their own bounds.
 
-Each choice changes what a client sees under overload and how refusals are audited, and section 7
-already rejects a thread limit in the Bridge for latency reasons. Per the instruction not to guess,
-it is left for an owner decision (section 8, question 6).
+The slot is held from just before the intent row until the completion audit has been attempted, and is
+released on every path (success, failure after enqueue, `internal error`). The size is
+`DRLINK_MCP_DISPATCH_BUDGET` (integer >= 1; default 64; an invalid value falls back to 64 with a
+warning). Test: `tests/test-mcp-bridge-call-budget.py` (6 tests, RED before): default 64; a call over
+the budget gets `-32001 busy` with a retry hint and leaves no extra job and no audit row (2 jobs, 4
+rows); the slot is free again after completion and after a failed dispatch; `list_hosts`/`get_host` are
+not counted; refusals are counted, logged once and never log arguments. The concurrent callers run in
+`request_scope()` like the HTTP handler does. Not measured: the effect of the budget on the 30-call
+latency run (the default of 64 is above 30) and a real overload on the production topology.
 
 **D7 startup race (found while verifying, fixed).** The unexplained `3 != 4` child counts in
 `tests/test-mcp-bridge-workers.py` (5d, NOT_RUN list; seen again here in
@@ -593,8 +614,9 @@ was not deployed and no production measurement was taken.
 - Each RED test is registered in `run-fast-pr.sh` and `run-all.sh` when its fix lands.
 - D4 and D6: `tests/test-mcp-bridge-intent-audit.py` (5) and `tests/test-mcp-bridge-job-metrics.py`
   (3), sharing `tests/mcp_dispatch_fixture.py` (real Bridge, real enqueue/claim/complete through a
-  second ControlPlane connection); registered in `run-fast-pr.sh` and `run-all.sh`. No `busy` test:
-  the D5 call budget is not implemented (5e).
+  second ControlPlane connection); registered in `run-fast-pr.sh` and `run-all.sh`.
+- D5: `tests/test-mcp-bridge-call-budget.py` (6 tests, same fixture, registered in `run-fast-pr.sh`
+  and `run-all.sh`); see 5e.
 - D7: `tests/test-mcp-bridge-workers.py` (16 tests, registered in `run-fast-pr.sh` and
   `run-all.sh`): `workers=1` forks nothing; 3 workers plus the full-control process share one port and
   name themselves; a revocation (rule disabled, credential revoked) is refused by every worker on
@@ -630,12 +652,15 @@ was not deployed and no production measurement was taken.
    (or larger claim batches) on the Agent, or relax the target for 30 calls to a single host?
 5. *Answered (2026-10-30).* The owner asked for every software improvement; D7 is implemented as a
    draft PR with `DRLINK_MCP_WORKERS` defaulting to 1.
-6. D5 call budget (5e): define the `busy` response (code, HTTP status, retry hint), whether a refusal
-   is audited and decided before or after authorization, per-worker or shared budget under D7, and
-   which tools count. Or drop it, since the allocator slots and parked-claim cap already bound load.
+6. *Answered (2026-10-31).* D5 call budget: implemented as defined in 5e (JSON-RPC `-32001 busy` with
+   a retry hint, decided after authorization and before the intent row, no audit row for a refusal,
+   per Bridge worker, endpoint dispatch only). The default stays 64 per worker.
 6. *Answered.* Server-local full control runs in one process behind a private Unix socket (the
    recommended option).
 7. *Answered.* Rate limits are shared in SQLite; dividing by K was measured to be unsafe.
 8. *Open.* How many cores does the production Server have, and which `DRLINK_MCP_WORKERS` should the
-   service unit set (6 on this 10-core machine reached p95 <= 500 ms)? The unit stays at one
-   process until the owner decides; nothing is deployed.
+   service unit set? Recommendation (2026-10-31, from the 4-core measurement in 5d, 30 simultaneous
+   calls): 6 workers (median p95 383 ms, all runs below 500 ms) rather than 4 (median p95 431 ms), if
+   the Server has about one free core per worker; each worker uses 138-213 MB PSS. Neither reached the
+   350 ms goal. The code default stays 1, the unit stays at one process and nothing is deployed until
+   the owner decides.
