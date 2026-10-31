@@ -589,6 +589,7 @@ CREATE TABLE ai_activity (
   duration_ms INTEGER,
   revision INTEGER,
   operand_summary TEXT,
+  correlation_id TEXT,
   FOREIGN KEY (principal_id) REFERENCES ai_principals(id)
 );
 
@@ -607,7 +608,12 @@ CREATE TABLE ai_jobs (
   deadline_at TEXT,
   claim_token TEXT,
   attempt_id TEXT,
-  claimed_at TEXT
+  claimed_at TEXT,
+  correlation_id TEXT,
+  enqueued_ms INTEGER,
+  queue_ms INTEGER,
+  run_ms INTEGER,
+  total_ms INTEGER
 );
 
 CREATE INDEX IF NOT EXISTS idx_ai_jobs_claim
@@ -828,6 +834,12 @@ def ensure_ai_jobs_safety_schema(conn: sqlite3.Connection) -> bool:
         ("claim_token", "ALTER TABLE ai_jobs ADD COLUMN claim_token TEXT"),
         ("attempt_id", "ALTER TABLE ai_jobs ADD COLUMN attempt_id TEXT"),
         ("claimed_at", "ALTER TABLE ai_jobs ADD COLUMN claimed_at TEXT"),
+        # Per-job latency (AUD-21 D6): epoch ms at enqueue, then the three spans.
+        ("correlation_id", "ALTER TABLE ai_jobs ADD COLUMN correlation_id TEXT"),
+        ("enqueued_ms", "ALTER TABLE ai_jobs ADD COLUMN enqueued_ms INTEGER"),
+        ("queue_ms", "ALTER TABLE ai_jobs ADD COLUMN queue_ms INTEGER"),
+        ("run_ms", "ALTER TABLE ai_jobs ADD COLUMN run_ms INTEGER"),
+        ("total_ms", "ALTER TABLE ai_jobs ADD COLUMN total_ms INTEGER"),
     ):
         if name not in cols:
             conn.execute(ddl)
@@ -934,6 +946,17 @@ def ensure_ai_auth_schema(conn: sqlite3.Connection) -> None:
     ensure_oauth_pending_completion_schema(conn)
     ensure_enrollment_plans_schema(conn)
     ensure_ai_jobs_safety_schema(conn)
+    ensure_ai_activity_correlation_schema(conn)
+
+
+def ensure_ai_activity_correlation_schema(conn: sqlite3.Connection) -> None:
+    """Additive ai_activity.correlation_id (AUD-21 D4) without SCHEMA_VERSION bump.
+
+    The intent row and the completion row of one dispatched call share it.
+    """
+    cols = {str(row[1]) for row in conn.execute("PRAGMA table_info(ai_activity)")}
+    if cols and "correlation_id" not in cols:
+        conn.execute("ALTER TABLE ai_activity ADD COLUMN correlation_id TEXT")
 
 
 def ensure_oauth_pending_completion_schema(conn: sqlite3.Connection) -> None:

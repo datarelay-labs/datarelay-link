@@ -419,7 +419,21 @@ LOG = logging.getLogger("drlink.mcp_bridge")
 _LOGGABLE_DETAIL_TYPES = (sqlite3.Error, OSError, TimeoutError)
 
 
-def _log_internal_error(exc: BaseException, *, tool: str) -> str:
+def _new_correlation_id() -> str:
+    return "mcp-" + os.urandom(6).hex()
+
+
+class _DispatchedJobError(Exception):
+    """An error after enqueue: the job may have run, so the call must not be retried."""
+
+    def __init__(self, job_id: str, correlation_id: str):
+        super().__init__("dispatched job failed")
+        self.job_id = job_id
+        self.correlation_id = correlation_id
+
+
+def _log_internal_error(exc: BaseException, *, tool: str, correlation_id: Optional[str] = None,
+                        job_id: Optional[str] = None, what: str = "internal error") -> str:
     """Record why a tools/call became `internal error`; return a correlation id.
 
     The JSON-RPC response stays generic. The log carries the exception class,
@@ -427,7 +441,7 @@ def _log_internal_error(exc: BaseException, *, tool: str) -> str:
     tokens and caller-supplied text are never logged, and the tool name is
     reduced to a known value so it cannot inject log lines.
     """
-    correlation_id = "mcp-" + os.urandom(6).hex()
+    correlation_id = correlation_id or _new_correlation_id()
     known_tools = {entry[0] for entry in TOOL_DEFS}
     safe_tool = tool if tool in known_tools else "unknown"
     frames = traceback.extract_tb(exc.__traceback__)[-6:]
@@ -439,8 +453,10 @@ def _log_internal_error(exc: BaseException, *, tool: str) -> str:
     if isinstance(exc, _LOGGABLE_DETAIL_TYPES):
         detail = " detail=%r" % (str(exc)[:200],)
     LOG.error(
-        "mcp tools/call internal error cid=%s tool=%s exc=%s.%s%s where=%s",
+        "mcp tools/call %s cid=%s%s tool=%s exc=%s.%s%s where=%s",
+        what,
         correlation_id,
+        " job=%s" % job_id if job_id else "",
         safe_tool,
         type(exc).__module__,
         type(exc).__name__,
@@ -557,12 +573,23 @@ class SharedRateLimiter:
         self._connection = sqlite3.connect(
             path, timeout=5.0, isolation_level=None, check_same_thread=False
         )
-        self._connection.execute("PRAGMA journal_mode=WAL")
-        self._connection.execute("PRAGMA synchronous=OFF")
-        self._connection.execute(
-            "CREATE TABLE IF NOT EXISTS rate_hits("
-            "key TEXT PRIMARY KEY, window_start REAL NOT NULL, hits INTEGER NOT NULL)"
-        )
+        # The workers start together and open the new file at the same moment. Switching it to
+        # WAL can answer "database is locked" at once instead of waiting (about one open in
+        # eight), which killed the worker at startup; retry within the same 5 s budget.
+        deadline = time.monotonic() + 5.0
+        while True:
+            try:
+                self._connection.execute("PRAGMA journal_mode=WAL")
+                self._connection.execute("PRAGMA synchronous=OFF")
+                self._connection.execute(
+                    "CREATE TABLE IF NOT EXISTS rate_hits("
+                    "key TEXT PRIMARY KEY, window_start REAL NOT NULL, hits INTEGER NOT NULL)"
+                )
+                break
+            except sqlite3.OperationalError as exc:
+                if "locked" not in str(exc) or time.monotonic() >= deadline:
+                    raise
+                time.sleep(0.01)
 
     def limited(self, key: str, *, limit: int, window_s: float, now: Optional[float] = None) -> bool:
         """Count one hit for ``key``; True when this hit is over ``limit`` in the current window."""
@@ -1100,6 +1127,16 @@ class MCPBridge:
             try:
                 result = self.call_tool(principal, name, args or {})
                 return 200, _jsonrpc_result(req_id, result)
+            except _DispatchedJobError as exc:
+                # After enqueue the command may have run: never invite a retry (D4).
+                cause = exc.__cause__ or exc
+                correlation_id = _log_internal_error(
+                    cause, tool=name, correlation_id=exc.correlation_id, job_id=exc.job_id
+                )
+                return 200, _jsonrpc_error(
+                    req_id, -32603, "internal error",
+                    {"correlation_id": correlation_id, "job_id": exc.job_id, "retryable": False},
+                )
             except ControlPlaneError as exc:
                 return 200, _jsonrpc_result(req_id, _text_result("DENY: %s" % exc, is_error=True))
             except Exception as exc:
@@ -1399,7 +1436,19 @@ class MCPBridge:
         if decision.get("winner") and not patterns:
             patterns = list(decision["winner"].get("paths") or [])
         timeout = decision.get("exec_timeout") or 30
-        payload = self._dispatch_endpoint(
+        # Intent first (AUD-21 D4): if this row cannot be written the call fails
+        # closed here, before anything is enqueued.
+        correlation_id = _new_correlation_id()
+        self.plane.record_ai_activity(
+            principal=principal["name"],
+            endpoint=endpoint,
+            capability=name,
+            result="DISPATCHING",
+            rule=self._rule_name(decision),
+            operand=operand,
+            correlation_id=correlation_id,
+        )
+        job_id, payload = self._dispatch_endpoint(
             principal=principal,
             client_id=client["id"],
             endpoint_object_id=ep["id"],
@@ -1407,19 +1456,30 @@ class MCPBridge:
             arguments=arguments,
             patterns=patterns,
             timeout=int(timeout),
+            correlation_id=correlation_id,
         )
         duration_ms = int((time.monotonic() - start) * 1000)
         op_result = payload.get("result") or "ALLOW"
-        self.plane.record_ai_activity(
-            principal=principal["name"],
-            endpoint=endpoint,
-            capability=name,
-            result=op_result,
-            rule=self._rule_name(decision),
-            operand=operand,
-            duration_ms=duration_ms,
-        )
+        audit_failed = False
+        try:
+            self.plane.record_ai_activity(
+                principal=principal["name"],
+                endpoint=endpoint,
+                capability=name,
+                result=op_result,
+                rule=self._rule_name(decision),
+                operand=operand,
+                duration_ms=duration_ms,
+                correlation_id=correlation_id,
+            )
+        except Exception as exc:
+            # The command has run: a failed completion write never replaces its result.
+            _log_internal_error(exc, tool=name, correlation_id=correlation_id, job_id=job_id,
+                                what="completion audit write failed")
+            audit_failed = True
         safe = dict(payload)
+        if audit_failed:
+            safe.update({"audit_status": "failed", "job_id": job_id, "retryable": False})
         if name not in ("read_file", "download_file"):
             safe.pop("content_b64", None)
         is_error = op_result not in ("ALLOW",)
@@ -1428,8 +1488,9 @@ class MCPBridge:
             return _structured_result(safe, text=json.dumps(safe, indent=2), is_error=is_error)
         return _text_result(json.dumps(safe, indent=2), is_error=is_error)
 
-    def _dispatch_endpoint(self, *, principal, client_id, endpoint_object_id, capability, arguments, patterns, timeout):
-        """Dispatch through the client AI agent job path, not a local MCP server."""
+    def _dispatch_endpoint(self, *, principal, client_id, endpoint_object_id, capability, arguments,
+                           patterns, timeout, correlation_id):
+        """Dispatch through the client AI agent job path; return ``(job_id, payload)``."""
         with self._lock:
             job_id = self.plane.enqueue_ai_job(
                 principal_id=principal["id"],
@@ -1439,7 +1500,16 @@ class MCPBridge:
                 arguments=arguments,
                 patterns=patterns,
                 timeout=timeout,
+                correlation_id=correlation_id,
             )
+        try:
+            return job_id, self._await_job_result(job_id, client_id, capability, arguments,
+                                                  patterns, timeout)
+        except Exception as exc:
+            raise _DispatchedJobError(job_id, correlation_id) from exc
+
+    def _await_job_result(self, job_id, client_id, capability, arguments, patterns, timeout):
+        """Wait for the Agent's result of an enqueued job (or time it out)."""
         if client_id in self._agents:
             wait_for = max(2.0, float(timeout) + 2.0)
         else:

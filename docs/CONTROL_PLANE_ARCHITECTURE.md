@@ -1131,6 +1131,12 @@ For `exec`, store bounded/sanitized command metadata or a fingerprint and exit s
 
 For file operations, store path, direction, byte count, result, and policy attribution, not file contents.
 
+A call dispatched to a Managed Host is recorded intent first: an allowed call writes a `DISPATCHING`
+row before its job is queued and fails closed if that row cannot be written; the completion row
+carries the same correlation id. If the completion row cannot be written, the result is still
+returned, marked `audit_status: failed`, and the failure is logged at ERROR
+(`docs/MCP_BRIDGE_DISPATCH_DESIGN.md`, D4).
+
 ## 43. MCP authentication boundary
 
 Remote MCP access requires authenticated HTTPS and a current-standard authorization design. The implementation must not invent a proprietary trust shortcut simply because the endpoint is an MCP server.
