@@ -73,6 +73,7 @@ python3 tests/test-zero-touch-operator-command-bound.py
 # E2E defect regressions must run in the full suite as well as focused PR checks.
 bash tests/test-agent-candidate-payload.sh
 python3 tests/test-cli-only-e2e-delta-triage.py
+python3 tests/test-cli-only-e2e-round-gate.py
 python3 tests/test-cli-only-e2e-document-parity.py
 python3 tests/test-client-uninstall-arguments.py
 python3 tests/test-doctor-permission-guidance.py
