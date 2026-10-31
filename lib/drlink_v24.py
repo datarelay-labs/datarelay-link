@@ -4854,7 +4854,13 @@ def set_ai_access_rule(
             plane_db.resolve_ref(destination)
         except ControlPlaneError:
             raise ControlPlaneError(
-                cli_error("Required Network Object '%s' does not exist." % destination)
+                cli_error(
+                    "Required Network Object '%s' does not exist." % destination,
+                    next_step=(
+                        "Create the required Network Object first,\n"
+                        "or use a ConfigurationBundle to create the dependencies and Rule together."
+                    ),
+                )
             ) from None
     if permission is not None:
         expand_permissions(plane_db, permission)
