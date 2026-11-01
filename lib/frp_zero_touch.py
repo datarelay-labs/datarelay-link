@@ -177,7 +177,7 @@ def private_ca_ip_linux_command(allocator_url, ca_sha256, handle):
         # Keep OpenSSL's unauthenticated public-CA retrieval path: Linux
         # enrollment never uses --insecure, even for the CA-only request.
         # HTTP/1.0 closes by default; X509 parsing normalizes the sole pinned CA.
-        "printf 'GET /ca.crt HTTP/1.0\r\nHost: %s\r\n\r\n'|"
+        "printf 'GET /ca.crt HTTP/1.0\\r\\nHost: %s\\r\\n\\r\\n'|"
         "openssl s_client -quiet -connect %s:%s 2>/dev/null|"
         "sed -n '/BEGIN CERTIFICATE/,/END CERTIFICATE/p' >\"$d/ca\" || :;"
         "test \"$(openssl x509 -in \"$d/ca\" -outform DER|openssl dgst -sha256|awk '{print $NF}')\" = %s;"
