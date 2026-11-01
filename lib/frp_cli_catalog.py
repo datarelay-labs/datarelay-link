@@ -1736,6 +1736,8 @@ def domain_help(topic, role):
             "  show service-object <NAME> references\n"
             "  set service-object <NAME> type <tcp|udp|fixed-tcp> port <PORT>\n"
             "  set service-object <NAME> port <PORT>\n"
+            "\nCreate a custom TCP Service Object:\n"
+            "  set service-object postgres type tcp port 5432\n"
             "  set service-group <NAME> members a,b\n"
             "  show service-group <NAME> references\n"
         )
@@ -1772,7 +1774,8 @@ def domain_help(topic, role):
             "UDP Remote Service is not supported.\n"
             "SERVICE selects a Server-defined TCP or Fixed TCP Service Object.\n"
             "The Server allocates/reserves the public endpoint; do not choose a public port on the Agent.\n"
-            "Use destination this-host for the Agent itself or a supported destination object.\n\n"
+            "Use destination this-host to select this Agent by identity; localhost is its loopback interface.\n"
+            "Use a supported destination object to reach another target.\n\n"
             "Everyday commands:\n"
             "  show remote-services\n"
             "  show remote-service <NAME>\n"
@@ -1952,6 +1955,18 @@ def commands_help(role):
         for cmd in cmds:
             lines.append("  %s" % usage_line(cmd))
         lines.append("")
+    if any(
+        cmd["path"] == ("system", "support-bundle")
+        for cmds in by_root.values()
+        for cmd in cmds
+    ):
+        lines.extend(
+            [
+                "Default support-bundle output:",
+                "  /var/lib/drlink/support-bundles/drlink-support-<host>-<UTC timestamp>.tar.gz",
+                "",
+            ]
+        )
     lines.append("See also: help commands")
     return "\n".join(lines).rstrip() + "\n"
 
@@ -2198,7 +2213,9 @@ def parity_paths(role):
 
 def suggestion_roots(role):
     """Root tokens used for 'Did you mean' suggestions (canonical first)."""
-    return list(roots_for_role(role))
+    # Keep the documented one-word shortcuts discoverable even though their
+    # canonical command paths are show status / show version.
+    return list(roots_for_role(role)) + ["status", "version"]
 
 
 def shell_usage_lines(role):

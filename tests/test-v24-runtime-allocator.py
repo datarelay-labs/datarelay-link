@@ -71,6 +71,40 @@ class RuntimeRenderTests(unittest.TestCase):
                 journal.write_text('#!/bin/sh\nprintf "login to server success\\n[host-rs-web] start proxy success\\n"\n')
                 runtime.verify_runtime_proxies(root=None, host_id='host', expected=service, toml_text=toml, since_cursor='fresh')
 
+    def test_real_activation_fails_fast_when_frp_server_unreachable(self):
+        # F-014: during a Server outage, delete/disable re-applies the runtime
+        # and then waited ~90 s for proxy registration that cannot happen.
+        from drlink_control_plane import ControlPlaneError
+        service = {'rs-web': {'id': 'rs-web', 'enabled': True, 'v24_remote_service': True, 'remote_port': 6010}}
+        toml = ('serverAddr = "203.0.113.9"\nserverPort = 443\n'
+                'name = "host-rs-web"\nremotePort = 6010\n')
+        probes = []
+
+        def refused(address, timeout=None):
+            probes.append((address, timeout))
+            raise ConnectionRefusedError(111, 'Connection refused')
+
+        with mock.patch.object(runtime.socket, 'create_connection', side_effect=refused), \
+                mock.patch.object(runtime.subprocess, 'run') as run:
+            with self.assertRaisesRegex(ControlPlaneError, r'could not be verified.*203\.0\.113\.9:443.*unreachable'):
+                runtime.verify_runtime_proxies(root=None, host_id='host', expected=service,
+                                               toml_text=toml, since_cursor='fresh')
+        run.assert_not_called()
+        self.assertEqual(probes, [(('203.0.113.9', 443), runtime.FRP_CONTROL_PROBE_TIMEOUT_SECONDS)])
+        self.assertLessEqual(runtime.FRP_CONTROL_PROBE_TIMEOUT_SECONDS, 5)
+
+    def test_real_activation_waits_for_proxies_when_frp_server_reachable(self):
+        service = {'rs-web': {'id': 'rs-web', 'enabled': True, 'v24_remote_service': True, 'remote_port': 6010}}
+        toml = ('serverAddr = "203.0.113.9"\nserverPort = 443\n'
+                'name = "host-rs-web"\nremotePort = 6010\n')
+        with mock.patch.object(runtime.socket, 'create_connection') as connect, \
+                mock.patch.object(runtime.subprocess, 'run') as run:
+            runtime.verify_runtime_proxies(root=None, host_id='host', expected=service,
+                                           toml_text=toml, since_cursor='fresh')
+        connect.assert_called_once()
+        run.assert_called_once()
+        self.assertIn('wait_for_proxies', ' '.join(run.call_args.args[0]))
+
     def test_REMOTE_SERVICE_RUNTIME_RENDER(self):
         text = runtime.render_frpc_toml_text(
             server="203.0.113.9",
@@ -995,8 +1029,11 @@ class AllocatorAuthorityTests(unittest.TestCase):
                 (p, "agent1", "", "hold-%s" % p, v24.utc_now_iso()),
             )
         self.plane.conn.commit()
-        with self.assertRaises(v24.ControlPlaneError):
+        with self.assertRaises(v24.ControlPlaneError) as caught:
             v24.allocate_endpoint_port(self.plane, "agent1", "overflow", "normal")
+        self.assertIn("Remote Service ports are available in the configured pool 6000-6098", str(caught.exception))
+        self.assertIn("release unused endpoints", str(caught.exception))
+        self.assertIn("No changes were applied", str(caught.exception))
 
     def test_ALLOCATOR_SEES_OS_BOUND_PORTS(self):
         # Bind an otherwise free port and ensure allocator skips it.

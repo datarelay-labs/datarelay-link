@@ -480,6 +480,8 @@ for role in ('server', 'client', 'both'):
     assert 'system' in help_txt, (role, help_txt)
     sys_help = g.help_text(['system'], role)
     assert 'support-bundle' in sys_help, (role, sys_help)
+    command_help = g.help_text(['commands'], role)
+    assert '/var/lib/drlink/support-bundles/drlink-support-<host>-<UTC timestamp>.tar.gz' in command_help, (role, command_help)
     # Normal help must not advertise the legacy create support-bundle form.
     assert 'create support-bundle' not in sys_help, (role, sys_help)
 print('ok')

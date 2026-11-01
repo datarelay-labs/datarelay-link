@@ -123,8 +123,22 @@ if python3 "$ROOT/tools/frp-enroll-bulk" --count 11 >"$WORK/count-invalid.out" 2
   exit 1
 fi
 grep -q 'Retry: sudo drlink set enrollment bulk' "$WORK/count-invalid.err"
+grep -q -- '--count must be between 1 and 10 enrollments' "$WORK/count-invalid.err"
+! grep -q 'ZERO_TOUCH_MAX_PER_ISSUE' "$WORK/count-invalid.err"
 ! grep -q 'frp-enroll-bulk\|usage:' "$WORK/count-invalid.err"
 echo "PASS BULK_PUBLIC_ERROR_GUIDANCE"
+
+# CSV row limits use the same public wording and never expose implementation constants.
+CSV_OVER="$WORK/over-capacity.csv"
+printf 'label,ssh_user,note\n' >"$CSV_OVER"
+for i in $(seq 1 11); do printf 'node-%02d,,\n' "$i" >>"$CSV_OVER"; done
+if python3 "$ROOT/tools/frp-enroll-bulk" --csv "$CSV_OVER" >"$WORK/csv-invalid.out" 2>"$WORK/csv-invalid.err"; then
+  echo "FAIL over-capacity CSV was accepted" >&2
+  exit 1
+fi
+grep -q 'CSV batch may contain at most 10 enrollment rows' "$WORK/csv-invalid.err"
+! grep -q 'ZERO_TOUCH_MAX_PER_ISSUE' "$WORK/csv-invalid.err"
+echo "PASS BULK_CSV_CAPACITY_GUIDANCE"
 
 # Pre-validate all rows: a bad later row issues zero tickets.
 BAD="$WORK/bad.csv"

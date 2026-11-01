@@ -51,6 +51,15 @@ def _load_grammar():
     return grammar
 
 
+def _command_was_cancelled(proc) -> bool:
+    """Recognize an explicit declined confirmation in backend output."""
+    if proc is None or proc.returncode in (0, 130):
+        return False
+    output = (getattr(proc, "stdout", "") or "") + (getattr(proc, "stderr", "") or "")
+    lines = {line.strip() for line in output.splitlines()}
+    return "Cancelled." in lines and "No changes were applied." in lines
+
+
 class LineEditor:
     def __init__(self, payload):
         self.grammar = _load_grammar()
@@ -483,7 +492,8 @@ def run_repl(frpctl_bin, payload):
             return 0
         if proc.returncode == 0 and _should_refresh_inventory(tokens):
             _refresh_editor_inventory(editor, frpctl_bin)
-        if proc.returncode not in (0, 130) and tokens[0] not in ("?", "help"):
+        if (proc.returncode not in (0, 130) and tokens[0] not in ("?", "help")
+                and not _command_was_cancelled(proc)):
             print()
             print("Command failed with exit code %s." % proc.returncode)
             print()

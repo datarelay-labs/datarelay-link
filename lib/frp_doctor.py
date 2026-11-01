@@ -1189,6 +1189,43 @@ def _load_client_registry():
     return None
 
 
+def _endpoint_pool_capacity(cfg, port_start, port_end, protected, used_ports):
+    """Summarize normal and Fixed TCP endpoint pool usage from the registry.
+
+    Capacity excludes infrastructure ports inside the range; usage counts
+    every registry reservation inside the range regardless of owner. The
+    allocator may also skip OS-bound ports, so exhaustion here is a lower
+    bound that is never reported as spare capacity the allocator lacks.
+    """
+    if not cfg:
+        return [], []
+    blocked = set(protected)
+    try:
+        from frp_infrastructure_ports import infrastructure_ports, tcp_relay_port_range
+        blocked |= set(infrastructure_ports(cfg))
+        fixed_range = tcp_relay_port_range(cfg)
+    except ImportError:
+        fixed_range = None
+    ranges = []
+    if port_start is not None and port_end is not None and port_start <= port_end:
+        ranges.append(('normal', port_start, port_end))
+    if fixed_range is not None:
+        ranges.append(('Fixed TCP', fixed_range[0], fixed_range[1]))
+    summaries = []
+    exhausted = []
+    for label, start, end in ranges:
+        usable = [p for p in range(start, end + 1) if p not in blocked]
+        used = sum(1 for p in usable if p in used_ports)
+        if usable and used >= len(usable):
+            exhausted.append(
+                '%s pool %s-%s is exhausted (%s/%s used); new Remote Services in this pool '
+                'stay Pending allocation until an endpoint is released'
+                % (label, start, end, used, len(usable))
+            )
+        summaries.append('%s pool %s-%s: %s/%s used' % (label, start, end, used, len(usable)))
+    return summaries, exhausted
+
+
 def validate_registry(state, cfg=None):
     issues = []
     infos = []
@@ -1295,8 +1332,13 @@ def validate_registry(state, cfg=None):
     extra = []
     if outside:
         extra.append('reservations outside current range: %s' % ','.join(str(p) for p in outside[:8]))
+    pools, exhausted = _endpoint_pool_capacity(cfg, port_start, port_end, protected, seen_ports)
+    extra.extend(exhausted)
+    if extra:
         return WARN, extra[0], extra
     msg = 'valid schema v2 (%s Managed Hosts, %s reserved ports)' % (len(clients), len(seen_ports))
+    if pools:
+        msg += '; ' + '; '.join(pools)
     if revoked:
         msg += ', %s revoked' % revoked
     if disabled:
@@ -1890,6 +1932,37 @@ def check_access_control(report, paths, facts, cfg, registry_state):
                     'access_plugin_health', FAIL,
                     'access plugin GET /healthz returned %s' % code,
                     health_url,
+                    'inspect drlink-access and authoritative Access/Registry state',
+                    'runtime',
+                )
+        except HTTPError as exc:
+            # The plugin shares one bounded worker budget between NewUserConn
+            # and /healthz. Its overload gate answers 503 with a fail-closed
+            # "server busy" body; /healthz itself answers 503 with ok=false.
+            # Both stay FAIL, but name the actual cause.
+            body = {}
+            try:
+                body = json.loads(exc.read(4096).decode('utf-8', 'replace') or '{}')
+            except (OSError, ValueError):
+                body = {}
+            if not isinstance(body, dict):
+                body = {}
+            if str(body.get('reject_reason') or '') == 'server busy':
+                report.add(
+                    'access_plugin_health', FAIL,
+                    'access plugin is saturated: GET /healthz was rejected with 503 server busy',
+                    '%s; all authorization workers are in use, so new public connections '
+                    'are being rejected fail-closed for every service' % health_url,
+                    'reduce the new-connection rate and re-run diagnostics after the load subsides',
+                    'runtime',
+                )
+            else:
+                error = str(body.get('error') or '').strip()
+                report.add(
+                    'access_plugin_health', FAIL,
+                    'access plugin GET /healthz returned %s%s' % (
+                        exc.code, (': %s' % error) if error else ''),
+                    '%s (%s)' % (health_url, exc),
                     'inspect drlink-access and authoritative Access/Registry state',
                     'runtime',
                 )

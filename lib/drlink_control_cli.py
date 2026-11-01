@@ -25,11 +25,21 @@ from drlink_mcp_tls import McpTlsError
 USAGE_HINT = "No changes were applied."
 
 
-def _exit_bundle_error(exc: BaseException) -> None:
+def _exit_bundle_error(exc: BaseException, *, no_mutation: bool = True) -> None:
     msg = str(exc).rstrip()
-    if USAGE_HINT not in msg:
+    if not no_mutation:
+        msg = msg.replace("\n\nNo changes were applied.", "")
+    if no_mutation and USAGE_HINT not in msg:
         msg = "ERROR:\n%s\n\n%s" % (msg, USAGE_HINT)
     raise SystemExit(msg) from exc
+
+
+
+def _exit_preview_bundle_error(exc: BaseException) -> None:
+    # Legacy shape rejection has no plan to report on; other rejected preview
+    # inputs explicitly reassure operators that no configuration was changed.
+    legacy = str(exc).startswith("ERROR:\nLegacy ConfigurationBundle apiVersion/kind form")
+    _exit_bundle_error(exc, no_mutation=not legacy)
 
 
 def _prepare_public_bundle(plane: ControlPlane, raw: str):
@@ -84,7 +94,7 @@ def _configuration_test(plane: ControlPlane, rest):
     try:
         plan = _prepare_public_bundle(plane, raw)
     except Exception as exc:
-        _exit_bundle_error(exc)
+        _exit_preview_bundle_error(exc)
     from drlink_v24_bundle import format_v24_plan
 
     sys.stdout.write(format_v24_plan(plan))
@@ -104,7 +114,7 @@ def _configuration_diff(plane: ControlPlane, rest):
     try:
         plan = _prepare_public_bundle(plane, raw)
     except Exception as exc:
-        _exit_bundle_error(exc)
+        _exit_preview_bundle_error(exc)
     from drlink_v24_bundle import format_v24_plan
 
     sys.stdout.write(format_v24_plan(plan))
@@ -176,7 +186,7 @@ def _configuration_apply(plane: ControlPlane, rest):
     return 0
 
 
-def _read_config_input(source: str):
+def _read_config_input(source: str, *, no_mutation: bool = True):
     if source == "-":
         from drlink_v24_bundle import read_bundle_stdin_with_end
 
@@ -187,7 +197,9 @@ def _read_config_input(source: str):
         _exit_bundle_error(ValueError(
             "Configuration input must be a UTF-8 text file, not binary data. "
             "Convert the file to UTF-8 and retry."
-        ))
+        ), no_mutation=no_mutation)
+    except BundleError as exc:
+        _exit_bundle_error(exc, no_mutation=no_mutation)
 
 
 def _confirm_from_stdin(message: str) -> bool:
@@ -1473,7 +1485,10 @@ def _system(plane: ControlPlane, rest):
             sys.stdout.write("No Revisions found.\n")
             return 0
         for row in rows:
-            sys.stdout.write("%s %s %s\n" % (row["revision"], row["created_at"], _public_revision_command(row["command"])))
+            sys.stdout.write("%s %s actor=%s %s\n" % (
+                row["revision"], row["created_at"], row.get("actor") or "unknown",
+                _public_revision_command(row["command"]),
+            ))
         return 0
     if rest[0] == "revision":
         if len(rest) != 2:
@@ -1498,7 +1513,10 @@ def _system(plane: ControlPlane, rest):
             kwargs["principal"] = rest[2]
         rows = plane.list_audit(**kwargs)
         for row in rows:
-            sys.stdout.write("%s rev=%s %s %s %s %s\n" % (row["timestamp"], row["revision"], row["action"], row["entity_type"], row["entity_id"], row["result"]))
+            sys.stdout.write("%s rev=%s actor=%s %s %s %s %s\n" % (
+                row["timestamp"], row["revision"], row.get("actor") or "unknown",
+                row["action"], row["entity_type"], row["entity_id"], row["result"],
+            ))
         return 0
     if rest[0] == "revoke" and len(rest) >= 3 and rest[1] == "client":
         _run(plane.remove_client, rest[2], revoke_only=True)

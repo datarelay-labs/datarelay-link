@@ -75,6 +75,13 @@ grep -E "^${MANUAL_ID}[[:space:]]+manual" "$WORK/public-list.out" | grep -q 'pen
 FRP_CTL_BIN_DIR="$ROOT/tools" FRP_CTL_TEST_ROOT="$TREE" FRP_DEPLOY_TEST_ROOT="$TREE" \
   "$ROOT/tools/frpctl" show enrollment "$MANUAL_ID" >"$WORK/public-detail.out"
 grep -q "^ID      : $MANUAL_ID$" "$WORK/public-detail.out" || fail "PUBLIC_SHOW_ENROLLMENT_DETAIL"
+if FRP_CTL_BIN_DIR="$ROOT/tools" FRP_CTL_TEST_ROOT="$TREE" FRP_DEPLOY_TEST_ROOT="$TREE" \
+  "$ROOT/tools/frpctl" show enrollment does-not-exist >"$WORK/public-missing.out" 2>"$WORK/public-missing.err"; then
+  fail "PUBLIC_SHOW_MISSING_ENROLLMENT_RC"
+fi
+grep -q "show enrollments" "$WORK/public-missing.err" \
+  && grep -q "issue a new enrollment" "$WORK/public-missing.err" \
+  || { cat "$WORK/public-missing.err" >&2; fail "PUBLIC_SHOW_MISSING_ENROLLMENT_RECOVERY_GUIDANCE"; }
 pass "PUBLIC_ENROLLMENT_READS_USE_LIFECYCLE_AUTHORITY"
 python3 "$CREATE" --client-name public-unset --note 'public unset' >"$WORK/public-unset-create.out"
 PUBLIC_UNSET_ID="$(awk '/^Enrollment ID:/{print $3; exit}' "$WORK/public-unset-create.out")"

@@ -190,6 +190,7 @@ python3 tests/test-lifecycle-cli-ux.py
 python3 tests/test-operational-ux-cli-recovery-closure.py
 python3 tests/test-release-recovery-dual-role-audit-docs-closure.py
 python3 tests/test-repl-live-inventory.py
+python3 tests/test-frpctl-repl-cancellation.py
 ./tests/test-real-e2e-canonical-cli.sh
 ./tests/test-client-upgrade.sh
 python3 tests/test-agent-upgrade-runtime-preservation.py
@@ -357,6 +358,7 @@ python3 tests/test-v24-rule-mutation-security-impact.py
 python3 tests/test-v24-referenced-selector-mutation-security-impact.py
 python3 tests/test-v24-restore-security-impact.py
 python3 tests/test-v24-restore-client-inventory.py
+python3 tests/test-v24-restore-agent-post-backup-service.py
 python3 tests/test-v24-managed-host-retirement.py
 python3 tests/test-v24-user-lifecycle-ux.py
 python3 tests/test-v24-ai-auth-convergence.py
@@ -394,6 +396,7 @@ python3 tests/test-cli-only-e2e-persistent-load.py
 python3 tests/test-v24-e2e-actionable-doc-parity.py
 python3 tests/test-cli-rule-selector-and-runtime-recovery.py
 python3 tests/test-doctor-proxy-identity.py
+python3 tests/test-doctor-access-plugin-health.py
 python3 tests/test-full-e2e-public-recovery-regressions.py
 python3 tests/test-guided-configuration-input.py
 python3 tests/test-v24-ai-completion-delivery.py

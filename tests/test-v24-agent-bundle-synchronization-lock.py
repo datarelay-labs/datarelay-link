@@ -66,7 +66,7 @@ class AgentBundleSynchronizationLock(unittest.TestCase):
         @contextlib.contextmanager
         def lock(*args, **kwargs):
             self.assertFalse(self.plane.conn.in_transaction)
-            entered.append(True)
+            entered.append(kwargs)
             yield
 
         with mock.patch("frp_control_locks.ExclusiveFileLock", side_effect=lock), \
@@ -75,6 +75,7 @@ class AgentBundleSynchronizationLock(unittest.TestCase):
             result = apply_v24_plan(self.plane, plan, confirm=True)
         self.assertEqual(result["status"], "APPLIED")
         self.assertEqual(len(entered), 1)
+        self.assertEqual(entered[0]["timeout"], 30)
         self.assertFalse(v24._agent_synchronize_lock_held())
         self.assertFalse(self.plane.conn.in_transaction)
 
@@ -86,6 +87,7 @@ class AgentBundleSynchronizationLock(unittest.TestCase):
                                         service="ssh", enabled=True, oneshot=True,
                                         root=self.root, server_reachable=False)
         self.assertEqual(lock.call_count, 1)
+        self.assertEqual(lock.call_args.kwargs["timeout"], 30)
         self.assertFalse(v24._agent_synchronize_lock_held())
 
     def test_local_validation_exemption_rejects_operational_calls(self):

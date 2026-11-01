@@ -384,6 +384,10 @@ system support-bundle
 system uninstall
 ```
 
+`system support-bundle` writes to
+`/var/lib/drlink/support-bundles/drlink-support-<host>-<UTC timestamp>.tar.gz`
+by default. Pass a path to choose a different output location.
+
 Restore validates the archive before offering live replacement confirmation.
 Backups contain private identity and PKI material; restrict access and store them
 securely. Run the read-only `system backup validate <FILE>` before restore.

@@ -41,6 +41,7 @@ python3 tests/test-cli-feature-scenario-remediation.py
 python3 tests/test-cli-only-e2e-delta-triage.py
 python3 tests/test-guided-configuration-input.py
 python3 tests/test-repl-live-inventory.py
+python3 tests/test-frpctl-repl-cancellation.py
 python3 tests/test-client-python-runtime.py
 python3 tests/test-cli-reconciliation-role-parser-regression.py
 python3 tests/test-permission-dependency-recovery.py
@@ -89,6 +90,7 @@ python3 tests/test-legacy-backup-migration.py
 python3 tests/test-egress-runtime-no-list-permission.py
 python3 tests/test-v24-upgrade-reconcile.py
 python3 tests/test-doctor-proxy-identity.py
+python3 tests/test-doctor-access-plugin-health.py
 python3 tests/test-doctor-agent-runtime-projection.py
 python3 tests/test-agent-idle-runtime-health.py
 python3 tests/test-agent-catalog-progress.py

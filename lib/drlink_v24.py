@@ -20,7 +20,7 @@ from typing import Any, Callable, Optional
 from drlink_control_db import ControlPlaneError, utc_now_iso
 
 NAME_RE = re.compile(r"^[A-Za-z][A-Za-z0-9._-]{0,63}$")
-RESERVED_TOKENS = frozenset({"enabled", "disabled", "policy"})
+RESERVED_TOKENS = frozenset({"enabled", "disabled", "policy", "all", "any", "default", "none"})
 
 NETWORK_PUBLIC_TYPES = ("ip", "cidr", "fqdn")
 NETWORK_STORE = {"ip": "host", "cidr": "network", "fqdn": "fqdn"}
@@ -1156,6 +1156,45 @@ def whitelist_last_rule_impact(
         "before": "WHITELIST / Enforcement ENABLED / Effective enabled rules: 1",
         "after": "WHITELIST / last enabled Rule %s / Effective result: DENY ALL"
         % ("disabled" if disabling else "removed"),
+    }
+
+
+def first_rule_deny_all_impact(
+    plane_db,
+    family: str,
+    mode: Optional[str],
+    enabled: Optional[bool],
+) -> Optional[dict]:
+    """Return DENY ALL outage impact when a first disabled WHITELIST Rule is created.
+
+    Remote Access with no Policy Mode is effective ALLOW ALL. Creating the
+    first Rule in WHITELIST mode while that Rule is disabled leaves WHITELIST
+    with zero enabled Rules, so the effective result becomes DENY ALL.
+    Internet Access and AI Access are already DENY without a policy, and
+    BLACKLIST with no enabled Rules stays ALLOW ALL, so neither changes.
+    """
+    plane = _plane_key(family)
+    if plane != "remote" or enabled is not False:
+        return None
+    if str(mode or "").strip().lower() != "whitelist":
+        return None
+    pol = get_access_policy(plane_db, plane)
+    if pol.get("mode") is not None:
+        return None
+    if str(pol.get("enforcement") or "enabled").lower() != "enabled":
+        return None
+    title = _access_family_title(plane)
+    return {
+        "access_broadened": False,
+        "access_narrowed": True,
+        "requires_confirmation": True,
+        "warning": (
+            "This change leaves the %s WHITELIST with no enabled rules; "
+            "effective result becomes DENY ALL."
+        )
+        % title,
+        "before": "No Policy Mode / Effective result: ALLOW ALL",
+        "after": "WHITELIST / Enabled Rules: 0 / Effective result: DENY ALL",
     }
 
 
@@ -4041,15 +4080,13 @@ def set_access_rule(
         return {"entity": {"type": "%s-access" % plane, "id": rule_id, "name": name}, "operation": op}
 
     impact = None
-    if (
-        enabled is False
-        and existing is not None
-        and bool(existing["enabled"])
-    ):
+    if existing is None:
+        impact = first_rule_deny_all_impact(plane_db, plane, mode, enabled)
+    elif enabled is False and bool(existing["enabled"]):
         impact = last_enabled_rule_mutation_impact(
             plane_db, plane, name, disabling=True
         )
-    elif existing is not None:
+    else:
         impact = access_rule_update_security_impact(
             plane_db,
             plane,
@@ -6300,10 +6337,11 @@ def synchronize_agent_remote_services(plane_db, *, root: Optional[str] = None,
     """Serialize Agent reconciliation across CLI and lifecycle-worker callers."""
     import drlink_v24_runtime as runtime
     from frp_control_locks import ExclusiveFileLock, LockTimeout
+    from frp_control_locks import AGENT_SYNCHRONIZE_LOCK_TIMEOUT_SEC
 
     actual_root = root if root is not None else getattr(plane_db, "root", None)
     lock_path = runtime._client_state_path(actual_root).with_name("client-synchronize.lock")
-    timeout = float(os.environ.get("DRLINK_SYNCHRONIZE_LOCK_TIMEOUT") or 180)
+    timeout = float(os.environ.get("DRLINK_SYNCHRONIZE_LOCK_TIMEOUT") or AGENT_SYNCHRONIZE_LOCK_TIMEOUT_SEC)
     try:
         with ExclusiveFileLock(lock_path, timeout=timeout):
             previous_lock_depth = _agent_synchronize_lock_enter()
@@ -6897,7 +6935,9 @@ def allocate_endpoint_port(plane_db, client_id: str, service_name: str, pool_cla
             return port
         label = "Fixed TCP" if pool_class == "fixed-tcp" else "Remote Service"
         raise ControlPlaneError(
-            "ERROR:\nNo %s ports are available.\n\nNo changes were applied." % label
+            "ERROR:\nNo %s ports are available in the configured pool %s-%s.\n\n"
+            "Check the pool range and release unused endpoints before retrying. "
+            "No changes were applied." % (label, start, end)
         )
 
 
@@ -6925,10 +6965,11 @@ def set_remote_service_agent(
     if not _local_validation and not reconcile_existing and not _agent_synchronize_lock_held():
         import drlink_v24_runtime as runtime
         from frp_control_locks import ExclusiveFileLock, LockTimeout
+        from frp_control_locks import AGENT_SYNCHRONIZE_LOCK_TIMEOUT_SEC
 
         actual_root = root if root is not None else getattr(plane_db, "root", None)
         lock_path = runtime._client_state_path(actual_root).with_name("client-synchronize.lock")
-        timeout = float(os.environ.get("DRLINK_SYNCHRONIZE_LOCK_TIMEOUT") or 180)
+        timeout = float(os.environ.get("DRLINK_SYNCHRONIZE_LOCK_TIMEOUT") or AGENT_SYNCHRONIZE_LOCK_TIMEOUT_SEC)
         try:
             with ExclusiveFileLock(lock_path, timeout=timeout):
                 previous_lock_depth = _agent_synchronize_lock_enter()

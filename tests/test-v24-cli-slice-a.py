@@ -177,6 +177,22 @@ class SliceAConfigurationConfirmationTests(unittest.TestCase):
         self.assertIn("NO CHANGE", out)
         self.assertNotIn("requires confirmation", err)
 
+    def test_read_only_bundle_rejections_do_not_claim_no_changes_applied(self):
+        self.path.write_text("not: [valid", encoding="utf-8")
+        for args in (
+            ["test", "configuration", str(self.path)],
+            ["system", "diff", "configuration", str(self.path)],
+        ):
+            out = io.StringIO()
+            with redirect_stdout(out), self.assertRaises(SystemExit) as raised:
+                cli.dispatch(
+                    args,
+                    root=self.tmp,
+                    plane=self.plane,
+                )
+            self.assertNotIn("No changes were applied", str(raised.exception))
+            self.assertNotIn("No changes were applied", out.getvalue())
+
 
 class SliceARemoteServiceConfirmationTests(unittest.TestCase):
     def setUp(self):

@@ -444,6 +444,15 @@ class ManagedHostSubviews(_Base):
         self.assertEqual(rc_bad, 1)
         self.assertIn("Unknown Managed Host view", err_bad)
 
+        rc_references, _out_references, err_references = self._run(
+            "show", "managed-host", "ubuntu-prod", "references"
+        )
+        self.assertEqual(rc_references, 1)
+        self.assertIn("Expected:", err_references)
+        self.assertIn("show managed-host <HOST> [remote-services|agent|addresses]", err_references)
+        self.assertIn("show network-object <NAME> references", err_references)
+        self.assertNotIn("show network-object <NAME> references", err_references.split("No changes were applied.", 1)[0])
+
 
 class AIAccessDetail(_Base):
     def test_show_ai_access_includes_destination_and_permission(self):
