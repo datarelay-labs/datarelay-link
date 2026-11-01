@@ -1155,6 +1155,7 @@ def run_remote_service_wizard(plane: ControlPlane, name: str) -> int:
                 io,
                 "Destination (this-host or Network Object)",
                 default=session.draft.get("destination") or session.before.get("Destination"),
+                validate=lambda value: _validate_remote_service_destination(plane, value),
             )
             svc_options = [
                 r["name"] for r in plane.conn.execute("SELECT name FROM service_objects ORDER BY name")
@@ -1209,6 +1210,27 @@ def run_remote_service_wizard(plane: ControlPlane, name: str) -> int:
     except WizardCancelled:
         sys.stdout.write(_cancel_message())
         return 0
+
+
+def _validate_remote_service_destination(plane: ControlPlane, value: str) -> Optional[str]:
+    """Reject unknown wizard destinations before they reach the apply step."""
+    token = str(value or "").strip()
+    if token.lower() in ("this-host", "this_host", "self"):
+        return None
+    obj = plane.get_object(token)
+    if obj is not None:
+        return None
+    try:
+        catalog = plane.conn.execute(
+            "SELECT 1 FROM agent_object_catalog WHERE kind IN ('network-object','managed-host') "
+            "AND name = ? COLLATE NOCASE LIMIT 1",
+            (token,),
+        ).fetchone()
+    except Exception:
+        catalog = None
+    if catalog is not None:
+        return None
+    return "Choose this-host or an existing Network Object / Managed Host."
 
 
 WIZARDS = {

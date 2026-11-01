@@ -1200,6 +1200,28 @@ frpctl_nav_workflow manage_host
         self.assertFalse(enabled.call_args.kwargs["default"])
         self.assertEqual(self.plane.conn.execute("SELECT enabled FROM agent_remote_services WHERE name='http'").fetchone()[0], 0)
 
+    def test_remote_service_wizard_rejects_unknown_destination_at_prompt(self):
+        import drlink_v24_wizard as wizard
+        self.assertIsNone(wizard._validate_remote_service_destination(self.plane, "this-host"))
+        self.assertIsNotNone(wizard._validate_remote_service_destination(self.plane, "no-such-target"))
+        v24.set_network_object(self.plane, "db-host", type="ip", value="192.0.2.44", oneshot=True)
+        self.assertIsNone(wizard._validate_remote_service_destination(self.plane, "db-host"))
+
+    def test_remote_service_wizard_reprompts_after_unknown_destination(self):
+        import drlink_v24_wizard as wizard
+        output = io.StringIO()
+        wizard.set_wizard_io(wizard.ScriptedIO(
+            ["not-a-target", "this-host", "ssh", "y", "3"], out=[]
+        ))
+        with redirect_stdout(output):
+            self.assertEqual(wizard.run_remote_service_wizard(self.plane, "guided"), 0)
+        self.assertIn("Choose this-host or an existing Network Object / Managed Host.",
+                      "\n".join(wizard._WIZARD_IO.out))
+        self.assertIsNone(self.plane.conn.execute(
+            "SELECT 1 FROM agent_remote_services WHERE name='guided'"
+        ).fetchone())
+        wizard.set_wizard_io(None)
+
     def test_codex_audit_retired_parser_and_menu_help_routes_fail_closed(self):
         retired = (
             ["set", "access-assign"],
