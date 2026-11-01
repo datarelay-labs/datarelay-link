@@ -59,6 +59,43 @@ printf 'RESULT rc=%s\\n' "$rc"
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertIn("RESULT rc=2", proc.stdout)
 
+    def test_menu_cancel_returns_to_parent_then_exits_root(self):
+        script = '''source "$1"
+FRP_CTL_REPL=1
+frpctl_header() { :; }
+frpctl_render_nav_menu() { printf 'MENU %s\\n' "$1"; }
+frpctl_nav_resolve() {
+  [[ "$2" == 1 ]] || return 1
+  printf 'open_system\\nsubmenu\\nserver.system\\nSystem\\n'
+}
+frpctl_read() {
+  local index
+  index=$(cat "$SEQ_FILE")
+  printf '%s' "$((index + 1))" >"$SEQ_FILE"
+  case "$index" in
+    0) printf '1' ;;
+    1) printf 'cancel' ;;
+    2) printf 'q' ;;
+    *) return 1 ;;
+  esac
+}
+SEQ_FILE=$(mktemp)
+printf 0 >"$SEQ_FILE"
+frpctl_nav_loop root
+printf 'RESULT reads=%s\\n' "$(cat "$SEQ_FILE")"
+rm -f "$SEQ_FILE"
+'''
+        proc = subprocess.run(
+            ["bash", "-c", script, "regression", str(ROOT / "tools/frpctl")],
+            env=dict(os.environ, FRP_CTL_SOURCED="1"), text=True,
+            capture_output=True, timeout=3,
+        )
+        self.assertEqual(proc.returncode, 0, proc.stderr + proc.stdout)
+        self.assertIn("MENU server.system", proc.stdout)
+        self.assertIn("MENU root", proc.stdout)
+        self.assertIn("Cancelled.", proc.stdout)
+        self.assertIn("RESULT reads=3", proc.stdout)
+
     def test_public_managed_host_menu_empty_cancel_preserves_revision(self):
         revision = self.plane.current_revision()
         master, slave = pty.openpty()

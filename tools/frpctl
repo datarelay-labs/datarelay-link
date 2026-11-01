@@ -1538,6 +1538,23 @@ frpctl_nav_loop() {
       return 0
     fi
     choice="$(frpctl_read "Select: " "")" || return 1
+    case "$choice" in
+      q|Q|cancel|Cancel|CANCEL)
+        if ((${#stack[@]} == 0)); then
+          echo "Cancelled."
+          return 0
+        fi
+        top=$((${#stack[@]} - 1))
+        menu_key="${stack[$top]}"
+        if ((top == 0)); then
+          stack=()
+        else
+          stack=("${stack[@]:0:$top}")
+        fi
+        echo "Cancelled."
+        continue
+        ;;
+    esac
     if ! {
       read -r action_id
       read -r kind
