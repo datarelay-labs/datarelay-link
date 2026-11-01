@@ -110,5 +110,28 @@ class MacOSRuntimeProof(unittest.TestCase):
         self.assertFalse(self.probe())
 
 
+    def test_ipv6_server_socket_proves_ready(self):
+        # F-010: lsof -nP prints IPv6 peers in brackets; an IPv6 Server must
+        # not be reported DEGRADED when the live control socket exists.
+        self.config.write_text('serverAddr = "2001:DB8::10"\nserverPort = 443\n')
+        self.socket = (
+            "frpc 84156 root 4u IPv6 0t0 TCP "
+            "[2001:db8::65]:49437->[2001:db8::10]:443 (ESTABLISHED)"
+        )
+        self.assertTrue(self.probe())
+
+    def test_ipv6_server_wrong_peer_fails_closed(self):
+        self.config.write_text('serverAddr = "2001:db8::10"\nserverPort = 443\n')
+        for peer in ("[2001:db8::11]:443", "[2001:db8::10]:80", "2001:db8::10:443"):
+            with self.subTest(peer=peer):
+                self.socket = "frpc 84156 root 4u IPv6 0t0 TCP [2001:db8::65]:49437->%s (ESTABLISHED)" % peer
+                self.assertFalse(self.probe())
+
+    def test_dns_hostname_server_still_fails_closed(self):
+        self.config.write_text('serverAddr = "relay.example.com"\nserverPort = 443\n')
+        self.socket = "frpc 84156 root 4u IPv4 0t0 TCP 192.168.86.65:49437->relay.example.com:443 (ESTABLISHED)"
+        self.assertFalse(self.probe())
+
+
 if __name__ == "__main__":
     unittest.main()

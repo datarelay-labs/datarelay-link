@@ -782,13 +782,28 @@ class StatusParityTests(unittest.TestCase):
         from unittest import mock
         import drlink_v24_runtime as runtime
 
-        for platform_name in ('darwin', 'win32', 'freebsd14'):
+        for platform_name in ('win32', 'freebsd14'):
             with self.subTest(platform=platform_name), \
                  mock.patch.object(runtime.sys, 'platform', platform_name), \
                  mock.patch.object(runtime.subprocess, 'check_output') as output:
                 self.assertFalse(runtime._current_runtime_ready(
                     None, 'agent-a', {}))
                 output.assert_not_called()
+        # macOS has a native launchd/process/socket/log-epoch proof (e06faf88);
+        # without it (not running, or launchctl unavailable) it fails closed.
+        for launchctl in (mock.DEFAULT, OSError('launchctl unavailable'),
+                          runtime.subprocess.CalledProcessError(113, ['launchctl'])):
+            with self.subTest(platform='darwin', launchctl=repr(launchctl)), \
+                 mock.patch.object(runtime.sys, 'platform', 'darwin'), \
+                 mock.patch.object(runtime.subprocess, 'check_output') as output:
+                if launchctl is mock.DEFAULT:
+                    output.return_value = 'system/com.datarelay.drlink.frpc = {\n\tstate = waiting\n}\n'
+                else:
+                    output.side_effect = launchctl
+                self.assertFalse(runtime._current_runtime_ready(
+                    None, 'agent-a', {}))
+                self.assertEqual(output.call_count, 1)
+                self.assertEqual(output.call_args.args[0][:2], ['launchctl', 'print'])
 
     def test_idle_heartbeat_demotes_lost_proxy_and_recovers_without_replay(self):
         from unittest import mock

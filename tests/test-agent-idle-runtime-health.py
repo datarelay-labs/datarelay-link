@@ -128,5 +128,51 @@ class AgentIdleRuntimeHealth(unittest.TestCase):
         self.assertNotIn("Agent transport unverified", text)
 
 
+class LifecycleWorkerResumeLiveness(unittest.TestCase):
+    """F-029: a paused worker must notice resume within the retry interval."""
+
+    def run_worker(self, statuses, env=None):
+        import drlink_agent_lifecycle as lifecycle
+
+        results = iter(statuses)
+        sleeps = []
+
+        def fake_reconcile(root=None):
+            try:
+                return {"status": next(results), "updated": 0}
+            except StopIteration:
+                raise KeyboardInterrupt
+
+        with patch.dict(os.environ, env or {}, clear=False), \
+                patch.object(lifecycle, "reconcile_once", side_effect=fake_reconcile), \
+                patch.object(lifecycle.time, "sleep", side_effect=sleeps.append):
+            self.assertEqual(lifecycle.worker(None), 0)
+        return sleeps
+
+    def test_paused_worker_polls_intent_at_retry_interval(self):
+        sleeps = self.run_worker(["PAUSED", "PAUSED"])
+        self.assertEqual(sleeps, [5, 5])
+
+    def test_paused_poll_honors_configured_retry(self):
+        sleeps = self.run_worker(
+            ["PAUSED"], env={"DRLINK_LIFECYCLE_RETRY_SECONDS": "2",
+                             "DRLINK_LIFECYCLE_IDLE_SECONDS": "30"})
+        self.assertEqual(sleeps, [2])
+
+    def test_running_heartbeat_keeps_idle_interval(self):
+        sleeps = self.run_worker(
+            ["HEARTBEAT", "SYNCHRONIZED"],
+            env={"DRLINK_LIFECYCLE_RETRY_SECONDS": "5",
+                 "DRLINK_LIFECYCLE_IDLE_SECONDS": "30"})
+        self.assertEqual(sleeps, [30, 30])
+
+    def test_resume_after_pause_resets_degraded_backoff(self):
+        sleeps = self.run_worker(
+            ["DEGRADED", "DEGRADED", "PAUSED", "DEGRADED"],
+            env={"DRLINK_LIFECYCLE_RETRY_SECONDS": "5",
+                 "DRLINK_LIFECYCLE_IDLE_SECONDS": "30"})
+        self.assertEqual(sleeps, [5, 10, 5, 5])
+
+
 if __name__ == "__main__":
     unittest.main()
