@@ -1736,6 +1736,8 @@ def domain_help(topic, role):
             "  show service-object <NAME> references\n"
             "  set service-object <NAME> type <tcp|udp|fixed-tcp> port <PORT>\n"
             "  set service-object <NAME> port <PORT>\n"
+            "\nCreate a custom TCP Service Object:\n"
+            "  set service-object postgres type tcp port 5432\n"
             "  set service-group <NAME> members a,b\n"
             "  show service-group <NAME> references\n"
         )

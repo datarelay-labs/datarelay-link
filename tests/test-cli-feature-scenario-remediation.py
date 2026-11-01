@@ -33,6 +33,11 @@ import frp_cli_catalog as catalog
 
 
 class CliFeatureScenarioRemediation(unittest.TestCase):
+    def test_service_object_help_has_custom_tcp_example(self):
+        help_text = catalog.domain_help("service-object", "server")
+        self.assertIn("Create a custom TCP Service Object:", help_text)
+        self.assertIn("set service-object postgres type tcp port 5432", help_text)
+
     def test_zero_touch_service_wizard_exits_on_nested_eof(self):
         script = '''source "$1"
 FRP_CTL_SOURCED=1
