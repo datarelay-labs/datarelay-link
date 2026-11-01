@@ -174,6 +174,12 @@ def worker(root: Optional[str] = None) -> int:
             if status in ("OFFLINE", "DEGRADED", "DEFERRED"):
                 time.sleep(backoff)
                 backoff = min(MAX_RETRY_SECONDS, max(retry, backoff * 2))
+            elif status == "PAUSED":
+                # Paused work is a local intent-file check only. Resume flips
+                # the intent after restarting the runtime without waking this
+                # worker, so poll at the retry interval instead of idling.
+                backoff = retry
+                time.sleep(retry)
             else:
                 backoff = retry
                 time.sleep(idle)
