@@ -1640,6 +1640,14 @@ def server_delete_remote_service(plane, auth: MgmtAuthContext, name: str,
         ).fetchone()
         if pub is None:
             raise PublicationChanged()
+        # A case-insensitive selector is not authorization to delete a
+        # differently spelled existing Remote Service. The Agent CLI and
+        # Server must enforce the same exact canonical identity.
+        if pub["name"] != name:
+            raise MgmtSyncError(
+                "Remote Service name differs only by letter case. "
+                "Use the exact existing name; no changes were applied."
+            )
         if expected_publication is not None and _publication_receipt(pub) != expected_publication:
             outcome["status"] = "SUPERSEDED"
             raise PublicationChanged()

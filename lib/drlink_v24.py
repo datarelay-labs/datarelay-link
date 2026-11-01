@@ -7892,6 +7892,46 @@ def unset_remote_service_agent(plane_db, name: str, *, root: Optional[str] = Non
             "No changes were applied." % existing["name"]
         )
     if not existing:
+        # Explicit operator unset can recover a Server-only orphan left by a
+        # prior partial deletion. Never use an absence in a status heartbeat
+        # as automatic permission to delete remote state.
+        import drlink_mgmt_sync as mgmt
+        if server_reachable and mgmt.use_live_mgmt_path(root):
+            from frp_control_locks import ExclusiveFileLock, LockTimeout
+            import drlink_v24_runtime as runtime
+
+            lock_path = runtime._client_state_path(root).with_name("client-synchronize.lock")
+            try:
+                with ExclusiveFileLock(lock_path, timeout=8.0):
+                    # Another CLI may have created local intent while we
+                    # waited; refuse to delete based on a stale empty row.
+                    current = plane_db.conn.execute(
+                        "SELECT 1 FROM agent_remote_services WHERE name=? COLLATE NOCASE",
+                        (name,),
+                    ).fetchone()
+                    if current is not None:
+                        raise ControlPlaneError(
+                            "ERROR:\nRemote Service changed during cleanup.\n\n"
+                            "Review the current service and retry.\n\nNo changes were applied."
+                        )
+                    # If a legacy/previous runtime still has this proxy,
+                    # first require explicit runtime reconciliation. Deleting
+                    # the Server endpoint alone could leave an open proxy.
+                    configured = runtime._configured_v24_runtime_ports(root)
+                    if name.lower() in configured:
+                        raise ControlPlaneError(
+                            "ERROR:\nRemote Service has a configured Agent proxy but no local record.\n\n"
+                            "Run system synchronize and inspect diagnostics before deleting.\n\n"
+                            "No changes were applied."
+                        )
+                    result = mgmt.delete_remote_service_on_server(root=root, name=name)
+                    if isinstance(result, dict) and result.get("status") == "DELETED":
+                        return {"operation": "server_cleanup", "name": name}
+            except LockTimeout as exc:
+                raise ControlPlaneError(
+                    "ERROR:\nAnother Agent synchronization is in progress.\n\n"
+                    "Retry after it completes.\n\nNo changes were applied."
+                ) from exc
         raise ControlPlaneError(cli_error("Remote Service '%s' was not found." % name))
     identity = load_agent_identity(root)
     host_name = identity.get("hostname") or identity.get("label") or "this-host"
