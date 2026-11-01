@@ -1952,6 +1952,18 @@ def commands_help(role):
         for cmd in cmds:
             lines.append("  %s" % usage_line(cmd))
         lines.append("")
+    if any(
+        cmd["path"] == ("system", "support-bundle")
+        for cmds in by_root.values()
+        for cmd in cmds
+    ):
+        lines.extend(
+            [
+                "Default support-bundle output:",
+                "  /var/lib/drlink/support-bundles/drlink-support-<host>-<UTC timestamp>.tar.gz",
+                "",
+            ]
+        )
     lines.append("See also: help commands")
     return "\n".join(lines).rstrip() + "\n"
 

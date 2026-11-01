@@ -20,7 +20,7 @@ from typing import Any, Callable, Optional
 from drlink_control_db import ControlPlaneError, utc_now_iso
 
 NAME_RE = re.compile(r"^[A-Za-z][A-Za-z0-9._-]{0,63}$")
-RESERVED_TOKENS = frozenset({"enabled", "disabled", "policy"})
+RESERVED_TOKENS = frozenset({"enabled", "disabled", "policy", "all", "any", "default", "none"})
 
 NETWORK_PUBLIC_TYPES = ("ip", "cidr", "fqdn")
 NETWORK_STORE = {"ip": "host", "cidr": "network", "fqdn": "fqdn"}

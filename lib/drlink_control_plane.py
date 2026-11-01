@@ -299,7 +299,9 @@ def normalize_object_value(obj_type: str, value: str) -> str:
             ) from None
     if kind == "network":
         try:
-            net = ipaddress.ip_network(text, strict=False)
+            # Do not silently broaden a network when the supplied address has
+            # host bits set; callers must submit the canonical network prefix.
+            net = ipaddress.ip_network(text, strict=True)
             return str(net)
         except ValueError:
             raise ControlPlaneError(

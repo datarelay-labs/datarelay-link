@@ -66,6 +66,21 @@ class NetworkRemoteReferenceTests(unittest.TestCase):
                 self.assertEqual(self.plane.current_revision(), before)
                 self.assertIsNotNone(self.plane.get_object("lan-target"))
 
+    def test_reserved_selector_names_are_rejected(self):
+        for name in ("all", "any", "default", "none"):
+            with self.subTest(name=name), self.assertRaisesRegex(
+                    ControlPlaneError, "reserved command token"):
+                v24.set_network_object(self.plane, name, type="ip",
+                                       value="192.0.2.1", oneshot=True)
+
+    def test_network_object_rejects_noncanonical_cidr(self):
+        from drlink_control_plane import normalize_object_value
+
+        with self.assertRaisesRegex(ControlPlaneError, "Invalid network value"):
+            normalize_object_value("network", "192.0.2.19/24")
+        self.assertEqual(normalize_object_value("network", "192.0.2.0/24"),
+                         "192.0.2.0/24")
+
     def test_internal_delete_also_protects_relay_destination(self):
         self.publish()
         with self.assertRaisesRegex(ControlPlaneError, "(?i)referenc"):
