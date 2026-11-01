@@ -34,6 +34,14 @@ def _exit_bundle_error(exc: BaseException, *, no_mutation: bool = True) -> None:
     raise SystemExit(msg) from exc
 
 
+
+def _exit_preview_bundle_error(exc: BaseException) -> None:
+    # Legacy shape rejection has no plan to report on; other rejected preview
+    # inputs explicitly reassure operators that no configuration was changed.
+    legacy = str(exc).startswith("ERROR:\nLegacy ConfigurationBundle apiVersion/kind form")
+    _exit_bundle_error(exc, no_mutation=not legacy)
+
+
 def _prepare_public_bundle(plane: ControlPlane, raw: str):
     """The public CLI accepts only the canonical v2.4 schema."""
     from drlink_v24_bundle import prepare_v24_plan
@@ -86,7 +94,7 @@ def _configuration_test(plane: ControlPlane, rest):
     try:
         plan = _prepare_public_bundle(plane, raw)
     except Exception as exc:
-        _exit_bundle_error(exc)
+        _exit_preview_bundle_error(exc)
     from drlink_v24_bundle import format_v24_plan
 
     sys.stdout.write(format_v24_plan(plan))
@@ -106,7 +114,7 @@ def _configuration_diff(plane: ControlPlane, rest):
     try:
         plan = _prepare_public_bundle(plane, raw)
     except Exception as exc:
-        _exit_bundle_error(exc)
+        _exit_preview_bundle_error(exc)
     from drlink_v24_bundle import format_v24_plan
 
     sys.stdout.write(format_v24_plan(plan))
