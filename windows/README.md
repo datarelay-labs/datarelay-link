@@ -50,7 +50,15 @@ tools\drlink.cmd system update product
 tools\drlink.cmd system update engine
 tools\drlink.cmd system diagnostics
 tools\drlink.cmd system uninstall
+# Automation only (explicit destructive approval):
+tools\drlink.cmd system uninstall --yes
 ```
+
+`system uninstall` prompts `Remove local Data Relay Link Agent? [y/N]`
+before removing local software, identity or configuration. The default is No;
+unanswered or non-interactive prompts cancel without mutation. Only the
+explicit `--yes` argument bypasses the prompt; do not add it to beginner
+copy/paste flows. Server-side Managed Host records and reservations remain.
 
 Remote Service and ConfigurationBundle grammar is the same canonical v2.4 Agent grammar used on other supported platforms. Retired Windows root aliases are rejected with canonical guidance.
 

@@ -35,8 +35,19 @@ try {
     New-Item -ItemType Directory -Path $emptyDir -Force | Out-Null
     Assert-FrpTrue (Test-Path -LiteralPath $emptyDir) 'empty product subdirectory exists before uninstall'
 
+    # A headless uninstall with no operator confirmation must be rejected
+    # before touching identity, process, tasks or the Server.
+    $beforeIdentity = [string](Get-FrpOrCreateClientId)
+    $cancelOut = & $hostExe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $clientPath system uninstall 2>&1 | Out-String
+    $cancelRc = $LASTEXITCODE
+    Assert-FrpTrue ($cancelRc -ne 0) 'unconfirmed uninstall must not report success'
+    Assert-FrpTrue ($cancelOut -match 'Cancelled|confirmation required') 'unconfirmed uninstall cancellation message'
+    Assert-FrpTrue (Test-Path -LiteralPath $root) 'unconfirmed uninstall retained local product'
+    Assert-FrpTrue (Test-FrpAutostartTaskExists) 'unconfirmed uninstall retained autostart'
+    Assert-FrpEqual $beforeIdentity ([string](Get-FrpOrCreateClientId)) 'unconfirmed uninstall retained identity'
+
     $env:FRP_WINDOWS_FAIL_AUTOSTART = '1'
-    $failOut = & $hostExe -NoProfile -ExecutionPolicy Bypass -File $clientPath system uninstall 2>&1 | Out-String
+    $failOut = & $hostExe -NoProfile -ExecutionPolicy Bypass -File $clientPath system uninstall --yes 2>&1 | Out-String
     $rcFail = $LASTEXITCODE
     Remove-Item Env:FRP_WINDOWS_FAIL_AUTOSTART -ErrorAction SilentlyContinue
     Assert-FrpEqual 1 $rcFail 'uninstall fails closed when autostart removal fails'
@@ -44,7 +55,7 @@ try {
     Assert-FrpTrue (Test-Path -LiteralPath $root) 'product root left in place after failed uninstall'
     Assert-FrpTrue (Test-FrpAutostartTaskExists) 'autostart still present after failed uninstall'
 
-    $okOut = & $hostExe -NoProfile -ExecutionPolicy Bypass -File $clientPath system uninstall 2>&1 | Out-String
+    $okOut = & $hostExe -NoProfile -ExecutionPolicy Bypass -File $clientPath system uninstall --yes 2>&1 | Out-String
     $rc = $LASTEXITCODE
     Assert-FrpEqual 0 $rc 'uninstall succeeds after autostart can be removed'
     Assert-FrpTrue ($okOut -match 'SERVER-SIDE RESERVATIONS PRESERVED') 'uninstall reservation message'
