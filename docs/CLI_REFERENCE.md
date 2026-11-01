@@ -209,12 +209,16 @@ AI Access:
 
 On the first operator-approved OAuth AI Identity, after real PKCE verification,
 DataRelay Link creates the owner MCP access group and an explicit WHITELIST
-rule for signed/trusted enrolled Managed Hosts. This initial owner receives
-all seven MCP capabilities (including file operations, path scope `/*`);
-other authenticated identities remain default-DENY until separately granted.
-The owner rule is auditable as `mcp-owner-full-access`, with permission object
-`mcp-owner-all` and Network Group `mcp-owner-managed-hosts`.
-Revocation and endpoint trust checks remain effective.
+rule for signed/trusted enrolled Managed Hosts. **New owner profiles start with
+observation-only capabilities** (`host-info`, `process-read`). Command execution,
+file read/write, upload/download and path access are **DENIED** until the
+operator creates a separate explicit AI Access permission/rule. The new rule is
+`mcp-owner-read-access`, permission object `mcp-owner-read-only`, and Network
+Group `mcp-owner-managed-hosts`. Other authenticated identities remain default-DENY.
+Previously operator-approved installations with `mcp-owner-full-access` and
+`mcp-owner-all` are **not silently rewritten or revoked** by this change;
+review their existing access separately. Revocation and endpoint trust checks
+remain effective.
 
 ```text
 set ai-access claude-prod mode whitelist source claude destination production-servers permission read-only enabled
