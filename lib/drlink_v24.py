@@ -6939,6 +6939,13 @@ def set_remote_service_agent(
     existing = plane_db.conn.execute(
         "SELECT * FROM agent_remote_services WHERE name = ? COLLATE NOCASE", (name,)
     ).fetchone()
+    if existing is not None and existing["name"] != name:
+        raise ControlPlaneError(
+            "ERROR:\nRemote Service name differs only by letter case.\n\n"
+            "Existing Remote Service: %s\n"
+            "Use the exact existing name to edit or delete it.\n\n"
+            "No changes were applied." % existing["name"]
+        )
     if reconcile_existing and (existing is None or int(existing["delete_pending"] or 0)):
         # F024: a synchronizer's stale iteration row does not authorize a
         # CREATE after the operator has deleted it. Only an explicit public
@@ -7859,6 +7866,13 @@ def unset_remote_service_agent(plane_db, name: str, *, root: Optional[str] = Non
     existing = plane_db.conn.execute(
         "SELECT * FROM agent_remote_services WHERE name = ? COLLATE NOCASE", (name,)
     ).fetchone()
+    if existing is not None and existing["name"] != name:
+        raise ControlPlaneError(
+            "ERROR:\nRemote Service name differs only by letter case.\n\n"
+            "Existing Remote Service: %s\n"
+            "Use the exact existing name to edit or delete it.\n\n"
+            "No changes were applied." % existing["name"]
+        )
     if not existing:
         raise ControlPlaneError(cli_error("Remote Service '%s' was not found." % name))
     identity = load_agent_identity(root)

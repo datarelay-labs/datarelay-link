@@ -422,6 +422,31 @@ class RemoteServiceDistributedAtomicity(unittest.TestCase):
         self.assertIsNotNone(pub)
         self.assertEqual(int(pub["enabled"]), 0)
 
+    def test_case_variant_cannot_silently_overwrite_or_delete_service(self):
+        # F-005: A case-insensitive selector must not change the stored
+        # resource under a different spelling. Require its canonical name.
+        self._create("caseguard-http")
+        before = dict(self.agent.conn.execute(
+            "SELECT * FROM agent_remote_services WHERE name='caseguard-http'"
+        ).fetchone())
+        revision = self.agent.current_revision()
+        with self.assertRaisesRegex(ControlPlaneError, "(?i)case|name"):
+            v24.set_remote_service_agent(
+                self.agent, "CASEGUARD-HTTP", destination="this-host",
+                service="https", enabled=True, oneshot=True,
+                root=self.agent_tmp, server_reachable=True,
+            )
+        with self.assertRaisesRegex(ControlPlaneError, "(?i)case|name"):
+            v24.unset_remote_service_agent(
+                self.agent, "CASEGUARD-HTTP", root=self.agent_tmp,
+                server_reachable=True,
+            )
+        after = dict(self.agent.conn.execute(
+            "SELECT * FROM agent_remote_services WHERE name='caseguard-http'"
+        ).fetchone())
+        self.assertEqual(after, before)
+        self.assertEqual(self.agent.current_revision(), revision)
+
     def test_successful_create_update_delete_unchanged(self):
         # This test isolates distributed atomicity from target reachability.
         # The disposable fixture does not run real listeners on ports 22/443;

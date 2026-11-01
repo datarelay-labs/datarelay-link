@@ -796,6 +796,29 @@ def case_disabled_fixed_reservation_uses_its_own_pool():
         env.cleanup()
 
 
+def case_port_exhaustion_identifies_pool_and_range():
+    env = Env(port_start=18000, port_end=18000)
+    try:
+        try:
+            env.allocator.allocate_port({18000})
+            fail('normal pool exhaustion did not fail')
+        except MOD.PortRangeExhausted as exc:
+            message = str(exc)
+            if not ('normal' in message.lower() and '18000-18000' in message):
+                fail('normal pool exhaustion missing actionable range', message)
+        try:
+            env.allocator.allocate_port({6200}, start=6200, end=6200,
+                                        pool_class='fixed-tcp')
+            fail('Fixed TCP pool exhaustion did not fail')
+        except MOD.PortRangeExhausted as exc:
+            message = str(exc)
+            if not ('fixed' in message.lower() and '6200-6200' in message):
+                fail('Fixed TCP exhaustion missing actionable range', message)
+        pass_('port exhaustion names exact affected pool and range')
+    finally:
+        env.cleanup()
+
+
 def case_bootstrap_remote_service_adopts_existing_port():
     env = Env()
     try:
@@ -941,6 +964,7 @@ def main():
     case_registry_write_failure()
     case_lost_response_retry()
     case_range_6000_exhaustion()
+    case_port_exhaustion_identifies_pool_and_range()
     case_admin_metadata_and_source_ip()
     case_unreadable_host_version_fallback()
     case_disabled_fixed_reservation_uses_its_own_pool()

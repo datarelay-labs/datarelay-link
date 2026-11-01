@@ -1241,6 +1241,58 @@ def test_windows_renderer_frozen_and_launcher():
         env.cleanup()
 
 
+def test_qualified_short_url_missing_installer_config_recovers_safely():
+    """F-001: a qualified installed Agent must work after URL fields are absent."""
+    from unittest import mock
+    env = Env()
+    try:
+        cfg = json.loads(env.cfg.read_text())
+        cfg['allocator_public_url'] = 'https://bootstrap.example:6099/enroll'
+        cfg['tls_ca_cert'] = str(env.root / 'ca.crt')
+        cfg.pop('client_installer_url', None)
+        (env.root / 'ca.crt').write_text('fixture')
+        env.cfg.write_text(json.dumps(cfg))
+        env.allocator.reload_cfg_if_changed()
+        _raw, _enroll, record = env.issue()
+        handle = record['_short_handle']
+        head = 'a' * 40
+        manifest = {
+            'qualification_status': 'PASS', 'source_head': head,
+            'immutable_source_ref': head, 'channel': 'development',
+        }
+        installer = 'https://bootstrap.example:6099/artifacts/agent/bootstrap-client.sh'
+        artifact = {'source_head': head, 'sha256': 'b' * 64}
+        with mock.patch.object(MOD.PKI, 'fingerprint_from_cert_file', return_value='ab' * 32), \
+                mock.patch.object(MOD.QA, 'load_manifest', return_value=manifest), \
+                mock.patch.object(MOD.QA, 'lookup_installed', return_value=artifact):
+            script = env.allocator.build_short_url_script(handle, 'linux')
+            if not script or installer not in script:
+                fail('qualified derived installer was not served')
+                return
+            bad = dict(manifest, qualification_status='FAIL')
+            with mock.patch.object(MOD.QA, 'load_manifest', return_value=bad):
+                if env.allocator.build_short_url_script(handle, 'linux') is not None:
+                    fail('unqualified installer accepted')
+                    return
+            # A legacy record without a frozen Windows renderer must use
+            # only the qualified Windows/amd64 same-origin artifact.
+            with mock.patch.object(MOD.QA, 'lookup_installed', return_value=artifact) as lookup:
+                windows = env.allocator.build_short_url_script(handle, 'windows')
+                if (not windows or
+                        'https://bootstrap.example:6099/artifacts/agent/bootstrap-client.ps1' not in windows):
+                    fail('qualified Windows derived installer was not served')
+                    return
+                lookup.assert_called_with(mock.ANY, 'agent-installer', 'windows', 'amd64')
+            with mock.patch.object(MOD.QA, 'lookup_installed',
+                                   side_effect=MOD.QA.ArtifactError('missing')):
+                if env.allocator.build_short_url_script(handle, 'linux') is not None:
+                    fail('missing qualified installer accepted')
+                    return
+        pass_('QUALIFIED_MISSING_INSTALLER_CONFIG_SAFE_DERIVATION')
+    finally:
+        env.cleanup()
+
+
 def test_handle_index_removed_with_retention():
     env = Env()
     try:
@@ -1363,6 +1415,7 @@ def main():
     test_compact_redaction_and_command_length()
     test_shell_safety_floor()
     test_windows_renderer_frozen_and_launcher()
+    test_qualified_short_url_missing_installer_config_recovers_safely()
     test_handle_index_removed_with_retention()
     test_redeem_bind_and_retry()
     test_expired_and_invalid()

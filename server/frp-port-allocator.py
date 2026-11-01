@@ -2014,7 +2014,7 @@ class Allocator:
     def protected_ports(self):
         return infrastructure_protected_ports(self.cfg)
 
-    def allocate_port(self, used, *, start=None, end=None):
+    def allocate_port(self, used, *, start=None, end=None, pool_class='normal'):
         protected = self.protected_ports()
         start = int(self.cfg['port_start'] if start is None else start)
         end = int(self.cfg['port_end'] if end is None else end)
@@ -2024,7 +2024,11 @@ class Allocator:
             if not port_is_available(port):
                 continue
             return port
-        raise PortRangeExhausted('No available FRP service ports')
+        pool = 'Fixed TCP' if pool_class == 'fixed-tcp' else 'normal'
+        raise PortRangeExhausted(
+            'No available FRP service ports in %s pool (%d-%d)' %
+            (pool, start, end)
+        )
 
     def pool_port_range(self, pool_class):
         """Return (start, end) for normal FRP services or Fixed TCP Remote Services."""
@@ -2141,7 +2145,7 @@ class Allocator:
                 alloc_used = set(used)
                 if prev_port is not None:
                     alloc_used.discard(prev_port)
-                remote_port = self.allocate_port(alloc_used, start=start, end=end)
+                remote_port = self.allocate_port(alloc_used, start=start, end=end, pool_class=pool)
                 used.add(remote_port)
 
             stored = {
@@ -2383,6 +2387,17 @@ class Allocator:
         ca_path = str(self.cfg.get('tls_ca_cert') or '').strip()
         if not allocator.lower().startswith('https://'):
             return None
+        if not installer:
+            # The Server may have verified, installed same-origin artifacts
+            # without retaining the redundant client_installer_url field (F-001).
+            # Derive only the qualified Server-local artifact URL. No public
+            # download fallback, unsigned installer, or TLS weakening.
+            if QA is None:
+                return None
+            try:
+                installer = QA.agent_installer_url(allocator, platform)
+            except QA.ArtifactError:
+                return None
         if not installer.lower().startswith('https://'):
             return None
         if not ca_path or not Path(ca_path).is_file():
@@ -2394,28 +2409,36 @@ class Allocator:
         if not ca_fp:
             return None
         try:
+            provenance = None
+            # Artifacts at the Server's canonical path must be qualified
+            # before any script is served. The Linux script also carries the
+            # exact installed candidate provenance across public DNS aliases.
+            expected_path = (
+                '/artifacts/agent/bootstrap-client.ps1' if platform == 'windows'
+                else '/artifacts/agent/bootstrap-client.sh'
+            )
+            if urlparse(installer).path == expected_path:
+                if QA is None:
+                    return None
+                artifact_root = QA.installed_root()
+                target_arch = 'amd64' if platform == 'windows' else 'any'
+                try:
+                    artifact = QA.lookup_installed(
+                        artifact_root, 'agent-installer', platform, target_arch
+                    )
+                    manifest = QA.load_manifest(artifact_root)
+                    if manifest.get('qualification_status') != 'PASS':
+                        return None
+                    if artifact.get('source_head') != manifest.get('source_head'):
+                        return None
+                    if platform == 'linux':
+                        provenance = {**manifest, 'sha256': artifact['sha256']}
+                except QA.ArtifactError:
+                    return None
             if platform == 'windows':
                 return ZT.render_short_url_windows_bootstrap_script(
                     allocator, ca_fp, credential, installer
                 )
-            provenance = None
-            # Public DNS aliases can differ from the allocator's pinned-IP
-            # origin. Carry the locally verified candidate identity in stage 1
-            # instead of falling back to the installer's older embedded HEAD.
-            if urlparse(installer).path == '/artifacts/agent/bootstrap-client.sh':
-                if QA is None:
-                    return None
-                artifact_root = QA.installed_root()
-                try:
-                    artifact = QA.lookup_installed(artifact_root, 'agent-installer', 'linux', 'any')
-                    manifest = QA.load_manifest(artifact_root)
-                    if manifest.get('qualification_status') != 'PASS':
-                        return None
-                    provenance = {**manifest, 'sha256': artifact['sha256']}
-                    if artifact.get('source_head') != manifest.get('source_head'):
-                        return None
-                except QA.ArtifactError:
-                    return None
             return ZT.render_short_url_bootstrap_script(
                 allocator, ca_fp, credential, installer,
                 qualified_provenance=provenance,

@@ -37,11 +37,12 @@ else
 fi
 grep -q "PROJECT_VERSION:-${PROJECT_VERSION}" lib/frp-common.sh &&
   pass "VERSION_SSOT_COMMON_DEFAULT" || fail "VERSION_SSOT_COMMON_DEFAULT"
-./scripts/check-version-consistency.sh >/tmp/version-consistency.out 2>&1 &&
-  pass "VERSION_SSOT_CONSISTENT" || {
-    cat /tmp/version-consistency.out >&2
-    fail "VERSION_SSOT_CONSISTENT"
-  }
+if version_consistency_output="$(./scripts/check-version-consistency.sh 2>&1)"; then
+  pass "VERSION_SSOT_CONSISTENT"
+else
+  printf '%s\n' "$version_consistency_output" >&2
+  fail "VERSION_SSOT_CONSISTENT"
+fi
 
 # --- Manifest validity + provenance ----------------------------------------
 python3 ./scripts/validate-release-manifest.py &&
