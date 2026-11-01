@@ -2904,6 +2904,24 @@ def set_service_object(
                 type=stype,
                 port=port,
             )
+            # Access Rule impact alone omits references from active Remote
+            # Services. Changing their target port may interrupt live traffic
+            # even when no Access Rule references this reusable object.
+            if (impact is None and refs and
+                    (str(existing["type"]) != stype or int(existing["port"]) != int(port))):
+                impact = {
+                    "requires_confirmation": True,
+                    "access_broadened": False,
+                    "access_narrowed": False,
+                    "warning": (
+                        "Service Object '%s' is referenced by active configuration. "
+                        "Changing its port/type can interrupt Remote Services."
+                        % name
+                    ),
+                    "affected_rules": [r.get("display") or r.get("name") for r in refs],
+                    "before": "%s/%s" % (existing["type"], existing["port"]),
+                    "after": "%s/%s" % (stype, port),
+                }
             if impact is None and str(existing["type"]) == stype and int(existing["port"]) == int(port):
                 return {"operation": "noop", "name": name}
 

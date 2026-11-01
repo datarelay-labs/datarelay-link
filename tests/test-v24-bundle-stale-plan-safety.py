@@ -54,6 +54,30 @@ class BundleStalePlanSafety(unittest.TestCase):
         self.assertEqual(self.plane.current_revision(), before)
         self.assertEqual([row['name'] for row in self.plane.conn.execute('SELECT name FROM agent_remote_services')], ['old-name'])
 
+    def test_invalid_state_in_resource_or_policy_is_rejected(self):
+        bodies = [
+            """  networkObjects:
+    - name: unexpected-state
+      state: banana
+      type: ip
+      value: 192.0.2.77
+""",
+            """  remoteAccess:
+    state: banana
+    mode: blacklist
+""",
+        ]
+        before = self.plane.current_revision()
+        for body in bodies:
+            with self.subTest(body=body), self.assertRaisesRegex(
+                BundleError, "(?i)state.*present.*absent"
+            ):
+                prepare_v24_plan(
+                    self.plane, "configurationBundle:\n  context: server\n" + body,
+                    role="server"
+                )
+            self.assertEqual(self.plane.current_revision(), before)
+
     def test_concurrent_same_name_create_returns_reviewable_conflict(self):
         barrier = threading.Barrier(2)
         mutate = ControlPlane._mutate

@@ -475,6 +475,12 @@ def _cancel_message() -> str:
 def run_network_object_wizard(plane: ControlPlane, name: str) -> int:
     io = _io()
     existing = plane.get_object(name)
+    # Bind the review to the exact row/revision first displayed. A later
+    # writer cannot be silently overwritten by an old interactive session.
+    original = (
+        (str(existing["id"]), int(existing["row_version"]))
+        if existing is not None else None
+    )
     session = WizardSession(
         "network-object",
         name,
@@ -511,6 +517,17 @@ def run_network_object_wizard(plane: ControlPlane, name: str) -> int:
                 continue
 
             def apply_fn():
+                current = plane.get_object(name)
+                observed = (
+                    (str(current["id"]), int(current["row_version"]))
+                    if current is not None else None
+                )
+                if observed != original:
+                    raise ControlPlaneError(
+                        "ERROR:\nNetwork Object changed while you were editing it.\n\n"
+                        "Review the current object and retry.\n\n"
+                        "No changes were applied."
+                    )
                 return v24.set_network_object(
                     plane, name, type=typ, value=value, oneshot=True
                 )
