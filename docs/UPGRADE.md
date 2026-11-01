@@ -162,12 +162,21 @@ The v2.4 target authoritative state is:
 
 Database evolution uses ordered migrations and integrity validation.
 
-The Server can validate and restore a checksum-verified v2.3.0 product backup
-after updating to v2.4.0. Validation migrates legacy paths, clients, endpoint
-reservations and supported restrictive policies into a canonical SQLite DB in
-private staging before live changes. Restore retains the installed v2.4.0
-software/source identity. Unsupported policy constructs, mixed legacy/current
-authority, corrupt archives and other cross-version restores remain rejected.
+**v2.3.0 to v2.4.0 cross-version backup restore is not supported or qualified.**
+There is no currently operated v2.3.0 production host requiring that migration
+path. A valid archive checksum proves the backup contents, **not** that the
+backup may be restored into a different installed product version. The restore
+operation must reject an incompatible project version before changing live
+state. Validate and restore backups only on the supported matching product
+version; do not attempt a cross-version restore on an enrolled Server.
+
+The A-019 prior-stable upgrade scenario is mandatory only when an upgrade from
+that prior-stable version is an explicitly claimed release capability. A
+v2.3.0-to-v2.4.0 restore/upgrade claim must not be marked PASS by reusing old
+archive validation evidence. If future compatibility is required, it must be
+separately implemented, documented and qualified on actual supported hosts.
+Other data migrations within a supported same-version release must still use
+ordered SQLite migrations, integrity validation and fail-closed behavior.
 
 Upgrade sequence conceptually follows:
 

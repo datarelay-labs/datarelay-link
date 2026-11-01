@@ -4,7 +4,7 @@
 > **Source:** `docs/FULL_USER_E2E_SCENARIOS.md` (all 116 original IDs and headings preserved in its canonical document).
 > **Product baseline:** v2.4.0 **includes** AI Access and MCP Bridge; they are excluded **only from this test profile**, not removed from the product.
 > **Executor:** current owner-selected runtime (default `CHATGPT_CHAT`); current explicit instruction overrides historical Codex-only text.
-> **Canonical Full User E2E SHA256:** `7b7581528518547194a81fd6fce84a438b133c5a5b1e6635f778b316aab54792`
+> **Canonical Full User E2E SHA256:** `1a36359f6cfae39b63b7c9e7fed9edaf808f254c4769af2abe4feee72dba7140`
 > **Generation:** `python3 tools/generate_cli_only_e2e_contract.py --write`; `--check` verifies no source drift.
 > **Safety:** preserve current authorization, exact live platform/tool refusals, other actors, host ownership and management access; never reroute a denied effect.
 > **Candidate:** do not infer installed Source HEAD from a Git checkout; record each installed Server/Agent's provenance.
@@ -1183,6 +1183,14 @@ Verify no change to an optional friendly hostname silently changes control/alloc
 
 
 ## A-019 — Prior-stable upgrade to candidate — MANDATORY when an upgrade path is claimed
+
+**Release-scope note (owner decision, 2026-11-02):** v2.3.0-to-v2.4.0
+cross-version backup restore is not a supported/claimed upgrade capability.
+Do not require or imply a PASS for this *unsupported* path. Keep A-019's ID
+and all assertions for any actually claimed prior-stable upgrade path; record
+unsupported v2.3.0 coverage as owner-declared not applicable with this explicit
+reason, not as a successful test. Same-version backup/restore remains mandatory
+where the current release supports it. See [UPGRADE.md](UPGRADE.md).
 
 On each applicable real platform, start from the actual currently supported prior stable release and update using only the supported public CLI/install path.
 
