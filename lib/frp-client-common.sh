@@ -2430,8 +2430,6 @@ wait_for_proxies() {
   # Preserve the connection/login marker and all proxy announcements.
   local max_log_lines=$(( 500 + ${#names[@]} * 12 ))
   (( max_log_lines > 4096 )) && max_log_lines=4096
-  local wanted
-  wanted="$(printf '%s\n' "${names[@]}")"
   while (( attempt < max_attempts )); do
     attempt=$((attempt + 1))
     if (( sleep_s > 0 )); then
@@ -2441,14 +2439,14 @@ wait_for_proxies() {
     # A success from an earlier connection epoch is not live registration.
     # Respect the last login/connection failure and last event per proxy in
     # the current epoch. POSIX awk keeps this compatible with macOS Bash 3.2.
-    if printf '%s\n' "$logs" | awk -v required="$wanted" '
-      BEGIN {
-        count=split(required, names, "\n")
-        for (i=1; i<=count; i++) {
-          name=tolower(names[i])
-          if (name != "") { expected[name]=1; ready[name]=0 }
-        }
-        connected=0
+    # Do not pass newline-separated names through awk -v: macOS BSD awk
+    # rejects literal newlines in variable assignments. Feed required names
+    # as a separate input stream; keep runtime logs on stdin.
+    if printf '%s\n' "$logs" | awk '
+      NR==FNR {
+        name=tolower($0)
+        if (name != "") { expected[name]=1; ready[name]=0 }
+        next
       }
       {
         line=tolower($0)
@@ -2485,7 +2483,7 @@ wait_for_proxies() {
         if (!connected) exit 1
         for (name in expected) if (!ready[name]) exit 1
         exit 0
-      }'; then
+      }' <(printf '%s\n' "${names[@]}") -; then
       return 0
     fi
     if (( sleep_s < max_sleep )) && (( attempt % 3 == 0 )); then

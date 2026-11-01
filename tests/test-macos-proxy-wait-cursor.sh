@@ -192,6 +192,38 @@ case "$CURSOR_BOTH" in
 esac
 pass "CURSOR_COVERS_OUT_AND_ERR"
 
+# --- Test H: multi-proxy readiness is portable to macOS BSD awk ---
+# BSD awk rejects -v assignments whose value contains a literal newline.
+# Proxy names must enter as input records, not a newline-valued -v variable.
+if grep -Fq 'awk -v required="$wanted"' "$ROOT/lib/frp-client-common.sh"; then
+  fail "Test H: required proxy names passed as newline-valued awk -v (BSD awk rejects)"
+fi
+: >"$OUT_LOG"
+CURSOR_H="$(frp_client_journal_cursor)"
+printf '%s\n' \
+  'login to server success' \
+  '[host-ssh] start proxy success' \
+  '[host-http] start proxy success' >>"$OUT_LOG"
+export FRP_PROXY_WAIT_CURSOR="$CURSOR_H"
+if ! wait_for_proxies host-ssh host-http; then
+  fail "Test H: two current-epoch proxies must both reach ready"
+fi
+pass "TEST_H_MULTIPROXY_CURRENT_EPOCH"
+: >"$OUT_LOG"
+CURSOR_H2="$(frp_client_journal_cursor)"
+printf '%s\n' \
+  'login to server success' \
+  '[host-ssh] start proxy success' \
+  '[host-http] start proxy success' \
+  'control worker is closed' \
+  'login to server success' \
+  '[host-ssh] start proxy success' >>"$OUT_LOG"
+export FRP_PROXY_WAIT_CURSOR="$CURSOR_H2"
+if wait_for_proxies host-ssh host-http; then
+  fail "Test H: stale second proxy from older connection epoch must not PASS"
+fi
+pass "TEST_H_MULTIPROXY_STALE_EPOCH_DENIED"
+
 echo "MACOS_PROXY_WAIT_REGRESSION=PASS"
 echo "STALE_LOG_CAUSALITY=PASS"
 echo "LOG_ROTATION_CAUSALITY=PASS"
