@@ -17,6 +17,87 @@ except ImportError:  # pragma: no cover
     _scfg = None
 
 
+def _verify_access_rule_runtime(plane: ControlPlane, resource: str) -> Optional[str]:
+    """Bounded post-commit observation, not a policy commit/rollback primitive.
+
+    A generated policy JSON is not proof that a stopped or frozen enforcement
+    process actually applies it. Test-root simulations have no systemd and
+    are intentionally not promoted to live activation evidence.
+    """
+    import os
+    import subprocess
+    from pathlib import Path
+
+    root = getattr(plane, "root", None)
+    if root not in (None, "", "/"):
+        return None
+    if str(os.environ.get("DRLINK_SKIP_ACTIVATION") or "").strip().lower() in (
+        "1", "yes", "y", "true"
+    ):
+        # A testing override on a live Server cannot be presented as proof
+        # of activation. Its policy commit may still have succeeded.
+        return "runtime activation was explicitly skipped"
+
+    def service_status(unit: str) -> str:
+        try:
+            result = subprocess.run(
+                ["systemctl", "is-active", unit], capture_output=True,
+                text=True, timeout=3, check=False,
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            return "unavailable"
+        return (result.stdout or "").strip() if result.returncode == 0 else (
+            (result.stdout or "").strip() or "inactive"
+        )
+
+    if resource == "remote-access":
+        status = service_status("drlink-access.service")
+        if status != "active":
+            return "drlink-access is %s" % status
+        try:
+            import json
+            import urllib.request
+            config_path = Path("/etc/drlink/config.json")
+            cfg = json.loads(config_path.read_text(encoding="utf-8"))
+            addr = str(cfg.get("access_plugin_addr") or "127.0.0.1:6101")
+            # Health probes are loopback-only, even if service binds 0.0.0.0.
+            port = int(addr.rsplit(":", 1)[-1])
+            if not (1 <= port <= 65535):
+                return "access plugin health port is invalid"
+            with urllib.request.urlopen(
+                "http://127.0.0.1:%d/healthz" % port, timeout=2
+            ) as response:
+                if response.getcode() != 200:
+                    return "access plugin /healthz returned %s" % response.getcode()
+        except Exception:
+            return "access plugin /healthz failed"
+        return None
+
+    # HTTP CONNECT and Fixed TCP Egress can run independently. If both are
+    # inactive, a successful JSON compilation is definitively not activation.
+    http_status = service_status("drlink-egress.service")
+    tcp_status = service_status("drlink-tcp-egress.service")
+    if http_status != "active" and tcp_status != "active":
+        return "drlink-egress is %s; drlink-tcp-egress is %s" % (
+            http_status, tcp_status
+        )
+    return None
+
+
+def _access_rule_activation_result(plane: ControlPlane, resource: str, name: str) -> int:
+    reason = _verify_access_rule_runtime(plane, resource)
+    if reason:
+        sys.stderr.write(
+            "ERROR: %s rule '%s' was saved, but live activation was NOT verified: %s.\n"
+            "Changes remain saved; do not assume that access is enforced or available.\n"
+            "Run: sudo drlink system diagnostics\n"
+            % (resource, name, reason)
+        )
+        return 1
+    sys.stdout.write("%s rule set: %s\n" % (resource, name))
+    return 0
+
+
 def _presence_word(connectivity: str) -> str:
     return {"connected": "Connected", "stale": "Stale"}.get(connectivity, "Disconnected")
 
@@ -1324,8 +1405,7 @@ def handle_set(plane: ControlPlane, rest: list[str]) -> Optional[int]:
         )
         if isinstance(result, dict) and result.get("cancelled"):
             return 1
-        sys.stdout.write("%s rule set: %s\n" % (res, name))
-        return 0
+        return _access_rule_activation_result(plane, res, name)
     if res == "ai-access":
         _require_server(plane, "AI Access policy")
         if len(rest) < 2:
