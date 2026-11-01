@@ -1935,6 +1935,37 @@ def check_access_control(report, paths, facts, cfg, registry_state):
                     'inspect drlink-access and authoritative Access/Registry state',
                     'runtime',
                 )
+        except HTTPError as exc:
+            # The plugin shares one bounded worker budget between NewUserConn
+            # and /healthz. Its overload gate answers 503 with a fail-closed
+            # "server busy" body; /healthz itself answers 503 with ok=false.
+            # Both stay FAIL, but name the actual cause.
+            body = {}
+            try:
+                body = json.loads(exc.read(4096).decode('utf-8', 'replace') or '{}')
+            except (OSError, ValueError):
+                body = {}
+            if not isinstance(body, dict):
+                body = {}
+            if str(body.get('reject_reason') or '') == 'server busy':
+                report.add(
+                    'access_plugin_health', FAIL,
+                    'access plugin is saturated: GET /healthz was rejected with 503 server busy',
+                    '%s; all authorization workers are in use, so new public connections '
+                    'are being rejected fail-closed for every service' % health_url,
+                    'reduce the new-connection rate and re-run diagnostics after the load subsides',
+                    'runtime',
+                )
+            else:
+                error = str(body.get('error') or '').strip()
+                report.add(
+                    'access_plugin_health', FAIL,
+                    'access plugin GET /healthz returned %s%s' % (
+                        exc.code, (': %s' % error) if error else ''),
+                    '%s (%s)' % (health_url, exc),
+                    'inspect drlink-access and authoritative Access/Registry state',
+                    'runtime',
+                )
         except Exception as exc:
             report.add(
                 'access_plugin_health', FAIL,
