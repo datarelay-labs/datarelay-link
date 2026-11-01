@@ -18,6 +18,7 @@ that users of mature secure-connectivity products reasonably expect.
 | P0 | Managed Host Approval / Quarantine | GA Must Ship |
 | P0 | Bounded Staged Managed Agent Updates | GA Must Ship |
 | P1 | Public Automation API + scoped Service Accounts | GA Must Ship |
+| P1 | Multi-Account MCP Identity & Authorization (#255) | GA Must Ship |
 | P1 | Signed Generic Webhook Notifications | GA Must Ship |
 | P1 | Access Hygiene / Stale Access Review | GA Must Ship, recommendation-only |
 | P2 | Lightweight one-step JIT Access Request / Approval | Stretch, non-blocking |
@@ -504,6 +505,20 @@ ACCESS_HYGIENE_NO_AUTO_REVOKE=PASS
 ACCESS_HYGIENE_CORE_WEB_API_MCP_PARITY=PASS
 ```
 
+## 8A. P1 — Multi-Account MCP Identity & Authorization (#255)
+
+**Release disposition:** P1 GA Must Ship. **Tracking state 2026-11-01:** PLANNED / REAL MULTI-ACCOUNT E2E NOT QUALIFIED. The existing OAuth-enabled Native MCP bridge and single-identity full-control development tests do not qualify this feature.
+
+- **Scope:** multiple distinct personal or organizational ChatGPT, Claude, and other supported remote MCP host accounts independently connect to the **same incoming Data Relay Link MCP endpoint**. This is not a proxy/aggregator for arbitrary third-party MCP servers.
+- **Identity:** distinguish MCP OAuth client registration, authenticated issuer/subject, client account/session, durable AI Identity, host OS executor and non-interactive Automation API Service Accounts. No principal is selected by mutable display name or email. Reject ambiguous, unknown or unauthenticated principal mapping; require explicit Admin-controlled binding to an AI Identity.
+- **Permissions:** existing fail-closed AI Access WHITELIST, Permission Object/Group, allowed Server/Managed Host set, permitted tools/actions, path/command/time restrictions and executor OS permissions must all intersect. A scope granted to account A cannot be inherited by B even if the same OAuth application or Server URL is used. No default global/root permission.
+- **Administration:** Core-owned create/list/detail/disable/revoke/re-authorize/expiry and scoped grant inspection/edit through canonical CLI and authorized Web Admin; no token/secret readback. Admin-only grant mutation, role-aware read-only visibility and per-actor audit/explain/deny.
+- **Runtime:** enforce policy on every new MCP tool call; refresh/reconnect/session changes must never silently switch AI Identity. Revoked/deleted/disallowed accounts fail closed. Existing running-job revocation/termination semantics are governed by the established Job contract and must be explicit, not faked.
+- **Separation:** existing Service Accounts are Automation API principals and do not obtain MCP access automatically; Web sessions and Agent identity are separate. Reuse single Server/SQLite and existing authentication/authorization rather than adding mandatory SSO/IdP or duplicate IAM.
+- **Required genuine E2E:** ChatGPT A read Host A only, ChatGPT B bounded exec Host B only, Claude C read-only path on Host A, and unregistered/revoked D DENY; test disallowed cross-host/tool/path/job access, refresh expiry, concurrency, restart, backup/restore, audit and real Admin/Operator/Read Only UX. Preserve per-account consent and verified actual OAuth subject evidence without exposing tokens. Real host/tool calls, source HEAD, installed hash and recorded DENY are mandatory.
+
+**WBS:** MCP-A01 stable authenticated account binding; MCP-A02 enrollment/revocation; MCP-A03 least-privilege policy; MCP-A04 parallel identity isolation; MCP-A05 management/audit; MCP-A06 cross-surface parity; MCP-A07 real account acceptance. See [Issue #255](https://github.com/datarelay-labs/datarelay-link/issues/255).
+
 ## 9. P2 Stretch — Lightweight one-step JIT Access Request / Approval
 
 This is explicitly **not a 3.0 GA blocker**.
@@ -534,20 +549,24 @@ defer it to later 3.x.
 
 ```text
 DRL3-0
-  freeze admission state, Automation API/service-account auth, webhook envelope/signing,
+  freeze admission state, Automation API/service-account auth, multi-account MCP binding,
+  per-account AI Access granularity/revocation, webhook envelope/signing,
   access-hygiene evidence rules, staged-update risk/rollback contract
 
 DRL3-1
   Core schema/query/auth primitives for Host admission, Service Accounts,
+  MCP subject-to-AI-Identity mappings and account-level permission projection,
   Automation API adapter, webhook queue/event boundary, hygiene read model
 
 DRL3-2
   read-only Web visibility for admission, update drift, Service Accounts,
+  AI Identity/MCP account bindings and permission explain,
   notification delivery health, hygiene findings
 
 DRL3-3
   Host approval/quarantine mutations, pre-approved enrollment,
-  Service Account/token administration, webhook endpoint administration,
+  Service Account/token administration, MCP account grants/revocation,
+  webhook endpoint administration,
   public Automation API v1 contract
 
 DRL3-4
@@ -562,10 +581,12 @@ DRL3-6
 
 DRL3-7
   hardening, rate/resource limits, queue recovery, token/webhook secret lifecycle,
+  per-account MCP concurrent isolation/revocation regression,
   mixed-load qualification
 
 DRL3-8
-  exact-candidate cross-surface and 100-host acceptance
+  exact-candidate cross-surface and 100-host acceptance,
+  plus genuine distinct-account MCP OAuth/allow/deny E2E (#255)
 ```
 
 ## 11. 3.0 final priority boundary
@@ -576,6 +597,7 @@ DRL3-8
 Managed Host Approval / Quarantine
 Bounded Staged Managed Agent Updates
 Public Automation API + scoped Service Accounts
+Multi-Account MCP Identity & Authorization (#255)
 Signed Generic Webhook Notifications
 Access Hygiene / Stale Access Review
 ```
