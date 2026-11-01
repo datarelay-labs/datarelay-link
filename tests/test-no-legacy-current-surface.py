@@ -259,7 +259,7 @@ class LegacyReintroductionGate(unittest.TestCase):
             ["enable"], ["disable"], ["apply"], ["discard"], ["sync"],
             ["doctor"], ["support-bundle"], ["pause"], ["resume"], ["restart"],
             ["autostart"], ["uninstall"], ["access"], ["egress"], ["history"],
-            ["clear"], ["quit"], ["q"], ["status"], ["server-status"], ["version"],
+            ["clear"], ["quit"], ["q"], ["server-status"],
             ["explain"], ["export"], ["import"], ["diff"],
         ]
         for tokens in samples:
@@ -277,6 +277,25 @@ class LegacyReintroductionGate(unittest.TestCase):
                 % (tokens, question),
             )
             self.assertEqual(question.get("exit_code"), 2, (tokens, question))
+
+    def test_documented_status_and_version_shortcuts_are_canonical_only(self):
+        # The two documented single-word shortcuts are intentional exceptions
+        # to the otherwise canonical-root-only CLI contract.
+        for role in ("server", "client"):
+            for shortcut, canonical in (
+                ("status", ["show", "status"]),
+                ("version", ["system", "version"]),
+            ):
+                self.assertEqual(
+                    grammar.match([shortcut], role=role),
+                    grammar.match(canonical, role=role),
+                )
+                self.assertEqual(grammar.match([shortcut], role=role).get("status"), "ok")
+                # The exception must not create a new command namespace.
+                self.assertNotEqual(grammar.match([shortcut, "extra"], role=role).get("status"), "ok")
+                question = grammar.match([shortcut, "?"], role=role)
+                self.assertEqual(question.get("status"), "error")
+                self.assertEqual(question.get("exit_code"), 2)
 
     def test_hidden_dispatch_resources_are_rejected(self):
         samples = (
