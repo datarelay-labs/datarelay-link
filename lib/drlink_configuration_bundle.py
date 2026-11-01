@@ -171,6 +171,21 @@ def _load_yaml_reject_duplicate_keys(text: str) -> Any:
     yaml = _yaml()
 
     class _UniqueKeySafeLoader(yaml.SafeLoader):
+        # YAML 1.2 boolean vocabulary: unquoted yes/no/on/off must not silently
+        # become booleans under PyYAML's legacy YAML 1.1 resolver.
+        yaml_implicit_resolvers = {
+            initial: [
+                (tag, regexp) for tag, regexp in resolvers
+                if tag != "tag:yaml.org,2002:bool"
+            ]
+            for initial, resolvers in yaml.SafeLoader.yaml_implicit_resolvers.items()
+        }
+
+    _UniqueKeySafeLoader.add_implicit_resolver(
+        "tag:yaml.org,2002:bool", re.compile(r"^(?:true|false)$", re.IGNORECASE), list("tTfF")
+    )
+
+    class _UniqueKeySafeLoaderWithMapping(_UniqueKeySafeLoader):
         def construct_mapping(self, node, deep=False):
             seen = set()
             for key_node, _ in node.value:
@@ -198,7 +213,7 @@ def _load_yaml_reject_duplicate_keys(text: str) -> Any:
                     ) from None
             return super().construct_mapping(node, deep=deep)
 
-    return yaml.load(text, Loader=_UniqueKeySafeLoader)
+    return yaml.load(text, Loader=_UniqueKeySafeLoaderWithMapping)
 
 
 def _public_yaml_error_detail(exc: Exception) -> str:
@@ -349,10 +364,23 @@ def read_bundle_from_path_or_stdin(source: str, stdin_text: Optional[str] = None
 
 
 def _resource_state(item: dict) -> str:
-    state = str(item.get("state") or "present").strip().lower()
+    raw_state = item.get("state", "present")
+    if not isinstance(raw_state, str):
+        raise BundleError("state must be present or absent")
+    state = raw_state.strip().lower()
     if state not in ("present", "absent"):
         raise BundleError("state must be present or absent (got %r)" % state)
     return state
+
+
+def _optional_enabled(item: dict, family: str, *, default: Optional[bool] = None) -> Optional[bool]:
+    """Reject YAML truthy coercions; enabled is an explicit boolean contract."""
+    if "enabled" not in item:
+        return default
+    value = item["enabled"]
+    if not isinstance(value, bool):
+        raise BundleError("%s.enabled must be true or false" % family)
+    return value
 
 
 def _require_name(item: dict, family: str) -> str:
@@ -1088,7 +1116,7 @@ def build_change_plan(
         dest_host = item.get("destHost") or item.get("dest_host")
         dest_port = item.get("destPort") or item.get("dest_port")
         listen_port = item.get("listenPort") or item.get("listen_port")
-        enabled = item.get("enabled")
+        enabled = _optional_enabled(item, "fixedTcp")
         plan.changes.append(
             PlannedChange(
                 "UPDATE",
@@ -1100,7 +1128,7 @@ def build_change_plan(
                     dest_host=str(dh) if dh is not None else None,
                     dest_port=int(dp) if dp is not None else None,
                     listen_port=int(lp) if lp is not None else None,
-                    enabled=bool(en) if en is not None else None,
+                    enabled=en,
                 ),
             )
         )
@@ -1125,13 +1153,13 @@ def build_change_plan(
             )
             continue
         description = str(item.get("description") or "")
-        enabled = item.get("enabled")
+        enabled = _optional_enabled(item, "aiPrincipals")
         existing = plane.conn.execute(
             "SELECT * FROM ai_principals WHERE lower(name)=lower(?)", (name,)
         ).fetchone()
         if existing is not None:
             same_desc = (existing["description"] or "") == description
-            same_enabled = True if enabled is None else (bool(existing["enabled"]) == bool(enabled))
+            same_enabled = True if enabled is None else (bool(existing["enabled"]) == enabled)
             if same_desc and same_enabled:
                 plan.changes.append(
                     PlannedChange(
@@ -1149,7 +1177,7 @@ def build_change_plan(
                 name,
                 "set ai-principal %s" % name,
                 apply_fn=lambda pl, n=name, d=description, en=enabled: pl.set_ai_principal(
-                    n, description=d or None, enabled=bool(en) if en is not None else None
+                    n, description=d or None, enabled=en
                 ),
             )
         )
@@ -1181,7 +1209,7 @@ def build_change_plan(
             )
             continue
         if "enabled" in item and client:
-            enabled = bool(item.get("enabled"))
+            enabled = _optional_enabled(item, "publishedServices")
             op = "ENABLE" if enabled else "DISABLE"
             plan.changes.append(
                 PlannedChange(
@@ -1458,7 +1486,7 @@ def _plan_policy_rule(plane: ControlPlane, plan: ChangePlan, family: str, plane_
     action = str(item.get("action") or "ALLOW").strip().lower()
     if action not in ("allow", "deny"):
         raise BundleError("%s.action must be ALLOW or DENY" % family)
-    enabled = bool(item.get("enabled")) if "enabled" in item else False
+    enabled = _optional_enabled(item, family, default=False)
     description = str(item.get("description") or "")
     if not isinstance(sources, list) or not isinstance(destinations, list) or not isinstance(services, list):
         raise BundleError("%s sources/destinations/services must be lists" % family)
@@ -1568,7 +1596,7 @@ def _plan_ai_rule(plane: ControlPlane, plan: ChangePlan, item: dict):
     action = str(item.get("action") or "ALLOW").strip().lower()
     if action not in ("allow", "deny"):
         raise BundleError("aiAccess.action must be ALLOW or DENY")
-    enabled = bool(item.get("enabled")) if "enabled" in item else False
+    enabled = _optional_enabled(item, "aiAccess", default=False)
     description = str(item.get("description") or "")
     if not isinstance(targets, list) or not isinstance(caps, list) or not isinstance(paths, list):
         raise BundleError("aiAccess targets/capabilities/paths must be lists")
