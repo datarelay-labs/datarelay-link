@@ -33,6 +33,12 @@ import frp_cli_catalog as catalog
 
 
 class CliFeatureScenarioRemediation(unittest.TestCase):
+    def test_status_and_version_documented_shortcuts_resolve(self):
+        status = grammar.match(["status"], "server")
+        version = grammar.match(["version"], "server")
+        self.assertEqual((status.get("status"), status.get("action")), ("ok", "control_plane"))
+        self.assertEqual((version.get("status"), version.get("action")), ("ok", "show_version"))
+
     def test_system_audit_and_revisions_show_recorded_actor(self):
         class AuditPlane:
             def list_audit(self, **_kwargs):

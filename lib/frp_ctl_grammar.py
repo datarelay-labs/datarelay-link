@@ -1081,7 +1081,7 @@ def _root_help_legacy(role):
             "  clear",
             "  exit",
             "",
-            "status and version remain shortcuts for show status / show version.",
+            "status and version remain shortcuts for show status / system version.",
         ]
     )
     lines.extend(other)
@@ -2357,6 +2357,12 @@ def _canonical_result(tokens, role, names=None):
 def match(tokens, role, names=None, clients=None):
     if not tokens:
         return {"status": "empty"}
+    # These documented one-word conveniences must resolve through the same
+    # canonical public paths as their show commands.
+    if list(tokens) == ["status"]:
+        tokens = ["show", "status"]
+    elif list(tokens) == ["version"]:
+        tokens = ["system", "version"]
     # Binary shell meta-flags (not REPL command options).
     if list(tokens) in (["--help"], ["-h"]):
         return {"status": "unknown", "command": tokens[0]}
