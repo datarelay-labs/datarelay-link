@@ -512,14 +512,17 @@ def handle_show(plane: ControlPlane, rest: list[str]) -> Optional[int]:
             ))
         view = rest[2] if len(rest) > 2 else "overview"
         if view not in ("overview", "remote-services", "agent", "addresses"):
-            recovery = syntax
             if view == "references":
-                recovery += (
-                    "\n  show network-object <NAME> references"
-                    "\nUse the Managed Host's Network Object name on the Server."
-                )
+                raise ControlPlaneError(v24.cli_error(
+                    "Unknown Managed Host view '%s'." % view,
+                    expected=syntax,
+                    next_step=(
+                        "For references, use show network-object <NAME> references "
+                        "with the Managed Host's Network Object name on the Server."
+                    ),
+                ))
             raise ControlPlaneError(v24.cli_error(
-                "Unknown Managed Host view '%s'." % view, expected=recovery,
+                "Unknown Managed Host view '%s'." % view, expected=syntax,
             ))
         client = plane.require_client(rest[1])
         if view == "remote-services":
