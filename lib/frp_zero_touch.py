@@ -219,7 +219,11 @@ def private_ca_ip_windows_command(allocator_url, ca_sha256, stage1_sha256, handl
         '[Convert]::ToBase64String($cert.RawData,[Base64FormattingOptions]::InsertLineBreaks)+'
         '"`n-----END CERTIFICATE-----`n";'
         "[IO.File]::WriteAllText($ca,$pem);"
-        "& curl.exe -fsSL --max-redirs 0 --proto '=https' --cacert $ca -o $st '%s';"
+        # Schannel cannot validate revocation for this already SHA256-pinned
+        # private CA in a disconnected lab. Skip only that check on the
+        # credential-bearing stage-1 request; retain CA/host TLS validation,
+        # no redirects, and independent stage-1 SHA256 verification.
+        "& curl.exe -fsSL --max-redirs 0 --proto '=https' --ssl-no-revoke --cacert $ca -o $st '%s';"
         "if($LASTEXITCODE){throw 'verified stage-1 fetch failed'};"
         "if((Get-FileHash -LiteralPath $st).Hash -ne '%s'){throw 'stage-1 hash mismatch'};"
         "& powershell.exe -NoProfile -ExecutionPolicy Bypass -File $st;"
