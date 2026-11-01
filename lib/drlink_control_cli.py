@@ -82,11 +82,11 @@ def _configuration_export(plane: ControlPlane, rest):
 def _configuration_test(plane: ControlPlane, rest):
     if not rest:
         raise SystemExit("Missing configuration path.\n\nUsage:\n  test configuration <file|->")
-    raw, label = _read_config_input(rest[0], no_mutation=False)
+    raw, label = _read_config_input(rest[0])
     try:
         plan = _prepare_public_bundle(plane, raw)
     except Exception as exc:
-        _exit_bundle_error(exc, no_mutation=False)
+        _exit_bundle_error(exc)
     from drlink_v24_bundle import format_v24_plan
 
     sys.stdout.write(format_v24_plan(plan))
@@ -102,11 +102,11 @@ def _configuration_test(plane: ControlPlane, rest):
 def _configuration_diff(plane: ControlPlane, rest):
     if not rest:
         raise SystemExit("Missing configuration path.\n\nUsage:\n  system diff configuration <file|->")
-    raw, label = _read_config_input(rest[0], no_mutation=False)
+    raw, label = _read_config_input(rest[0])
     try:
         plan = _prepare_public_bundle(plane, raw)
     except Exception as exc:
-        _exit_bundle_error(exc, no_mutation=False)
+        _exit_bundle_error(exc)
     from drlink_v24_bundle import format_v24_plan
 
     sys.stdout.write(format_v24_plan(plan))
