@@ -102,6 +102,7 @@ python3 tests/test-v24-cli-ai-master-closure.py
 python3 tests/test-v24-cli-workflow-semantic-parity.py
 python3 tests/test-v24-readonly-selector-operands.py
 python3 tests/test-v24-admin-concurrency-ux.py
+python3 tests/test-v24-macos-runtime-proof.py
 python3 tests/test-v24-reference-delete-serialization.py
 python3 tests/test-v24-reference-delete-upsert-race.py
 python3 tests/test-v24-network-object-remote-reference.py

@@ -60,6 +60,68 @@ class AdminConcurrencyUxTests(unittest.TestCase):
         values = self.plane._object_values(self.plane.require_object("e2e-race")["id"])
         self.assertIn(values, (["192.0.2.11"], ["192.0.2.12"]))
 
+    def test_network_wizard_rejects_edit_committed_after_review_started(self):
+        import drlink_v24_wizard as wizard
+        from drlink_control_db import ControlPlaneError
+
+        class ConcurrentEditIO(wizard.ScriptedIO):
+            def __init__(self, root):
+                super().__init__(["1", "192.0.2.12", "1"])
+                self.root = root
+                self.changed = False
+
+            def ask(self, prompt=""):
+                if prompt == "Select: " and not self.changed:
+                    other = ControlPlane(self.root)
+                    try:
+                        v24.set_network_object(
+                            other, "e2e-race", value="192.0.2.11", oneshot=True
+                        )
+                    finally:
+                        other.close()
+                    self.changed = True
+                return super().ask(prompt)
+
+        initial_revision = self.plane.current_revision()
+        io = ConcurrentEditIO(self.tmp.name)
+        wizard.set_wizard_io(io)
+        try:
+            with self.assertRaisesRegex(ControlPlaneError, "(?i)changed|conflict|revision"):
+                wizard.run_network_object_wizard(self.plane, "e2e-race")
+        finally:
+            wizard.set_wizard_io(None)
+        self.assertTrue(io.changed)
+        self.assertEqual(self.plane.current_revision(), initial_revision + 1)
+        self.assertEqual(
+            self.plane._object_values(self.plane.require_object("e2e-race")["id"]),
+            ["192.0.2.11"],
+        )
+
+    def test_referenced_service_object_port_change_needs_confirmation(self):
+        from drlink_control_plane import ConfirmationRequired
+
+        v24.set_service_object(
+            self.plane, "test-service", type="tcp", port=22, oneshot=True
+        )
+        self.plane.conn.execute(
+            "INSERT INTO agent_remote_services "
+            "(name, destination, service_object, enabled, updated_at) "
+            "VALUES ('test-rs', 'this-host', 'test-service', 1, '2026-11-01T00:00:00Z')"
+        )
+        before = self.plane.current_revision()
+        with self.assertRaisesRegex(ConfirmationRequired, "(?i)reference|remote service"):
+            v24.set_service_object(
+                self.plane, "test-service", type="tcp", port=2222,
+                oneshot=True,
+            )
+        self.assertEqual(self.plane.current_revision(), before)
+        self.assertEqual(v24.get_service_object(self.plane, "test-service")["port"], 22)
+        v24.set_service_object(
+            self.plane, "test-service", type="tcp", port=2222,
+            oneshot=True, confirm=True,
+        )
+        self.assertEqual(v24.get_service_object(self.plane, "test-service")["port"], 2222)
+
     def test_stale_noop_with_explicit_object_version_rejects(self):
         previous = int(self.plane.require_object("e2e-race")["row_version"])
         v24.set_network_object(self.plane, "e2e-race", value="192.0.2.11", oneshot=True)

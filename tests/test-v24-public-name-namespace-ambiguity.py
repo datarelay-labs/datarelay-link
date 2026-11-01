@@ -70,6 +70,15 @@ class PublicNameNamespaceAmbiguity(unittest.TestCase):
         for key in ("FRP_DEPLOY_TEST_ROOT", "DRLINK_CONFIRM"):
             os.environ.pop(key, None)
 
+    def test_public_name_length_boundary_includes_limit_in_error(self):
+        v24.set_network_object(self.plane, "a" * 64,
+                               type="ip", value="198.51.100.99", oneshot=True)
+        revision = self.plane.current_revision()
+        with self.assertRaisesRegex(ControlPlaneError, "64"):
+            v24.set_network_object(self.plane, "a" * 65,
+                                   type="ip", value="198.51.100.98", oneshot=True)
+        self.assertEqual(self.plane.current_revision(), revision)
+
     def test_network_object_then_group_create_rejected(self):
         v24.set_network_object(
             self.plane, "shared", type="ip", value="198.51.100.10", oneshot=True

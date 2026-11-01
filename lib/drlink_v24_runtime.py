@@ -8,6 +8,7 @@ runtime apply (unless DRLINK_SKIP_ACTIVATION is set for unit tests).
 from __future__ import annotations
 
 import json
+from datetime import datetime
 import os
 import re
 import socket
@@ -583,17 +584,112 @@ def _wait_supervised_runtime(root, host_id, desired):
     raise ControlPlaneError('Isolated proxy generation could not be verified; previous configuration will be restored')
 
 
+def _macos_current_runtime_ready(root, host_id, expected) -> bool:
+    """Fail-closed native macOS generation, socket, and proxy-epoch proof.
+
+    launchctl alone does not establish a running relay. Require the configured
+    frpc process, a live TCP control socket to its configured Server, and a
+    successful proxy startup in the latest connection epoch of *that process*.
+    Old log successes after a daemon restart are never reused.
+    """
+    try:
+        launch = subprocess.check_output(
+            ["launchctl", "print", "system/com.datarelay.drlink.frpc"],
+            text=True, timeout=6,
+        )
+        if not re.search(r"(?m)^\s*state = running\s*$", launch):
+            return False
+        pids = re.findall(r"(?m)^\s*pid = ([0-9]+)\s*$", launch)
+        if len(pids) != 1 or int(pids[0]) <= 1:
+            return False
+        pid = pids[0]
+        cmdline = subprocess.check_output(
+            ["ps", "-p", pid, "-o", "command="], text=True, timeout=5,
+        ).strip()
+        config_path = _frpc_toml_path(root)
+        if ("/drlink/bin/frpc" not in cmdline
+                or str(config_path) not in cmdline):
+            return False
+        started = subprocess.check_output(
+            ["ps", "-p", pid, "-o", "lstart="], text=True, timeout=5,
+        ).strip()
+        start_time = datetime.strptime(started, "%a %b %d %H:%M:%S %Y")
+        config = config_path.read_text(encoding="utf-8")
+        server = re.search(r'(?m)^serverAddr\s*=\s*"([^"\r\n]+)"\s*$', config)
+        port = re.search(r'(?m)^serverPort\s*=\s*([0-9]{1,5})\s*$', config)
+        if not server or not port or not 1 <= int(port.group(1)) <= 65535:
+            return False
+        # The macOS lsof output is numeric (-nP). A DNS-only hostname cannot
+        # be reliably bound to this socket without independent resolution.
+        # Fail closed rather than accept an arbitrary connection on that port.
+        if not re.fullmatch(r"[0-9.:]+", server.group(1)):
+            return False
+        sockets = subprocess.check_output(
+            ["lsof", "-nP", "-a", "-p", pid, "-iTCP", "-sTCP:ESTABLISHED"],
+            text=True, timeout=8,
+        )
+        remote = "->%s:%d (ESTABLISHED)" % (server.group(1), int(port.group(1)))
+        if not any(remote in line for line in sockets.splitlines()):
+            return False
+        log_path = _base(root) / "Library/Application Support/drlink/logs/frpc.out.log"
+        with log_path.open("rb") as fh:
+            fh.seek(0, os.SEEK_END)
+            fh.seek(max(0, fh.tell() - 512 * 1024))
+            content = fh.read().decode("utf-8", "replace")
+        connected = False
+        successes: set[str] = set()
+        for line in content.splitlines():
+            ts = re.search(r"20[0-9]{2}-[01][0-9]-[0-3][0-9] [0-2][0-9]:[0-5][0-9]:[0-5][0-9]", line)
+            if not ts:
+                continue
+            event_time = datetime.strptime(ts.group(0), "%Y-%m-%d %H:%M:%S")
+            if event_time < start_time:
+                continue
+            low = line.lower()
+            if any(m in low for m in (
+                "try to connect to server", "connect to server error",
+                "login to server failed", "login server failed",
+                "session closed", "control worker is closed",
+                "try to reconnect", "read from control stream closed",
+            )):
+                connected = False
+                successes.clear()
+            elif "login to server success" in low:
+                connected = True
+                successes.clear()
+            elif connected:
+                if "proxy removed:" in low or "stop proxy" in low:
+                    for sid, rec in expected.items():
+                        name = "%s-%s" % (host_id, rec.get("id") or sid)
+                        if "[%s]" % name in line:
+                            successes.discard(name)
+                elif "start proxy success" in low:
+                    for sid, rec in expected.items():
+                        name = "%s-%s" % (host_id, rec.get("id") or sid)
+                        if "[%s]" % name in line:
+                            successes.add(name)
+        if not connected:
+            return False
+        return all(
+            "%s-%s" % (host_id, rec.get("id") or sid) in successes
+            for sid, rec in expected.items()
+            if isinstance(rec, dict) and rec.get("enabled", True) is not False
+        )
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return False
+
+
 def _current_runtime_ready(root, host_id, expected) -> bool:
     if any(str(os.environ.get(key) or '').lower() in ('1', 'yes', 'true', 'y')
            for key in ('DRLINK_FAULT_RUNTIME_VERIFY', 'DRLINK_FAULT_RUNTIME_RESTART', 'DRLINK_FAULT_RUNTIME_CONFIG')):
         return False
     if _isolated_skip_fixture(root):
         return True  # Exact isolated, activation-disabled test fixture only.
+    if sys.platform == 'darwin':
+        return _macos_current_runtime_ready(root, host_id, expected)
     if not sys.platform.startswith('linux'):
-        # Native current-process/connection-epoch proof is not yet available
-        # here. launchctl job presence alone would admit a stale or absent
-        # proxy, so macOS and Python-on-Windows fail closed until bound proof
-        # can be supplied. Windows PowerShell has its separate native path.
+        # Windows PowerShell has a separate native path. Other runtimes fail
+        # closed rather than accepting stale logs or old proxy registrations.
         return False
     try:
         props = subprocess.check_output(

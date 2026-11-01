@@ -54,6 +54,30 @@ class BundleStalePlanSafety(unittest.TestCase):
         self.assertEqual(self.plane.current_revision(), before)
         self.assertEqual([row['name'] for row in self.plane.conn.execute('SELECT name FROM agent_remote_services')], ['old-name'])
 
+    def test_invalid_state_in_resource_or_policy_is_rejected(self):
+        bodies = [
+            """  networkObjects:
+    - name: unexpected-state
+      state: banana
+      type: ip
+      value: 192.0.2.77
+""",
+            """  remoteAccess:
+    state: banana
+    mode: blacklist
+""",
+        ]
+        before = self.plane.current_revision()
+        for body in bodies:
+            with self.subTest(body=body), self.assertRaisesRegex(
+                BundleError, "(?i)state.*present.*absent"
+            ):
+                prepare_v24_plan(
+                    self.plane, "configurationBundle:\n  context: server\n" + body,
+                    role="server"
+                )
+            self.assertEqual(self.plane.current_revision(), before)
+
     def test_concurrent_same_name_create_returns_reviewable_conflict(self):
         barrier = threading.Barrier(2)
         mutate = ControlPlane._mutate
@@ -285,6 +309,32 @@ class BundleStalePlanSafety(unittest.TestCase):
                 self.assertEqual(plan.base_revision, expected)
                 self.assertIs(type(plan.base_revision), int)
                 self.assertEqual(self.plane.current_revision(), before)
+
+    def test_public_test_stale_revision_returns_nonzero_not_valid_success(self):
+        raw = ("configurationBundle:\n  context: server\n"
+               "  sourceRevision: 999999\n")
+        current = self.plane.current_revision()
+        self.assertNotEqual(current, 999999)
+        out = io.StringIO()
+        with mock.patch("sys.stdin", io.StringIO(raw)), redirect_stdout(out):
+            rc = cli.dispatch(["test", "configuration", "-"],
+                              root=self.tmp, plane=self.plane)
+        self.assertNotEqual(rc, 0)
+        self.assertIn("STALE_CONFIGURATION_REVISION", out.getvalue())
+        self.assertEqual(self.plane.current_revision(), current)
+
+    def test_public_config_binary_input_has_recovery_not_python_codec_error(self):
+        before = self.plane.current_revision()
+        file = Path(self.tmp, "binary-bundle.yaml")
+        file.write_bytes(b"configurationBundle:\n  context: server\n  \xff\xfe")
+        with self.assertRaises(SystemExit) as ctx:
+            cli.dispatch(["test", "configuration", str(file)],
+                         root=self.tmp, plane=self.plane)
+        message = str(ctx.exception)
+        self.assertIn("UTF-8", message)
+        self.assertIn("No changes were applied", message)
+        self.assertNotIn("codec can't decode", message)
+        self.assertEqual(self.plane.current_revision(), before)
 
     def test_public_test_and_diff_reject_invalid_source_revision_without_changes(self):
         before = self.plane.current_revision()

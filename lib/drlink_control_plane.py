@@ -259,7 +259,7 @@ def _validate_name(value: str, kind: str = "name") -> str:
         raise ControlPlaneError("%s is required" % kind)
     if not NAME_RE.fullmatch(text):
         raise ControlPlaneError(
-            "%s must start with a letter and may contain letters, digits, '.', '_' and '-'"
+            "%s must be 1-64 characters, start with a letter, and contain only letters, digits, '.', '_' or '-'"
             % kind
         )
     return text

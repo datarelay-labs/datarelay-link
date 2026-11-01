@@ -253,7 +253,7 @@ def validate_public_name(value: str, kind: str = "Name") -> str:
         )
     if not NAME_RE.fullmatch(text):
         raise ControlPlaneError(
-            "%s must start with a letter and may contain letters, digits, '.', '_' and '-'"
+            "%s must be 1-64 characters, start with a letter, and contain only letters, digits, '.', '_' or '-'"
             % kind
         )
     return text
@@ -2904,6 +2904,24 @@ def set_service_object(
                 type=stype,
                 port=port,
             )
+            # Access Rule impact alone omits references from active Remote
+            # Services. Changing their target port may interrupt live traffic
+            # even when no Access Rule references this reusable object.
+            if (impact is None and refs and
+                    (str(existing["type"]) != stype or int(existing["port"]) != int(port))):
+                impact = {
+                    "requires_confirmation": True,
+                    "access_broadened": False,
+                    "access_narrowed": False,
+                    "warning": (
+                        "Service Object '%s' is referenced by active configuration. "
+                        "Changing its port/type can interrupt Remote Services."
+                        % name
+                    ),
+                    "affected_rules": [r.get("display") or r.get("name") for r in refs],
+                    "before": "%s/%s" % (existing["type"], existing["port"]),
+                    "after": "%s/%s" % (stype, port),
+                }
             if impact is None and str(existing["type"]) == stype and int(existing["port"]) == int(port):
                 return {"operation": "noop", "name": name}
 
@@ -6939,6 +6957,13 @@ def set_remote_service_agent(
     existing = plane_db.conn.execute(
         "SELECT * FROM agent_remote_services WHERE name = ? COLLATE NOCASE", (name,)
     ).fetchone()
+    if existing is not None and existing["name"] != name:
+        raise ControlPlaneError(
+            "ERROR:\nRemote Service name differs only by letter case.\n\n"
+            "Existing Remote Service: %s\n"
+            "Use the exact existing name to edit or delete it.\n\n"
+            "No changes were applied." % existing["name"]
+        )
     if reconcile_existing and (existing is None or int(existing["delete_pending"] or 0)):
         # F024: a synchronizer's stale iteration row does not authorize a
         # CREATE after the operator has deleted it. Only an explicit public
@@ -7859,7 +7884,54 @@ def unset_remote_service_agent(plane_db, name: str, *, root: Optional[str] = Non
     existing = plane_db.conn.execute(
         "SELECT * FROM agent_remote_services WHERE name = ? COLLATE NOCASE", (name,)
     ).fetchone()
+    if existing is not None and existing["name"] != name:
+        raise ControlPlaneError(
+            "ERROR:\nRemote Service name differs only by letter case.\n\n"
+            "Existing Remote Service: %s\n"
+            "Use the exact existing name to edit or delete it.\n\n"
+            "No changes were applied." % existing["name"]
+        )
     if not existing:
+        # Explicit operator unset can recover a Server-only orphan left by a
+        # prior partial deletion. Never use an absence in a status heartbeat
+        # as automatic permission to delete remote state.
+        import drlink_mgmt_sync as mgmt
+        if server_reachable and mgmt.use_live_mgmt_path(root):
+            from frp_control_locks import ExclusiveFileLock, LockTimeout
+            import drlink_v24_runtime as runtime
+
+            lock_path = runtime._client_state_path(root).with_name("client-synchronize.lock")
+            try:
+                with ExclusiveFileLock(lock_path, timeout=8.0):
+                    # Another CLI may have created local intent while we
+                    # waited; refuse to delete based on a stale empty row.
+                    current = plane_db.conn.execute(
+                        "SELECT 1 FROM agent_remote_services WHERE name=? COLLATE NOCASE",
+                        (name,),
+                    ).fetchone()
+                    if current is not None:
+                        raise ControlPlaneError(
+                            "ERROR:\nRemote Service changed during cleanup.\n\n"
+                            "Review the current service and retry.\n\nNo changes were applied."
+                        )
+                    # If a legacy/previous runtime still has this proxy,
+                    # first require explicit runtime reconciliation. Deleting
+                    # the Server endpoint alone could leave an open proxy.
+                    configured = runtime._configured_v24_runtime_ports(root)
+                    if name.lower() in configured:
+                        raise ControlPlaneError(
+                            "ERROR:\nRemote Service has a configured Agent proxy but no local record.\n\n"
+                            "Run system synchronize and inspect diagnostics before deleting.\n\n"
+                            "No changes were applied."
+                        )
+                    result = mgmt.delete_remote_service_on_server(root=root, name=name)
+                    if isinstance(result, dict) and result.get("status") == "DELETED":
+                        return {"operation": "server_cleanup", "name": name}
+            except LockTimeout as exc:
+                raise ControlPlaneError(
+                    "ERROR:\nAnother Agent synchronization is in progress.\n\n"
+                    "Retry after it completes.\n\nNo changes were applied."
+                ) from exc
         raise ControlPlaneError(cli_error("Remote Service '%s' was not found." % name))
     identity = load_agent_identity(root)
     host_name = identity.get("hostname") or identity.get("label") or "this-host"

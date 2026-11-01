@@ -226,6 +226,53 @@ class RemoteServiceDistributedAtomicity(unittest.TestCase):
         self.assertEqual(after["service_name"], "ssh")
         self.assertEqual(int(after["public_port"]), prior_port)
 
+    def test_explicit_delete_repairs_server_only_orphan_without_local_row(self):
+        # A crashed pre-fix deletion could leave Server-only publication.
+        self._create("orphan-repair")
+        self.agent.conn.execute(
+            "DELETE FROM agent_remote_services WHERE name='orphan-repair'"
+        )
+        self.agent.commit_if_autonomous()
+        before = self.agent.current_revision()
+        result = v24.unset_remote_service_agent(
+            self.agent, "orphan-repair", root=self.agent_tmp,
+            server_reachable=True,
+        )
+        self.assertEqual(result["operation"], "server_cleanup")
+        self.assertEqual(self.agent.current_revision(), before)
+        pub = self._server_pub("orphan-repair")
+        self.assertTrue(pub is None or int(pub["released"] or 0) == 1)
+
+    def test_server_only_delete_refuses_different_case(self):
+        self._create("orphan-Case")
+        self.agent.conn.execute(
+            "DELETE FROM agent_remote_services WHERE name='orphan-Case'"
+        )
+        self.agent.commit_if_autonomous()
+        with self.assertRaisesRegex(ControlPlaneError, "(?i)case|exact"):
+            v24.unset_remote_service_agent(
+                self.agent, "ORPHAN-CASE", root=self.agent_tmp,
+                server_reachable=True,
+            )
+        self.assertEqual(int(self._server_pub("orphan-Case")["released"] or 0), 0)
+
+    def test_server_only_delete_refuses_when_old_local_proxy_still_configured(self):
+        self._create("orphan-live-proxy")
+        self.agent.conn.execute(
+            "DELETE FROM agent_remote_services WHERE name='orphan-live-proxy'"
+        )
+        self.agent.commit_if_autonomous()
+        with mock.patch(
+            "drlink_v24_runtime._configured_v24_runtime_ports",
+            return_value={"orphan-live-proxy": 6012},
+        ):
+            with self.assertRaisesRegex(ControlPlaneError, "(?i)proxy|synchronize"):
+                v24.unset_remote_service_agent(
+                    self.agent, "orphan-live-proxy", root=self.agent_tmp,
+                    server_reachable=True,
+                )
+        self.assertEqual(int(self._server_pub("orphan-live-proxy")["released"] or 0), 0)
+
     def test_direct_delete_activation_failure_restores_server(self):
         created = self._create("svc-del")
         prior_port = int(created["view"]["endpoint_port"])
@@ -421,6 +468,31 @@ class RemoteServiceDistributedAtomicity(unittest.TestCase):
         pub = self._server_pub("svc-disable-stale")
         self.assertIsNotNone(pub)
         self.assertEqual(int(pub["enabled"]), 0)
+
+    def test_case_variant_cannot_silently_overwrite_or_delete_service(self):
+        # F-005: A case-insensitive selector must not change the stored
+        # resource under a different spelling. Require its canonical name.
+        self._create("caseguard-http")
+        before = dict(self.agent.conn.execute(
+            "SELECT * FROM agent_remote_services WHERE name='caseguard-http'"
+        ).fetchone())
+        revision = self.agent.current_revision()
+        with self.assertRaisesRegex(ControlPlaneError, "(?i)case|name"):
+            v24.set_remote_service_agent(
+                self.agent, "CASEGUARD-HTTP", destination="this-host",
+                service="https", enabled=True, oneshot=True,
+                root=self.agent_tmp, server_reachable=True,
+            )
+        with self.assertRaisesRegex(ControlPlaneError, "(?i)case|name"):
+            v24.unset_remote_service_agent(
+                self.agent, "CASEGUARD-HTTP", root=self.agent_tmp,
+                server_reachable=True,
+            )
+        after = dict(self.agent.conn.execute(
+            "SELECT * FROM agent_remote_services WHERE name='caseguard-http'"
+        ).fetchone())
+        self.assertEqual(after, before)
+        self.assertEqual(self.agent.current_revision(), revision)
 
     def test_successful_create_update_delete_unchanged(self):
         # This test isolates distributed atomicity from target reachability.

@@ -438,7 +438,7 @@ def _validate_access_rule(item: dict, *, family: str) -> dict:
 def _validate_access_section(section: Any, *, key: str, family: str) -> dict:
     section = _require_mapping(section, key)
     _reject_unknown_keys(section, ACCESS_SECTION_KEYS, key)
-    if str(section.get("state") or "").lower() == "absent":
+    if _validated_resource_state(section) == "absent":
         extras = {k for k in section.keys() if k not in ("state",)}
         if extras:
             _bundle_error("%s declares state: absent with other fields." % key)
@@ -1154,8 +1154,19 @@ def parse_v24_bundle(raw_text: str) -> dict:
     )
 
 
+def _validated_resource_state(item: dict) -> str:
+    # An unrecognized state was previously silently interpreted as present,
+    # allowing test to disagree with operator intent on apply.
+    if "state" not in item:
+        return "present"
+    state = str(item["state"]).strip().lower()
+    if state not in ("present", "absent"):
+        _bundle_error("Resource state must be present or absent.")
+    return state
+
+
 def _absent_and_present_fields(item: dict) -> None:
-    if str(item.get("state") or "").strip().lower() != "absent":
+    if _validated_resource_state(item) != "absent":
         return
     extras = {k for k in item.keys() if k not in ("name", "state")}
     if extras:
@@ -2122,8 +2133,18 @@ def _apply_one(plane: ControlPlane, change: dict, *, server_reachable_override: 
         reachable = (v24.detect_server_reachable(plane, plane.root)
                      if server_reachable_override is None else server_reachable_override)
         if op == "DELETE":
+            # Bundles are declarative desired-state documents. Their names
+            # compare case-insensitively, but the public direct CLI requires
+            # exact stored spelling to prevent accidental case-only edits.
+            # Bind a planned deletion to the existing canonical row; never
+            # derive it from a new name or change any other resource.
+            stored = plane.conn.execute(
+                "SELECT name FROM agent_remote_services WHERE name = ? COLLATE NOCASE",
+                (name,),
+            ).fetchone()
             v24.unset_remote_service_agent(
-                plane, name, root=plane.root, server_reachable=reachable
+                plane, stored["name"] if stored is not None else name,
+                root=plane.root, server_reachable=reachable
             )
         else:
             if "enabled" not in item:
