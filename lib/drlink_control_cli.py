@@ -25,9 +25,11 @@ from drlink_mcp_tls import McpTlsError
 USAGE_HINT = "No changes were applied."
 
 
-def _exit_bundle_error(exc: BaseException) -> None:
+def _exit_bundle_error(exc: BaseException, *, no_mutation: bool = True) -> None:
     msg = str(exc).rstrip()
-    if USAGE_HINT not in msg:
+    if not no_mutation:
+        msg = msg.replace("\n\nNo changes were applied.", "")
+    if no_mutation and USAGE_HINT not in msg:
         msg = "ERROR:\n%s\n\n%s" % (msg, USAGE_HINT)
     raise SystemExit(msg) from exc
 
@@ -80,11 +82,11 @@ def _configuration_export(plane: ControlPlane, rest):
 def _configuration_test(plane: ControlPlane, rest):
     if not rest:
         raise SystemExit("Missing configuration path.\n\nUsage:\n  test configuration <file|->")
-    raw, label = _read_config_input(rest[0])
+    raw, label = _read_config_input(rest[0], no_mutation=False)
     try:
         plan = _prepare_public_bundle(plane, raw)
     except Exception as exc:
-        _exit_bundle_error(exc)
+        _exit_bundle_error(exc, no_mutation=False)
     from drlink_v24_bundle import format_v24_plan
 
     sys.stdout.write(format_v24_plan(plan))
@@ -100,11 +102,11 @@ def _configuration_test(plane: ControlPlane, rest):
 def _configuration_diff(plane: ControlPlane, rest):
     if not rest:
         raise SystemExit("Missing configuration path.\n\nUsage:\n  system diff configuration <file|->")
-    raw, label = _read_config_input(rest[0])
+    raw, label = _read_config_input(rest[0], no_mutation=False)
     try:
         plan = _prepare_public_bundle(plane, raw)
     except Exception as exc:
-        _exit_bundle_error(exc)
+        _exit_bundle_error(exc, no_mutation=False)
     from drlink_v24_bundle import format_v24_plan
 
     sys.stdout.write(format_v24_plan(plan))
@@ -176,7 +178,7 @@ def _configuration_apply(plane: ControlPlane, rest):
     return 0
 
 
-def _read_config_input(source: str):
+def _read_config_input(source: str, *, no_mutation: bool = True):
     if source == "-":
         from drlink_v24_bundle import read_bundle_stdin_with_end
 
@@ -187,7 +189,9 @@ def _read_config_input(source: str):
         _exit_bundle_error(ValueError(
             "Configuration input must be a UTF-8 text file, not binary data. "
             "Convert the file to UTF-8 and retry."
-        ))
+        ), no_mutation=no_mutation)
+    except BundleError as exc:
+        _exit_bundle_error(exc, no_mutation=no_mutation)
 
 
 def _confirm_from_stdin(message: str) -> bool:
