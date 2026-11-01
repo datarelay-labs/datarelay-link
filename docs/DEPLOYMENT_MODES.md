@@ -236,8 +236,10 @@ Recommended sequence:
    create a fresh enrollment on the Server with `sudo drlink set enrollment zero-touch`,
    then follow the Agent uninstall/reinstall lifecycle in [INSTALLATION.md](INSTALLATION.md).
    An existing Agent must explicitly confirm `sudo drlink system uninstall` before
-   the generated first-time installer can run. Uninstall removes local identity and
-   configuration; it does not retire the Server's Managed Host record or reservations.
+   the generated first-time installer can run. Uninstall removes local enrollment
+   credentials and configuration; on Windows only the non-secret persistent machine
+   binding remains outside the Agent root to support re-enrollment to the same
+   Managed Host ID. It does not retire Server Managed Host records or reservations.
    Review and reapply the exported desired configuration through the new Agent's
    ConfigurationBundle workflow, then run `sudo drlink system synchronize` to
    reconcile its Remote Services. Do not assume an unchanged identity or endpoint

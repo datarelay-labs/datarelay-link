@@ -54,4 +54,12 @@ tools\drlink.cmd system uninstall
 
 Remote Service and ConfigurationBundle grammar is the same canonical v2.4 Agent grammar used on other supported platforms. Retired Windows root aliases are rejected with canonical guidance.
 
+On Windows, `system uninstall` deletes local Agent software, configuration, enrollment
+credentials and private keys. It deliberately retains only a non-secret, ACL-restricted
+machine binding at `%ProgramData%\DataRelayLinkHostIdentity\machine-id` so the same
+Windows installation can reuse its Managed Host ID and reserved ports after
+re-enrollment. This identifier is **not** an authentication credential. An OS reinstall
+or loss of this file cannot be assumed to preserve identity; administrator review is
+required if the machine identity conflicts with enrolled state.
+
 The Windows client reuses the same server enrollment and management model. It does not fork a Windows-only API.
