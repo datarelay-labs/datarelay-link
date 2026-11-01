@@ -253,7 +253,7 @@ def validate_public_name(value: str, kind: str = "Name") -> str:
         )
     if not NAME_RE.fullmatch(text):
         raise ControlPlaneError(
-            "%s must start with a letter and may contain letters, digits, '.', '_' and '-'"
+            "%s must be 1-64 characters, start with a letter, and contain only letters, digits, '.', '_' or '-'"
             % kind
         )
     return text

@@ -220,17 +220,24 @@ class ParkedSlotTests(unittest.TestCase):
             threading.Thread(target=lambda: results.append(_get(port)), daemon=True)
             for _ in range(6)
         ]
-        for t in threads:
-            t.start()
-        deadline = time.monotonic() + 3.0
-        while len(srv.parked_results) < 6 and time.monotonic() < deadline:
-            time.sleep(0.02)
-        # Six requests are parked at once although only two slots exist.
-        self.assertEqual(len(srv.parked_results), 6)
-        self.assertTrue(all(srv.parked_results))
-        srv.gate.set()
-        for t in threads:
-            t.join(5.0)
+        # A burst can legitimately be refused while both accept-time slots
+        # are occupied. Wait for each earlier request to enter the parked
+        # state before submitting the next; test parking, not burst admission.
+        try:
+            for i, t in enumerate(threads, 1):
+                t.start()
+                deadline = time.monotonic() + 3.0
+                while len(srv.parked_results) < i and time.monotonic() < deadline:
+                    time.sleep(0.01)
+                self.assertEqual(len(srv.parked_results), i)
+                self.assertTrue(srv.parked_results[-1])
+            # All six requests are now parked with only two worker slots.
+            self.assertEqual(len(srv.parked_results), 6)
+        finally:
+            srv.gate.set()
+            for t in threads:
+                if t.ident is not None:
+                    t.join(5.0)
         self.assertEqual(results, [b"ok"] * 6)
 
     def test_slot_is_taken_again_before_the_caller_continues(self):
@@ -241,10 +248,11 @@ class ParkedSlotTests(unittest.TestCase):
         srv.gate.set()
         for _ in range(3):
             self.assertEqual(_get(srv.server_address[1]), b"ok")
-        # The worker releases its slot just after the response is flushed, so
-        # give it a moment instead of racing the client.
-        self.assertTrue(srv._slot_sem.acquire(timeout=2.0))
-        srv._slot_sem.release()
+            # A completed HTTP response may arrive before the worker's final
+            # slot release. Synchronize each iteration to avoid turning this
+            # healthy race into an unintended accept-time overload test.
+            self.assertTrue(srv._slot_sem.acquire(timeout=2.0))
+            srv._slot_sem.release()
 
     def test_parking_is_refused_above_the_cap(self):
         srv = _make_server(max_concurrent=8, max_parked=2)
