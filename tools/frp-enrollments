@@ -157,7 +157,10 @@ def main(argv=None):
         target = str(args.id).strip().lower()
         row = next((item for item in rows if str(item.get('id') or '').lower() == target), None)
         if row is None:
-            raise SystemExit('ERROR: enrollment not found')
+            raise SystemExit(
+                'ERROR: enrollment not found. It may have expired, been used, or been revoked.\n'
+                "Run 'show enrollments' to check current tickets; issue a new enrollment if needed."
+            )
         if args.state_only:
             print(row['state'])
             return 0
