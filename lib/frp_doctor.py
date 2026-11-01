@@ -1189,6 +1189,43 @@ def _load_client_registry():
     return None
 
 
+def _endpoint_pool_capacity(cfg, port_start, port_end, protected, used_ports):
+    """Summarize normal and Fixed TCP endpoint pool usage from the registry.
+
+    Capacity excludes infrastructure ports inside the range; usage counts
+    every registry reservation inside the range regardless of owner. The
+    allocator may also skip OS-bound ports, so exhaustion here is a lower
+    bound that is never reported as spare capacity the allocator lacks.
+    """
+    if not cfg:
+        return [], []
+    blocked = set(protected)
+    try:
+        from frp_infrastructure_ports import infrastructure_ports, tcp_relay_port_range
+        blocked |= set(infrastructure_ports(cfg))
+        fixed_range = tcp_relay_port_range(cfg)
+    except ImportError:
+        fixed_range = None
+    ranges = []
+    if port_start is not None and port_end is not None and port_start <= port_end:
+        ranges.append(('normal', port_start, port_end))
+    if fixed_range is not None:
+        ranges.append(('Fixed TCP', fixed_range[0], fixed_range[1]))
+    summaries = []
+    exhausted = []
+    for label, start, end in ranges:
+        usable = [p for p in range(start, end + 1) if p not in blocked]
+        used = sum(1 for p in usable if p in used_ports)
+        if usable and used >= len(usable):
+            exhausted.append(
+                '%s pool %s-%s is exhausted (%s/%s used); new Remote Services in this pool '
+                'stay Pending allocation until an endpoint is released'
+                % (label, start, end, used, len(usable))
+            )
+        summaries.append('%s pool %s-%s: %s/%s used' % (label, start, end, used, len(usable)))
+    return summaries, exhausted
+
+
 def validate_registry(state, cfg=None):
     issues = []
     infos = []
@@ -1295,8 +1332,13 @@ def validate_registry(state, cfg=None):
     extra = []
     if outside:
         extra.append('reservations outside current range: %s' % ','.join(str(p) for p in outside[:8]))
+    pools, exhausted = _endpoint_pool_capacity(cfg, port_start, port_end, protected, seen_ports)
+    extra.extend(exhausted)
+    if extra:
         return WARN, extra[0], extra
     msg = 'valid schema v2 (%s Managed Hosts, %s reserved ports)' % (len(clients), len(seen_ports))
+    if pools:
+        msg += '; ' + '; '.join(pools)
     if revoked:
         msg += ', %s revoked' % revoked
     if disabled:
