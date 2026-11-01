@@ -146,11 +146,17 @@ class CompactZeroTouchContract(unittest.TestCase):
             command = zt.private_ca_ip_linux_command(
                 cfg["allocator_public_url"], data["fingerprint"], HANDLE
             )
-            self.assertLessEqual(len(command), 900, len(command))
-            self.assertIn("openssl s_client", command)
+            self.assertLessEqual(len(command), 620, len(command))
+            # The only unauthenticated fetch obtains the public CA certificate.
+            # A pinned DER fingerprint MUST precede the credential request.
+            self.assertEqual(command.count("--insecure"), 1)
+            self.assertIn("/ca.crt", command)
+            self.assertIn("--max-redirs 0", command)
             self.assertIn("--cacert", command)
             self.assertIn("/i/", command)
-            self.assertNotIn("--insecure", command)
+            self.assertLess(command.index("--insecure"), command.index("openssl dgst -sha256"))
+            self.assertLess(command.index("openssl dgst -sha256"), command.index("/i/"))
+            self.assertLess(command.index("--cacert"), command.index("/i/"))
             self.assertNotIn("curl -k", command)
             self.assertNotIn("zt1.", command)
             self.assertIsNone(cli.private_ca_ip_bootstrap_plan(cfg, "0" * 64))
@@ -193,7 +199,7 @@ class CompactZeroTouchContract(unittest.TestCase):
             lines = output.getvalue().splitlines()
             commands = [x for x in lines if x.startswith('bash -c ')]
             self.assertEqual(len(commands), 1)
-            self.assertLessEqual(len(commands[0]), 900)
+            self.assertLessEqual(len(commands[0]), 620)
             self.assertIn('/i/', commands[0])
             self.assertNotIn('zt1.', commands[0])
 
@@ -264,7 +270,7 @@ class CompactZeroTouchContract(unittest.TestCase):
         command = zt.private_ca_ip_windows_command(
             'https://192.0.2.20:6099/enroll', fp, digest, HANDLE
         )
-        self.assertLessEqual(len(command), 1500)
+        self.assertLessEqual(len(command), 1300)
         self.assertIn('--insecure -o $ca', command)  # public cert only
         self.assertIn('--cacert $ca -o $st', command)  # credential protected
         self.assertEqual(command.count('--insecure'), 1)
@@ -423,7 +429,7 @@ class CompactZeroTouchContract(unittest.TestCase):
             lines = output.getvalue().splitlines()
             prefix = "$ErrorActionPreference=" if windows else "bash -c "
             command = next(line for line in lines if line.startswith(prefix))
-            self.assertLessEqual(len(command), 1500 if windows else 900)
+            self.assertLessEqual(len(command), 1300 if windows else 620)
             self.assertIn("/i/", command)
             self.assertNotIn("zt1.", command)
 
