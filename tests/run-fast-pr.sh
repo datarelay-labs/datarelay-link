@@ -90,6 +90,7 @@ python3 tests/test-legacy-backup-migration.py
 python3 tests/test-egress-runtime-no-list-permission.py
 python3 tests/test-v24-upgrade-reconcile.py
 python3 tests/test-doctor-proxy-identity.py
+python3 tests/test-doctor-access-plugin-health.py
 python3 tests/test-doctor-agent-runtime-projection.py
 python3 tests/test-agent-idle-runtime-health.py
 python3 tests/test-agent-catalog-progress.py

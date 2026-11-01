@@ -205,6 +205,104 @@ class WhitelistLastRuleOutageSafety(unittest.TestCase):
             )
         self._assert_narrowing_impact(ctx_a.exception.impact)
 
+    def _seed_remote_objects(self):
+        v24.set_network_object(
+            self.plane, "src", type="ip", value="198.51.100.10", oneshot=True
+        )
+        v24.set_network_object(
+            self.plane, "dst", type="ip", value="198.51.100.20", oneshot=True
+        )
+        v24.set_service_object(self.plane, "ssh", type="tcp", port=22, oneshot=True)
+
+    def test_first_remote_whitelist_rule_disabled_requires_confirm(self):
+        # F-011: no Remote policy is effective ALLOW ALL. A disabled first
+        # WHITELIST Rule establishes WHITELIST with zero enabled Rules, which
+        # is DENY ALL; that outage must be confirmed, not applied silently.
+        self._seed_remote_objects()
+        os.environ.pop("DRLINK_CONFIRM", None)
+        rev_before = self.plane.current_revision()
+        with self.assertRaises(ConfirmationRequired) as ctx:
+            v24.set_access_rule(
+                self.plane,
+                "remote",
+                "allow-ssh",
+                mode="whitelist",
+                source="src",
+                destination="dst",
+                service="ssh",
+                enabled=False,
+                oneshot=True,
+            )
+        self._assert_narrowing_impact(ctx.exception.impact)
+        self.assertEqual(self.plane.current_revision(), rev_before)
+        self.assertIsNone(self.plane._get_rule("remote", "allow-ssh"))
+        self.assertIsNone(v24.get_access_policy(self.plane, "remote")["mode"])
+
+    def test_first_remote_whitelist_rule_disabled_cli_cancel_preserves_no_policy(self):
+        self._seed_remote_objects()
+        os.environ.pop("DRLINK_CONFIRM", None)
+        rev_before = self.plane.current_revision()
+        rc, out, _err = self._dispatch(
+            [
+                "set", "remote-access", "allow-ssh", "mode", "whitelist",
+                "source", "src", "destination", "dst", "service", "ssh", "disabled",
+            ]
+        )
+        self.assertEqual(rc, 1)
+        self.assertIn("DENY ALL", out)
+        self.assertIn("Cancelled", out)
+        self.assertEqual(self.plane.current_revision(), rev_before)
+        self.assertIsNone(v24.get_access_policy(self.plane, "remote")["mode"])
+
+    def test_first_remote_whitelist_rule_disabled_confirmed_applies(self):
+        self._seed_remote_objects()
+        v24.set_access_rule(
+            self.plane,
+            "remote",
+            "allow-ssh",
+            mode="whitelist",
+            source="src",
+            destination="dst",
+            service="ssh",
+            enabled=False,
+            oneshot=True,
+        )
+        self.assertEqual(v24.get_access_policy(self.plane, "remote")["mode"], "whitelist")
+        self.assertFalse(bool(self.plane._get_rule("remote", "allow-ssh")["enabled"]))
+
+    def test_first_rule_without_deny_all_transition_needs_no_confirm(self):
+        # Guards: enabled first WHITELIST Rule, disabled first BLACKLIST Rule
+        # (ALLOW stays ALLOW) and disabled first Internet WHITELIST Rule
+        # (DENY stays DENY) do not gain a new confirmation.
+        self._seed_remote_objects()
+        os.environ.pop("DRLINK_CONFIRM", None)
+        v24.set_access_rule(
+            self.plane, "remote", "block-ssh", mode="blacklist", source="src",
+            destination="dst", service="ssh", enabled=False, oneshot=True,
+        )
+        self.assertEqual(v24.get_access_policy(self.plane, "remote")["mode"], "blacklist")
+        v24.set_network_object(
+            self.plane, "lan", type="ip", value="10.10.10.20", oneshot=True
+        )
+        v24.set_network_object(
+            self.plane, "web", type="fqdn", value="example.com", oneshot=True
+        )
+        v24.set_service_object(self.plane, "https", type="tcp", port=443, oneshot=True)
+        v24.set_access_rule(
+            self.plane, "internet", "allow-https", mode="whitelist", source="lan",
+            destination="web", service="https", enabled=False, oneshot=True,
+        )
+        self.assertEqual(v24.get_access_policy(self.plane, "internet")["mode"], "whitelist")
+
+    def test_first_remote_whitelist_rule_enabled_needs_no_new_confirm(self):
+        self._seed_remote_objects()
+        os.environ.pop("DRLINK_CONFIRM", None)
+        v24.set_access_rule(
+            self.plane, "remote", "allow-ssh", mode="whitelist", source="src",
+            destination="dst", service="ssh", enabled=True, oneshot=True,
+        )
+        self.assertTrue(bool(self.plane._get_rule("remote", "allow-ssh")["enabled"]))
+
     def test_cancel_leaves_state_and_revision_unchanged_cli(self):
         self._seed_remote_whitelist()
         os.environ.pop("DRLINK_CONFIRM", None)

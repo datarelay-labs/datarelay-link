@@ -1218,6 +1218,45 @@ while True:
         self.assertEqual(doctor.validate_registry(registry({**fixed, "remote_port": 6300}), cfg)[0], doctor.PASS)
         self.assertEqual(doctor.validate_registry(registry(fixed, fixed), cfg)[0], doctor.FAIL)
 
+    def test_doctor_reports_endpoint_pool_capacity_and_exhaustion(self):
+        # F-015: diagnostics reported PASS while both endpoint pools were full.
+        import frp_doctor as doctor
+        cfg = {"port_start": 6000, "port_end": 6002,
+               "tcp_relay_port_start": 6200, "tcp_relay_port_end": 6201}
+        def registry(*services):
+            return {"schema_version": 2, "clients": {"a" * 32: {
+                "hostname": "agent", "services": {str(i): s for i, s in enumerate(services)}}}}
+        def normal(port):
+            return {"remote_port": port, "pool_class": "normal"}
+        def fixed(port):
+            return {"remote_port": port, "pool_class": "fixed-tcp"}
+
+        status, message, _extra = doctor.validate_registry(registry(normal(6000), fixed(6200)), cfg)
+        self.assertEqual(status, doctor.PASS)
+        self.assertIn("normal pool 6000-6002: 1/3 used", message)
+        self.assertIn("Fixed TCP pool 6200-6201: 1/2 used", message)
+
+        status, message, extra = doctor.validate_registry(
+            registry(normal(6000), normal(6001), normal(6002), fixed(6200)), cfg)
+        self.assertEqual(status, doctor.WARN)
+        self.assertIn("normal pool 6000-6002 is exhausted (3/3 used)", message)
+        self.assertNotIn("Fixed TCP pool 6200-6201 is exhausted", "; ".join(extra))
+
+        status, message, extra = doctor.validate_registry(
+            registry(normal(6000), normal(6001), normal(6002), fixed(6200), fixed(6201)), cfg)
+        self.assertEqual(status, doctor.WARN)
+        joined = "; ".join(extra)
+        self.assertIn("normal pool 6000-6002 is exhausted (3/3 used)", joined)
+        self.assertIn("Fixed TCP pool 6200-6201 is exhausted (2/2 used)", joined)
+
+        # Reserved and infrastructure ports inside a pool consume its capacity.
+        reserved = registry(normal(6000))
+        reserved["reserved"] = [6001]
+        status, message, _extra = doctor.validate_registry(
+            reserved, {**cfg, "allocator_listen_port": 6002})
+        self.assertEqual(status, doctor.WARN)
+        self.assertIn("normal pool 6000-6002 is exhausted (2/2 used)", message)
+
     def test_update_leaves_disclose_outage_without_extra_confirmation(self):
         rows = {tuple(r["path"]): r for r in json.loads((LIB / "frp_cli_final_commands.json").read_text())}
         for target in ("product", "engine"):
