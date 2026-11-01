@@ -343,6 +343,7 @@ python3 tests/test-v24-readonly-selector-operands.py
 python3 tests/test-v24-revision-rollback.py
 python3 tests/test-v24-direct-revision-guard.py
 python3 tests/test-v24-admin-concurrency-ux.py
+python3 tests/test-v24-macos-runtime-proof.py
 python3 tests/test-v24-ai-access-reference-integrity.py
 python3 tests/test-v24-ai-path-scope-public-parity.py
 python3 tests/test-v24-group-policy-test-false-assurance.py
