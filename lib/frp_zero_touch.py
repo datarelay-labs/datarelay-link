@@ -174,16 +174,17 @@ def private_ca_ip_linux_command(allocator_url, ca_sha256, handle):
     url = short_url_for_ticket(authority, handle)
     inner = (
         "set -euo pipefail;umask 077;d=$(mktemp -d);trap 'rm -rf \"$d\"' EXIT;"
-        # Fetch only the public CA without trust; no handle is disclosed
-        # until its DER SHA256 matches the operator's independent pin.
-        # No redirects and no non-HTTPS protocol are permitted.
-        "curl -fsSL --max-redirs 0 --proto '=https' --insecure "
-        "https://%s/ca.crt -o \"$d/ca\";"
+        # Keep OpenSSL's unauthenticated public-CA retrieval path: Linux
+        # enrollment never uses --insecure, even for the CA-only request.
+        # HTTP/1.0 closes by default; X509 parsing normalizes the sole pinned CA.
+        "printf 'GET /ca.crt HTTP/1.0\r\nHost: %s\r\n\r\n'|"
+        "openssl s_client -quiet -connect %s:%s 2>/dev/null|"
+        "sed -n '/BEGIN CERTIFICATE/,/END CERTIFICATE/p' >\"$d/ca\" || :;"
         "test \"$(openssl x509 -in \"$d/ca\" -outform DER|openssl dgst -sha256|awk '{print $NF}')\" = %s;"
         "openssl x509 -in \"$d/ca\" -out \"$d/trust\";"
         "curl -fsSL --max-redirs 0 --proto '=https' --tlsv1.2 --cacert \"$d/trust\" %s -o \"$d/stage1\";"
         "sudo env FRP_ALLOCATOR_CA_FILE=\"$d/trust\" bash \"$d/stage1\""
-    ) % (authority, ca, shell_quote(url))
+    ) % (host, host, port, ca, shell_quote(url))
     return 'bash -c ' + shlex.quote(inner)
 
 
