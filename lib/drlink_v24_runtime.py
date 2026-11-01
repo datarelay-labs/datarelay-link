@@ -7,6 +7,7 @@ runtime apply (unless DRLINK_SKIP_ACTIVATION is set for unit tests).
 """
 from __future__ import annotations
 
+import ipaddress
 import json
 from datetime import datetime
 import os
@@ -622,13 +623,18 @@ def _macos_current_runtime_ready(root, host_id, expected) -> bool:
         # The macOS lsof output is numeric (-nP). A DNS-only hostname cannot
         # be reliably bound to this socket without independent resolution.
         # Fail closed rather than accept an arbitrary connection on that port.
-        if not re.fullmatch(r"[0-9.:]+", server.group(1)):
+        try:
+            server_ip = ipaddress.ip_address(server.group(1).strip("[]"))
+        except ValueError:
             return False
         sockets = subprocess.check_output(
             ["lsof", "-nP", "-a", "-p", pid, "-iTCP", "-sTCP:ESTABLISHED"],
             text=True, timeout=8,
         )
-        remote = "->%s:%d (ESTABLISHED)" % (server.group(1), int(port.group(1)))
+        # lsof prints IPv6 peers bracketed and compressed: ->[2001:db8::10]:443
+        peer = ("[%s]" % server_ip.compressed if server_ip.version == 6
+                else server_ip.compressed)
+        remote = "->%s:%d (ESTABLISHED)" % (peer, int(port.group(1)))
         if not any(remote in line for line in sockets.splitlines()):
             return False
         log_path = _base(root) / "Library/Application Support/drlink/logs/frpc.out.log"
