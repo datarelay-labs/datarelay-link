@@ -29,8 +29,14 @@ def _verify_access_rule_runtime(plane: ControlPlane, resource: str) -> Optional[
     from pathlib import Path
 
     root = getattr(plane, "root", None)
-    if root not in (None, "", "/") or os.environ.get("DRLINK_SKIP_ACTIVATION") == "1":
+    if root not in (None, "", "/"):
         return None
+    if str(os.environ.get("DRLINK_SKIP_ACTIVATION") or "").strip().lower() in (
+        "1", "yes", "y", "true"
+    ):
+        # A testing override on a live Server cannot be presented as proof
+        # of activation. Its policy commit may still have succeeded.
+        return "runtime activation was explicitly skipped"
 
     def service_status(unit: str) -> str:
         try:

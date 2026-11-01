@@ -36,6 +36,13 @@ class ActivationAcknowledgementTests(unittest.TestCase):
         with mock.patch('subprocess.run', return_value=inactive):
             self.assertIn('inactive', cli._verify_access_rule_runtime(plane, 'internet-access'))
 
+    def test_live_skip_activation_is_not_success(self):
+        plane = type('Live', (), {'root': None})()
+        with mock.patch.dict('os.environ', {'DRLINK_SKIP_ACTIVATION': 'true'}), \
+             mock.patch('subprocess.run') as runner:
+            self.assertIn('explicitly skipped', cli._verify_access_rule_runtime(plane, 'remote-access'))
+            runner.assert_not_called()
+
     def test_no_false_claim_for_non_live_test_root(self):
         plane = type('Test', (), {'root': '/tmp/fixture'})()
         with mock.patch('subprocess.run') as runner:
