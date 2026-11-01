@@ -7,6 +7,21 @@
 > **Current 2.x CLI authority:** `DATA_RELAY_LINK_CLI_AI_MASTER_v2.4_FINAL.md`
 > **Rule:** actual exact-HEAD implementation and qualification evidence override status snapshots in this document.
 
+## 2026-11-01 — 3.0 evidence-bound progress snapshot
+
+This is a dated tracking snapshot, **not a 3.0 GA sign-off**. The release authority remains the exact Git HEAD, installed candidate, real user E2E and immutable release evidence.
+
+| Workstream | Verified state as of this snapshot | Remaining release evidence |
+|---|---|---|
+| 3.0 Core/CLI/Web expansion (#135; Draft PR #168) | IN PROGRESS. Earlier isolated P0/P1 source-focused unit/integration suites were reported passing on historical candidate HEADs. PR #168 is open/draft, not merged to its 3.0 base. | Reconcile actual final source HEAD, independent CI and installed Server/Agent, real personas and 2× same-HEAD Full User E2E |
+| Host approval/quarantine, staged Agent rollout | IMPLEMENTED IN DEVELOPMENT / GA UNQUALIFIED | Authoritative real Agent canary, quarantine denial, stop/failure/health/rollback and exact-candidate evidence |
+| Public Automation API / Service Accounts, signed Webhooks, Access Hygiene | IMPLEMENTED IN DEVELOPMENT / GA UNQUALIFIED | Real operator/API/Web parity, token lifecycle, deliverability/recovery, negative-case and full release gates |
+| Native MCP bridge (#223) | SEPARATE DEVELOPMENT CAPABILITY. Real single authorized identity calls observed, but not proof of 3.0 multi-user functionality. | Cross-identity, true public host OAuth/account session and per-account permissions qualification |
+| **Multi-Account MCP Identity & Authorization (#255)** | **P1 GA MUST SHIP — PLANNED; no multi-account E2E evidence** | MCP-A01..A07 and explicit per-actor live accept/deny + revoke, audit and admin UX gates |
+| Optional Web UI (#182/#184), Foundation consumer | Workstream has its own acceptance contract; legacy UI fixtures/preview are not 3.0 acceptance | Admin/Operator/Read Only actual browser and security/UX evidence, required dependency approval |
+
+No percentage is asserted from historical test counts; PR merge, native CI and genuine installed-persona qualification are separate gates. This roadmap change grants **no new AI Access/OS privileges** and does not install or release any 3.0 product.
+
 ## 1. Roadmap model
 
 This roadmap separates **product generations** from historical implementation tasks.
@@ -288,6 +303,7 @@ The additional 3.0 security/operations features are intentionally split by prior
 | P0 Must Ship | Managed Host Approval / Quarantine | Optional approval gate for newly enrolled Hosts; pre-approved enrollment preserves Zero-Touch automation |
 | P0 Must Ship | Managed Update / Staged Rollout | Bounded manual canary/wave Agent rollout with pause-on-failure and canonical rollback where supported |
 | P1 Must Ship | Public Automation API + Service Accounts | Supported versioned automation surface with scoped non-human principals and full audit |
+| P1 Must Ship | Multi-Account MCP Identity & Authorization (#255) | Separate authenticated AI Identity and per-account Host/tool/permission grants for multiple MCP users; real cross-account deny/audit E2E |
 | P1 Must Ship | Signed Event Webhook | Generic optional signed HTTPS event delivery with bounded retry/health; direct vendor connectors remain later |
 | P1 Must Ship | Access Hygiene Recommendations | Read-only evidence-qualified stale/unused/orphaned/expiring access findings; no automatic mutation |
 | P2 stretch | Lightweight JIT Access Request / Approval | One local requester→Admin flow that creates normal Temporary Access; not a GA blocker |
@@ -305,7 +321,7 @@ DRL3-5  Live Access Visibility → Emergency Cutoff + Access Hygiene + signed We
 DRL3-6  bounded staged Agent update rollout
 DRL3-7  hardening/recovery/scale for all admitted surfaces
 DRL3-7A modern SaaS workspace + DR Control visual parity
-DRL3-8  exact-candidate qualification
+DRL3-8  exact-candidate qualification, including multi-account MCP E2E (#255)
 ```
 
 SSO/IdP integration is not required by or implied by this priority model.
@@ -327,6 +343,7 @@ Required:
 - Agent RPC/job semantics frozen;
 - browser-internal Web API vs supported Public Automation API boundary frozen;
 - Service Account identity/credential/management-permission lifecycle frozen;
+- multi-account MCP OAuth subject/client binding, separate AI Identity per account, per-account permission/admin/revocation/audit contract frozen (#255), distinct from Automation API Service Accounts;
 - Managed Host Approval / Quarantine states, pre-approved enrollment semantics, and access/job denial behavior frozen;
 - staged Agent update rollout canary/wave/failure-pause/rollback bounds frozen;
 - signed event Webhook event classes, signature/secret lifecycle, queue/retry/resource bounds, and health semantics frozen;
@@ -801,6 +818,11 @@ CLI_FULL_CAPABILITY=PASS
 WEB_CAPABILITY_PARITY=PASS
 MANAGEMENT_SURFACE_CONTRACT=PASS
 MCP_CORE_SEMANTIC_PARITY=PASS
+MCP_MULTI_ACCOUNT_IDENTITY_ISOLATION=PASS
+MCP_PER_ACCOUNT_HOST_TOOL_PERMISSION_ENFORCEMENT=PASS
+MCP_ACCOUNT_REVOKE_REFRESH_FAIL_CLOSED=PASS
+MCP_CROSS_ACCOUNT_AUDIT_ATTRIBUTION=PASS
+MCP_MULTI_ACCOUNT_REAL_HOST_E2E=PASS
 PLUGIN_WEB_API_DEPENDENCY=NO
 TARGET_OS_PERMISSION_IMPLIES_MANAGEMENT_PERMISSION=NO
 CLI_AUDIT_QUERY_EXPORT=PASS
@@ -891,6 +913,7 @@ Live Access Visibility + Emergency New-Access Cutoff
 Managed Host Approval / Quarantine
 Managed Update / Staged Rollout
 Public Automation API + Service Accounts
+Multi-Account MCP Identity & Authorization (Issue #255)
 Signed Event Webhook
 Access Hygiene Recommendations
 Audit / Revision Explorer
