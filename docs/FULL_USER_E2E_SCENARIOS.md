@@ -24,6 +24,12 @@ A single finding, mismatch, scenario failure, or test failure MUST NOT stop the 
 
 Stop or skip only the specific downstream check when continuing it would be unsafe, would corrupt shared state/evidence, requires an unavailable mandatory dependency or explicit owner action, or is technically impossible because its prerequisite failed. Mark that check `BLOCKED` or `NOT_RUN` with the exact reason and continue all other independent checks. Do not remediate product/source findings inline during a frozen audit pass; finish the pass first, then remediate findings as one phase and rerun the required pass.
 
+### 2026-11-01 — Test-method improvement draft and qualification compatibility
+
+The documentation-only method proposal is [E2E_TEST_METHOD_POLICY.md](E2E_TEST_METHOD_POLICY.md), with the 116-ID [application matrix draft](FULL_USER_E2E_APPLICATION_MATRIX_DRAFT.md). It separates Smoke, Qualification and Exploratory scheduling, proposes assertion×platform cell events, deterministic 116-row aggregation, independent oracles, per-lane Preflight, global-resource locks, Waves and Delta reruns. **These are not currently authorized changes to scenario applicability, release scope or product behavior.** Apply the existing stricter scenario and release contract unless and until the owner signs a complete revision/matrix. Do not change the evidence/state of an already running E2E.
+
+All mandatory platform-native and previously discovered major regression checks, real Direct/AI actors, allow/deny traffic, full applicable 3,600-second Soak and **two complete same-exact-HEAD Full Real E2E PASS** remain required. Do not mark missing DNS/TLS/AI/MCP lab capabilities PASS or NOT_APPLICABLE by inference; record the dependent blocker and reconcile release scope explicitly. New harness results are supporting evidence, never an acting User persona. A proposed Smoke/Delta checkpoint cannot issue a release qualification PASS.
+
 ## 1. Purpose and execution trigger
 
 This document defines the exhaustive real-user E2E suite for Data Relay Link.
@@ -3927,6 +3933,9 @@ Rules:
 - A release PASS additionally follows all exact-HEAD and double-pass requirements in docs/RELEASE_VALIDATION.md.
 
 ### 16.1 Canonical evidence ledgers and report consistency
+
+**Proposed new-run cell ledger (not active-run schema migration):** The method draft defines an append-only per-assertion/per-platform/per-role cell-events ledger and a deterministic single-writer reducer into this section's existing exactly-116-row scenario-results.tsv. Worker lanes write only their own events; no lane may overwrite aggregate outcomes from another. A missing, blocked, stale, inconclusive or unapproved exclusion cell cannot be synthesized as PASS; retained FAIL attempts require explicit triage, not overwrite. Evidence and immutable historical ledgers remain authoritative. See [E2E_TEST_METHOD_POLICY.md §6](E2E_TEST_METHOD_POLICY.md). Until the reducer and applicability matrix are reviewed and approved, continue using the current canonical ledger contract with truthful original statuses.
+
 
 The final FULL_USER_E2E report must be generated from retained machine-readable ledgers, not manually re-counted from prose evidence.
 
