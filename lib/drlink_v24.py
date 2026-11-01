@@ -6898,7 +6898,9 @@ def allocate_endpoint_port(plane_db, client_id: str, service_name: str, pool_cla
             return port
         label = "Fixed TCP" if pool_class == "fixed-tcp" else "Remote Service"
         raise ControlPlaneError(
-            "ERROR:\nNo %s ports are available.\n\nNo changes were applied." % label
+            "ERROR:\nNo %s ports are available in the configured pool %s-%s.\n\n"
+            "Check the pool range and release unused endpoints before retrying. "
+            "No changes were applied." % (label, start, end)
         )
 
 
