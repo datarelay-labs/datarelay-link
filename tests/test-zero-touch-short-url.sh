@@ -592,7 +592,19 @@ print('ok')
 PY
 pass "SINGLE_USE"
 
-python3 "$ROOT/tools/frp-server-set" hostname access.example.com >/dev/null
+# DNS is intentionally not public in this fixture. Supply a test-local resolver
+# only for the exact alias; the production command retains strict verification.
+mkdir -p "$WORKDIR/dns-stub"
+cat >"$WORKDIR/dns-stub/sitecustomize.py" <<'PYDNS'
+import socket
+_real_lookup = socket.getaddrinfo
+def _fixture_lookup(host, port, *args, **kwargs):
+    if host == 'access.example.com':
+        return [(socket.AF_INET, socket.SOCK_STREAM, 0, '', ('203.0.113.10', 0))]
+    return _real_lookup(host, port, *args, **kwargs)
+socket.getaddrinfo = _fixture_lookup
+PYDNS
+PYTHONPATH="$WORKDIR/dns-stub${PYTHONPATH:+:$PYTHONPATH}" python3 "$ROOT/tools/frp-server-set" hostname access.example.com >/dev/null
 python3 - "$TREE/etc/drlink/config.json" <<'PY' || fail "hostname fields distinct"
 import json
 import sys
