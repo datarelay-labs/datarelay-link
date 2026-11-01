@@ -33,6 +33,32 @@ import frp_cli_catalog as catalog
 
 
 class CliFeatureScenarioRemediation(unittest.TestCase):
+    def test_zero_touch_service_wizard_exits_on_nested_eof(self):
+        script = '''source "$1"
+FRP_CTL_SOURCED=1
+_FRP_ZT_CLIENT_NAME=fixture
+_FRP_ZT_NOTE=
+_FRP_ZT_PLATFORM=linux
+frpctl_read() {
+  case "$1" in
+    Select:*) printf '1' ;;
+    'Service ID'*) printf 'ssh' ;;
+    'Target host'*) return 2 ;;
+    *) return 2 ;;
+  esac
+}
+rc=0
+frpctl_zt_run_services || rc=$?
+printf 'RESULT rc=%s\\n' "$rc"
+'''
+        proc = subprocess.run(
+            ["bash", "-c", script, "regression", str(ROOT / "tools/frpctl")],
+            env=dict(os.environ, FRP_CTL_SOURCED="1"), text=True,
+            capture_output=True, timeout=3,
+        )
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertIn("RESULT rc=2", proc.stdout)
+
     def test_public_managed_host_menu_empty_cancel_preserves_revision(self):
         revision = self.plane.current_revision()
         master, slave = pty.openpty()

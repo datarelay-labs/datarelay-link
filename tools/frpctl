@@ -1664,7 +1664,7 @@ frpctl_try_read() {
     # Never print the prompt separately then read: that allows the cursor to
     # walk into the immutable prompt text on some terminals/SSH clients.
     if ! IFS= read -e -r -p "$prompt" value; then
-      return 1
+      return 2
     fi
   else
     echo "ERROR: no TTY for interactive menu; pass a command such as: ${FRP_CTL_CMD_NAME} show status" >&2
@@ -1677,8 +1677,10 @@ frpctl_try_read() {
 frpctl_read() {
   local prompt="$1" default="${2:-}"
   local value=""
-  if ! value="$(frpctl_try_read "$prompt")"; then
-    return 1
+  if value="$(frpctl_try_read "$prompt")"; then
+    :
+  else
+    return $?
   fi
   if [[ -z "$value" ]]; then
     value="$default"
@@ -1936,25 +1938,25 @@ frpctl_zt_prompt_service_fields() {
   local sid host port user name
   while true; do
     if [[ -n "$default_id" ]]; then
-      sid="$(frpctl_read "Service ID [${default_id}]: " "$default_id")" || return 1
+      sid="$(frpctl_read "Service ID [${default_id}]: " "$default_id")" || return $?
     else
-      sid="$(frpctl_read "Service ID: " "")" || return 1
+      sid="$(frpctl_read "Service ID: " "")" || return $?
     fi
     if sid="$(frpctl_zt_validate_field service_id "$sid")"; then
       break
     fi
   done
   while true; do
-    host="$(frpctl_read "Target host [${default_host}]: " "$default_host")" || return 1
+    host="$(frpctl_read "Target host [${default_host}]: " "$default_host")" || return $?
     if host="$(frpctl_zt_validate_field target_host "$host")"; then
       break
     fi
   done
   while true; do
     if [[ -n "$default_port" ]]; then
-      port="$(frpctl_read "Target port [${default_port}]: " "$default_port")" || return 1
+      port="$(frpctl_read "Target port [${default_port}]: " "$default_port")" || return $?
     else
-      port="$(frpctl_read "Target port: " "")" || return 1
+      port="$(frpctl_read "Target port: " "")" || return $?
     fi
     if port="$(frpctl_zt_validate_field target_port "$port")"; then
       break
@@ -1962,14 +1964,14 @@ frpctl_zt_prompt_service_fields() {
   done
   name="$default_name"
   if [[ "$preset" == "custom" ]]; then
-    name="$(frpctl_read "Display name [${sid}]: " "$sid")" || return 1
+    name="$(frpctl_read "Display name [${sid}]: " "$sid")" || return $?
     name="${name#"${name%%[![:space:]]*}"}"
     name="${name%"${name##*[![:space:]]}"}"
     [[ -n "$name" ]] || name="$sid"
   fi
   if [[ "$preset" == "ssh" ]]; then
     while true; do
-      user="$(frpctl_read "SSH user: " "")" || return 1
+      user="$(frpctl_read "SSH user: " "")" || return $?
       if user="$(frpctl_zt_validate_field ssh_user "$user")"; then
         break
       fi
@@ -2022,22 +2024,22 @@ frpctl_zt_run_services() {
     choice="$(frpctl_read "Select: " "")" || return 1
     case "$choice" in
       1)
-        frpctl_zt_prompt_service_fields ssh ssh SSH 127.0.0.1 22 || continue
+        frpctl_zt_prompt_service_fields ssh ssh SSH 127.0.0.1 22 || { rc=$?; ((rc == 2)) && return 2; continue; }
         svc_jsons+=("$_FRP_ZT_SVC_JSON")
         echo "Added SSH service."
         ;;
       2)
-        frpctl_zt_prompt_service_fields http http HTTP 127.0.0.1 80 || continue
+        frpctl_zt_prompt_service_fields http http HTTP 127.0.0.1 80 || { rc=$?; ((rc == 2)) && return 2; continue; }
         svc_jsons+=("$_FRP_ZT_SVC_JSON")
         echo "Added HTTP service."
         ;;
       3)
-        frpctl_zt_prompt_service_fields https https HTTPS 127.0.0.1 443 || continue
+        frpctl_zt_prompt_service_fields https https HTTPS 127.0.0.1 443 || { rc=$?; ((rc == 2)) && return 2; continue; }
         svc_jsons+=("$_FRP_ZT_SVC_JSON")
         echo "Added HTTPS service."
         ;;
       4)
-        frpctl_zt_prompt_service_fields custom "" "Custom TCP" 127.0.0.1 "" || continue
+        frpctl_zt_prompt_service_fields custom "" "Custom TCP" 127.0.0.1 "" || { rc=$?; ((rc == 2)) && return 2; continue; }
         svc_jsons+=("$_FRP_ZT_SVC_JSON")
         echo "Added Custom TCP service."
         ;;
