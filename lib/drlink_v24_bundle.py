@@ -1829,9 +1829,10 @@ def apply_v24_plan(
             raise ControlPlaneError("Agent Bundle apply requires the synchronization guard before a database transaction")
         import drlink_v24_runtime as runtime
         from frp_control_locks import ExclusiveFileLock, LockTimeout
+        from frp_control_locks import AGENT_SYNCHRONIZE_LOCK_TIMEOUT_SEC
 
         lock_path = runtime._client_state_path(plane.root).with_name("client-synchronize.lock")
-        timeout = float(os.environ.get("DRLINK_SYNCHRONIZE_LOCK_TIMEOUT") or 180)
+        timeout = float(os.environ.get("DRLINK_SYNCHRONIZE_LOCK_TIMEOUT") or AGENT_SYNCHRONIZE_LOCK_TIMEOUT_SEC)
         try:
             with ExclusiveFileLock(lock_path, timeout=timeout):
                 previous_depth = v24._agent_synchronize_lock_enter()

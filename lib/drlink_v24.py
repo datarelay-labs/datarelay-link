@@ -6300,10 +6300,11 @@ def synchronize_agent_remote_services(plane_db, *, root: Optional[str] = None,
     """Serialize Agent reconciliation across CLI and lifecycle-worker callers."""
     import drlink_v24_runtime as runtime
     from frp_control_locks import ExclusiveFileLock, LockTimeout
+    from frp_control_locks import AGENT_SYNCHRONIZE_LOCK_TIMEOUT_SEC
 
     actual_root = root if root is not None else getattr(plane_db, "root", None)
     lock_path = runtime._client_state_path(actual_root).with_name("client-synchronize.lock")
-    timeout = float(os.environ.get("DRLINK_SYNCHRONIZE_LOCK_TIMEOUT") or 180)
+    timeout = float(os.environ.get("DRLINK_SYNCHRONIZE_LOCK_TIMEOUT") or AGENT_SYNCHRONIZE_LOCK_TIMEOUT_SEC)
     try:
         with ExclusiveFileLock(lock_path, timeout=timeout):
             previous_lock_depth = _agent_synchronize_lock_enter()
@@ -6925,10 +6926,11 @@ def set_remote_service_agent(
     if not _local_validation and not reconcile_existing and not _agent_synchronize_lock_held():
         import drlink_v24_runtime as runtime
         from frp_control_locks import ExclusiveFileLock, LockTimeout
+        from frp_control_locks import AGENT_SYNCHRONIZE_LOCK_TIMEOUT_SEC
 
         actual_root = root if root is not None else getattr(plane_db, "root", None)
         lock_path = runtime._client_state_path(actual_root).with_name("client-synchronize.lock")
-        timeout = float(os.environ.get("DRLINK_SYNCHRONIZE_LOCK_TIMEOUT") or 180)
+        timeout = float(os.environ.get("DRLINK_SYNCHRONIZE_LOCK_TIMEOUT") or AGENT_SYNCHRONIZE_LOCK_TIMEOUT_SEC)
         try:
             with ExclusiveFileLock(lock_path, timeout=timeout):
                 previous_lock_depth = _agent_synchronize_lock_enter()
