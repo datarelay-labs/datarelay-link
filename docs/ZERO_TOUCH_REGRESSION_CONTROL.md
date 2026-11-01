@@ -33,6 +33,24 @@ The operator requested a short one-line Agent enrollment. The installed Server p
 7. **Signed enrollment and routing:** bootstrap tickets are bounded, one-time and bound to first machine. For another LAN destination, the Server/Agent authoritative reference must represent the exact signed IP or FQDN, not `this-host`. Preserve Service ID, target port, public port and intentional disabled state; a TCP-open local target alone must not mark public service `HEALTHY`.
 8. **No false acceptance:** generated installer parity, stock TLS, issued-command bytes, installation, reported Source HEAD, real external SSH/HTTPS traffic, and cleanup are distinct observable gates. Success on a different HEAD, internal-only mock or an unopened destination listener is not interchangeable.
 
+## Compact Private CA + IP reference bounds (2026-11-01)
+
+For a representative numeric allocator at `192.0.2.20:6099` and a 22-character
+handle, the source command renderers are regression-bounded to **700 characters**
+on Linux/macOS and **1,300 characters** on Windows. These are fixture bounds,
+not universal limits for longer IPv6 authorities or custom endpoints.
+
+Shortening must not compromise the trust chain: Linux/macOS fetch the CA through
+OpenSSL and pin its DER SHA256 before transmitting the handle; Windows's
+unauthenticated fetch is limited to the public CA and must pin the CA before
+strict `--cacert` credential retrieval. Windows must separately hash-check
+stage-1 before PowerShell execution. Neither path may bypass failures, redirect
+a credential-bearing request, or execute a partially downloaded stage.
+
+A qualified publicly trusted bootstrap hostname is still preferred for the
+shortest launcher. Private-CA-only hosts cannot safely achieve the same command
+length without a pre-established independent trust anchor.
+
 ## Historical Agent self-target recovery contract
 
 An earlier installed Agent may retain `127.0.0.1` in `client-state.json`
