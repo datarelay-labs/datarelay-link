@@ -2608,6 +2608,14 @@ Verify no change to an optional friendly hostname silently changes control/alloc
 
 ## A-019 — Prior-stable upgrade to candidate — MANDATORY when an upgrade path is claimed
 
+**Release-scope note (owner decision, 2026-11-02):** v2.3.0-to-v2.4.0
+cross-version backup restore is not a supported/claimed upgrade capability.
+Do not require or imply a PASS for this *unsupported* path. Keep A-019's ID
+and all assertions for any actually claimed prior-stable upgrade path; record
+unsupported v2.3.0 coverage as owner-declared not applicable with this explicit
+reason, not as a successful test. Same-version backup/restore remains mandatory
+where the current release supports it. See [UPGRADE.md](UPGRADE.md).
+
 On each applicable real platform, start from the actual currently supported prior stable release and update using only the supported public CLI/install path.
 
 An empty prior-stable Server is **insufficient** for full PASS. Before upgrade, the prior-stable fixture must contain meaningful non-empty state created or freshly staged for this RUN_ID, including at least:
