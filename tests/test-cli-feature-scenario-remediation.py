@@ -137,6 +137,7 @@ frpctl_nav_prompt_id 'Name: '
             detail = rows[("unset", resource)]["detail"]
             self.assertIn("references", detail)
             self.assertIn("no change", detail)
+
         retirement = rows[("unset", "managed-host")]["detail"]
         for phrase in ("trust", "inventory", "reservations", "irreversible"):
             self.assertIn(phrase, retirement)
@@ -163,6 +164,13 @@ frpctl_nav_prompt_id 'Name: '
             self.assertIn("system diagnostics", rows[path]["detail"])
             self.assertNotIn("system diagnostic.", rows[path]["detail"])
         self.assertEqual(grammar.match(["system", "diagnostics"], "server")["status"], "ok")
+
+    def test_agent_update_help_documents_read_only_check(self):
+        help_text = grammar.help_text(["update"], "client")
+        self.assertIn("system update product [--check]", help_text)
+        self.assertIn("system update engine [--check]", help_text)
+        self.assertIn("without applying it", help_text)
+        self.assertNotIn("system update check-engine", help_text)
 
     def test_policy_explain_help_identifies_named_selectors_and_empty_state_recovery(self):
         for resource in ("remote-access", "internet-access"):

@@ -1232,8 +1232,8 @@ def _update_help(role):
         "======",
         "",
         "Public commands:",
-        "  system update product",
-        "  system update engine",
+        "  system update product [--check]",
+        "  system update engine [--check]",
     ]
     if server:
         lines.append("  system update check-engine")
@@ -1242,6 +1242,7 @@ def _update_help(role):
             "",
             "system update product updates Data Relay Link management tools.",
             "system update engine updates the pinned upstream Relay Engine (FRP) binary.",
+            "Append --check to either command to verify/report update availability without applying it.",
         ]
     )
     if server:
