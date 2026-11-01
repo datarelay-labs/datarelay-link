@@ -100,6 +100,7 @@ python3 tests/test-v24-bundle-duplicate-mapping-keys.py
 python3 tests/test-v24-doc-consistency.py
 python3 tests/test-v24-cli-ai-master-closure.py
 python3 tests/test-v24-cli-workflow-semantic-parity.py
+python3 tests/test-v24-rule-activation-ack.py
 python3 tests/test-v24-readonly-selector-operands.py
 python3 tests/test-v24-admin-concurrency-ux.py
 python3 tests/test-v24-reference-delete-serialization.py
