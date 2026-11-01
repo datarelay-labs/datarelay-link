@@ -33,6 +33,32 @@ import frp_cli_catalog as catalog
 
 
 class CliFeatureScenarioRemediation(unittest.TestCase):
+    def test_system_audit_and_revisions_show_recorded_actor(self):
+        class AuditPlane:
+            def list_audit(self, **_kwargs):
+                return [{
+                    "timestamp": "2026-11-01T00:00:00Z", "revision": 9,
+                    "actor": "operator-a", "action": "set object",
+                    "entity_type": "object", "entity_id": "net-a", "result": "ok",
+                }]
+
+            def list_revisions(self):
+                return [{
+                    "revision": 9, "created_at": "2026-11-01T00:00:00Z",
+                    "actor": "operator-a", "command": "set object",
+                }]
+
+        plane = AuditPlane()
+        audit_out = io.StringIO()
+        with redirect_stdout(audit_out):
+            self.assertEqual(cli._system(plane, ["audit"]), 0)
+        self.assertIn("actor=operator-a", audit_out.getvalue())
+
+        revisions_out = io.StringIO()
+        with redirect_stdout(revisions_out):
+            self.assertEqual(cli._system(plane, ["revisions"]), 0)
+        self.assertIn("actor=operator-a", revisions_out.getvalue())
+
     def test_service_object_help_has_custom_tcp_example(self):
         help_text = catalog.domain_help("service-object", "server")
         self.assertIn("Create a custom TCP Service Object:", help_text)
@@ -998,7 +1024,10 @@ frpctl_nav_prompt_id 'Name: '
             with self.subTest(tokens=tokens):
                 with self.assertRaises(SystemExit) as exc:
                     self._dispatch(tokens + [str(path)])
-                self.assertIn("No changes were applied", str(exc.exception))
+                if tokens[0] == "system" and tokens[1] == "apply":
+                    self.assertIn("No changes were applied", str(exc.exception))
+                else:
+                    self.assertNotIn("No changes were applied", str(exc.exception))
             self.assertIsNone(self.plane.get_object("legacy-input"))
         self.assertEqual(self.plane.conn.total_changes, before)
 

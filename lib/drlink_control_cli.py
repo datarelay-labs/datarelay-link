@@ -1477,7 +1477,10 @@ def _system(plane: ControlPlane, rest):
             sys.stdout.write("No Revisions found.\n")
             return 0
         for row in rows:
-            sys.stdout.write("%s %s %s\n" % (row["revision"], row["created_at"], _public_revision_command(row["command"])))
+            sys.stdout.write("%s %s actor=%s %s\n" % (
+                row["revision"], row["created_at"], row.get("actor") or "unknown",
+                _public_revision_command(row["command"]),
+            ))
         return 0
     if rest[0] == "revision":
         if len(rest) != 2:
@@ -1502,7 +1505,10 @@ def _system(plane: ControlPlane, rest):
             kwargs["principal"] = rest[2]
         rows = plane.list_audit(**kwargs)
         for row in rows:
-            sys.stdout.write("%s rev=%s %s %s %s %s\n" % (row["timestamp"], row["revision"], row["action"], row["entity_type"], row["entity_id"], row["result"]))
+            sys.stdout.write("%s rev=%s actor=%s %s %s %s %s\n" % (
+                row["timestamp"], row["revision"], row.get("actor") or "unknown",
+                row["action"], row["entity_type"], row["entity_id"], row["result"],
+            ))
         return 0
     if rest[0] == "revoke" and len(rest) >= 3 and rest[1] == "client":
         _run(plane.remove_client, rest[2], revoke_only=True)
