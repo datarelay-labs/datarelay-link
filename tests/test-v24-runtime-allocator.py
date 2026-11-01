@@ -995,8 +995,11 @@ class AllocatorAuthorityTests(unittest.TestCase):
                 (p, "agent1", "", "hold-%s" % p, v24.utc_now_iso()),
             )
         self.plane.conn.commit()
-        with self.assertRaises(v24.ControlPlaneError):
+        with self.assertRaises(v24.ControlPlaneError) as caught:
             v24.allocate_endpoint_port(self.plane, "agent1", "overflow", "normal")
+        self.assertIn("Remote Service ports are available in the configured pool 6000-6098", str(caught.exception))
+        self.assertIn("release unused endpoints", str(caught.exception))
+        self.assertIn("No changes were applied", str(caught.exception))
 
     def test_ALLOCATOR_SEES_OS_BOUND_PORTS(self):
         # Bind an otherwise free port and ensure allocator skips it.

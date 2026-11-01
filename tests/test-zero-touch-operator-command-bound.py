@@ -131,6 +131,34 @@ class CompactZeroTouchContract(unittest.TestCase):
                     cli.short_url_host_for_cfg({"public_hostname": HOST}), ""
                 )
 
+    def test_private_ip_overlong_command_rejected_before_issuing_ticket(self):
+        # A terminal-only renderer limit is too late: the immutable ticket
+        # and its short-handle mapping have already been written by then.
+        cfg = {'allocator_public_url': 'https://192.0.2.20/enroll'}
+        plan = {'mode': 'private_ca_ip', 'authority': '192.0.2.20'}
+        for platform, renderer_name, oversize in (
+            ('linux', 'private_ca_ip_linux_command', 'x' * 901),
+            ('windows', 'private_ca_ip_windows_command', 'x' * 1501),
+        ):
+            with self.subTest(platform=platform):
+                class FakeAllocator:
+                    @staticmethod
+                    def windows_renderer_inputs_from_cfg(_config):
+                        return {'stage1_sha256': 'f' * 64}
+                with mock.patch.object(cli, 'short_url_host_for_cfg', return_value=''), \
+                     mock.patch.object(cli, 'private_ca_ip_bootstrap_plan', return_value=plan), \
+                     mock.patch.object(cli, 'preflight_installer_url'), \
+                     mock.patch.object(cli, 'load_allocator', return_value=FakeAllocator()), \
+                     mock.patch.object(cli, 'remapped_server_cfg', return_value={}), \
+                     mock.patch.object(zt, renderer_name, return_value=oversize), \
+                     mock.patch.object(cli, '_zt', return_value=zt):
+                    with mock.patch('sys.stderr', new_callable=io.StringIO) as err:
+                        with self.assertRaises(SystemExit):
+                            cli.validate_zero_touch_prerequisites(
+                                cfg, platform, 'https://example.test/installer', 'a' * 64
+                            )
+                    self.assertIn('No enrollment ticket was issued', err.getvalue())
+
     def test_private_ca_numeric_ip_has_compact_verified_command(self):
         import frp_pki
         with tempfile.TemporaryDirectory(prefix="drlink-ip-bootstrap-") as tmp:

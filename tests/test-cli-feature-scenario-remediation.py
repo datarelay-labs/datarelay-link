@@ -33,6 +33,186 @@ import frp_cli_catalog as catalog
 
 
 class CliFeatureScenarioRemediation(unittest.TestCase):
+    def test_status_and_version_documented_shortcuts_resolve(self):
+        status = grammar.match(["status"], "server")
+        version = grammar.match(["version"], "server")
+        self.assertEqual((status.get("status"), status.get("action")), ("ok", "control_plane"))
+        self.assertEqual((version.get("status"), version.get("action")), ("ok", "show_version"))
+        self.assertEqual(grammar.suggest_commands("versio", catalog.suggestion_roots("server")),
+                         ["system version"])
+
+    def test_system_audit_and_revisions_show_recorded_actor(self):
+        class AuditPlane:
+            def list_audit(self, **_kwargs):
+                return [{
+                    "timestamp": "2026-11-01T00:00:00Z", "revision": 9,
+                    "actor": "operator-a", "action": "set object",
+                    "entity_type": "object", "entity_id": "net-a", "result": "ok",
+                }]
+
+            def list_revisions(self):
+                return [{
+                    "revision": 9, "created_at": "2026-11-01T00:00:00Z",
+                    "actor": "operator-a", "command": "set object",
+                }]
+
+        plane = AuditPlane()
+        audit_out = io.StringIO()
+        with redirect_stdout(audit_out):
+            self.assertEqual(cli._system(plane, ["audit"]), 0)
+        self.assertIn("actor=operator-a", audit_out.getvalue())
+
+        revisions_out = io.StringIO()
+        with redirect_stdout(revisions_out):
+            self.assertEqual(cli._system(plane, ["revisions"]), 0)
+        self.assertIn("actor=operator-a", revisions_out.getvalue())
+
+    def test_service_object_help_has_custom_tcp_example(self):
+        help_text = catalog.domain_help("service-object", "server")
+        self.assertIn("Create a custom TCP Service Object:", help_text)
+        self.assertIn("set service-object postgres type tcp port 5432", help_text)
+
+    def test_zero_touch_service_wizard_exits_on_nested_eof(self):
+        script = '''source "$1"
+FRP_CTL_SOURCED=1
+_FRP_ZT_CLIENT_NAME=fixture
+_FRP_ZT_NOTE=
+_FRP_ZT_PLATFORM=linux
+frpctl_read() {
+  case "$1" in
+    Select:*) printf '1' ;;
+    'Service ID'*) printf 'ssh' ;;
+    'Target host'*) return 2 ;;
+    *) return 2 ;;
+  esac
+}
+rc=0
+frpctl_zt_run_services || rc=$?
+printf 'RESULT rc=%s\\n' "$rc"
+'''
+        proc = subprocess.run(
+            ["bash", "-c", script, "regression", str(ROOT / "tools/frpctl")],
+            env=dict(os.environ, FRP_CTL_SOURCED="1"), text=True,
+            capture_output=True, timeout=3,
+        )
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertIn("RESULT rc=2", proc.stdout)
+
+    def test_shell_guided_zero_touch_recovery_names_the_actual_back_choice(self):
+        script = r"""source "$1"
+frpctl_menu_selection_error 1 3 "show status"
+frpctl_menu_selection_error 1 4 "set server public-hostname example.test"
+"""
+        proc = subprocess.run(
+            ["bash", "-c", script, "regression", str(ROOT / "tools/frpctl")],
+            env=dict(os.environ, FRP_CTL_SOURCED="1"),
+            text=True, capture_output=True, timeout=5,
+        )
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertIn("Choose 3) Back", proc.stderr)
+        self.assertIn("Choose 4) Back", proc.stderr)
+        self.assertNotIn("Back/Cancel", proc.stderr)
+
+    def test_pretransaction_validation_failure_removes_activation_archive(self):
+        # A malformed operator revision precondition is checked after the
+        # activation checkpoint but before the transaction is started.
+        with tempfile.TemporaryDirectory(prefix="drlink-guard-test-") as tmp:
+            backup = Path(tmp, "drlink-act-orphan.tar")
+            backup.write_bytes(b"isolated-test-snapshot")
+            plane = ControlPlane.__new__(ControlPlane)
+            plane._batch_mode = False
+            plane._activation_should_run = lambda: True
+            plane._pre_activation_checkpoint = lambda: {"backup": str(backup)}
+            def reject_revision():
+                raise ValueError("invalid revision guard")
+            plane._public_expected_revision = reject_revision
+            with self.assertRaisesRegex(ValueError, "invalid revision guard"):
+                plane._mutate("set object", "fixture", lambda: None,
+                              compile_runtime=True, activate_before_commit=False)
+            self.assertFalse(backup.exists(), "failed precondition must not leave an activation archive")
+
+    def test_activation_backup_is_removed_when_revision_read_fails(self):
+        from drlink_control_plane import ControlPlane
+        with tempfile.TemporaryDirectory(prefix="drlink-act-test-") as tmp:
+            plane = ControlPlane.__new__(ControlPlane)
+            plane._runtime_activation_snapshot = lambda: {}
+            plane.backup = lambda path: Path(path).write_bytes(b"isolated-test-snapshot")
+            def cannot_read_revision():
+                raise RuntimeError("simulated revision lookup failure")
+            plane.current_revision = cannot_read_revision
+            original_mkstemp = tempfile.mkstemp
+            def make_test_file(*args, **kwargs):
+                return original_mkstemp(*args, dir=tmp, **kwargs)
+            with patch("drlink_control_plane.tempfile.mkstemp", side_effect=make_test_file):
+                with self.assertRaisesRegex(RuntimeError, "simulated revision"):
+                    plane._pre_activation_checkpoint()
+            self.assertEqual(list(Path(tmp).glob("drlink-act-*.tar")), [])
+
+    def test_wizard_menu_recovery_names_the_actual_cancel_choice(self):
+        import drlink_v24_wizard as wizard
+        io = wizard.ScriptedIO(["show status", "c"])
+        with self.assertRaises(wizard.WizardCancelled):
+            wizard._ask_choice(io, "Select service", ["ssh"])
+        output = "\n".join(io.out)
+        self.assertIn("Choose c) Cancel", output)
+        self.assertNotIn("Back/Cancel", output)
+
+    def test_guided_menu_eof_exits_cleanly_without_retrying_prompt(self):
+        script = '''source "$1"
+FRP_CTL_REPL=1
+frpctl_header() { :; }
+frpctl_render_nav_menu() { printf 'MENU %s\n' "$1"; }
+frpctl_nav_resolve() { return 1; }
+frpctl_read() { return 1; }
+frpctl_nav_loop root
+printf 'RESULT rc=%s\n' "$?"
+'''
+        proc = subprocess.run(
+            ["bash", "-c", script, "regression", str(ROOT / "tools/frpctl")],
+            env=dict(os.environ, FRP_CTL_SOURCED="1"), text=True,
+            capture_output=True, timeout=3,
+        )
+        self.assertEqual(proc.returncode, 0, proc.stderr + proc.stdout)
+        self.assertIn("Cancelled.", proc.stdout)
+        self.assertIn("RESULT rc=0", proc.stdout)
+
+    def test_menu_cancel_returns_to_parent_then_exits_root(self):
+        script = '''source "$1"
+FRP_CTL_REPL=1
+frpctl_header() { :; }
+frpctl_render_nav_menu() { printf 'MENU %s\\n' "$1"; }
+frpctl_nav_resolve() {
+  [[ "$2" == 1 ]] || return 1
+  printf 'open_system\\nsubmenu\\nserver.system\\nSystem\\n'
+}
+frpctl_read() {
+  local index
+  index=$(cat "$SEQ_FILE")
+  printf '%s' "$((index + 1))" >"$SEQ_FILE"
+  case "$index" in
+    0) printf '1' ;;
+    1) printf 'cancel' ;;
+    2) printf 'q' ;;
+    *) return 1 ;;
+  esac
+}
+SEQ_FILE=$(mktemp)
+printf 0 >"$SEQ_FILE"
+frpctl_nav_loop root
+printf 'RESULT reads=%s\\n' "$(cat "$SEQ_FILE")"
+rm -f "$SEQ_FILE"
+'''
+        proc = subprocess.run(
+            ["bash", "-c", script, "regression", str(ROOT / "tools/frpctl")],
+            env=dict(os.environ, FRP_CTL_SOURCED="1"), text=True,
+            capture_output=True, timeout=3,
+        )
+        self.assertEqual(proc.returncode, 0, proc.stderr + proc.stdout)
+        self.assertIn("MENU server.system", proc.stdout)
+        self.assertIn("MENU root", proc.stdout)
+        self.assertIn("Cancelled.", proc.stdout)
+        self.assertIn("RESULT reads=3", proc.stdout)
+
     def test_public_managed_host_menu_empty_cancel_preserves_revision(self):
         revision = self.plane.current_revision()
         master, slave = pty.openpty()
@@ -111,6 +291,7 @@ frpctl_nav_prompt_id 'Name: '
             detail = rows[("unset", resource)]["detail"]
             self.assertIn("references", detail)
             self.assertIn("no change", detail)
+
         retirement = rows[("unset", "managed-host")]["detail"]
         for phrase in ("trust", "inventory", "reservations", "irreversible"):
             self.assertIn(phrase, retirement)
@@ -137,6 +318,13 @@ frpctl_nav_prompt_id 'Name: '
             self.assertIn("system diagnostics", rows[path]["detail"])
             self.assertNotIn("system diagnostic.", rows[path]["detail"])
         self.assertEqual(grammar.match(["system", "diagnostics"], "server")["status"], "ok")
+
+    def test_agent_update_help_documents_read_only_check(self):
+        help_text = grammar.help_text(["update"], "client")
+        self.assertIn("system update product [--check]", help_text)
+        self.assertIn("system update engine [--check]", help_text)
+        self.assertIn("without applying it", help_text)
+        self.assertNotIn("system update check-engine", help_text)
 
     def test_policy_explain_help_identifies_named_selectors_and_empty_state_recovery(self):
         for resource in ("remote-access", "internet-access"):
@@ -903,7 +1091,10 @@ frpctl_nav_prompt_id 'Name: '
             with self.subTest(tokens=tokens):
                 with self.assertRaises(SystemExit) as exc:
                     self._dispatch(tokens + [str(path)])
-                self.assertIn("No changes were applied", str(exc.exception))
+                if tokens[0] == "system" and tokens[1] == "apply":
+                    self.assertIn("No changes were applied", str(exc.exception))
+                else:
+                    self.assertNotIn("No changes were applied", str(exc.exception))
             self.assertIsNone(self.plane.get_object("legacy-input"))
         self.assertEqual(self.plane.conn.total_changes, before)
 
@@ -1199,6 +1390,28 @@ frpctl_nav_workflow manage_host
             self.assertEqual(wizard.run_remote_service_wizard(self.plane, "http"), 0)
         self.assertFalse(enabled.call_args.kwargs["default"])
         self.assertEqual(self.plane.conn.execute("SELECT enabled FROM agent_remote_services WHERE name='http'").fetchone()[0], 0)
+
+    def test_remote_service_wizard_rejects_unknown_destination_at_prompt(self):
+        import drlink_v24_wizard as wizard
+        self.assertIsNone(wizard._validate_remote_service_destination(self.plane, "this-host"))
+        self.assertIsNotNone(wizard._validate_remote_service_destination(self.plane, "no-such-target"))
+        v24.set_network_object(self.plane, "db-host", type="ip", value="192.0.2.44", oneshot=True)
+        self.assertIsNone(wizard._validate_remote_service_destination(self.plane, "db-host"))
+
+    def test_remote_service_wizard_reprompts_after_unknown_destination(self):
+        import drlink_v24_wizard as wizard
+        output = io.StringIO()
+        wizard.set_wizard_io(wizard.ScriptedIO(
+            ["not-a-target", "this-host", "ssh", "y", "3"], out=[]
+        ))
+        with redirect_stdout(output):
+            self.assertEqual(wizard.run_remote_service_wizard(self.plane, "guided"), 0)
+        self.assertIn("Choose this-host or an existing Network Object / Managed Host.",
+                      "\n".join(wizard._WIZARD_IO.out))
+        self.assertIsNone(self.plane.conn.execute(
+            "SELECT 1 FROM agent_remote_services WHERE name='guided'"
+        ).fetchone())
+        wizard.set_wizard_io(None)
 
     def test_codex_audit_retired_parser_and_menu_help_routes_fail_closed(self):
         retired = (

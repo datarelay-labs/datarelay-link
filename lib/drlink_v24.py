@@ -20,7 +20,7 @@ from typing import Any, Callable, Optional
 from drlink_control_db import ControlPlaneError, utc_now_iso
 
 NAME_RE = re.compile(r"^[A-Za-z][A-Za-z0-9._-]{0,63}$")
-RESERVED_TOKENS = frozenset({"enabled", "disabled", "policy"})
+RESERVED_TOKENS = frozenset({"enabled", "disabled", "policy", "all", "any", "default", "none"})
 
 NETWORK_PUBLIC_TYPES = ("ip", "cidr", "fqdn")
 NETWORK_STORE = {"ip": "host", "cidr": "network", "fqdn": "fqdn"}
@@ -6300,10 +6300,11 @@ def synchronize_agent_remote_services(plane_db, *, root: Optional[str] = None,
     """Serialize Agent reconciliation across CLI and lifecycle-worker callers."""
     import drlink_v24_runtime as runtime
     from frp_control_locks import ExclusiveFileLock, LockTimeout
+    from frp_control_locks import AGENT_SYNCHRONIZE_LOCK_TIMEOUT_SEC
 
     actual_root = root if root is not None else getattr(plane_db, "root", None)
     lock_path = runtime._client_state_path(actual_root).with_name("client-synchronize.lock")
-    timeout = float(os.environ.get("DRLINK_SYNCHRONIZE_LOCK_TIMEOUT") or 180)
+    timeout = float(os.environ.get("DRLINK_SYNCHRONIZE_LOCK_TIMEOUT") or AGENT_SYNCHRONIZE_LOCK_TIMEOUT_SEC)
     try:
         with ExclusiveFileLock(lock_path, timeout=timeout):
             previous_lock_depth = _agent_synchronize_lock_enter()
@@ -6897,7 +6898,9 @@ def allocate_endpoint_port(plane_db, client_id: str, service_name: str, pool_cla
             return port
         label = "Fixed TCP" if pool_class == "fixed-tcp" else "Remote Service"
         raise ControlPlaneError(
-            "ERROR:\nNo %s ports are available.\n\nNo changes were applied." % label
+            "ERROR:\nNo %s ports are available in the configured pool %s-%s.\n\n"
+            "Check the pool range and release unused endpoints before retrying. "
+            "No changes were applied." % (label, start, end)
         )
 
 
@@ -6925,10 +6928,11 @@ def set_remote_service_agent(
     if not _local_validation and not reconcile_existing and not _agent_synchronize_lock_held():
         import drlink_v24_runtime as runtime
         from frp_control_locks import ExclusiveFileLock, LockTimeout
+        from frp_control_locks import AGENT_SYNCHRONIZE_LOCK_TIMEOUT_SEC
 
         actual_root = root if root is not None else getattr(plane_db, "root", None)
         lock_path = runtime._client_state_path(actual_root).with_name("client-synchronize.lock")
-        timeout = float(os.environ.get("DRLINK_SYNCHRONIZE_LOCK_TIMEOUT") or 180)
+        timeout = float(os.environ.get("DRLINK_SYNCHRONIZE_LOCK_TIMEOUT") or AGENT_SYNCHRONIZE_LOCK_TIMEOUT_SEC)
         try:
             with ExclusiveFileLock(lock_path, timeout=timeout):
                 previous_lock_depth = _agent_synchronize_lock_enter()

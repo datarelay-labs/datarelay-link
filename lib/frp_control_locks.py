@@ -51,6 +51,7 @@ from pathlib import Path
 LIFECYCLE_LOCK_REL = "var/lib/drlink/server-lifecycle.lock"
 CONTROL_STATE_LOCK_REL = "var/lib/drlink/control-state.lock"
 DEFAULT_TIMEOUT_SEC = 30
+AGENT_SYNCHRONIZE_LOCK_TIMEOUT_SEC = 30
 
 
 class LockTimeout(TimeoutError):

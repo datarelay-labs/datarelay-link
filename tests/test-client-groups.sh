@@ -60,6 +60,12 @@ PY
 "$GSET" add-member aaaaaaaa pilot
 "$GSET" add-member aaaaaaaa seoul
 "$GSET" add-member bbbbbbbb acme-korea
+"$GROUP_TOOL" acme-korea >"$WORKDIR/group-members"
+grep -q 'Managed Hosts : 2' "$WORKDIR/group-members"
+grep -q 'gw01 (aaaaaaaa)' "$WORKDIR/group-members"
+grep -q 'gw02 (bbbbbbbb)' "$WORKDIR/group-members"
+"$GROUP_TOOL" seoul >"$WORKDIR/group-empty"
+grep -q 'Members       : none' "$WORKDIR/group-empty"
 "$GSET" add-member aaaaaaaa acme-korea | grep -qi already
 "$ROOT/tools/frp-client-info" aaaaaaaa groups | grep -q acme-korea
 "$ROOT/tools/frp-clients" --group acme-korea >"$WORKDIR/filter"

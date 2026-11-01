@@ -164,6 +164,11 @@ if "$CTL" definitely-not-a-command >"$WORKDIR/unknown.out" 2>"$WORKDIR/unknown.e
   fail "unknown command should fail"
 fi
 grep -qi 'unknown command' "$WORKDIR/unknown.err" || fail "unknown command message"
+if "$CTL" stauts >"$WORKDIR/unknown-typo.out" 2>"$WORKDIR/unknown-typo.err"; then
+  fail "misspelled command should fail"
+fi
+grep -q 'Did you mean:' "$WORKDIR/unknown-typo.err" || fail "unknown command lacks recovery suggestions"
+grep -q 'show status' "$WORKDIR/unknown-typo.err" || fail "status typo suggestion is not canonical"
 pass "FRPCTL_CANONICAL_HELP"
 # ---------------------------------------------------------------------------
 # Client role: canonical direct paths + provenance

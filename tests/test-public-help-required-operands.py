@@ -28,6 +28,11 @@ def examples_from_help(text):
 
 
 class PublicHelpRequiredOperands(unittest.TestCase):
+    def test_remote_service_help_distinguishes_agent_and_loopback(self):
+        text = catalog.domain_help("remote-service", "client")
+        self.assertIn("this-host to select this Agent by identity", text)
+        self.assertIn("localhost is its loopback interface", text)
+
     def test_own_leaf_examples_include_required_operands(self):
         failures = []
         for command in catalog.PUBLIC_COMMANDS:

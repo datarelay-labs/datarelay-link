@@ -63,6 +63,35 @@ class ConfigurationBundleTests(unittest.TestCase):
         self.plane.close()
         os.environ.pop("DRLINK_CONFIRM", None)
 
+    def test_enabled_requires_yaml_boolean(self):
+        unquoted_yes = _bundle(remoteAccess=[{
+            "name": "strict-enabled", "sources": ["any"],
+            "destinations": ["any"], "services": ["tcp/22"],
+            "action": "ALLOW", "enabled": True,
+        }]).replace("enabled: true", "enabled: yes")
+        with self.assertRaises(BundleError):
+            prepare_plan(self.plane, unquoted_yes)
+        for value in ("yes", 1, "false"):
+            raw = _bundle(
+                remoteAccess=[{
+                    "name": "strict-enabled", "sources": ["any"],
+                    "destinations": ["any"], "services": ["tcp/22"],
+                    "action": "ALLOW", "enabled": value,
+                }]
+            )
+            before = self.plane.current_revision()
+            with self.subTest(value=value), self.assertRaises(BundleError):
+                prepare_plan(self.plane, raw)
+            self.assertEqual(self.plane.current_revision(), before)
+
+        valid = _bundle(remoteAccess=[{
+            "name": "strict-enabled", "sources": ["any"],
+            "destinations": ["any"], "services": ["tcp/22"],
+            "action": "ALLOW", "enabled": False,
+        }])
+        plan = prepare_plan(self.plane, valid)
+        self.assertFalse(plan.access_broadened)
+
     def test_secret_field_rejected(self):
         raw = _bundle(
             objects=[
