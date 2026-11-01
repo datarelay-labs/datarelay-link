@@ -88,6 +88,19 @@ def main(argv):
             cfg = SCFG.load_config(cfg_path)
             control = SCFG.control_host(cfg)
             if normalized == 'hostname':
+                if not unset:
+                    # Never publish a new alias until it points at the current
+                    # public IP. A bad alias would replace every displayed
+                    # Remote Service endpoint even though the FRP port is live.
+                    checked_host = SCFG.validate_public_hostname(hostname, required=True)
+                    dns = SCFG.assess_dns(checked_host, control)
+                    if dns['status'] != 'READY':
+                        fail(
+                            'Public hostname was not applied; existing endpoint is unchanged. '
+                            'DNS %s for %s: %s. Publish an A/AAAA record for %s, '
+                            'verify resolution, then retry.'
+                            % (dns['status'], checked_host, dns['message'], control)
+                        )
                 previous = SCFG.set_public_hostname(cfg, '' if unset else hostname)
                 # Keep legacy public_host mirrored to control IP/host.
                 if 'public_ip' in cfg and cfg.get('public_ip'):

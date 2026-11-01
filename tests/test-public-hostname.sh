@@ -167,6 +167,37 @@ EOF
 chmod 600 "$TREE/etc/drlink/config.json" "$TREE/var/lib/drlink/registry.json"
 
 export FRP_DEPLOY_TEST_ROOT="$TREE"
+# A syntactically valid but unresolved alias must not replace the advertised IP.
+BEFORE_UNRESOLVED="$(sha256sum "$TREE/etc/drlink/config.json" | cut -d' ' -f1)"
+if "$ROOT/tools/frp-server-set" hostname nonexist-drlink-test.invalid >"$TMP/dns-unresolved.out" 2>&1; then
+  fail 'unresolved public hostname was accepted; active endpoint would become unusable'
+fi
+AFTER_UNRESOLVED="$(sha256sum "$TREE/etc/drlink/config.json" | cut -d' ' -f1)"
+[[ "$BEFORE_UNRESOLVED" == "$AFTER_UNRESOLVED" ]] || fail 'DNS preflight mutated config on failed hostname'
+pass 'unresolved public hostname fails closed before mutation'
+
+# Test-only deterministic DNS. No production bypass or test-only flag in CLI.
+# Python loads this file only from this test's private PYTHONPATH.
+mkdir -p "$TMP/dns-stub"
+cat >"$TMP/dns-stub/sitecustomize.py" <<'PYDNS'
+import socket
+_original_getaddrinfo = socket.getaddrinfo
+def _test_getaddrinfo(host, port, *args, **kwargs):
+    if host == 'frp.example.com':
+        return [(socket.AF_INET, socket.SOCK_STREAM, 0, '', ('203.0.113.10', 0))]
+    if host == 'wrong.example.com':
+        return [(socket.AF_INET, socket.SOCK_STREAM, 0, '', ('198.51.100.10', 0))]
+    return _original_getaddrinfo(host, port, *args, **kwargs)
+socket.getaddrinfo = _test_getaddrinfo
+PYDNS
+export PYTHONPATH="$TMP/dns-stub:$PYTHONPATH"
+BEFORE_MISMATCH="$(sha256sum "$TREE/etc/drlink/config.json" | cut -d' ' -f1)"
+if "$ROOT/tools/frp-server-set" hostname wrong.example.com >"$TMP/dns-mismatch.out" 2>&1; then
+  fail 'DNS alias pointing at wrong public IP was accepted'
+fi
+AFTER_MISMATCH="$(sha256sum "$TREE/etc/drlink/config.json" | cut -d' ' -f1)"
+[[ "$BEFORE_MISMATCH" == "$AFTER_MISMATCH" ]] || fail 'DNS mismatch mutated config'
+pass 'DNS mismatch fails closed before mutation'
 # Let audit_path() join FRP_DEPLOY_TEST_ROOT + /var/log/... (do not set
 # FRP_AUDIT_LOG to an already-rooted path; that double-prefixes under test).
 unset FRP_AUDIT_LOG || true

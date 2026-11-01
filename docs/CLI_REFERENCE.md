@@ -173,6 +173,11 @@ set network-object office-admin type ip value 203.0.113.10
 
 set network-group approved-admins members office-admin,vpn-admin
 
+# The Server verifies that a public hostname already resolves to its Public IP
+# before publishing it. Unresolved or mismatched DNS leaves the old alias intact.
+# Create/verify A or AAAA DNS first, then run:
+set server public-hostname relay.example.com
+
 set service-object ssh type tcp port 22
 set service-object dns-udp type udp port 53
 set service-object legacy-db type fixed-tcp port 1521
