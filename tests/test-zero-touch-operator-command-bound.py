@@ -272,7 +272,9 @@ class CompactZeroTouchContract(unittest.TestCase):
         )
         self.assertLessEqual(len(command), 1300)
         self.assertIn('--insecure -o $ca', command)  # public cert only
-        self.assertIn('--cacert $ca -o $st', command)  # credential protected
+        self.assertIn('--ssl-no-revoke --cacert $ca -o $st', command)  # Schannel private CA only
+        self.assertEqual(command.count('--ssl-no-revoke'), 1)
+        self.assertLess(command.index('CA fingerprint mismatch'), command.index('--ssl-no-revoke'))
         self.assertEqual(command.count('--insecure'), 1)
         self.assertLess(command.index("CA fingerprint mismatch"), command.index('/i/'))
         self.assertLess(command.index('--cacert'), command.index('Get-FileHash'))
@@ -294,10 +296,12 @@ class CompactZeroTouchContract(unittest.TestCase):
             digest = hashlib.sha256(stage.read_bytes()).hexdigest()
             (root / 'curl.exe').write_text(
                 '#!/bin/sh\n'
-                'dest=;kind=\n'
+                'dest=;kind=;norevoke=0\n'
                 'for a in "$@"; do\n'
-                ' case "$a" in /ca.crt|*/ca.crt) kind=ca;; *"/i/"*) kind=stage;; esac\n'
+                ' case "$a" in /ca.crt|*/ca.crt) kind=ca;; *"/i/"*) kind=stage;; --ssl-no-revoke) norevoke=1;; esac\n'
                 'done\n'
+                'if [ "$kind" = ca ] && [ "$norevoke" -eq 1 ]; then exit 17; fi\n'
+                'if [ "$kind" = stage ] && [ "$norevoke" -ne 1 ]; then exit 18; fi\n'
                 'while [ "$#" -gt 0 ];do if [ "$1" = -o ];then shift;dest="$1";fi;shift;done\n'
                 '[ -n "$dest" ] || exit 11\n'
                 'if [ "$kind" = ca ];then cp "$CASE_ROOT/pki/ca.crt" "$dest";exit 0;fi\n'
