@@ -99,7 +99,7 @@ def main(argv=None):
     if bool(args.count is not None) == bool(csv_path):
         parser.error('use exactly one of --count N or CSV input')
     if args.count is not None and (args.count < 1 or args.count > 10):
-        parser.error('--count must be between 1 and 10 (ZERO_TOUCH_MAX_PER_ISSUE)')
+        parser.error('--count must be between 1 and 10 enrollments')
 
     create = load_create_client()
     try:
@@ -138,7 +138,7 @@ def main(argv=None):
         if not rows:
             parser.error('CSV contains no enrollment rows')
         if len(rows) > 10:
-            parser.error('CSV Zero-Touch batch must be at most 10 rows (ZERO_TOUCH_MAX_PER_ISSUE)')
+            parser.error('CSV batch may contain at most 10 enrollment rows')
 
     validated = []
     for index, raw in enumerate(rows):
