@@ -38,6 +38,8 @@ class CliFeatureScenarioRemediation(unittest.TestCase):
         version = grammar.match(["version"], "server")
         self.assertEqual((status.get("status"), status.get("action")), ("ok", "control_plane"))
         self.assertEqual((version.get("status"), version.get("action")), ("ok", "show_version"))
+        self.assertEqual(grammar.suggest_commands("versio", catalog.suggestion_roots("server")),
+                         ["system version"])
 
     def test_system_audit_and_revisions_show_recorded_actor(self):
         class AuditPlane:
