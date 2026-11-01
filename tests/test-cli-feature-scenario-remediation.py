@@ -59,6 +59,25 @@ printf 'RESULT rc=%s\\n' "$rc"
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertIn("RESULT rc=2", proc.stdout)
 
+    def test_guided_menu_eof_exits_cleanly_without_retrying_prompt(self):
+        script = '''source "$1"
+FRP_CTL_REPL=1
+frpctl_header() { :; }
+frpctl_render_nav_menu() { printf 'MENU %s\n' "$1"; }
+frpctl_nav_resolve() { return 1; }
+frpctl_read() { return 1; }
+frpctl_nav_loop root
+printf 'RESULT rc=%s\n' "$?"
+'''
+        proc = subprocess.run(
+            ["bash", "-c", script, "regression", str(ROOT / "tools/frpctl")],
+            env=dict(os.environ, FRP_CTL_SOURCED="1"), text=True,
+            capture_output=True, timeout=3,
+        )
+        self.assertEqual(proc.returncode, 0, proc.stderr + proc.stdout)
+        self.assertIn("Cancelled.", proc.stdout)
+        self.assertIn("RESULT rc=0", proc.stdout)
+
     def test_menu_cancel_returns_to_parent_then_exits_root(self):
         script = '''source "$1"
 FRP_CTL_REPL=1

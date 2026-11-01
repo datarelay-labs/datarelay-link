@@ -1537,7 +1537,10 @@ frpctl_nav_loop() {
     if [[ "${FRP_CTL_TEST_MENU:-}" == "1" ]]; then
       return 0
     fi
-    choice="$(frpctl_read "Select: " "")" || return 1
+    choice="$(frpctl_read "Select: " "")" || {
+      echo "Cancelled."
+      return 0
+    }
     case "$choice" in
       q|Q|cancel|Cancel|CANCEL)
         if ((${#stack[@]} == 0)); then
