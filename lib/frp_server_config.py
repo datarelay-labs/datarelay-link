@@ -373,9 +373,9 @@ def dns_record_guidance(hostname, public_ip):
         except ValueError:
             pass
     lines = [
-        'Public hostname configured.',
+        'Public hostname configured after DNS verification.',
         '',
-        'Create this DNS record:',
+        'Verified DNS record (must keep pointing to this Server):',
         '',
         '  Type  : %s' % record_type,
         '  Name  : %s' % hostname,
@@ -383,7 +383,7 @@ def dns_record_guidance(hostname, public_ip):
         '',
         'DNS records are managed outside Data Relay Link.',
         '',
-        'The Public IP remains available while DNS propagates.',
+        'The Public IP remains available as the fallback access endpoint.',
     ]
     return '\n'.join(lines)
 
