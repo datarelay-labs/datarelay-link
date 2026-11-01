@@ -25,6 +25,7 @@ $tests = @(
     'test-ticket-scope.ps1',
     'test-backup-acl.ps1',
     'test-client-id-recovery.ps1',
+    'test-client-id-reinstall.ps1',
     'test-zero-touch-lock.ps1',
     'test-path-shim.ps1',
     'test-runtime-log.ps1',

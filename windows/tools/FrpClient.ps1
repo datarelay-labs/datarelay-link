@@ -806,7 +806,7 @@ function Invoke-FrpClientUninstallLocked {
     Write-Host 'WHAT WILL BE REMOVED'
     Write-Host ''
     Write-Host 'Local Data Relay Link software'
-    Write-Host 'Local Agent Host identity'
+    Write-Host 'Local Agent enrollment keys and credentials'
     Write-Host 'Local Agent Host configuration'
     Write-Host 'Local service state'
     Write-Host 'Local autostart configuration'
@@ -818,6 +818,17 @@ function Invoke-FrpClientUninstallLocked {
     Write-Host 'Public port reservations'
     Write-Host 'Server-side policy state'
     Write-Host ''
+    # Seed the non-secret machine binding for agents upgraded from a release
+    # that stored its entire identity inside the removable product directory.
+    # Refuse removal on corrupt/conflicting identity instead of silently
+    # abandoning the Server-managed host and its reserved public ports.
+    try {
+        $null = Get-FrpOrCreateClientId
+    } catch {
+        Write-Host ("ERROR: cannot preserve persistent machine identity before uninstall: {0}" -f $_.Exception.Message)
+        Write-Host 'ERROR: leaving product files in place; repair Agent identity first.'
+        return 1
+    }
     try {
         $null = Invoke-FrpAgentLifecycle -State 'disconnected'
         Write-Host 'Signed disconnect notification sent to the Server.'

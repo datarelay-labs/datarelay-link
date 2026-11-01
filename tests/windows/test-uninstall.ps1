@@ -22,6 +22,10 @@ try {
         -Transport 'tcp' | Out-Null
 
     $root = Get-FrpWindowsRoot
+    $binding = Get-FrpDurableClientIdPath
+    # Existing 2.4 Agent upgrades need an explicit one-time migration at
+    # uninstall even when they never called Get-FrpOrCreateClientId earlier.
+    Remove-Item -LiteralPath $binding -Force
     Assert-FrpTrue (Test-Path -LiteralPath $root) 'root exists'
     $env:FRP_AUTOSTART_TASK_NAME = 'DataRelayLinkClient-Test-' + [guid]::NewGuid().ToString('N').Substring(0, 8)
     $env:FRP_LIFECYCLE_TASK_NAME = 'DataRelayLinkLifecycle-Test-' + [guid]::NewGuid().ToString('N').Substring(0, 8)
@@ -42,6 +46,7 @@ try {
     Assert-FrpEqual 1 $rcFail 'uninstall fails closed when autostart removal fails'
     Assert-FrpTrue ($failOut -match 'leaving product files in place') 'fail-closed uninstall message'
     Assert-FrpTrue (Test-Path -LiteralPath $root) 'product root left in place after failed uninstall'
+    Assert-FrpEqual $mid (([IO.File]::ReadAllText($binding)).Trim()) 'legacy Agent migrated machine binding before attempted uninstall'
     Assert-FrpTrue (Test-FrpAutostartTaskExists) 'autostart still present after failed uninstall'
 
     $okOut = & $hostExe -NoProfile -ExecutionPolicy Bypass -File $clientPath system uninstall 2>&1 | Out-String
@@ -49,6 +54,7 @@ try {
     Assert-FrpEqual 0 $rc 'uninstall succeeds after autostart can be removed'
     Assert-FrpTrue ($okOut -match 'SERVER-SIDE RESERVATIONS PRESERVED') 'uninstall reservation message'
     Assert-FrpTrue (-not (Test-Path -LiteralPath $root)) 'root removed after successful uninstall'
+    Assert-FrpEqual $mid (([IO.File]::ReadAllText($binding)).Trim()) 'machine ID survives full Agent uninstall'
     Assert-FrpTrue (-not (Test-FrpAutostartTaskExists)) 'autostart gone after successful uninstall'
     Assert-FrpTrue (-not (Test-FrpAutostartTaskExists -TaskName $env:FRP_LIFECYCLE_TASK_NAME)) 'lifecycle task gone after successful uninstall'
     Assert-FrpTrue ($okOut -match 'Signed disconnect notification') 'best-effort disconnect is reported'
