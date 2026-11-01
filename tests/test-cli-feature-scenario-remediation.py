@@ -98,6 +98,15 @@ printf 'RESULT rc=%s\\n' "$rc"
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertIn("RESULT rc=2", proc.stdout)
 
+    def test_wizard_menu_recovery_names_the_actual_cancel_choice(self):
+        import drlink_v24_wizard as wizard
+        io = wizard.ScriptedIO(["show status", "c"])
+        with self.assertRaises(wizard.WizardCancelled):
+            wizard._ask_choice(io, "Select service", ["ssh"])
+        output = "\n".join(io.out)
+        self.assertIn("Choose c) Cancel", output)
+        self.assertNotIn("Back/Cancel", output)
+
     def test_guided_menu_eof_exits_cleanly_without_retrying_prompt(self):
         script = '''source "$1"
 FRP_CTL_REPL=1

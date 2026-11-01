@@ -169,7 +169,7 @@ def _menu_selection_error(io: WizardIO, raw: str, lo: int, hi: int) -> None:
             "ERROR:\n"
             "This prompt is waiting for a menu selection (%d-%d).\n\n"
             "The entered text looks like a DRLink command.\n\n"
-            "Choose Back/Cancel to leave this Wizard,\n"
+            "Choose c) Cancel to leave this Wizard,\n"
             "then run the command at the drlink> prompt.\n\n"
             "No changes were applied." % (lo, hi),
         )
