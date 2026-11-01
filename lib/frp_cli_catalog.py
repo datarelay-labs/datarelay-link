@@ -2210,7 +2210,9 @@ def parity_paths(role):
 
 def suggestion_roots(role):
     """Root tokens used for 'Did you mean' suggestions (canonical first)."""
-    return list(roots_for_role(role))
+    # Keep the documented one-word shortcuts discoverable even though their
+    # canonical command paths are show status / show version.
+    return list(roots_for_role(role)) + ["status", "version"]
 
 
 def shell_usage_lines(role):

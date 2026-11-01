@@ -4133,6 +4133,7 @@ frpctl_unknown_command() {
   fi
   echo "ERROR: unknown command: ${cmd}" >&2
   echo >&2
+  frpctl_suggest "$cmd" >&2
   frpctl_usage >&2
   return 2
 }

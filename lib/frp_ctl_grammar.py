@@ -5199,7 +5199,9 @@ def suggest_commands(unknown, cmds):
                 keep = True
         if keep:
             seen.add(text)
-            ranked.append(text)
+            # These discovery aliases are not standalone shell commands;
+            # recover to their canonical public command paths.
+            ranked.append({"status": "show status", "version": "show version"}.get(text, text))
     return ranked
 
 
