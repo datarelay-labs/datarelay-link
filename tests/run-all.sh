@@ -190,6 +190,7 @@ python3 tests/test-lifecycle-cli-ux.py
 python3 tests/test-operational-ux-cli-recovery-closure.py
 python3 tests/test-release-recovery-dual-role-audit-docs-closure.py
 python3 tests/test-repl-live-inventory.py
+python3 tests/test-frpctl-repl-cancellation.py
 ./tests/test-real-e2e-canonical-cli.sh
 ./tests/test-client-upgrade.sh
 python3 tests/test-agent-upgrade-runtime-preservation.py
