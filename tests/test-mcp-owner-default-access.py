@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""First operator-approved OAuth owner gets all MCP capabilities; others stay deny-by-default."""
+"""First OAuth owner gets observation-only MCP defaults; writes require a separate rule."""
 from __future__ import annotations
 import base64
 import hashlib
@@ -118,7 +118,16 @@ class FirstOwnerMcpDefaults(unittest.TestCase):
                 )
                 self.assertEqual(decision["action"], expectation, decision)
 
-    def test_operator_approved_first_mcp_owner_receives_all_seven_rights(self):
+    def check_owner_read_only(self, identity, host):
+        for cap, operand in ALL_CAPABILITIES:
+            expected = "ALLOW" if cap in ("list_hosts", "get_host", "get_system_info", "list_processes") else "DENY"
+            with self.subTest(capability=cap, identity=identity, host=host):
+                observed = v24.authorize_ai_capability_v24(
+                    self.plane, identity=identity, destination=host,
+                    capability=cap, operand=operand)
+                self.assertEqual(observed["action"], expected, observed)
+
+    def test_operator_approved_first_mcp_owner_receives_read_only_rights(self):
         self.approve_and_exchange("chatgpt", "owner")
         self.assertEqual(
             self.plane.conn.execute(
@@ -131,7 +140,7 @@ class FirstOwnerMcpDefaults(unittest.TestCase):
             self.plane.conn.execute("SELECT mode FROM access_policies WHERE plane='ai'"
                                     ).fetchone()["mode"], "whitelist"
         )
-        self.check_caps("chatgpt", "First Test Agent", "ALLOW")
+        self.check_owner_read_only("chatgpt", "First Test Agent")
         self.plane.set_ai_principal("other-oauth-client", enabled=True)
         self.plane.conn.execute(
             "UPDATE ai_principals SET credential_status='verified',auth_mode='oauth' "
@@ -145,7 +154,7 @@ class FirstOwnerMcpDefaults(unittest.TestCase):
             self.plane, client_id="b" * 32, hostname="agent-02",
             label="Second Test Agent", services={},
         )
-        self.check_caps("chatgpt", "Second Test Agent", "ALLOW")
+        self.check_owner_read_only("chatgpt", "Second Test Agent")
         self.plane.set_ai_principal("other", enabled=True)
         self.plane.conn.execute(
             "UPDATE ai_principals SET credential_status='verified',auth_mode='oauth' "
@@ -170,6 +179,22 @@ class FirstOwnerMcpDefaults(unittest.TestCase):
             "UPDATE ai_principals SET credential_status='revoked' WHERE name='chatgpt'"
         )
         self.check_caps("chatgpt", "Second Test Agent", "DENY")
+
+    def test_existing_operator_owner_marker_is_not_rewritten(self):
+        # Old deployments retain the explicit owner approval marker. The new
+        # read-only bootstrap must not silently downgrade their live grants.
+        self.plane.set_ai_principal("legacy-owner", enabled=True)
+        self.plane.conn.execute(
+            "UPDATE ai_principals SET credential_status='verified',auth_mode='oauth' "
+            "WHERE name='legacy-owner'")
+        owner_id = self.plane.get_principal("legacy-owner")["id"]
+        self.plane.conn.execute(
+            "INSERT INTO system_meta(key,value) VALUES(?,?)",
+            (v24.MCP_OWNER_PRINCIPAL_META, owner_id))
+        before = list(self.plane.conn.iterdump())
+        result = v24.ensure_operator_approved_mcp_owner_access(self.plane, owner_id)
+        self.assertEqual(result["operation"], "noop")
+        self.assertEqual(list(self.plane.conn.iterdump()), before)
 
     def test_owner_profile_does_not_rewrite_existing_operator_resource(self):
         self.plane.set_ai_principal("owner", enabled=True)

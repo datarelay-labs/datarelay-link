@@ -4624,9 +4624,13 @@ def format_policy_test(family: str, evaluation: dict, selectors: dict, remote_se
 # Owner-controlled MCP bootstrap is an explicitly operator-approved first
 # OAuth identity ceremony, not a generic grant for every OAuth client.
 MCP_OWNER_PRINCIPAL_META = "mcp_owner_operator_approved_principal"
-MCP_OWNER_PERMISSION = "mcp-owner-all"
+# New OAuth owners begin observation-only. Existing installations with the
+# legacy mcp-owner-full-access rule and a recorded owner meta marker are not
+# migrated/revoked by this first-identity bootstrap path.
+MCP_OWNER_PERMISSION = "mcp-owner-read-only"
 MCP_OWNER_HOST_GROUP = "mcp-owner-managed-hosts"
-MCP_OWNER_RULE = "mcp-owner-full-access"
+MCP_OWNER_RULE = "mcp-owner-read-access"
+MCP_OWNER_DEFAULT_PERMISSIONS = ("host-info", "process-read")
 
 
 def _owner_managed_endpoint_rows(plane_db) -> list:
@@ -4696,9 +4700,9 @@ def ensure_operator_approved_mcp_owner_access(plane_db, principal_id: str) -> di
         plane_db.conn.execute(
             "INSERT INTO permission_objects(id,name,description,row_version,created_at,updated_at) "
             "VALUES(?,?,?,1,?,?)",
-            (permission_id, MCP_OWNER_PERMISSION, "Operator-approved owner MCP rights", now, now),
+            (permission_id, MCP_OWNER_PERMISSION, "First OAuth owner observation-only MCP rights", now, now),
         )
-        for permission in PERMISSIONS:
+        for permission in MCP_OWNER_DEFAULT_PERMISSIONS:
             plane_db.conn.execute(
                 "INSERT INTO permission_object_members(permission_object_id,permission) VALUES(?,?)",
                 (permission_id, permission),
@@ -4719,12 +4723,10 @@ def ensure_operator_approved_mcp_owner_access(plane_db, principal_id: str) -> di
             "permission_ref_kind,permission_ref_id,description,row_version,created_at,updated_at)"
             " VALUES(?, ?,1,?,'group',?,'permission_object',?,?,1,?,?)",
             (rule_id, MCP_OWNER_RULE, principal_id, group_id, permission_id,
-             "Owner consent + PKCE; any other identity remains deny-by-default", now, now),
+             "First owner observation-only; exec/file require explicit grants", now, now),
         )
-        plane_db.conn.execute(
-            "INSERT INTO ai_policy_path_scopes(rule_id,pattern) VALUES(?,'/*')",
-            (rule_id,),
-        )
+        # No file permissions or wildcard filesystem path scopes are granted
+        # automatically. Exec and file operations require explicit ACL setup.
         plane_db.conn.execute(
             "INSERT INTO system_meta(key,value) VALUES(?,?)",
             (MCP_OWNER_PRINCIPAL_META, principal_id),
