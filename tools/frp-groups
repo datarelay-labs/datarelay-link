@@ -71,7 +71,19 @@ def show_group(state, selector):
     print('Description   : %s' % (
         CREG.sanitize_display(group.get('description') or '-', 1024) or '-'
     ))
-    print('Managed Hosts : %s' % CREG.group_member_count(state, gid))
+    members = CREG.clients_in_group(state, gid)
+    print('Managed Hosts : %s' % len(members))
+    if members:
+        print('Members:')
+        for member_id, client in members:
+            hostname = CREG.sanitize_display(client.get('hostname') or '-', 128)
+            label = CREG.sanitize_display(client.get('label') or '', 128)
+            identity = '%s (%s)' % (hostname, member_id[:8])
+            if label:
+                identity += ' — %s' % label
+            print('  %s' % identity)
+    else:
+        print('Members       : none')
 
 
 def main():
