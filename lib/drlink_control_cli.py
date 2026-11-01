@@ -88,6 +88,12 @@ def _configuration_test(plane: ControlPlane, rest):
     from drlink_v24_bundle import format_v24_plan
 
     sys.stdout.write(format_v24_plan(plan))
+    # VALID means syntax/contract validity, not permission to apply a stale
+    # review. Exit nonzero so automation and operators cannot treat a rejected
+    # sourceRevision as an accepted, current ConfigurationBundle.
+    if (plan.base_revision is not None and plan.current_revision is not None
+            and int(plan.base_revision) != int(plan.current_revision)):
+        return 1
     return 0
 
 
@@ -175,7 +181,13 @@ def _read_config_input(source: str):
         from drlink_v24_bundle import read_bundle_stdin_with_end
 
         return read_bundle_stdin_with_end(), "stdin"
-    return read_bundle_from_path_or_stdin(source)
+    try:
+        return read_bundle_from_path_or_stdin(source)
+    except UnicodeError:
+        _exit_bundle_error(ValueError(
+            "Configuration input must be a UTF-8 text file, not binary data. "
+            "Convert the file to UTF-8 and retry."
+        ))
 
 
 def _confirm_from_stdin(message: str) -> bool:
