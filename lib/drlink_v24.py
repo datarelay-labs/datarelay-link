@@ -1159,6 +1159,45 @@ def whitelist_last_rule_impact(
     }
 
 
+def first_rule_deny_all_impact(
+    plane_db,
+    family: str,
+    mode: Optional[str],
+    enabled: Optional[bool],
+) -> Optional[dict]:
+    """Return DENY ALL outage impact when a first disabled WHITELIST Rule is created.
+
+    Remote Access with no Policy Mode is effective ALLOW ALL. Creating the
+    first Rule in WHITELIST mode while that Rule is disabled leaves WHITELIST
+    with zero enabled Rules, so the effective result becomes DENY ALL.
+    Internet Access and AI Access are already DENY without a policy, and
+    BLACKLIST with no enabled Rules stays ALLOW ALL, so neither changes.
+    """
+    plane = _plane_key(family)
+    if plane != "remote" or enabled is not False:
+        return None
+    if str(mode or "").strip().lower() != "whitelist":
+        return None
+    pol = get_access_policy(plane_db, plane)
+    if pol.get("mode") is not None:
+        return None
+    if str(pol.get("enforcement") or "enabled").lower() != "enabled":
+        return None
+    title = _access_family_title(plane)
+    return {
+        "access_broadened": False,
+        "access_narrowed": True,
+        "requires_confirmation": True,
+        "warning": (
+            "This change leaves the %s WHITELIST with no enabled rules; "
+            "effective result becomes DENY ALL."
+        )
+        % title,
+        "before": "No Policy Mode / Effective result: ALLOW ALL",
+        "after": "WHITELIST / Enabled Rules: 0 / Effective result: DENY ALL",
+    }
+
+
 def last_enabled_rule_mutation_impact(
     plane_db,
     family: str,
@@ -4041,15 +4080,13 @@ def set_access_rule(
         return {"entity": {"type": "%s-access" % plane, "id": rule_id, "name": name}, "operation": op}
 
     impact = None
-    if (
-        enabled is False
-        and existing is not None
-        and bool(existing["enabled"])
-    ):
+    if existing is None:
+        impact = first_rule_deny_all_impact(plane_db, plane, mode, enabled)
+    elif enabled is False and bool(existing["enabled"]):
         impact = last_enabled_rule_mutation_impact(
             plane_db, plane, name, disabling=True
         )
-    elif existing is not None:
+    else:
         impact = access_rule_update_security_impact(
             plane_db,
             plane,
