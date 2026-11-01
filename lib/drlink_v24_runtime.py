@@ -743,6 +743,32 @@ def _current_runtime_ready(root, host_id, expected) -> bool:
         return False
 
 
+FRP_CONTROL_PROBE_TIMEOUT_SECONDS = 3.0
+
+
+def _frp_control_endpoint_unreachable(toml_text: str) -> Optional[str]:
+    """Return 'host:port (error)' when the rendered FRP control endpoint refuses TCP.
+
+    frpc logs in over a direct TCP (or WSS over TCP) connection to this
+    endpoint, so a failed connect means no proxy of this generation can
+    register. An unparsable endpoint is not judged here.
+    """
+    server = re.search(r'(?m)^serverAddr\s*=\s*"([^"\r\n]+)"\s*$', toml_text or "")
+    port = re.search(r'(?m)^serverPort\s*=\s*([0-9]{1,5})\s*$', toml_text or "")
+    if not server or not port or not 1 <= int(port.group(1)) <= 65535:
+        return None
+    address = (server.group(1), int(port.group(1)))
+    try:
+        conn = socket.create_connection(address, timeout=FRP_CONTROL_PROBE_TIMEOUT_SECONDS)
+    except OSError as exc:
+        return '%s:%s (%s)' % (address[0], address[1], exc.strerror or exc.__class__.__name__)
+    try:
+        conn.close()
+    except (OSError, AttributeError):
+        pass
+    return None
+
+
 def verify_runtime_proxies(
     *,
     root: Optional[str],
@@ -778,6 +804,15 @@ def verify_runtime_proxies(
         names = ['%s-%s' % (host_id, rec.get('id') or sid)
                  for sid, rec in expected.items()
                  if isinstance(rec, dict) and rec.get('enabled', True) is not False]
+        unreachable = _frp_control_endpoint_unreachable(toml_text)
+        if unreachable:
+            # Registration needs a live frps login. Waiting out the full proxy
+            # readiness window during a Server outage only delays the same
+            # unverified result; report it now and leave retry to lifecycle.
+            raise ControlPlaneError(
+                'Agent connection and proxy activation could not be verified for the new '
+                'runtime generation: FRP Server control endpoint %s is unreachable' % unreachable
+            )
         common = Path(__file__).resolve().with_name('frp-client-common.sh')
         try:
             subprocess.run(
