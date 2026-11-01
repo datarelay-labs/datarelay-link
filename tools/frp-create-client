@@ -570,6 +570,40 @@ def validate_zero_touch_prerequisites(cfg, platform, installer, ca_fp, *, long_b
                  'public HTTPS hostname or a numeric-IP allocator with a valid '
                  'Private CA and matching Server certificate IP SAN. '
                  'No enrollment ticket was issued.')
+    if not long_bootstrap:
+        # Prove that this Server's actual launcher fits before calling the
+        # ticket issuer. Waiting until print_one_line* can strand a pending
+        # credential/short-handle when a larger launcher is rejected.
+        zt = _zt()
+        if zt is None:
+            fail('Compact Zero-Touch launcher is unavailable. No enrollment ticket was issued.')
+        placeholder_handle = 'A' * 22
+        try:
+            if private_ip_plan:
+                if platform == 'windows':
+                    candidate = zt.private_ca_ip_windows_command(
+                        allocator, ca_fp, '0' * 64, placeholder_handle
+                    )
+                else:
+                    candidate = zt.private_ca_ip_linux_command(
+                        allocator, ca_fp, placeholder_handle
+                    )
+            elif platform == 'windows':
+                candidate = zt.windows_strict_launcher(
+                    compact_host, placeholder_handle, '0' * 64
+                )
+            else:
+                candidate = zt.short_url_command(compact_host, placeholder_handle)
+        except ValueError as exc:
+            fail('Cannot render compact Zero-Touch launcher: %s. '
+                 'No enrollment ticket was issued.' % exc)
+        command_cap = (1500 if private_ip_plan else 500) if platform == 'windows' else (
+            900 if private_ip_plan else 200
+        )
+        if len(candidate) > command_cap:
+            fail('Compact %s Zero-Touch launcher exceeds %s characters '
+                 'for this Server configuration. No enrollment ticket was issued.'
+                 % (platform, command_cap))
     label = 'Windows Agent installer URL' if platform == 'windows' else 'Agent installer URL'
     preflight_installer_url(installer, label=label)
     if platform == 'windows' and private_ip_plan:
