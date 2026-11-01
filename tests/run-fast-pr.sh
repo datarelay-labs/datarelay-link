@@ -39,6 +39,7 @@ python3 tests/test-zero-touch-doc-contract.py
 bash tests/test-zero-touch-short-url.sh
 python3 tests/test-cli-feature-scenario-remediation.py
 python3 tests/test-cli-only-e2e-delta-triage.py
+python3 tests/test-cli-only-e2e-round-gate.py
 python3 tests/test-guided-configuration-input.py
 python3 tests/test-repl-live-inventory.py
 python3 tests/test-client-python-runtime.py
