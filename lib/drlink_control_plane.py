@@ -759,6 +759,9 @@ class ControlPlane:
         os.close(fd)
         try:
             self.backup(backup_path)
+            # A failed revision read must not strand an unencrypted temporary
+            # activation archive after the backup has already been written.
+            revision = self.current_revision()
         except Exception:
             try:
                 os.unlink(backup_path)
@@ -768,7 +771,7 @@ class ControlPlane:
         return {
             "backup": backup_path,
             "runtime": runtime_snap,
-            "revision": self.current_revision(),
+            "revision": revision,
         }
 
     def _restore_db_only(self, backup_path: str) -> None:
@@ -958,8 +961,14 @@ class ControlPlane:
                 runtime_checkpoint = self._runtime_activation_snapshot()
             else:
                 checkpoint = self._pre_activation_checkpoint()
-        public_expected_revision = self._public_expected_revision()
-        self.conn.execute("BEGIN IMMEDIATE")
+        try:
+            public_expected_revision = self._public_expected_revision()
+            self.conn.execute("BEGIN IMMEDIATE")
+        except Exception:
+            # Preflight can reject an invalid revision guard or fail to begin
+            # a transaction after a checkpoint archive was already created.
+            self._cleanup_activation_checkpoint(checkpoint)
+            raise
         try:
             if public_expected_revision is not None:
                 current = self.current_revision()

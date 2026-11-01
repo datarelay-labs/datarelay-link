@@ -98,6 +98,56 @@ printf 'RESULT rc=%s\\n' "$rc"
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertIn("RESULT rc=2", proc.stdout)
 
+    def test_shell_guided_zero_touch_recovery_names_the_actual_back_choice(self):
+        script = r"""source "$1"
+frpctl_menu_selection_error 1 3 "show status"
+frpctl_menu_selection_error 1 4 "set server public-hostname example.test"
+"""
+        proc = subprocess.run(
+            ["bash", "-c", script, "regression", str(ROOT / "tools/frpctl")],
+            env=dict(os.environ, FRP_CTL_SOURCED="1"),
+            text=True, capture_output=True, timeout=5,
+        )
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertIn("Choose 3) Back", proc.stderr)
+        self.assertIn("Choose 4) Back", proc.stderr)
+        self.assertNotIn("Back/Cancel", proc.stderr)
+
+    def test_pretransaction_validation_failure_removes_activation_archive(self):
+        # A malformed operator revision precondition is checked after the
+        # activation checkpoint but before the transaction is started.
+        with tempfile.TemporaryDirectory(prefix="drlink-guard-test-") as tmp:
+            backup = Path(tmp, "drlink-act-orphan.tar")
+            backup.write_bytes(b"isolated-test-snapshot")
+            plane = ControlPlane.__new__(ControlPlane)
+            plane._batch_mode = False
+            plane._activation_should_run = lambda: True
+            plane._pre_activation_checkpoint = lambda: {"backup": str(backup)}
+            def reject_revision():
+                raise ValueError("invalid revision guard")
+            plane._public_expected_revision = reject_revision
+            with self.assertRaisesRegex(ValueError, "invalid revision guard"):
+                plane._mutate("set object", "fixture", lambda: None,
+                              compile_runtime=True, activate_before_commit=False)
+            self.assertFalse(backup.exists(), "failed precondition must not leave an activation archive")
+
+    def test_activation_backup_is_removed_when_revision_read_fails(self):
+        from drlink_control_plane import ControlPlane
+        with tempfile.TemporaryDirectory(prefix="drlink-act-test-") as tmp:
+            plane = ControlPlane.__new__(ControlPlane)
+            plane._runtime_activation_snapshot = lambda: {}
+            plane.backup = lambda path: Path(path).write_bytes(b"isolated-test-snapshot")
+            def cannot_read_revision():
+                raise RuntimeError("simulated revision lookup failure")
+            plane.current_revision = cannot_read_revision
+            original_mkstemp = tempfile.mkstemp
+            def make_test_file(*args, **kwargs):
+                return original_mkstemp(*args, dir=tmp, **kwargs)
+            with patch("drlink_control_plane.tempfile.mkstemp", side_effect=make_test_file):
+                with self.assertRaisesRegex(RuntimeError, "simulated revision"):
+                    plane._pre_activation_checkpoint()
+            self.assertEqual(list(Path(tmp).glob("drlink-act-*.tar")), [])
+
     def test_wizard_menu_recovery_names_the_actual_cancel_choice(self):
         import drlink_v24_wizard as wizard
         io = wizard.ScriptedIO(["show status", "c"])

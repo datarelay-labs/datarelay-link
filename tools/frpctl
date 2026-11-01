@@ -1730,7 +1730,7 @@ This prompt is waiting for a menu selection (${lo}-${hi}).
 
 The entered text looks like a DRLink command.
 
-Choose Back/Cancel to leave this Wizard,
+Choose ${hi}) Back to leave this Wizard,
 then run the command at the drlink> prompt.
 
 No changes were applied.
