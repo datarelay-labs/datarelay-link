@@ -148,8 +148,8 @@ class CompactZeroTouchContract(unittest.TestCase):
             )
             self.assertLessEqual(len(command), 700, len(command))
             # Generated installation commands must remain exactly one line.
-            self.assertNotIn("\\n", command)
-            self.assertNotIn("\\r", command)
+            self.assertNotIn("\n", command)
+            self.assertNotIn("\r", command)
             self.assertIn("openssl s_client", command)
             self.assertIn("/ca.crt", command)
             self.assertIn("--cacert", command)
