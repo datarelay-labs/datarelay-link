@@ -231,6 +231,34 @@ class BundleStalePlanSafety(unittest.TestCase):
             ["198.51.100.20"],
         )
 
+    def test_public_cli_reapply_does_not_claim_stale_noop_will_be_rejected(self):
+        """Keep user-visible stale warning aligned with the guarded replay path."""
+        v24.set_network_object(
+            self.plane, "office", type="ip", value="198.51.100.10", oneshot=True
+        )
+        exported = export_configuration_v24(self.plane)
+        changed = exported.replace("198.51.100.10", "198.51.100.20", 1)
+        path = Path(self.tmp) / "repeat.yaml"
+        path.write_text(changed, encoding="utf-8")
+        with mock.patch("drlink_control_cli._approve_configuration_mutation", return_value="apply"), \
+             redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+            first_rc = cli.dispatch(
+                ["system", "apply", "configuration", str(path)],
+                root=self.tmp, plane=self.plane,
+            )
+        self.assertEqual(first_rc, 0)
+        revision = self.plane.current_revision()
+        output = io.StringIO()
+        with redirect_stdout(output), redirect_stderr(io.StringIO()):
+            rc = cli.dispatch(
+                ["system", "apply", "configuration", str(path)],
+                root=self.tmp, plane=self.plane,
+            )
+        self.assertEqual(rc, 0)
+        self.assertIn("NO CHANGE", output.getvalue())
+        self.assertNotIn("Apply will reject this stale snapshot", output.getvalue())
+        self.assertEqual(self.plane.current_revision(), revision)
+
     def test_normal_apply_still_applied(self):
         v24.set_network_object(
             self.plane, "office", type="ip", value="198.51.100.10", oneshot=True

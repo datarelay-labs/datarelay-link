@@ -1695,7 +1695,10 @@ def format_v24_plan(plan: V24Plan) -> str:
             "WARNING: STALE_CONFIGURATION_REVISION",
             "Base revision: %s" % plan.base_revision,
             "Current revision: %s" % plan.current_revision,
-            "Apply will reject this stale snapshot. Re-export/review the Bundle.",
+            ("Apply will recheck authoritative state under the write lock. "
+             "A verified NO CHANGE is allowed; any mutation is rejected."
+             if plan.no_change else
+             "Apply will reject this stale snapshot. Re-export/review the Bundle."),
             "",
         ])
     lines.append("Planned changes:")
