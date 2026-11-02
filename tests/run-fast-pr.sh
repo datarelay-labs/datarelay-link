@@ -39,6 +39,10 @@ python3 tests/test-zero-touch-doc-contract.py
 bash tests/test-zero-touch-short-url.sh
 python3 tests/test-cli-feature-scenario-remediation.py
 python3 tests/test-cli-only-e2e-delta-triage.py
+# Immutable candidate=provenance commit; installed CLI Source HEAD=content parent.
+python3 tests/test-e2e-candidate-identity.py
+python3 tests/test-cli-only-e2e-contract.py
+python3 tests/test-e2e-lab-readiness.py
 python3 tests/test-guided-configuration-input.py
 python3 tests/test-human-ux-cli-session-timeout.py
 python3 tests/test-access-plugin-newuserconn-burst.py
