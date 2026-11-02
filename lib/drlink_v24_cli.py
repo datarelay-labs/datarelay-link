@@ -73,14 +73,67 @@ def _verify_access_rule_runtime(plane: ControlPlane, resource: str) -> Optional[
             return "access plugin /healthz failed"
         return None
 
-    # HTTP CONNECT and Fixed TCP Egress can run independently. If both are
-    # inactive, a successful JSON compilation is definitively not activation.
+    # Systemd being active is not proof of a bound listener or healthy policy:
+    # tcp-egress intentionally keeps its supervisor alive after an individual
+    # relay bind fails. Inspect the effective snapshots written by the real
+    # policy workers rather than treating their service units as an ACK.
     http_status = service_status("drlink-egress.service")
     tcp_status = service_status("drlink-tcp-egress.service")
     if http_status != "active" and tcp_status != "active":
         return "drlink-egress is %s; drlink-tcp-egress is %s" % (
             http_status, tcp_status
         )
+
+    import json
+    def effective(path: str, healthy_key: str) -> tuple[Optional[dict], Optional[str]]:
+        try:
+            data = json.loads(Path(path).read_text(encoding="utf-8"))
+            if not isinstance(data, dict) or data.get(healthy_key) is not True:
+                return None, "Internet Access effective policy is unhealthy"
+            return data, None
+        except (OSError, ValueError, TypeError):
+            return None, "Internet Access effective policy evidence is missing or unreadable"
+
+    if http_status == "active":
+        _doc, failure = effective("/run/drlink/egress/effective.json", "policy_healthy")
+        if failure:
+            return "HTTP egress: %s" % failure
+        try:
+            if not 1 <= int(_doc.get("listen_port")) <= 65535:
+                return "HTTP egress has no valid effective listener"
+        except (TypeError, ValueError, OverflowError):
+            return "HTTP egress has no valid effective listener"
+
+    if tcp_status == "active":
+        tcp_doc, failure = effective("/run/drlink/tcp-egress/effective.json", "healthy")
+        if failure:
+            return "Fixed TCP egress: %s" % failure
+    else:
+        tcp_doc = None
+
+    # The TCP supervisor can remain active with zero bound relay sockets.
+    # A live policy is not active when its desired Fixed TCP listener is absent,
+    # even if an unrelated HTTP egress unit is healthy.
+    try:
+        from drlink_runtime_policy import list_enabled_fixed_tcp
+        required_relays = list_enabled_fixed_tcp(plane)
+    except Exception:
+        return "Fixed TCP relay expectations cannot be verified"
+    if required_relays:
+        if tcp_status != "active" or tcp_doc is None:
+            return "Fixed TCP egress service is not active"
+        listeners = {
+            (str(item.get("relay_id")), str(item.get("listen")))
+            for item in (tcp_doc.get("listeners") or [])
+            if isinstance(item, dict)
+        }
+        for rid, relay in required_relays.items():
+            address = str(relay.get("listen_addr") or "0.0.0.0")
+            expected = "%s:%s" % (address, relay["listen_port"])
+            if (str(rid), expected) not in listeners:
+                return "Fixed TCP relay %s has no verified live listener" % rid
+    elif http_status != "active":
+        return "No active HTTP egress or configured Fixed TCP listeners"
     return None
 
 

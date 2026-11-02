@@ -36,6 +36,84 @@ class ActivationAcknowledgementTests(unittest.TestCase):
         with mock.patch('subprocess.run', return_value=inactive):
             self.assertIn('inactive', cli._verify_access_rule_runtime(plane, 'internet-access'))
 
+    def test_live_egress_active_unit_with_unhealthy_effective_policy_fails(self):
+        plane = type('Live', (), {'root': None})()
+        active = subprocess.CompletedProcess(['systemctl'], 0, stdout='active\n', stderr='')
+        with mock.patch('subprocess.run', return_value=active), \
+             mock.patch('pathlib.Path.read_text', return_value='{"policy_healthy":false,"healthy":false,"listeners":[]}'):
+            reason = cli._verify_access_rule_runtime(plane, 'internet-access')
+        self.assertIsNotNone(reason)
+        self.assertIn('unhealthy', reason.lower())
+
+    def test_live_fixed_tcp_busy_port_missing_effective_listener_fails(self):
+        from types import SimpleNamespace
+        plane = SimpleNamespace(root=None, conn=mock.MagicMock())
+        plane.conn.execute.return_value = [
+            {'id':'relay1','name':'busy','enabled':1,'listen_port':6155,
+             'dest_host':'127.0.0.1','dest_port':22},
+        ]
+        active = subprocess.CompletedProcess(['systemctl'], 0, stdout='active\n', stderr='')
+        def effective(path, **_kwargs):
+            if 'tcp-egress' in str(path):
+                return '{"healthy":true,"listeners":[],"policy_generation":3}'
+            return '{"policy_healthy":true,"listen_port":6100,"policy_generation":3}'
+        with mock.patch('subprocess.run', return_value=active), \
+             mock.patch('pathlib.Path.read_text', autospec=True, side_effect=effective):
+            reason = cli._verify_access_rule_runtime(plane, 'internet-access')
+        self.assertIsNotNone(reason)
+        self.assertIn('relay1', reason.lower())
+
+    def test_fixed_tcp_relay_bind_collision_keeps_worker_alive_without_listener(self):
+        # Real loopback bind collision, not a simulated socket error: the
+        # sync loop catches the failure while its supervisor remains active.
+        import importlib.util
+        import socket
+        from types import SimpleNamespace
+        root = Path(__file__).resolve().parents[1]
+        module_path = root / 'server/drlink-tcp-egress.py'
+        spec = importlib.util.spec_from_file_location('drlink_tcp_egress_activation_test', module_path)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        with socket.socket() as occupied:
+            occupied.bind(('127.0.0.1', 0))
+            occupied.listen(1)
+            port = occupied.getsockname()[1]
+            state = SimpleNamespace(_servers={}, cache=mock.MagicMock())
+            state.cache.snapshot.return_value = (None, None, None, None)
+            with mock.patch.object(module, '_desired_enabled_relays',
+                                   return_value={'relay1':('127.0.0.1', port)}), \
+                 mock.patch('sys.stderr', new_callable=io.StringIO) as err:
+                module.sync_listeners(state)
+            self.assertEqual(state._servers, {})
+            self.assertIn('failed to bind tcp relay relay1', err.getvalue())
+        # The same port can bind again after the competing listener exits.
+        with socket.socket() as recovered:
+            recovered.bind(('127.0.0.1', port))
+            recovered.listen(1)
+
+    def test_live_egress_effective_listener_matching_desired_is_verified(self):
+        from types import SimpleNamespace
+        plane = SimpleNamespace(root=None, conn=mock.MagicMock())
+        plane.conn.execute.return_value = [
+            {'id':'relay1','name':'ready','enabled':1,'listen_port':6156,
+             'dest_host':'127.0.0.1','dest_port':22},
+        ]
+        active = subprocess.CompletedProcess(['systemctl'], 0, stdout='active\n', stderr='')
+        def effective(path, **_kwargs):
+            if 'tcp-egress' in str(path):
+                return '{"healthy":true,"listeners":[{"relay_id":"relay1","listen":"0.0.0.0:6156"}],"policy_generation":4}'
+            return '{"policy_healthy":true,"listen_port":6100,"policy_generation":4}'
+        with mock.patch('subprocess.run', return_value=active), \
+             mock.patch('pathlib.Path.read_text', autospec=True, side_effect=effective):
+            self.assertIsNone(cli._verify_access_rule_runtime(plane, 'internet-access'))
+
+    def test_live_egress_active_unit_with_missing_snapshot_fails_closed(self):
+        active = subprocess.CompletedProcess(['systemctl'], 0, stdout='active\n', stderr='')
+        plane = type('Live', (), {'root': None})()
+        with mock.patch('subprocess.run', return_value=active), \
+             mock.patch('pathlib.Path.read_text', side_effect=FileNotFoundError):
+            self.assertIn('unreadable', cli._verify_access_rule_runtime(plane, 'internet-access'))
+
     def test_live_skip_activation_is_not_success(self):
         plane = type('Live', (), {'root': None})()
         with mock.patch.dict('os.environ', {'DRLINK_SKIP_ACTIVATION': 'true'}), \
