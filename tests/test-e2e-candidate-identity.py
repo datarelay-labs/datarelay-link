@@ -86,6 +86,23 @@ class ImmutableProvenanceE2ETests(unittest.TestCase):
                     with self.assertRaises(ValueError):
                         identity.bound_installed_head(f.root, candidate, installed)
 
+    def test_rc_and_stable_tag_references_are_qualified_only_at_candidate(self):
+        for channel, tag in (("preview", "v2.4.0-rc.3"), ("stable", "v2.4.0")):
+            with self.subTest(channel=channel), CandidateFixture() as f:
+                git(f.root, "checkout", "-q", f.content)
+                f.make_provenance({
+                    "channel": channel, "project_version": "2.4.0",
+                    "git_ref": tag, "immutable_source_ref": tag,
+                })
+                with self.assertRaises(ValueError):
+                    identity.bound_installed_head(f.root, f.provenance, f.content)
+                git(f.root, "tag", tag, f.provenance)
+                self.assertEqual(identity.bound_installed_head(f.root, f.provenance,
+                                                                 f.content), "provenance-parent")
+                git(f.root, "tag", "-f", tag, f.content)
+                with self.assertRaises(ValueError):
+                    identity.bound_installed_head(f.root, f.provenance, f.content)
+
     def test_changed_source_file_in_provenance_commit_rejected(self):
         with CandidateFixture() as f:
             git(f.root, "checkout", "-q", f.content)

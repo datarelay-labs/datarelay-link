@@ -58,10 +58,30 @@ def bound_installed_head(repo: Path, candidate_head: str, installed_head: str) -
     if installed_head != parent:
         raise ValueError("installed Source HEAD is not the candidate's first content parent")
     manifest = json.loads(_git(repo, "show", candidate_head + ":release-manifest.json"))
-    if manifest.get("source_head") != parent or manifest.get("git_ref") != parent:
-        raise ValueError("candidate manifest source_head/git_ref does not match content parent")
-    if manifest.get("immutable_source_ref") != parent:
+    if manifest.get("source_head") != parent:
+        raise ValueError("candidate manifest source_head does not match content parent")
+    ref = manifest.get("git_ref")
+    if manifest.get("immutable_source_ref") != ref:
         raise ValueError("candidate manifest immutable_source_ref mismatch")
+    channel = manifest.get("channel", "development")
+    if channel == "development":
+        if ref != parent:
+            raise ValueError("development manifest git_ref is not the content parent")
+    elif channel in {"preview", "stable"}:
+        # RC and stable bind immutable Git tags to the provenance commit;
+        # never confuse these tag references with the installed content SHA.
+        version = manifest.get("project_version")
+        expected = (
+            r"v" + re.escape(version or "") + r"-rc\.[0-9]+"
+            if channel == "preview" else
+            r"v" + re.escape(version or "")
+        )
+        if not version or not isinstance(ref, str) or not re.fullmatch(expected, ref):
+            raise ValueError("RC/stable manifest must use the expected immutable version tag")
+        if _git(repo, "rev-parse", "--verify", "refs/tags/" + ref + "^{commit}") != candidate_head:
+            raise ValueError("RC/stable tag does not point to the candidate provenance commit")
+    else:
+        raise ValueError("unsupported provenance release channel")
     changed = _git(repo, "diff", "--name-status", "--no-renames", parent, candidate_head)
     paths = set()
     for line in changed.splitlines():
