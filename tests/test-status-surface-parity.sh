@@ -72,7 +72,31 @@ pass "SERVER_STATUS_DETAILED_SETTINGS"
 # A broken/unreadable control DB must fail rather than print an error with rc=0.
 chmod 000 "$SERVER/var/lib/drlink"
 set +e
-"$ROOT/tools/frpctl" show status >"$WORK/denied.out" 2>"$WORK/denied.err"
+python3 - "$ROOT" "$WORK" <<'PYUSER'
+import os
+from pathlib import Path
+import subprocess
+import sys
+
+repo, scratch = (Path(x) for x in sys.argv[1:])
+kwargs = {}
+if hasattr(os, "geteuid") and os.geteuid() == 0:
+    import pwd
+    owner = next((p.stat().st_uid for p in repo.parents if p.stat().st_uid != 0), None)
+    uid = owner if owner is not None else pwd.getpwnam("nobody").pw_uid
+    kwargs = {"user": uid, "group": pwd.getpwuid(uid).pw_gid}
+    # Permit traversal of the disposable fixture only. The DB directory
+    # remains mode 000 and cannot be read by the unprivileged child.
+    scratch.chmod(0o711)
+result = subprocess.run(
+    [str(repo / "tools/frpctl"), "show", "status"],
+    capture_output=True, text=True, env=os.environ.copy(),
+    timeout=30, **kwargs,
+)
+(scratch / "denied.out").write_text(result.stdout)
+(scratch / "denied.err").write_text(result.stderr)
+sys.exit(result.returncode)
+PYUSER
 rc=$?
 set -e
 chmod 700 "$SERVER/var/lib/drlink"

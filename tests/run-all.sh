@@ -339,6 +339,7 @@ python3 tests/test-v24-doc-consistency.py
 python3 tests/test-v24-ai-policy-cli-parity.py
 python3 tests/test-v24-manual-e2e-findings.py
 python3 tests/test-v24-cli-workflow-semantic-parity.py
+python3 tests/test-v24-rule-activation-ack.py
 python3 tests/test-v24-readonly-selector-operands.py
 python3 tests/test-v24-revision-rollback.py
 python3 tests/test-v24-direct-revision-guard.py

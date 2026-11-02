@@ -17,6 +17,182 @@ except ImportError:  # pragma: no cover
     _scfg = None
 
 
+def _verify_access_rule_runtime(
+    plane: ControlPlane, resource: str, *, after: Optional[float] = None,
+    max_freshness_wait_seconds: float = 4.5,
+) -> Optional[str]:
+    """Bounded post-commit observation, not a policy commit/rollback primitive.
+
+    A generated policy JSON is not proof that a stopped or frozen enforcement
+    process actually applies it. Test-root simulations have no systemd and
+    are intentionally not promoted to live activation evidence.
+    """
+    import os
+    import subprocess
+    from pathlib import Path
+
+    root = getattr(plane, "root", None)
+    if root not in (None, "", "/"):
+        return None
+    if str(os.environ.get("DRLINK_SKIP_ACTIVATION") or "").strip().lower() in (
+        "1", "yes", "y", "true"
+    ):
+        # A testing override on a live Server cannot be presented as proof
+        # of activation. Its policy commit may still have succeeded.
+        return "runtime activation was explicitly skipped"
+
+    def service_status(unit: str) -> str:
+        try:
+            result = subprocess.run(
+                ["systemctl", "is-active", unit], capture_output=True,
+                text=True, timeout=3, check=False,
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            return "unavailable"
+        return (result.stdout or "").strip() if result.returncode == 0 else (
+            (result.stdout or "").strip() or "inactive"
+        )
+
+    if resource == "internet-access" and after is not None:
+        # Egress workers asynchronously reload canonical policy from SQLite.
+        # A previously healthy effective.json and an active unit are NOT proof
+        # that this just-committed rule was observed. Wait for post-commit
+        # snapshots from each active datapath, then revalidate contents and
+        # required TCP listeners. The wait is bounded and fails closed.
+        import time
+        http_status = service_status("drlink-egress.service")
+        tcp_status = service_status("drlink-tcp-egress.service")
+        if http_status != "active" and tcp_status != "active":
+            return "drlink-egress is %s; drlink-tcp-egress is %s" % (
+                http_status, tcp_status
+            )
+        paths = []
+        if http_status == "active":
+            paths.append("/run/drlink/egress/effective.json")
+        if tcp_status == "active":
+            paths.append("/run/drlink/tcp-egress/effective.json")
+        until = time.monotonic() + max(0.0, max_freshness_wait_seconds)
+        while True:
+            try:
+                refreshed = all(
+                    Path(path).stat().st_mtime >= after for path in paths
+                )
+            except OSError:
+                refreshed = False
+            if refreshed:
+                # Recheck unit state, worker health and every expected listener
+                # AFTER the generation-freshness barrier.
+                return _verify_access_rule_runtime(plane, resource)
+            if time.monotonic() >= until:
+                return "effective policy snapshots were not refreshed after the rule was saved"
+            time.sleep(0.25)
+
+    if resource == "remote-access":
+        status = service_status("drlink-access.service")
+        if status != "active":
+            return "drlink-access is %s" % status
+        try:
+            import json
+            import urllib.request
+            config_path = Path("/etc/drlink/config.json")
+            cfg = json.loads(config_path.read_text(encoding="utf-8"))
+            addr = str(cfg.get("access_plugin_addr") or "127.0.0.1:6101")
+            # Health probes are loopback-only, even if service binds 0.0.0.0.
+            port = int(addr.rsplit(":", 1)[-1])
+            if not (1 <= port <= 65535):
+                return "access plugin health port is invalid"
+            with urllib.request.urlopen(
+                "http://127.0.0.1:%d/healthz" % port, timeout=2
+            ) as response:
+                if response.getcode() != 200:
+                    return "access plugin /healthz returned %s" % response.getcode()
+        except Exception:
+            return "access plugin /healthz failed"
+        return None
+
+    # Systemd being active is not proof of a bound listener or healthy policy:
+    # tcp-egress intentionally keeps its supervisor alive after an individual
+    # relay bind fails. Inspect the effective snapshots written by the real
+    # policy workers rather than treating their service units as an ACK.
+    http_status = service_status("drlink-egress.service")
+    tcp_status = service_status("drlink-tcp-egress.service")
+    if http_status != "active" and tcp_status != "active":
+        return "drlink-egress is %s; drlink-tcp-egress is %s" % (
+            http_status, tcp_status
+        )
+
+    import json
+    def effective(path: str, healthy_key: str) -> tuple[Optional[dict], Optional[str]]:
+        try:
+            data = json.loads(Path(path).read_text(encoding="utf-8"))
+            if not isinstance(data, dict) or data.get(healthy_key) is not True:
+                return None, "Internet Access effective policy is unhealthy"
+            return data, None
+        except (OSError, ValueError, TypeError):
+            return None, "Internet Access effective policy evidence is missing or unreadable"
+
+    if http_status == "active":
+        _doc, failure = effective("/run/drlink/egress/effective.json", "policy_healthy")
+        if failure:
+            return "HTTP egress: %s" % failure
+        try:
+            if not 1 <= int(_doc.get("listen_port")) <= 65535:
+                return "HTTP egress has no valid effective listener"
+        except (TypeError, ValueError, OverflowError):
+            return "HTTP egress has no valid effective listener"
+
+    if tcp_status == "active":
+        tcp_doc, failure = effective("/run/drlink/tcp-egress/effective.json", "healthy")
+        if failure:
+            return "Fixed TCP egress: %s" % failure
+    else:
+        tcp_doc = None
+
+    # The TCP supervisor can remain active with zero bound relay sockets.
+    # A live policy is not active when its desired Fixed TCP listener is absent,
+    # even if an unrelated HTTP egress unit is healthy.
+    try:
+        from drlink_runtime_policy import list_enabled_fixed_tcp
+        required_relays = list_enabled_fixed_tcp(plane)
+    except Exception:
+        return "Fixed TCP relay expectations cannot be verified"
+    if required_relays:
+        if tcp_status != "active" or tcp_doc is None:
+            return "Fixed TCP egress service is not active"
+        listeners = {
+            (str(item.get("relay_id")), str(item.get("listen")))
+            for item in (tcp_doc.get("listeners") or [])
+            if isinstance(item, dict)
+        }
+        for rid, relay in required_relays.items():
+            address = str(relay.get("listen_addr") or "0.0.0.0")
+            expected = "%s:%s" % (address, relay["listen_port"])
+            if (str(rid), expected) not in listeners:
+                return "Fixed TCP relay %s has no verified live listener" % rid
+    elif http_status != "active":
+        return "No active HTTP egress or configured Fixed TCP listeners"
+    return None
+
+
+def _access_rule_activation_result(plane: ControlPlane, resource: str, name: str) -> int:
+    if resource == "internet-access":
+        # Capture the observation barrier only AFTER the DB mutation returns.
+        import time
+        reason = _verify_access_rule_runtime(plane, resource, after=time.time())
+    else:
+        reason = _verify_access_rule_runtime(plane, resource)
+    if reason:
+        sys.stderr.write(
+            "ERROR: %s rule '%s' was saved, but live activation was NOT verified: %s.\n"
+            "Changes remain saved; do not assume that access is enforced or available.\n"
+            "Run: sudo drlink system diagnostics\n"
+            % (resource, name, reason)
+        )
+        return 1
+    sys.stdout.write("%s rule set: %s\n" % (resource, name))
+    return 0
+
+
 def _presence_word(connectivity: str) -> str:
     return {"connected": "Connected", "stale": "Stale"}.get(connectivity, "Disconnected")
 
@@ -108,12 +284,28 @@ def _agent_service_status(plane, row, runtime_level, management_verified=None):
     if load_lifecycle_intent(plane.root) == 'paused':
         return 'DEGRADED'
     stored = str(row['status'] or 'DEGRADED')
-    if stored == 'HEALTHY' and (
-        not row['runtime_verified']
-        or runtime_level != 'Healthy'
-        or management_verified is False
-    ):
-        return 'DEGRADED'
+    if stored == 'HEALTHY':
+        if (
+            not row['runtime_verified']
+            or runtime_level != 'Healthy'
+            or management_verified is False
+        ):
+            return 'DEGRADED'
+        # The global FRP service and Server management identity can both be
+        # healthy while this particular Remote Service proxy is missing.
+        # Verify the current per-proxy generation before presenting HEALTHY.
+        # Do not infer local target reachability when optional Target Health
+        # Check is disabled; that is a separate, explicitly scoped signal.
+        from drlink_v24_runtime import verified_remote_service_status
+        try:
+            status, _reason = verified_remote_service_status(
+                plane, row['name'], root=plane.root
+            )
+        except Exception:
+            # A failed proof must never make an operator-facing status green.
+            return 'DEGRADED'
+        if status != 'HEALTHY':
+            return 'DEGRADED'
     return stored
 
 
@@ -745,6 +937,9 @@ def handle_show(plane: ControlPlane, rest: list[str]) -> Optional[int]:
                 "%-18s %-14s %-10s %-24s %s\n"
                 % (row["name"], row["destination"], row["service_object"], endpoint, _agent_service_status(plane, row, runtime_level, management_verified))
             )
+        sys.stdout.write(
+            "Note: Status verifies the Agent/FRP proxy, not application availability at the target.\n"
+        )
         return 0
     if res == "remote-service":
         _require_agent(plane)
@@ -780,6 +975,12 @@ def handle_show(plane: ControlPlane, rest: list[str]) -> Optional[int]:
                 "YES" if row["enabled"] else "NO",
             )
         )
+        if row['enabled'] and effective_status == 'HEALTHY':
+            sys.stdout.write(
+                "Verification: Current Agent/FRP proxy verified. "
+                "Target application availability is not established by this status; "
+                "test the public endpoint.\n"
+            )
         from drlink_agent_lifecycle import load_lifecycle_intent
         if row['enabled'] and load_lifecycle_intent(plane.root) == 'paused':
             sys.stdout.write('Reason: Agent runtime is intentionally paused.\n')
@@ -1324,8 +1525,7 @@ def handle_set(plane: ControlPlane, rest: list[str]) -> Optional[int]:
         )
         if isinstance(result, dict) and result.get("cancelled"):
             return 1
-        sys.stdout.write("%s rule set: %s\n" % (res, name))
-        return 0
+        return _access_rule_activation_result(plane, res, name)
     if res == "ai-access":
         _require_server(plane, "AI Access policy")
         if len(rest) < 2:

@@ -6453,8 +6453,12 @@ class ControlPlane:
         if env:
             candidates.append(Path(env))
         if self.root:
+            # Explicit filesystem roots are isolation boundaries, including
+            # temporary E2E fixtures. A missing config in that root must not
+            # silently inherit the installed Server's public URL or TLS mode.
             candidates.append(Path(self.root) / "etc" / "drlink" / "config.json")
-        candidates.append(Path("/etc/drlink/config.json"))
+        else:
+            candidates.append(Path("/etc/drlink/config.json"))
         for path in candidates:
             try:
                 if path.is_file():
