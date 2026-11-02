@@ -17,7 +17,10 @@ except ImportError:  # pragma: no cover
     _scfg = None
 
 
-def _verify_access_rule_runtime(plane: ControlPlane, resource: str) -> Optional[str]:
+def _verify_access_rule_runtime(
+    plane: ControlPlane, resource: str, *, after: Optional[float] = None,
+    max_freshness_wait_seconds: float = 4.5,
+) -> Optional[str]:
     """Bounded post-commit observation, not a policy commit/rollback primitive.
 
     A generated policy JSON is not proof that a stopped or frozen enforcement
@@ -49,6 +52,40 @@ def _verify_access_rule_runtime(plane: ControlPlane, resource: str) -> Optional[
         return (result.stdout or "").strip() if result.returncode == 0 else (
             (result.stdout or "").strip() or "inactive"
         )
+
+    if resource == "internet-access" and after is not None:
+        # Egress workers asynchronously reload canonical policy from SQLite.
+        # A previously healthy effective.json and an active unit are NOT proof
+        # that this just-committed rule was observed. Wait for post-commit
+        # snapshots from each active datapath, then revalidate contents and
+        # required TCP listeners. The wait is bounded and fails closed.
+        import time
+        http_status = service_status("drlink-egress.service")
+        tcp_status = service_status("drlink-tcp-egress.service")
+        if http_status != "active" and tcp_status != "active":
+            return "drlink-egress is %s; drlink-tcp-egress is %s" % (
+                http_status, tcp_status
+            )
+        paths = []
+        if http_status == "active":
+            paths.append("/run/drlink/egress/effective.json")
+        if tcp_status == "active":
+            paths.append("/run/drlink/tcp-egress/effective.json")
+        until = time.monotonic() + max(0.0, max_freshness_wait_seconds)
+        while True:
+            try:
+                refreshed = all(
+                    Path(path).stat().st_mtime >= after for path in paths
+                )
+            except OSError:
+                refreshed = False
+            if refreshed:
+                # Recheck unit state, worker health and every expected listener
+                # AFTER the generation-freshness barrier.
+                return _verify_access_rule_runtime(plane, resource)
+            if time.monotonic() >= until:
+                return "effective policy snapshots were not refreshed after the rule was saved"
+            time.sleep(0.25)
 
     if resource == "remote-access":
         status = service_status("drlink-access.service")
@@ -138,7 +175,12 @@ def _verify_access_rule_runtime(plane: ControlPlane, resource: str) -> Optional[
 
 
 def _access_rule_activation_result(plane: ControlPlane, resource: str, name: str) -> int:
-    reason = _verify_access_rule_runtime(plane, resource)
+    if resource == "internet-access":
+        # Capture the observation barrier only AFTER the DB mutation returns.
+        import time
+        reason = _verify_access_rule_runtime(plane, resource, after=time.time())
+    else:
+        reason = _verify_access_rule_runtime(plane, resource)
     if reason:
         sys.stderr.write(
             "ERROR: %s rule '%s' was saved, but live activation was NOT verified: %s.\n"

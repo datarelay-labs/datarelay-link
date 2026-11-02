@@ -114,6 +114,62 @@ class ActivationAcknowledgementTests(unittest.TestCase):
              mock.patch('pathlib.Path.read_text', side_effect=FileNotFoundError):
             self.assertIn('unreadable', cli._verify_access_rule_runtime(plane, 'internet-access'))
 
+    def test_live_egress_stale_effective_snapshot_after_commit_fails_closed(self):
+        from types import SimpleNamespace
+        plane = SimpleNamespace(root=None, conn=mock.MagicMock())
+        plane.conn.execute.return_value = []
+        active = subprocess.CompletedProcess(['systemctl'], 0, stdout='active\n', stderr='')
+        with mock.patch('subprocess.run', return_value=active), \
+             mock.patch('pathlib.Path.stat',
+                        return_value=SimpleNamespace(st_mtime=1000.0)):
+            reason = cli._verify_access_rule_runtime(
+                plane, 'internet-access', after=2000.0, max_freshness_wait_seconds=0
+            )
+        self.assertIsNotNone(reason)
+        self.assertIn('refreshed', reason.lower())
+
+    def test_live_egress_fresh_effective_snapshot_after_commit_accepts(self):
+        from types import SimpleNamespace
+        plane = SimpleNamespace(root=None, conn=mock.MagicMock())
+        plane.conn.execute.return_value = []
+        active = subprocess.CompletedProcess(['systemctl'], 0, stdout='active\n', stderr='')
+        def effective(path, **_kwargs):
+            if 'tcp-egress' in str(path):
+                return '{"healthy":true,"listeners":[],"policy_generation":3}'
+            return '{"policy_healthy":true,"listen_port":6100,"policy_generation":3}'
+        with mock.patch('subprocess.run', return_value=active), \
+             mock.patch('pathlib.Path.read_text', autospec=True, side_effect=effective), \
+             mock.patch('pathlib.Path.stat',
+                        return_value=SimpleNamespace(st_mtime=2001.0)):
+            self.assertIsNone(cli._verify_access_rule_runtime(
+                plane, 'internet-access', after=2000.0, max_freshness_wait_seconds=0
+            ))
+
+    def test_live_egress_bounded_post_commit_refresh_then_success(self):
+        from types import SimpleNamespace
+        plane = SimpleNamespace(root=None, conn=mock.MagicMock())
+        plane.conn.execute.return_value = []
+        active = subprocess.CompletedProcess(['systemctl'], 0, stdout='active\n', stderr='')
+        calls = [0]
+        def stat(_path):
+            calls[0] += 1
+            return SimpleNamespace(st_mtime=1000.0 if calls[0] == 1 else 2001.0)
+        def effective(path, **_kwargs):
+            if 'tcp-egress' in str(path):
+                return '{"healthy":true,"listeners":[],"policy_generation":3}'
+            return '{"policy_healthy":true,"listen_port":6100,"policy_generation":3}'
+        with mock.patch('subprocess.run', return_value=active), \
+             mock.patch('pathlib.Path.read_text', autospec=True, side_effect=effective), \
+             mock.patch('pathlib.Path.stat', autospec=True, side_effect=stat), \
+             mock.patch('time.sleep') as sleeper:
+            reason = cli._verify_access_rule_runtime(
+                plane, 'internet-access', after=2000.0,
+                max_freshness_wait_seconds=1
+            )
+        self.assertIsNone(reason)
+        self.assertGreaterEqual(calls[0], 3)
+        sleeper.assert_called_once_with(0.25)
+
     def test_live_skip_activation_is_not_success(self):
         plane = type('Live', (), {'root': None})()
         with mock.patch.dict('os.environ', {'DRLINK_SKIP_ACTIVATION': 'true'}), \
@@ -128,9 +184,11 @@ class ActivationAcknowledgementTests(unittest.TestCase):
             runner.assert_not_called()
 
     def test_active_runtime_returns_zero(self):
-        with mock.patch('drlink_v24_cli._verify_access_rule_runtime', return_value=None):
+        with mock.patch('drlink_v24_cli._verify_access_rule_runtime', return_value=None) as check:
             self.assertEqual(cli._access_rule_activation_result(None, 'remote-access', 'a'), 0)
             self.assertEqual(cli._access_rule_activation_result(None, 'internet-access', 'b'), 0)
+        # The barrier is computed after the mutation and passed to the verifier.
+        self.assertGreater(check.call_args.kwargs['after'], 0)
 
 
 if __name__ == '__main__':
