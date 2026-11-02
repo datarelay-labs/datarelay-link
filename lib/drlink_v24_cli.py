@@ -242,12 +242,28 @@ def _agent_service_status(plane, row, runtime_level, management_verified=None):
     if load_lifecycle_intent(plane.root) == 'paused':
         return 'DEGRADED'
     stored = str(row['status'] or 'DEGRADED')
-    if stored == 'HEALTHY' and (
-        not row['runtime_verified']
-        or runtime_level != 'Healthy'
-        or management_verified is False
-    ):
-        return 'DEGRADED'
+    if stored == 'HEALTHY':
+        if (
+            not row['runtime_verified']
+            or runtime_level != 'Healthy'
+            or management_verified is False
+        ):
+            return 'DEGRADED'
+        # The global FRP service and Server management identity can both be
+        # healthy while this particular Remote Service proxy is missing.
+        # Verify the current per-proxy generation before presenting HEALTHY.
+        # Do not infer local target reachability when optional Target Health
+        # Check is disabled; that is a separate, explicitly scoped signal.
+        from drlink_v24_runtime import verified_remote_service_status
+        try:
+            status, _reason = verified_remote_service_status(
+                plane, row['name'], root=plane.root
+            )
+        except Exception:
+            # A failed proof must never make an operator-facing status green.
+            return 'DEGRADED'
+        if status != 'HEALTHY':
+            return 'DEGRADED'
     return stored
 
 
@@ -879,6 +895,9 @@ def handle_show(plane: ControlPlane, rest: list[str]) -> Optional[int]:
                 "%-18s %-14s %-10s %-24s %s\n"
                 % (row["name"], row["destination"], row["service_object"], endpoint, _agent_service_status(plane, row, runtime_level, management_verified))
             )
+        sys.stdout.write(
+            "Note: Status verifies the Agent/FRP proxy, not application availability at the target.\n"
+        )
         return 0
     if res == "remote-service":
         _require_agent(plane)
@@ -914,6 +933,12 @@ def handle_show(plane: ControlPlane, rest: list[str]) -> Optional[int]:
                 "YES" if row["enabled"] else "NO",
             )
         )
+        if row['enabled'] and effective_status == 'HEALTHY':
+            sys.stdout.write(
+                "Verification: Current Agent/FRP proxy verified. "
+                "Target application availability is not established by this status; "
+                "test the public endpoint.\n"
+            )
         from drlink_agent_lifecycle import load_lifecycle_intent
         if row['enabled'] and load_lifecycle_intent(plane.root) == 'paused':
             sys.stdout.write('Reason: Agent runtime is intentionally paused.\n')
