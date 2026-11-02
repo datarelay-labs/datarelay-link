@@ -236,6 +236,7 @@ python3 tests/test-fixed-tcp-egress.py
 ./tests/test-fixed-tcp-egress.sh
 python3 tests/test-tcp-egress-admission-ordering.py
 python3 tests/test-bounded-server-slot-release.py
+python3 tests/test-access-plugin-newuserconn-burst.py
 python3 tests/test-egress-conn-log-traverse-only.py
 python3 tests/test-egress-conn-log-rotation.py
 python3 tests/test-egress-conn-log-rotation-concurrency.py

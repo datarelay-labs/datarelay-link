@@ -41,6 +41,7 @@ python3 tests/test-cli-feature-scenario-remediation.py
 python3 tests/test-cli-only-e2e-delta-triage.py
 python3 tests/test-guided-configuration-input.py
 python3 tests/test-human-ux-cli-session-timeout.py
+python3 tests/test-access-plugin-newuserconn-burst.py
 python3 tests/test-repl-live-inventory.py
 python3 tests/test-client-python-runtime.py
 python3 tests/test-cli-reconciliation-role-parser-regression.py
