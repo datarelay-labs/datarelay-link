@@ -396,6 +396,7 @@ python3 tests/test-cli-rule-selector-and-runtime-recovery.py
 python3 tests/test-doctor-proxy-identity.py
 python3 tests/test-full-e2e-public-recovery-regressions.py
 python3 tests/test-guided-configuration-input.py
+python3 tests/test-human-ux-cli-session-timeout.py
 python3 tests/test-v24-ai-completion-delivery.py
 python3 tests/test-v24-denied-upload-response.py
 bash tests/test-v24-legacy-update-check-readonly.sh
