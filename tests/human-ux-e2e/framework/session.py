@@ -3,7 +3,11 @@ from __future__ import annotations
 
 import io
 import os
+import pty
+import select
+import signal
 import subprocess
+import time
 from contextlib import redirect_stderr, redirect_stdout
 from dataclasses import dataclass
 from pathlib import Path
@@ -26,6 +30,70 @@ class CommandResult:
         return (self.stdout or "") + ("\n" + self.stderr if self.stderr else "")
 
 
+def _run_confirmed_cli(argv: list[str], env: dict, timeout: int = 30) -> subprocess.CompletedProcess:
+    """Confirm only after observing the product's exact TTY prompt, with a deadline."""
+    master, slave = pty.openpty()
+    try:
+        proc = subprocess.Popen(
+            argv, stdin=slave, stdout=slave, stderr=slave,
+            env=env, start_new_session=True,
+        )
+    except BaseException:
+        os.close(master)
+        os.close(slave)
+        raise
+    os.close(slave)
+    output = bytearray()
+    confirmed = False
+    deadline = time.monotonic() + timeout
+    try:
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                try:
+                    os.killpg(proc.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+                proc.wait()
+                return subprocess.CompletedProcess(
+                    argv, 124, output.decode("utf-8", "replace"),
+                    "ERROR: Confirmed CLI timed out; inspect authoritative state before retry.",
+                )
+            readable, _, _ = select.select([master], [], [], min(0.25, remaining))
+            if readable:
+                try:
+                    chunk = os.read(master, 65536)
+                except OSError:
+                    chunk = b""
+                if chunk:
+                    output.extend(chunk)
+                    if len(output) > 1024 * 1024:
+                        del output[:len(output) - 1024 * 1024]
+                    if not confirmed and (
+                        b"Apply these changes? [y/N]" in output
+                        or b"Continue? [y/N]" in output
+                    ):
+                        os.write(master, b"y\n")
+                        confirmed = True
+                elif proc.poll() is not None:
+                    break
+            if proc.poll() is not None:
+                break
+        while select.select([master], [], [], 0)[0]:
+            try:
+                chunk = os.read(master, 65536)
+            except OSError:
+                break
+            if not chunk:
+                break
+            output.extend(chunk)
+        return subprocess.CompletedProcess(
+            argv, proc.wait(timeout=2), output.decode("utf-8", "replace"), ""
+        )
+    finally:
+        os.close(master)
+
+
 class CliSession:
     def __init__(
         self,
@@ -44,7 +112,7 @@ class CliSession:
     def _role_token(self) -> str:
         return self.context.value
 
-    def run(self, *tokens: str, env_extra: Optional[dict] = None) -> CommandResult:
+    def run(self, *tokens: str, env_extra: Optional[dict] = None, confirm: bool = False) -> CommandResult:
         cmdline = " ".join(tokens)
         if self.recorder:
             self.recorder.command(self._role_token(), cmdline)
@@ -56,13 +124,34 @@ class CliSession:
             if self.use_subprocess:
                 env = {**os.environ, **(env_extra or {})}
                 env["FRP_DEPLOY_TEST_ROOT"] = str(self.root)
-                proc = subprocess.run(
-                    [str(self.repo / "tools" / "drlink"), *tokens],
-                    capture_output=True,
-                    text=True,
-                    env=env,
-                )
-                result = CommandResult(proc.returncode, proc.stdout, proc.stderr, self.context, cmdline)
+                try:
+                    if confirm:
+                        proc = _run_confirmed_cli(
+                            [str(self.repo / "tools" / "drlink"), *tokens], env,
+                        )
+                    else:
+                        proc = subprocess.run(
+                            [str(self.repo / "tools" / "drlink"), *tokens],
+                            capture_output=True,
+                            text=True,
+                            stdin=subprocess.DEVNULL,
+                            timeout=30,
+                            env=env,
+                        )
+                except subprocess.TimeoutExpired as exc:
+                    def _as_text(value):
+                        return value.decode("utf-8", "replace") if isinstance(value, bytes) else (value or "")
+
+                    result = CommandResult(
+                        124,
+                        _as_text(exc.stdout),
+                        (_as_text(exc.stderr) + "\nERROR: CLI command timed out after 30s. "
+                         "Authoritative state must be inspected before retry.").strip(),
+                        self.context,
+                        cmdline,
+                    )
+                else:
+                    result = CommandResult(proc.returncode, proc.stdout, proc.stderr, self.context, cmdline)
             else:
                 import drlink_control_cli as cli
                 from drlink_control_plane import ControlPlane

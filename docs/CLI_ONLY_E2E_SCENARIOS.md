@@ -4,7 +4,7 @@
 > **Source:** `docs/FULL_USER_E2E_SCENARIOS.md` (all 116 original IDs and headings preserved in its canonical document).
 > **Product baseline:** v2.4.0 **includes** AI Access and MCP Bridge; they are excluded **only from this test profile**, not removed from the product.
 > **Executor:** current owner-selected runtime (default `CHATGPT_CHAT`); current explicit instruction overrides historical Codex-only text.
-> **Canonical Full User E2E SHA256:** `31726cb78632503f04811cd198009839d27b1e3c958f8c5d6bca166eb08fbf9e`
+> **Canonical Full User E2E SHA256:** `23a609689a9a41eadbbed8d22a6805df725809a473b9465d004f820b42b1b759`
 > **Generation:** `python3 tools/generate_cli_only_e2e_contract.py --write`; `--check` verifies no source drift.
 > **Safety:** preserve current authorization, exact live platform/tool refusals, other actors, host ownership and management access; never reroute a denied effect.
 > **Candidate:** do not infer installed Source HEAD from a Git checkout; record each installed Server/Agent's provenance.
@@ -308,7 +308,20 @@ Server:
 
 ~~~text
 show managed-host <RELAY_HOST> remote-services
+test remote-access source <ACTUAL_INGRESS_SOURCE> destination <TARGET_OBJECT> service <SERVICE_OBJECT>
 ~~~
+
+**Policy oracle for a routed LAN service:** Confirm the Remote Access rule
+and the policy-test command use the **actual target** (<TARGET_OBJECT> shown
+in the Remote Service's Destination), not the Relay Agent's own Managed
+Host object. The source selector must match the IP observed at the Server's
+ingress for the real external client (which may differ from its local IP
+after NAT). Use the same source + target + service tuple for the explanation
+test, then independently verify real application traffic. An ALLOW result
+for the Relay Agent destination is not proof that traffic to a different LAN
+target is allowed. Do not broaden a security rule just to pass a test.
+Record the observed ingress IP, target and service identity alongside the
+access-policy log decision and actual connection result.
 
 External user connects to the returned public Endpoint.
 

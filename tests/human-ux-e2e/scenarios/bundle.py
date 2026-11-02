@@ -95,7 +95,7 @@ def hux_bundle_004(env: ScenarioEnv) -> None:
     path = h.server_root / "bundle-apply.yaml"
     path.write_text(_yaml_bundle(), encoding="utf-8")
     s = CliSession(root=h.server_root, context=ExecutionContext.DRLINK_SERVER, recorder=env.recorder)
-    r = s.run("system", "apply", "configuration", str(path))
+    r = s.run("system", "apply", "configuration", str(path), confirm=True)
     expect_true(r.rc == 0, "apply failed", evidence=r.combined)
     expect_any(r.combined, ("APPLIED", "Applied", "applied", "NO_CHANGE", "NO CHANGE"))
 
@@ -113,7 +113,7 @@ def hux_bundle_005(env: ScenarioEnv) -> None:
     path = h.server_root / "bundle-reapply.yaml"
     path.write_text(_yaml_bundle(), encoding="utf-8")
     s = CliSession(root=h.server_root, context=ExecutionContext.DRLINK_SERVER, recorder=env.recorder)
-    r1 = s.run("system", "apply", "configuration", str(path))
+    r1 = s.run("system", "apply", "configuration", str(path), confirm=True)
     expect_true(r1.rc == 0, "first apply failed", evidence=r1.combined)
     r2 = s.run("system", "apply", "configuration", str(path))
     expect_true(r2.rc == 0, "reapply failed", evidence=r2.combined)

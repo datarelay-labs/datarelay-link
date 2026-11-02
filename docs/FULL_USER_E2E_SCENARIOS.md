@@ -1598,7 +1598,20 @@ Server:
 
 ~~~text
 show managed-host <RELAY_HOST> remote-services
+test remote-access source <ACTUAL_INGRESS_SOURCE> destination <TARGET_OBJECT> service <SERVICE_OBJECT>
 ~~~
+
+**Policy oracle for a routed LAN service:** Confirm the Remote Access rule
+and the policy-test command use the **actual target** (<TARGET_OBJECT> shown
+in the Remote Service's Destination), not the Relay Agent's own Managed
+Host object. The source selector must match the IP observed at the Server's
+ingress for the real external client (which may differ from its local IP
+after NAT). Use the same source + target + service tuple for the explanation
+test, then independently verify real application traffic. An ALLOW result
+for the Relay Agent destination is not proof that traffic to a different LAN
+target is allowed. Do not broaden a security rule just to pass a test.
+Record the observed ingress IP, target and service identity alongside the
+access-policy log decision and actual connection result.
 
 External user connects to the returned public Endpoint.
 
