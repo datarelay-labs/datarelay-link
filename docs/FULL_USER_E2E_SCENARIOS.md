@@ -34,6 +34,13 @@ All mandatory platform-native and previously discovered major regression checks,
 
 This document defines the exhaustive real-user E2E suite for Data Relay Link.
 
+**Owner execution-environment decision (2026-11-02): LXC/LXD is excluded from Data Relay Link E2E.**
+Do not create, start, require, or retain LXC/LXD containers, images or lab snapshots as test prerequisites.
+Use authorized native Server/Agent hosts for real public-surface E2E. Bounded isolated
+processes and temporary loopback ports may support component/fault-injection evidence,
+but cannot substitute for installed-host Full User E2E or the two exact-HEAD release
+passes. Missing LXC infrastructure must never be recorded as an E2E blocker.
+
 When the user asks for any of the following without explicitly narrowing scope:
 
 - 사용자 E2E

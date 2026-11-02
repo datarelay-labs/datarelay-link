@@ -40,6 +40,7 @@ INTRO = """# Data Relay Link v2.4.0 — CLI-only Full Functional E2E (100 scenar
 > **Generation:** `python3 tools/generate_cli_only_e2e_contract.py --write`; `--check` verifies no source drift.
 > **Safety:** preserve current authorization, exact live platform/tool refusals, other actors, host ownership and management access; never reroute a denied effect.
 > **Candidate:** do not infer installed Source HEAD from a Git checkout; record each installed Server/Agent's provenance.
+> **Test environment:** LXC/LXD is excluded by owner decision (2026-11-02). Use authorized native hosts for user E2E; isolated processes/temporary ports provide supporting evidence only.
 
 ## 1. Scope and complete original-ID traceability
 
