@@ -60,7 +60,11 @@ except SystemExit as exc:
     _BOUNDED = None
     _BOUNDED_LOAD_ERROR = str(exc) or "ERROR: missing frp_bounded_server.py"
 
-ACCESS_MAX_CONCURRENT = int(os.environ.get("FRP_ACCESS_MAX_CONCURRENT", "32"))
+# NewUserConn bursts may require one independent auth request per new FRP
+# connection. Preserve a finite overload reject rather than an unbounded
+# thread pool; leave SQLite read-only reader capacity independently bounded.
+# 96 slots provide headroom for the qualified 64-connection burst.
+ACCESS_MAX_CONCURRENT = int(os.environ.get("FRP_ACCESS_MAX_CONCURRENT", "96"))
 # NewUserConn authorization is read-only, but each SQLite reader owns a file
 # descriptor. Keep a smaller DB-reader bound under the HTTP worker bound.
 ACCESS_DB_MAX_CONCURRENT = 8
