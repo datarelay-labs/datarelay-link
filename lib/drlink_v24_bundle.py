@@ -1765,6 +1765,16 @@ def _resolve_plan_for_apply(plane: ControlPlane, plan: V24Plan) -> V24Plan:
     base = getattr(plan, "base_revision", None)
     current = int(plane.current_revision())
     if base is not None and current != int(base):
+        # A previously successful Bundle can advance the revision itself.
+        # Replaying it is safe only when the reviewed plan was already a
+        # no-op AND an authoritative re-diff under the write lock is still
+        # a no-op. A stale mutating plan or any newly needed change must
+        # retain the strict revision conflict (never last-writer-wins).
+        source = str(getattr(plan, "source_text", "") or "")
+        if plan.no_change and source.strip():
+            refreshed = prepare_v24_plan(plane, source)
+            if refreshed.no_change:
+                return refreshed
         raise ConcurrencyError(
             "REVISION_CONFLICT\n"
             "Base revision: %s\n"

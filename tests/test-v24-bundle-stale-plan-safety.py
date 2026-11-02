@@ -207,6 +207,30 @@ class BundleStalePlanSafety(unittest.TestCase):
         self.assertEqual(result["revision"], rev_before)
         self.assertEqual(self.plane.current_revision(), rev_before)
 
+    def test_exported_bundle_reapply_is_no_change_after_own_success(self):
+        """An identical replay must not fail solely because its own apply bumped revision."""
+        v24.set_network_object(
+            self.plane, "office", type="ip", value="198.51.100.10", oneshot=True
+        )
+        exported = export_configuration_v24(self.plane)
+        changed = exported.replace("198.51.100.10", "198.51.100.20", 1)
+        self.assertNotEqual(changed, exported)
+        first = prepare_v24_plan(self.plane, changed)
+        self.assertFalse(first.no_change)
+        applied = apply_v24_plan(self.plane, first, confirm=True)
+        self.assertEqual(applied["status"], "APPLIED")
+        rev_after = self.plane.current_revision()
+        second = prepare_v24_plan(self.plane, changed)
+        self.assertTrue(second.no_change)
+        self.assertLess(second.base_revision, rev_after)
+        result = apply_v24_plan(self.plane, second)
+        self.assertEqual(result, {"status": "NO_CHANGE", "revision": rev_after})
+        self.assertEqual(self.plane.current_revision(), rev_after)
+        self.assertEqual(
+            self.plane._object_values(self.plane.get_object("office")["id"])[:1],
+            ["198.51.100.20"],
+        )
+
     def test_normal_apply_still_applied(self):
         v24.set_network_object(
             self.plane, "office", type="ip", value="198.51.100.10", oneshot=True
