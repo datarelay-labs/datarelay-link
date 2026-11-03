@@ -5,7 +5,10 @@ WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 TREE="$WORK/tree"
 mkdir -p "$TREE/etc/drlink/pki" "$TREE/var/lib/drlink/enrollments" "$TREE/var/lib/drlink/bootstrap"
-python3 "$ROOT/lib/frp_pki.py" ensure --pki-dir "$TREE/etc/drlink/pki" --public-host example.test >/dev/null
+# Supported compact Zero-Touch form: numeric-IP allocator + Private CA whose Server
+# certificate carries the matching IP SAN.  An unqualified DNS name such as
+# example.test is rejected fail-closed by the product (see the negative case below).
+python3 "$ROOT/lib/frp_pki.py" ensure --pki-dir "$TREE/etc/drlink/pki" --public-host 203.0.113.10 >/dev/null
 python3 - "$TREE" <<'PY'
 import json, sys
 from pathlib import Path
@@ -14,7 +17,9 @@ root=Path(sys.argv[1])
   'enrollments_dir':'/var/lib/drlink/enrollments',
   'bootstrap_dir':'/var/lib/drlink/bootstrap',
   'tls_ca_cert':'/etc/drlink/pki/ca.crt',
-  'allocator_public_url':'https://example.test/enroll',
+  'public_host':'203.0.113.10',
+  'public_ip':'203.0.113.10',
+  'allocator_public_url':'https://203.0.113.10:9443/enroll',
   'client_installer_url':'https://example.test/bootstrap-client.sh',
 })+'\n')
 PY
@@ -76,4 +81,28 @@ import json,sys
 r=json.load(open(sys.argv[1]))
 assert r.get('revoked_at')
 PY
+# Negative: an unqualified DNS-name allocator must fail closed and issue no ticket.
+TREE2="$WORK/tree-dns"
+mkdir -p "$TREE2/etc/drlink/pki" "$TREE2/var/lib/drlink/enrollments" "$TREE2/var/lib/drlink/bootstrap"
+python3 "$ROOT/lib/frp_pki.py" ensure --pki-dir "$TREE2/etc/drlink/pki" --public-host example.test >/dev/null
+python3 - "$TREE2" <<'PY'
+import json, sys
+from pathlib import Path
+root=Path(sys.argv[1])
+(root/'etc/drlink/config.json').write_text(json.dumps({
+  'enrollments_dir':'/var/lib/drlink/enrollments',
+  'bootstrap_dir':'/var/lib/drlink/bootstrap',
+  'tls_ca_cert':'/etc/drlink/pki/ca.crt',
+  'allocator_public_url':'https://example.test/enroll',
+  'client_installer_url':'https://example.test/bootstrap-client.sh',
+})+'\n')
+PY
+set +e
+FRP_DEPLOY_TEST_ROOT="$TREE2" python3 "$ROOT/tools/frp-create-client" --one-line --client-name pending-dns >"$WORK/dns.out" 2>"$WORK/dns.err"
+DNS_RC=$?
+set -e
+[[ "$DNS_RC" -ne 0 ]]
+grep -q 'Secure compact Zero-Touch is not configured' "$WORK/dns.err" "$WORK/dns.out"
+grep -q 'No enrollment ticket was issued' "$WORK/dns.err" "$WORK/dns.out"
+[[ -z "$(find "$TREE2/var/lib/drlink/bootstrap" "$TREE2/var/lib/drlink/enrollments" -type f 2>/dev/null)" ]]
 echo "PENDING_ENROLLMENTS_TEST=PASS"
