@@ -3916,9 +3916,27 @@ class ControlPlane:
             )
 
         def write():
-            self.conn.execute("DELETE FROM ai_sessions WHERE principal_id = ?", (existing["id"],))
-            self.conn.execute("DELETE FROM ai_principals WHERE id = ?", (existing["id"],))
-            return {"entity": {"type": "ai-principal", "id": existing["id"], "name": name}, "operation": "delete"}
+            pid = existing["id"]
+            # Every child table below references ai_principals(id) with ON DELETE
+            # NO ACTION, so each must be cleared in the same transaction before the
+            # principal row is removed.  Credentials and in-flight OAuth state die
+            # with the identity; audit history (ai_activity) is retained, detached
+            # from the deleted row, and stays attributable through principal_name.
+            for table in (
+                "ai_oauth_tokens",
+                "ai_oauth_codes",
+                "ai_oauth_pending",
+                "ai_oauth_clients",
+                "ai_sessions",
+            ):
+                self.conn.execute("DELETE FROM %s WHERE principal_id = ?" % table, (pid,))
+            self.conn.execute(
+                "UPDATE ai_activity SET principal_id = NULL, "
+                "principal_name = COALESCE(NULLIF(principal_name, ''), ?) WHERE principal_id = ?",
+                (name, pid),
+            )
+            self.conn.execute("DELETE FROM ai_principals WHERE id = ?", (pid,))
+            return {"entity": {"type": "ai-principal", "id": pid, "name": name}, "operation": "delete"}
 
         return self._mutate(
             "unset ai-principal %s" % name,
@@ -3928,7 +3946,7 @@ class ControlPlane:
                 "kind": "destructive-delete",
                 "resource": public_label,
                 "name": name,
-                "warning": "This permanently deletes the %s and its active session state." % public_label,
+                "warning": "This permanently deletes the %s, its credentials and its OAuth/session state. Audit history is kept." % public_label,
                 "requires_confirmation": True,
             },
             confirm=confirm,
