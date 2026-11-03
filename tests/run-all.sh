@@ -93,6 +93,7 @@ python3 tests/test-enrollment-security.py
 python3 tests/test-enrollment-atomicity.py
 python3 tests/test-enrollment-pair-atomicity.py
 python3 tests/test-enrollment-retention-policy.py
+python3 tests/test-enrollment-purge-eof.py
 python3 tests/test-mgmt-identity.py
 python3 tests/test-mgmt-identity-first-gen-atomicity.py
 ./tests/test-client-config.sh
