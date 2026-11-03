@@ -46,7 +46,12 @@ def confirm_yes(prompt):
             'ERROR: confirmation required; use an interactive terminal or set %s=yes'
             % PURGE_ENV
         )
-    answer = input(prompt).strip().lower()
+    try:
+        answer = input(prompt).strip().lower()
+    except (EOFError, KeyboardInterrupt):
+        # stdin closed or interrupted at the prompt: a clean cancel, never an implementation traceback
+        print()
+        raise SystemExit('Cancelled. No changes were applied.')
     return answer in ('y', 'yes')
 
 
