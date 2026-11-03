@@ -61,6 +61,7 @@ python3 tests/test-mcp-owner-default-access.py
 python3 tests/test-runtime-generation-atomicity.py
 python3 tests/test-server-fixed-pool-migration.py
 python3 tests/test-short-url-qualified-provenance.py
+python3 tests/test-short-url-derived-installer.py
 python3 tests/test-v24-agent-bundle-absent-idempotency.py
 python3 tests/test-v24-bundle-preview-writer-isolation.py
 python3 tests/test-v24-remote-binding-uniqueness.py
