@@ -658,7 +658,34 @@ def raise_agent_mgmt_activation_failure(
     ) from cause
 
 
+# U-013: a "<Kind> '<name>' was not found." error must say how to list the valid names.
+_NOT_FOUND_LISTING = {
+    "Network Object": "show network-objects",
+    "Network Group": "show network-groups",
+    "Service Object": "show service-objects",
+    "Service Group": "show service-groups",
+    "Permission Object": "show permission-objects",
+    "Permission Group": "show permission-groups",
+    "Remote Service": "show remote-services",
+    "AI Identity": "show ai-identities",
+    "Enrollment": "show enrollments",
+    "Managed Host": "show managed-hosts",
+    "Rule": "show remote-access or show internet-access",
+}
+_NOT_FOUND_RE = re.compile(r"^(?P<kind>[A-Za-z ]+?) '.*' was not found\.$")
+
+
+def not_found_next_step(what: str) -> str:
+    match = _NOT_FOUND_RE.match(what or "")
+    listing = _NOT_FOUND_LISTING.get(match.group("kind")) if match else None
+    if not listing:
+        return ""
+    return "Next: run %s to list the existing names, then retry with an exact name." % listing
+
+
 def cli_error(what: str, expected: str = "", next_step: str = "", applied: bool = False) -> str:
+    if not next_step:
+        next_step = not_found_next_step(what)
     lines = ["ERROR:", what, ""]
     if expected:
         lines.extend(["Expected:", expected, ""])
@@ -8613,12 +8640,12 @@ def format_show_status(role: str, plane_db=None) -> str:
                 mode = str(pol["mode"] or "").lower()
                 if family in ("internet", "ai") and mode != "whitelist":
                     policies.append(
-                        "  %s: %s / FAIL CLOSED (UNSUPPORTED MODE)"
+                        "  %s: Mode %s / FAIL CLOSED (UNSUPPORTED MODE)"
                         % (title, str(pol["mode"]).upper())
                     )
                 else:
                     policies.append(
-                        "  %s: %s / %s"
+                        "  %s: Mode %s / Enforcement %s"
                         % (title, str(pol["mode"]).upper(), str(pol["enforcement"]).upper())
                     )
         if not configured:

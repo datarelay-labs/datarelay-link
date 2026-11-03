@@ -1887,6 +1887,18 @@ class ControlPlane:
     ) -> dict:
         grp = self.get_object_group(name)
         if grp is None:
+            listing = {
+                "Network Group": "show network-groups",
+                "Service Group": "show service-groups",
+                "Permission Group": "show permission-groups",
+            }.get(public_label)
+            if listing:
+                # U-013: public Group errors say what was missing and how to list valid names.
+                raise ControlPlaneError(
+                    "ERROR:\n%s '%s' was not found.\n\nNo changes were applied.\n\n"
+                    "Next: run %s to list the existing names, then retry with an exact name."
+                    % (public_label, name, listing)
+                )
             raise ControlPlaneError("Object Group not found: %s" % name)
         refs = []
         for table in ("rule_sources", "rule_destinations"):
@@ -2261,7 +2273,8 @@ class ControlPlane:
         client = self.get_client(selector)
         if client is None:
             raise ControlPlaneError(
-                "ERROR:\nManaged Host '%s' was not found.\n\nNo changes were applied." % selector
+                "ERROR:\nManaged Host '%s' was not found.\n\nNo changes were applied.\n\n"
+                "Next: run show managed-hosts to list the existing names, then retry with an exact name." % selector
             )
         ep = self.conn.execute(
             "SELECT o.* FROM objects o JOIN managed_endpoints e ON e.object_id = o.id WHERE e.client_id = ?",
