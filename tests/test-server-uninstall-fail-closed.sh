@@ -530,5 +530,33 @@ fi
 [[ ! -f "$TREE/usr/local/lib/drlink/frp_cli_catalog.py" ]] || fail "client uninstall left frp_cli_catalog.py orphan"
 pass "CLIENT_UNINSTALL_REMOVES_SHARED_CATALOG"
 
+# A-019 regression: --purge must not leave dangling legacy compatibility aliases
+# (legacy -> canonical) that make an older installer's `mkdir -p <legacy>` fail.
+TREE="$WORKDIR/legacy-alias-purge"
+seed "$TREE"
+mkdir -p "$TREE/var/log/drlink" "$TREE/var/log" "$TREE/run"
+ln -s /var/lib/drlink "$TREE/var/lib/frp-auto-deploy"
+ln -s /var/log/drlink "$TREE/var/log/frp-auto-deploy"
+ln -s /etc/drlink "$TREE/etc/frp-auto-deploy"
+ln -s /somewhere/else "$TREE/run/frp-auto-deploy"   # unrelated link must be kept
+UNIT="$WORKDIR/units-legacy-alias"
+mkdir -p "$UNIT"
+: >"$UNIT/drlink-server.loaded"
+export FRP_UNINSTALL_TEST_ROOT="$TREE"
+export FRP_MOCK_UNIT_DIR="$UNIT"
+export FRP_UNINSTALL_HOOK_SYSTEMCTL="$MOCK"
+export FRP_PURGE_CONFIRM=yes
+if ! "$ROOT/uninstall-server.sh" --purge --yes >"$WORKDIR/legacy-alias.out" 2>"$WORKDIR/legacy-alias.err"; then
+  fail "legacy alias purge: $(cat "$WORKDIR/legacy-alias.err")"
+fi
+[[ ! -e "$TREE/var/lib/drlink" ]] || fail "legacy alias purge left canonical var/lib"
+for a in var/lib/frp-auto-deploy var/log/frp-auto-deploy etc/frp-auto-deploy; do
+  [[ ! -L "$TREE/$a" && ! -e "$TREE/$a" ]] || fail "purge left dangling legacy alias: $a"
+done
+# The older installer's first step must now succeed on the purged tree.
+mkdir -p "$TREE/var/lib/frp-auto-deploy" || fail "mkdir -p legacy path fails after purge"
+[[ -L "$TREE/run/frp-auto-deploy" ]] || fail "purge removed an unrelated legacy-named symlink"
+pass "PURGE_REMOVES_DANGLING_LEGACY_ALIASES"
+
 echo "SERVER_UNINSTALL_FAIL_CLOSED_TEST=PASS"
 echo "NEW_002_UNINSTALL_CONTROL_STATE_LOCK=PASS"
