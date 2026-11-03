@@ -84,6 +84,7 @@ python3 tests/test-v24-agent-bundle-synchronization-lock.py
 python3 tests/test-v24-agent-management-status-proof.py
 python3 tests/test-v24-e2e-readiness-targeted.py
 python3 tests/test-v24-network-object-remote-reference.py
+python3 tests/test-unset-ai-identity-oauth-cleanup.py
 python3 tests/test-v24-reference-delete-serialization.py
 python3 tests/test-v24-selector-membership-impact.py
 ./tests/test-server-migration.sh
