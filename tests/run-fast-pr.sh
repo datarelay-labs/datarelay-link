@@ -85,6 +85,7 @@ bash tests/test-client-upgrade-enrolled-state.sh
 bash tests/test-client-upgrade-legacy-supervisor.sh
 python3 tests/test-agent-bundle-fresh-catalog.py
 python3 tests/test-short-url-qualified-provenance.py
+python3 tests/test-short-url-derived-installer.py
 python3 tests/test-legacy-backup-migration.py
 python3 tests/test-egress-runtime-no-list-permission.py
 python3 tests/test-v24-upgrade-reconcile.py
