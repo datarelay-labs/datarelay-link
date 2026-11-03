@@ -63,6 +63,9 @@ from pathlib import Path
 tree = Path(sys.argv[2])
 cfg = {
   "public_ip": "203.0.113.10",
+  # Explicit operator trust intent for the compact zt1 form (a bare IP + bare CA is
+  # rejected fail-closed; the IP/Private-CA shape is covered by test-pending-enrollments).
+  "bootstrap_hostname": "link.example.com",
   "control_port": 443,
   "frp_control_public_port": 443,
   "port_start": 6000,
@@ -87,9 +90,10 @@ OUT="$WORKDIR/one-line.out"
 python3 "$ROOT/tools/frp-create-client" --one-line --client-name short-zt --note 'pkg' \
   >"$OUT" || { cat "$OUT"; fail "create one-line"; }
 grep -q 'Zero-touch Agent command' "$OUT" || fail "header"
-grep -q "curl -fsSL --proto =https --cacert" "$OUT" || { cat "$OUT"; fail "pinned installer curl missing"; }
-grep -q '/ca.crt' "$OUT" || { cat "$OUT"; fail "ca.crt bootstrap missing"; }
-grep -q 'zt1\.' "$OUT" || { cat "$OUT"; fail "zt1 package missing"; }
+# Current compact public-hostname form (since 6f1302d7): one publicly trusted
+# https://<bootstrap_hostname>/i/<ticket> fetch.  No legacy zt1 package or pinned
+# --cacert block is emitted for this form.
+grep -Eq 'curl -fsSL https://link\.example\.com/i/[A-Za-z0-9_-]+' "$OUT" || { cat "$OUT"; fail "compact /i/ bootstrap missing"; }
 if grep -qiE 'curl -fsSL --insecure .*/bootstrap-client|curl -k .*/bootstrap-client' "$OUT"; then
   fail "insecure TLS on installer fetch"
 fi
@@ -102,13 +106,19 @@ pass "ZERO_TOUCH_SHORT_COMMAND_SHAPE"
 source "$ROOT/lib/frp-common.sh"
 # shellcheck source=/dev/null
 source "$ROOT/lib/frp-client-common.sh"
-PACKAGE="$(python3 - "$OUT" <<'PY'
-import re, sys
+# The zt1 package remains the transport for the long/advanced path; exercise the client
+# apply helper with a package produced by the same encoder the product uses.
+PACKAGE="$(python3 - "$ROOT/tools/frp-create-client" <<'PY'
+import importlib.machinery, importlib.util, sys
 from pathlib import Path
-text = Path(sys.argv[1]).read_text()
-m = re.search(r"zt1\.[A-Za-z0-9_-]+", text)
-assert m, text
-print(m.group(0))
+path = Path(sys.argv[1])
+spec = importlib.util.spec_from_file_location(
+    "frp_create_client", path,
+    loader=importlib.machinery.SourceFileLoader("frp_create_client", str(path)))
+mod = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(mod)
+print(mod.encode_zero_touch_package(
+    "https://203.0.113.10:9443/enroll", "a" * 64, "bt1." + "b" * 16 + "." + "c" * 64))
 PY
 )"
 frp_zero_touch_apply_package "$PACKAGE" || fail "apply package"
