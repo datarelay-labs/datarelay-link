@@ -703,6 +703,28 @@ else
   try_rm_rf "$(frp_u_path /var/log/drlink)"
 fi
 
+# Upgrade creates legacy compatibility aliases (legacy path -> canonical path).
+# Once the canonical tree is gone they dangle, and an older installer's
+# `mkdir -p <legacy path>` then fails with "File exists". Remove only aliases
+# whose canonical tree is gone and that point exactly at the canonical path
+# (never real dirs, never unrelated links, never aliases still in use).
+remove_dangling_legacy_alias() {
+  local legacy_abs="$1" canonical_abs="$2" legacy target
+  legacy="$(frp_u_path "$legacy_abs")"
+  [[ -L "$legacy" ]] || return 0
+  # Canonical tree still present (e.g. dual-role client state): alias is live.
+  [[ ! -e "$(frp_u_path "$canonical_abs")" ]] || return 0
+  target="$(readlink "$legacy" 2>/dev/null || true)"
+  if [[ "$target" == "$canonical_abs" || "$target" == "$(frp_u_path "$canonical_abs")" ]]; then
+    try_rm_file "$legacy"
+  fi
+}
+remove_dangling_legacy_alias /etc/frp-auto-deploy /etc/drlink
+remove_dangling_legacy_alias /var/lib/frp-auto-deploy /var/lib/drlink
+remove_dangling_legacy_alias /var/log/frp-auto-deploy /var/log/drlink
+remove_dangling_legacy_alias /usr/local/lib/frp-auto-deploy /usr/local/lib/drlink
+remove_dangling_legacy_alias /run/frp-auto-deploy /run/drlink
+
 if [[ "$PURGE_FAILED" == "1" ]]; then
   echo "ERROR: server uninstall did not complete." >&2
   echo "FAILURE_CLASS=PURGE_PARTIAL" >&2
