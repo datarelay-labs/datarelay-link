@@ -1093,7 +1093,8 @@ def _show_policy(plane: ControlPlane, family: str, rest: list[str]) -> int:
             except (OSError, ValueError):
                 sys.stdout.write('Proxy endpoint: unavailable (check Server configuration)\n')
             readiness, recovery = v24.restricted_policy_readiness(
-                family, pol["mode"], pol["enforcement"]
+                family, pol["mode"], pol["enforcement"],
+                generation_mismatch=v24.runtime_generation_mismatch(plane),
             )
             sys.stdout.write("Readiness   : %s\n" % readiness)
             if recovery:
@@ -1153,7 +1154,8 @@ def _show_ai_policy(plane: ControlPlane, rest: list[str]) -> int:
                 % (pol["mode"].upper(), str(pol["enforcement"]).upper(), eff)
             )
         readiness, recovery = v24.restricted_policy_readiness(
-            "ai", pol["mode"], pol["enforcement"]
+            "ai", pol["mode"], pol["enforcement"],
+            generation_mismatch=v24.runtime_generation_mismatch(plane),
         )
         sys.stdout.write("Readiness   : %s\n" % readiness)
         if recovery:

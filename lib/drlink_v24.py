@@ -2516,13 +2516,35 @@ def effective_policy_result(
     return "DENY"
 
 
+def runtime_generation_mismatch(plane_db) -> bool:
+    """True when the authoritative runtime generation is mismatched or failed.
+
+    Enforcement fails closed in that state, so public readiness must not claim
+    READY. Read errors are treated as not-mismatched here; the policy readers
+    own their own fail-closed handling.
+    """
+    try:
+        gens = [dict(r) for r in plane_db.conn.execute("SELECT status FROM runtime_generations")]
+    except Exception:
+        return False
+    return any(str(g.get("status") or "").lower() in ("mismatch", "failed") for g in gens)
+
+
+RUNTIME_GENERATION_RECOVERY = (
+    "re-apply the current configuration (system apply configuration <file>) "
+    "to rebuild the runtime, or restart the Server services."
+)
+
+
 def restricted_policy_readiness(
-    plane: str, mode: Optional[str], enforcement: str
+    plane: str, mode: Optional[str], enforcement: str, generation_mismatch: bool = False
 ) -> tuple[str, Optional[str]]:
     """Describe fail-closed Internet/AI policy readiness for public output."""
     plane_n = _plane_key(plane)
     if plane_n not in ("internet", "ai"):
         return "READY", None
+    if generation_mismatch:
+        return "FAIL CLOSED (RUNTIME GENERATION MISMATCH)", RUNTIME_GENERATION_RECOVERY
     mode_n = str(mode or "").strip().lower() or None
     enforcement_n = str(enforcement or "enabled").strip().lower()
     if mode_n is None:

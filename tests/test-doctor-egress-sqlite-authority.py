@@ -187,7 +187,11 @@ class EgressSQLiteAuthorityTests(unittest.TestCase):
                         elif fault == "failed-generation": conn.execute("UPDATE runtime_generations SET status='failed' WHERE plane='internet'")
                         else: conn.execute("UPDATE runtime_generations SET generation=generation+1 WHERE plane='internet'")
                 report, _ = self._diagnose(root)
-                self._check(report, "EGRESS_SQLITE_AUTHORITY", doctor.FAIL)
+                row = self._check(report, "EGRESS_SQLITE_AUTHORITY", doctor.FAIL)
+                if fault == "mismatched-generation":
+                    # A generation mismatch must not be a dead end: the next step names a real recovery.
+                    self.assertIn("system apply configuration", row["recommendation"])
+                    self.assertIn("systemctl restart drlink-server", row["recommendation"])
                 self._check(report, "EGRESS_UNIT", doctor.PASS)
                 self._check(report, "EGRESS_TCP_UNIT", doctor.PASS)
                 self.assertEqual(report.overall(), "FAIL", "saved healthy snapshots must not hide unhealthy current authority")
