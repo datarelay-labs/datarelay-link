@@ -1869,6 +1869,23 @@ def apply_v24_plan(
             fresh = _resolve_plan_for_apply(plane, plan)
             if fresh.no_change:
                 rev = int(plane.current_revision())
+                if compile_runtime and plane._activation_should_run() and v24.runtime_generation_mismatch(plane):
+                    # Desired state already matches, but the runtime generation
+                    # is mismatched/failed (for example after an activation
+                    # plus rollback double fault). Rebuild it from the
+                    # authoritative DB instead of reporting a false NO CHANGE.
+                    try:
+                        plane.compile_runtime()
+                        plane._commit_open_transaction()
+                    except Exception:
+                        plane._rollback_open_transaction()
+                        raise ControlPlaneError(
+                            "ERROR:\nRuntime reconciliation failed.\n\n"
+                            "The runtime generation is still mismatched and enforcement remains fail-closed.\n"
+                            "No configuration changes were made.\n\n"
+                            "Run:\n  system diagnostics"
+                        ) from None
+                    return {"status": "RECONCILED", "revision": rev}
                 plane._rollback_open_transaction()
                 return {"status": "NO_CHANGE", "revision": rev}
 

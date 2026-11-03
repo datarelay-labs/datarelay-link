@@ -164,6 +164,12 @@ def _configuration_apply(plane: ControlPlane, rest):
     if isinstance(result, dict) and result.get("status") == "NO_CHANGE":
         sys.stdout.write("NO CHANGE\nConfiguration already matches the requested state.\n")
         return 0
+    if isinstance(result, dict) and result.get("status") == "RECONCILED":
+        sys.stdout.write(
+            "RECONCILED\nConfiguration already matched; the mismatched runtime generation was rebuilt.\n"
+        )
+        sys.stdout.write("Revision: %s\n" % result.get("revision"))
+        return 0
     sys.stdout.write("Apply result: APPLIED\n")
     if isinstance(result, dict):
         sys.stdout.write("Revision: %s\n" % result.get("revision"))
@@ -353,6 +359,11 @@ def _show_internet_status(plane: ControlPlane) -> int:
     else:
         default = "DENY ALL"
         readiness = "FAIL CLOSED (UNSUPPORTED MODE)"
+    if v24.runtime_generation_mismatch(plane):
+        # Enforcement is fail-closed while the runtime generation is
+        # mismatched or failed; never advertise READY in that state.
+        default = "DENY ALL"
+        readiness = "FAIL CLOSED (RUNTIME GENERATION MISMATCH)"
     cfg = {}
     root = getattr(plane, "root", None) or ""
     cfg_path = Path(str(root)) / "etc/drlink/config.json" if root else Path("/etc/drlink/config.json")

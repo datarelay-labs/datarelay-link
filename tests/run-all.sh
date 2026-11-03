@@ -59,6 +59,7 @@ python3 tests/test-enrolled-routed-target-parity.py
 python3 tests/test-legacy-backup-migration.py
 python3 tests/test-mcp-owner-default-access.py
 python3 tests/test-runtime-generation-atomicity.py
+python3 tests/test-runtime-generation-reconcile.py
 python3 tests/test-server-fixed-pool-migration.py
 python3 tests/test-short-url-qualified-provenance.py
 python3 tests/test-short-url-derived-installer.py

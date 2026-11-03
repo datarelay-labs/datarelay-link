@@ -2315,13 +2315,24 @@ def check_egress_control(report, paths, facts, cfg):
             'state',
         )
     except Exception as exc:
+        if 'runtime generation mismatch' in str(exc):
+            next_step = (
+                'Re-apply the current configuration to rebuild the runtime generation: '
+                'sudo drlink system apply configuration <file>\n'
+                'or restart the Server services: sudo systemctl restart drlink-server\n'
+                'Then run: sudo drlink show internet-access'
+            )
+        else:
+            next_step = (
+                'Run: sudo drlink show internet-access\n'
+                'Restore a verified Server backup if authoritative SQLite state is missing or corrupt; '
+                'doctor does not create or migrate drlink.db'
+            )
         report.add(
             'EGRESS_SQLITE_AUTHORITY', FAIL,
             'SQLite Internet Access authority is unavailable or unhealthy (fail-closed)',
             str(exc),
-            'Run: sudo drlink show internet-access\n'
-            'Restore a verified Server backup if authoritative SQLite state is missing or corrupt; '
-            'doctor does not create or migrate drlink.db',
+            next_step,
             'state',
         )
 
