@@ -1671,6 +1671,12 @@ class ThreadedTCPServer(socketserver.ThreadingTCPServer):
         self.max_concurrent = int(getattr(gw, "max_concurrent", DEFAULT_MAX_CONCURRENT) or DEFAULT_MAX_CONCURRENT)
         self.request_timeout = float(CLIENT_HEADER_TIMEOUT)
         self._slot_sem = threading.BoundedSemaphore(self.max_concurrent)
+        # socketserver.TCPServer listens with a backlog of 5. That queues only a
+        # fraction of the authorized worker capacity: a burst of new proxy
+        # connections overflowed the accept queue, SYNs were dropped and requests
+        # were reset or delayed by TCP retransmission before policy code ran.
+        # The kernel clamps this to net.core.somaxconn.
+        self.request_queue_size = self.max_concurrent
         super().__init__(server_address, None)
 
     def process_request(self, request, client_address):
