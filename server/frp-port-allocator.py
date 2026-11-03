@@ -2380,6 +2380,17 @@ class Allocator:
             ).strip()
         else:
             installer = str(self.cfg.get('client_installer_url') or '').strip()
+        if not installer and QA is not None and allocator.lower().startswith('https://'):
+            # The CLI issues Zero-Touch tickets against the Server-local
+            # qualified installer URL derived from allocator_public_url when
+            # no installer URL is configured. Serve stage 1 against the same
+            # derivation, otherwise a ticket the CLI accepted yields HTTP 503.
+            try:
+                installer = str(QA.agent_installer_url(allocator, platform) or '').strip()
+            except Exception:
+                installer = ''
+            if QA.is_forbidden_public_installer_url(installer):
+                installer = ''
         ca_path = str(self.cfg.get('tls_ca_cert') or '').strip()
         if not allocator.lower().startswith('https://'):
             return None

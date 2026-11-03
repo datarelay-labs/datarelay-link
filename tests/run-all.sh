@@ -61,6 +61,7 @@ python3 tests/test-mcp-owner-default-access.py
 python3 tests/test-runtime-generation-atomicity.py
 python3 tests/test-server-fixed-pool-migration.py
 python3 tests/test-short-url-qualified-provenance.py
+python3 tests/test-short-url-derived-installer.py
 python3 tests/test-v24-agent-bundle-absent-idempotency.py
 python3 tests/test-v24-bundle-preview-writer-isolation.py
 python3 tests/test-v24-remote-binding-uniqueness.py
@@ -93,6 +94,7 @@ python3 tests/test-enrollment-security.py
 python3 tests/test-enrollment-atomicity.py
 python3 tests/test-enrollment-pair-atomicity.py
 python3 tests/test-enrollment-retention-policy.py
+python3 tests/test-enrollment-purge-eof.py
 python3 tests/test-mgmt-identity.py
 python3 tests/test-mgmt-identity-first-gen-atomicity.py
 ./tests/test-client-config.sh
@@ -391,6 +393,7 @@ python3 tests/test-e2e-owner-preflight-procedure.py
 # These are deterministic non-live regressions; real CLI/soak runs keep
 # their independent owner-scoped RUN_ID and do not block unrelated CI.
 python3 tests/test-cli-only-e2e-contract.py
+python3 tests/test-e2e-candidate-identity.py
 python3 tests/test-cli-only-e2e-persistent-load.py
 python3 tests/test-v24-e2e-actionable-doc-parity.py
 python3 tests/test-cli-rule-selector-and-runtime-recovery.py
