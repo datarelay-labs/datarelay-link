@@ -106,7 +106,7 @@ def _agent_service_status(plane, row, runtime_level, management_verified=None):
         return 'DISABLED'
     from drlink_agent_lifecycle import load_lifecycle_intent
     if load_lifecycle_intent(plane.root) == 'paused':
-        return 'DEGRADED'
+        return 'PAUSED'
     stored = str(row['status'] or 'DEGRADED')
     if stored == 'HEALTHY' and (
         not row['runtime_verified']
