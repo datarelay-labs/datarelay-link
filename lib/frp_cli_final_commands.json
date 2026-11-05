@@ -3742,8 +3742,8 @@
     ],
     "roles": "client",
     "category": "Remote Services",
-    "summary": "Create or edit a Remote Service",
-    "detail": "Create or edit a Remote Service. SERVICE selects a Server-defined TCP or Fixed TCP Service Object; the Server allocates/reserves the public endpoint, so the Agent does not choose a public port. Use destination this-host for the Agent itself or a supported destination object. The name-only form opens a reviewed edit wizard. Use enabled or disabled in the complete form to change activation. Editing or disabling can interrupt access to the service. The explicit complete command authorizes that change without an additional confirmation prompt; the wizard reviews the change before apply.",
+    "summary": "Configure an Agent Host Remote Service",
+    "detail": "Run this command on the Agent Host that owns the Remote Service. To inspect Server-side publication, run show managed-host <HOST> remote-services on the Server. SERVICE selects a Server-defined TCP or Fixed TCP Service Object; the Server allocates/reserves the public endpoint, so the Agent does not choose a public port. Use destination this-host for the Agent itself or a supported destination object. The name-only form opens a reviewed edit wizard. Use enabled or disabled in the complete form to change activation. Editing or disabling can interrupt access to the service. The explicit complete command authorizes that change without an additional confirmation prompt; the wizard reviews the change before apply.",
     "examples": [
       "set remote-service <NAME>",
       "set remote-service ssh-access destination this-host service ssh enabled",
