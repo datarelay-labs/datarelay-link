@@ -7622,10 +7622,25 @@ def set_remote_service_agent(
         }
         return result
 
-    # Runtime activation: desired DB alone must never imply HEALTHY.
+    # Runtime activation: desired DB alone must never imply HEALTHY. A
+    # deliberate Agent pause is an independent lifecycle intent; configuration
+    # edits may update desired state and Server reservations but must not start
+    # the runtime behind that pause.
     runtime_ok = False
     runtime_error = ""
-    if (
+    from drlink_agent_lifecycle import load_lifecycle_intent
+    lifecycle_paused = load_lifecycle_intent(root) == "paused"
+    if en and lifecycle_paused and not destination_identity_reason:
+        status = "DEGRADED"
+        if not pending and endpoint_port is not None:
+            reason = "Agent runtime is intentionally paused."
+        else:
+            reason = reason or "Agent runtime is intentionally paused."
+        _persist_status(status, reason)
+        if live_mgmt:
+            _push_agent_remote_service_status(plane_db, root=root, names=[name])
+        _clear_agent_mgmt_side_effects(plane_db)
+    elif (
         en
         and endpoint_port is not None
         and pending == 0
@@ -7785,6 +7800,15 @@ def set_remote_service_agent(
                 _clear_agent_mgmt_side_effects(plane_db)
     elif destination_identity_reason and en:
         _persist_status(status, reason or destination_identity_reason)
+        if live_mgmt:
+            _push_agent_remote_service_status(plane_db, root=root, names=[name])
+        _clear_agent_mgmt_side_effects(plane_db)
+    elif not en and lifecycle_paused:
+        # Pause already keeps the runtime stopped. Updating a disabled desired
+        # service while paused must not restart an empty runtime generation.
+        status = "DISABLED"
+        reason = DISABLED_OPERATOR_REASON
+        _persist_status(status, reason)
         if live_mgmt:
             _push_agent_remote_service_status(plane_db, root=root, names=[name])
         _clear_agent_mgmt_side_effects(plane_db)
