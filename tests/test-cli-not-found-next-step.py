@@ -24,6 +24,7 @@ sys.path.insert(0, str(ROOT / "lib"))
 from drlink_control_plane import ControlPlane
 import drlink_control_cli as cli
 import drlink_v24 as v24
+import frp_cli_catalog as catalog
 
 
 class NotFoundNextStep(unittest.TestCase):
@@ -100,6 +101,15 @@ class NotFoundNextStep(unittest.TestCase):
     def test_unrelated_errors_are_unchanged(self):
         plain = v24.cli_error("Something else failed.")
         self.assertEqual(plain, "ERROR:\nSomething else failed.\n\nNo changes were applied.")
+
+    def test_remote_service_help_names_the_owning_agent_role(self):
+        command = next(
+            item for item in catalog.COMMANDS
+            if item["path"] == ("set", "remote-service")
+        )
+        rendered = catalog.command_help(command)
+        self.assertIn("Run this command on the Agent Host that owns the Remote Service.", rendered)
+        self.assertIn("on the Server", rendered)
 
 
 if __name__ == "__main__":
