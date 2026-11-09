@@ -57,6 +57,16 @@ class FakeCommands:
             elif argv[-1] == "Enter" and self.draft == "/goal resume":
                 if self.resume_works:
                     self.screen = "Goal active Objective: CLI-only E2E\nPursuing goal (1m)"
+            elif argv[-1] == "Enter" and self.program == "bash" and " resume " in self.draft:
+                self.program = "codex"
+                self.process = True
+                self.screen = ("Resume paused goal?\n"
+                               "› 1. Resume goal\n"
+                               "2. Leave paused\n"
+                               "Goal stalled (/goal resume)")
+            elif argv[-1] == "Enter" and self.program == "codex" and "Resume paused goal?" in self.screen:
+                if self.resume_works:
+                    self.screen = "Goal active Objective: CLI-only E2E\nPursuing goal (1m)"
             stdout = ""
         else:
             stdout = ""
@@ -172,10 +182,62 @@ class WatchdogTest(unittest.TestCase):
     def test_relaunch_requires_exact_valid_session(self):
         cmd = FakeCommands(screen="Session ended", process=False, program="bash")
         self.args.allow_relaunch = True
-        (self.root / "thread.id").write_text("not-a-uuid")
+        (self.root / "codex_session_id.txt").write_text("not-a-uuid")
         result = watchdog.tick(self.args, command=cmd, now=10000)
         self.assertFalse(result.get("executed", True))
         self.assertIn("ValueError", result["error"])
+        self.assertEqual(cmd.sent(), 0)
+
+    def test_exact_session_relaunch_and_goal_menu(self):
+        sid = "01a1b689-b0b8-7680-a91f-02d3e744cd42"
+        (self.root / "codex_session_id.txt").write_text(sid + "\n")
+        sessions = self.root / ".codex" / "sessions" / "2026" / "11" / "09"
+        sessions.mkdir(parents=True)
+        (sessions / ("rollout-" + sid + ".jsonl")).write_text("{}\n")
+        cmd = FakeCommands(screen="aella@dev-drlink:~/datarelay-link-main$ ",
+                           program="bash", process=False)
+        self.args.allow_relaunch = True
+        with unittest.mock.patch.object(watchdog.Path, "home", return_value=self.root), (
+            unittest.mock.patch.object(watchdog.time, "sleep", return_value=None)
+        ):
+            result = watchdog.tick(self.args, command=cmd, now=10000)
+        self.assertEqual(result["action"], "relaunch")
+        self.assertTrue(result["executed"])
+        self.assertEqual(result["restart_last_hour"], 1)
+        self.assertEqual(cmd.sent(), 3)
+        self.assertIn(" resume " + sid, str(cmd.calls))
+        self.assertNotIn("Tab", str(cmd.calls))
+        self.assertEqual(watchdog.ui_status(cmd.screen), "active")
+        # No duplicate attempt when the process is still alive.
+        second = watchdog.tick(self.args, command=cmd, now=10060)
+        self.assertEqual(second["action"], "observe")
+        self.assertEqual(cmd.sent(), 3)
+
+    def test_relaunch_circuit_breaker(self):
+        self.args.allow_relaunch = True
+        with (self.root / "e2e_watchdog_state.json").open("w") as f:
+            import json
+            json.dump({"restart_history": [9000, 9200, 9700]}, f)
+        cmd = FakeCommands(screen="aella@dev-drlink:~/x$",
+                           program="bash", process=False)
+        result = watchdog.tick(self.args, command=cmd, now=10000)
+        self.assertEqual(result["action"], "hold")
+        self.assertIn("circuit breaker", result["reason"])
+        self.assertEqual(cmd.sent(), 0)
+
+    def test_not_idle_shell_never_relaunch(self):
+        self.args.allow_relaunch = True
+        sid = "01a1b689-b0b8-7680-a91f-02d3e744cd42"
+        (self.root / "codex_session_id.txt").write_text(sid + "\n")
+        sessions = self.root / ".codex" / "sessions" / "2026" / "11" / "09"
+        sessions.mkdir(parents=True)
+        (sessions / ("rollout-" + sid + ".jsonl")).write_text("{}\n")
+        cmd = FakeCommands(screen="some history without an actual shell prompt",
+                           program="bash", process=False)
+        with unittest.mock.patch.object(watchdog.Path, "home", return_value=self.root):
+            result = watchdog.tick(self.args, command=cmd, now=10000)
+        self.assertFalse(result.get("executed", True))
+        self.assertIn("shell prompt not visible", result["error"])
         self.assertEqual(cmd.sent(), 0)
 
     def test_corrupt_ledger_is_rejected_without_any_send(self):
