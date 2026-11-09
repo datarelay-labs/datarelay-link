@@ -5,6 +5,7 @@ from pathlib import Path
 import subprocess
 import tempfile
 import unittest
+import unittest.mock
 
 MODULE_PATH = Path(__file__).resolve().parents[1] / "tools/e2e_codex_watchdog.py"
 spec = importlib.util.spec_from_file_location("e2e_codex_watchdog", MODULE_PATH)
@@ -27,10 +28,14 @@ def ledger(root, pending=1, state=None):
 
 class FakeCommands:
     def __init__(self, screen="GPT-6-Luna medium · Pursuing goal (12h)",
-                 program="codex", process=True):
+                 program="codex", process=True, resume_works=True,
+                 clear_succeeds=True):
         self.screen = screen
         self.program = program
         self.process = process
+        self.resume_works = resume_works
+        self.clear_succeeds = clear_succeeds
+        self.draft = ""
         self.calls = []
 
     def __call__(self, argv, timeout=8):
@@ -41,6 +46,18 @@ class FakeCommands:
             stdout = self.program + "\n"
         elif argv[0] == "ps":
             stdout = "/path/bin/codex -c memories.use_memories=false\n" if self.process else ""
+        elif argv[:2] == ["tmux", "send-keys"]:
+            if argv[-1] == "C-c":
+                if self.clear_succeeds:
+                    self.draft = ""
+                    self.screen = ("Goal stalled (/goal resume)\n"
+                                   "› Ask Codex to do anything\n")
+            elif "-l" in argv:
+                self.draft = argv[-1]
+            elif argv[-1] == "Enter" and self.draft == "/goal resume":
+                if self.resume_works:
+                    self.screen = "Goal active Objective: CLI-only E2E\nPursuing goal (1m)"
+            stdout = ""
         else:
             stdout = ""
         return subprocess.CompletedProcess(argv, 0, stdout=stdout, stderr="")
@@ -61,6 +78,12 @@ class WatchdogTest(unittest.TestCase):
             cwd=str(self.root), codex_binary="/bin/true",
         )
 
+    def test_latest_ui_footer_wins_over_old_stalled_footer(self):
+        screen = ("Goal stalled (/goal resume)\nWorked for 5m\n"
+                  "Goal active Objective: tests\n"
+                  "GPT-6-Luna medium · Pursuing goal (2m)")
+        self.assertEqual(watchdog.ui_status(screen), "active")
+
     def test_active_actor_never_receives_inputs(self):
         cmd = FakeCommands()
         report = watchdog.tick(self.args, command=cmd, now=10000)
@@ -75,17 +98,23 @@ class WatchdogTest(unittest.TestCase):
         self.assertEqual(first["action"], "resume")
         self.assertTrue(first["executed"])
         self.assertEqual(first["attempts"], 1)
-        self.assertEqual(cmd.sent(), 6)
+        self.assertEqual(cmd.sent(), 3)
+        self.assertEqual([c[-1] for c in cmd.calls if c[:2] == ("tmux", "send-keys")],
+                         ["C-c", "/goal resume", "Enter"])
+        self.assertNotIn("Tab", str(cmd.calls))
+        # Simulate a later stall after the successful activation.
+        cmd.screen = "Goal stalled (/goal resume)"
         second = watchdog.tick(self.args, command=cmd, now=10030)
         self.assertEqual(second["action"], "cooldown")
-        self.assertEqual(cmd.sent(), 6)
+        self.assertEqual(cmd.sent(), 3)
         third = watchdog.tick(self.args, command=cmd, now=11000)
         self.assertEqual(third["action"], "resume")
-        self.assertEqual(cmd.sent(), 12)
+        self.assertEqual(cmd.sent(), 6)
+        cmd.screen = "Goal stalled (/goal resume)"
         fourth = watchdog.tick(self.args, command=cmd, now=12000)
         self.assertEqual(fourth["action"], "hold")
         self.assertIn("resume budget", fourth["reason"])
-        self.assertEqual(cmd.sent(), 12)
+        self.assertEqual(cmd.sent(), 6)
         ledger(self.root, pending=2)
         fifth = watchdog.tick(self.args, command=cmd, now=13000)
         self.assertEqual(fifth["action"], "resume")
@@ -100,6 +129,23 @@ class WatchdogTest(unittest.TestCase):
             self.assertEqual(result["action"], "hold")
             self.assertEqual(cmd.sent(), 0)
             (self.root / "e2e_watchdog_state.json").unlink()
+
+    def test_unconfirmed_resume_is_not_reported_successful(self):
+        cmd = FakeCommands(screen="Goal stalled (/goal resume)", resume_works=False)
+        with unittest.mock.patch.object(watchdog.time, "sleep", return_value=None):
+            result = watchdog.tick(self.args, command=cmd, now=10000)
+        self.assertEqual(result["action"], "resume")
+        self.assertFalse(result["executed"])
+        self.assertIn("did not become active", result["error"])
+        self.assertEqual(cmd.sent(), 3)
+
+    def test_uncleared_multiline_composer_is_not_submitted(self):
+        cmd = FakeCommands(screen="Goal stalled (/goal resume)",
+                           clear_succeeds=False)
+        result = watchdog.tick(self.args, command=cmd, now=10000)
+        self.assertFalse(result["executed"])
+        self.assertIn("draft not confirmed empty", result["error"])
+        self.assertEqual(cmd.sent(), 1)
 
     def test_terminal_results_never_retry(self):
         ledger(self.root, pending=0, state="SCENARIO_FAIL_REPRODUCED")
