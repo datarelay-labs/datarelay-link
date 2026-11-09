@@ -26,10 +26,18 @@ and never creates a second actor while Codex is alive.
   eligible PARTIAL scenarios after a 15-minute cooldown, with at most two tries
   per scenario; the resumed Codex Goal independently selects the actual test
   work. A resume without a verified UI transition is recorded as failure.
-- If the Codex process exits, the watcher reports it but does not launch a
-  different actor by default. Optional --allow-relaunch supports exact UUID
-  session resume only on the original idle shell pane and with no other Codex
-  process detected; enable only after validating the lane's thread.id.
+- If the Codex process exits while PARTIAL assertions remain, the watcher
+  resumes ONLY the pinned exact Codex session ID from codex_session_id.txt
+  when the original tmux pane is a verified idle shell. It validates the
+  existing local rollout file, launches resume once, and chooses the known
+  Resume paused goal menu only if that exact menu appears. It then verifies
+  the Pursuing goal UI; any other approval or unexpected UI fails closed.
+  No new session, separate actor, or candidate is created.
+- Recovery is checked every 60 seconds with a 90-second minimum between
+  process relaunch attempts and a circuit breaker of 3 relaunches/hour and
+  12/day. Repeated failure is reported, not treated as PASS. This limits
+  runaway model consumption when missing resources or genuine blockers
+  prevent meaningful test progress. The test outcome ledger is preserved.
 - Pending human approval, deliberate pause, unknown UI, malformed ledger,
   missing tmux session, or unavailable process evidence are fail-closed.
 - Every invocation has a short timeout. No infinite REPL and no unsafe automatic
@@ -37,7 +45,13 @@ and never creates a second actor while Codex is alive.
 
 ## Installation
 
-Run as aella on dev-drlink:
+Pin the latest verified resumable session UUID as aella in the E2E run
+directory in codex_session_id.txt. Do not overwrite the older thread.id.
+For the November 9 run it is:
+
+    01a1b689-b0b8-7680-a91f-02d3e744cd42
+
+Then install as aella on dev-drlink:
 
     bash tools/install_e2e_codex_watchdog.sh
 
