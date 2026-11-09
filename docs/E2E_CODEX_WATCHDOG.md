@@ -17,11 +17,15 @@ and never creates a second actor while Codex is alive.
   PASS, SCOPED PASS, FAIL, measured-only and AI/MCP exclusions are terminal
   for scheduling. Remaining environment-blocked assertions are reported but never
   silently promoted to PASS.
-- After a stall, the watcher sends a small scenario-specific task instruction to
-  the same tmux pane and resumes the existing Goal. The next stall advances to
-  another eligible scenario after a 15-minute cooldown. Each unchanged PARTIAL
-  scenario is attempted at most twice. If all are exhausted, it stops retrying
-  rather than looping indefinitely.
+- After a stall, the watcher clears a stale multiline draft with Ctrl-C,
+  verifies the blank composer, submits only the standalone /goal resume command
+  to the same tmux pane, and verifies the UI actually changes to Pursuing goal.
+  This fixes the observed bug where a long prompt plus the slash command
+  remained unsubmitted in the editor. The watcher never presses Tab during
+  this transition. Another stall rotates the retry-accounting target among
+  eligible PARTIAL scenarios after a 15-minute cooldown, with at most two tries
+  per scenario; the resumed Codex Goal independently selects the actual test
+  work. A resume without a verified UI transition is recorded as failure.
 - If the Codex process exits, the watcher reports it but does not launch a
   different actor by default. Optional --allow-relaunch supports exact UUID
   session resume only on the original idle shell pane and with no other Codex
