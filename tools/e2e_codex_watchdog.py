@@ -13,6 +13,7 @@ import os
 from pathlib import Path
 import re
 import subprocess
+import shlex
 import sys
 import time
 import uuid
@@ -161,7 +162,7 @@ def recover_stalled(target, command=run_command,
     # Do not queue a follow-up or press Tab. It combines the slash command
     # with an unsent multiline prompt in Codex's composer (live regression).
     send_literal(target, RESUME_COMMAND, command)
-    for delay in (0.4, 0.8, 1.5, 2.0):
+    for delay in (1, 2, 3, 4, 5):
         sleep(delay)
         ui, _pane, program = tmux_state(target, command)
         if ui == "active" and program in {"codex", "codex-linux-x64"}:
@@ -172,14 +173,56 @@ def recover_stalled(target, command=run_command,
 
 
 
-def relaunch_exact_session(target, run_dir, cwd, codex_bin, command=run_command):
-    thread = (run_dir / "thread.id").read_text(encoding="utf-8").strip()
-    uuid.UUID(thread)
+def relaunch_exact_session(target, run_dir, cwd, codex_bin, command=run_command,
+                           sleep=time.sleep):
+    """Reattach only the pinned session; re-enable its own paused Goal if prompted."""
+    sid_file = run_dir / "codex_session_id.txt"
+    session_id = sid_file.read_text(encoding="utf-8").strip()
+    uuid.UUID(session_id)
     if not Path(codex_bin).is_file() or not Path(cwd).is_dir():
         raise RuntimeError("missing exact Codex executable or work directory")
-    # No shell interpolation from a model: fixed paths and UUID-validated session.
-    cmd = f"cd {cwd} && {codex_bin} resume {thread}"
+    session_files = list((Path.home() / ".codex" / "sessions").glob(
+        f"**/*{session_id}.jsonl"))
+    if len(session_files) != 1:
+        raise RuntimeError("pinned Codex session rollout file not found uniquely")
+    ui, pane, program = tmux_state(target, command)
+    if program not in {"bash", "sh", "zsh", "fish"}:
+        raise RuntimeError("cannot relaunch: tmux pane is not an idle shell")
+    # Never blindly issue shell commands into an unverified TUI or another actor.
+    if not re.search(r"(?m)^\S+@\S+:[^\n]*[#$]\s*$", pane):
+        raise RuntimeError("cannot relaunch: shell prompt not visible")
+    cmd = ("cd " + shlex.quote(str(cwd)) + " && " +
+           shlex.quote(str(codex_bin)) + " resume " + session_id)
     send_literal(target, cmd, command)
+    for delay in (1, 2, 3, 4, 5):
+        sleep(delay)
+        ui, pane, program = tmux_state(target, command)
+        if program not in {"codex", "codex-linux-x64"}:
+            continue
+        if "Resume paused goal?" in pane and re.search(
+            r"(?m)^\s*›\s*1\. Resume goal", pane
+        ):
+            # This is the app's existing goal reactivation, NOT a security,
+            # credential, or platform approval. Only first option is safe.
+            if APPROVAL.search(pane):
+                raise RuntimeError("approval prompt: operator required")
+            result = command(["tmux", "send-keys", "-t", target, "Enter"])
+            if result.returncode:
+                raise RuntimeError("unable to select the known Resume goal menu")
+        elif ui == "active":
+            return
+        elif ui in {"approval_pending", "paused"}:
+            raise RuntimeError(f"refusing to auto-advance Codex {ui}")
+        # The shell handoff can take longer than status capture.
+    for delay in (1, 2, 3, 4, 5):
+        sleep(delay)
+        ui, pane, program = tmux_state(target, command)
+        if ui == "active" and program in {"codex", "codex-linux-x64"}:
+            return
+        if ui in {"approval_pending", "missing"}:
+            raise RuntimeError(f"Codex {ui} during exact-session relaunch")
+    raise RuntimeError("exact-session resume was not confirmed active")
+
 
 
 def evaluate(run_dir, target, state, ui, pane_program, running, now,
@@ -194,10 +237,13 @@ def evaluate(run_dir, target, state, ui, pane_program, running, now,
     state["attempts_by_target"] = attempts_by_target
     selected = next((sid for sid in eligible
                      if attempts_by_target.get(sid, 0) < max_attempts), None)
+    restart_history = [float(t) for t in state.get("restart_history", [])
+                       if 0 <= now - float(t) < 86400]
+    state["restart_history"] = restart_history
     action, reason = "observe", "actor active; continue autonomous testing"
     if not eligible:
         action, reason = "none", "no pending PARTIAL; blocked/failed cases retained"
-    elif selected is None:
+    elif selected is None and (running or not relaunch):
         action, reason = "hold", "each partial scenario exhausted its bounded resume budget"
     elif ui == "approval_pending":
         action, reason = "hold", "approval pending; never automate consent"
@@ -221,8 +267,17 @@ def evaluate(run_dir, target, state, ui, pane_program, running, now,
     else:
         action, reason = "hold", "UI state not authoritative; fail closed"
     if action in {"resume", "relaunch"}:
-        if now - float(state.get("last_attempt", 0)) < cooldown:
-            action, reason = "cooldown", "prior resume within cooldown"
+        if action == "relaunch" and (
+            sum(now - t < 3600 for t in restart_history) >= 3 or
+            len(restart_history) >= 12
+        ):
+            action, reason = "hold", "relaunch circuit breaker (3/hour; 12/day)"
+        elif action == "relaunch" and (
+            now - float(state.get("last_relaunch_attempt", 0)) < 90
+        ):
+            action, reason = "cooldown", "prior relaunch within 90s"
+        elif action == "resume" and now - float(state.get("last_attempt", 0)) < cooldown:
+            action, reason = "cooldown", "prior Goal resume within cooldown"
     report = {
         "time_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(now)),
         "ui": ui, "pane_program": pane_program, "actor_running": running,
@@ -232,6 +287,8 @@ def evaluate(run_dir, target, state, ui, pane_program, running, now,
         "action": action, "reason": reason,
         "attempts": int(state.get("attempts", 0)),
         "target_attempts": attempts_by_target.get(selected, 0) if selected else 0,
+        "restart_last_hour": sum(now - t < 3600 for t in restart_history),
+        "restart_last_day": len(restart_history),
     }
     return action, report
 
@@ -264,8 +321,12 @@ def tick(args, command=run_command, now=None):
                 state["attempts"] = int(state.get("attempts", 0)) + 1
                 target = report["selected_scenario"]
                 by_target = dict(state.get("attempts_by_target", {}))
-                by_target[target] = by_target.get(target, 0) + 1
+                if action == "resume" and target:
+                    by_target[target] = by_target.get(target, 0) + 1
                 state["attempts_by_target"] = by_target
+                if action == "relaunch":
+                    state["restart_history"] = state.get("restart_history", []) + [now]
+                    state["last_relaunch_attempt"] = now
                 write_json(state_path, state)
                 try:
                     if action == "resume":
@@ -280,6 +341,9 @@ def tick(args, command=run_command, now=None):
             else:
                 write_json(state_path, state)
             report["attempts"] = state.get("attempts", 0)
+            report["restart_last_hour"] = sum(
+                now - t < 3600 for t in state.get("restart_history", []))
+            report["restart_last_day"] = len(state.get("restart_history", []))
             target = report.get("selected_scenario")
             report["target_attempts"] = state.get("attempts_by_target", {}).get(target, 0)
             write_json(run_dir / "e2e_watchdog_status.json", report)
