@@ -30,15 +30,11 @@ APPROVAL = re.compile(
     r"permission denied by (?:platform|policy)|do you approve|confirm authorization",
     re.IGNORECASE,
 )
-RESUME_PROMPT = (
-    "CLI-only E2E 계속. 최신 WORK_STATE와 증거로 미완료 PARTIAL 중 실행 가능한 "
-    "첫 assertion만 선택해 검증하고 결과를 즉시 ledger/report에 기록해. "
-    "기존 PASS/SCOPED_PASS/성능 baseline 반복 금지, 결함은 FAIL 증거로 유지하고 "
-    "제품 코드는 수정하지 마. Server=frp-e2e-server(.113), 접속 가능한 Linux Agent만 "
-    "사용; Windows/macOS 임시 제외. 호스트·인증·보안 차단은 우회하지 말고 "
-    "그 항목만 BLOCKED로 기록해 다음 독립 항목 진행. "
-    "명령별 timeout, 안전한 정리, 사용자 입력 대기 금지."
-)
+# A stalled Goal must receive a standalone slash command. Longer messages
+# before "/goal resume" can remain in Codex's multiline draft and prevent it
+# from being dispatched even though tmux send-keys returns success.
+RESUME_COMMAND = "/goal resume"
+
 
 
 def run_command(argv, timeout=8):
@@ -80,16 +76,21 @@ def load_ledger(run_dir):
 
 
 def ui_status(terminal):
-    tail = "\n".join(terminal.splitlines()[-23:])
+    lines = terminal.splitlines()[-23:]
+    tail = "\\n".join(lines)
     if APPROVAL.search(tail):
         return "approval_pending"
-    if "Goal paused (/goal resume)" in tail:
-        return "paused"
-    if "Goal stalled (/goal resume)" in tail:
-        return "stalled"
-    if "Pursuing goal" in tail:
-        return "active"
+    # The captured pane may retain the previous stalled footer immediately
+    # after a successful resume. Interpret the *newest* status label.
+    for line in reversed(lines):
+        if "Pursuing goal" in line:
+            return "active"
+        if "Goal paused (/goal resume)" in line:
+            return "paused"
+        if "Goal stalled (/goal resume)" in line:
+            return "stalled"
     return "unknown"
+
 
 
 def tmux_state(target, command=run_command):
@@ -146,19 +147,29 @@ def send_literal(target, content, command=run_command):
             raise RuntimeError(f"tmux send failed (rc={result.returncode})")
 
 
-def recover_stalled(target, selected_scenario, command=run_command):
-    prompt = (
-        f"우선 검사 시나리오: {selected_scenario}. " + RESUME_PROMPT +
-        " 이 항목이 실제로 불가하면 근거를 기록하고 다음 독립 작업으로 이동."
-    )
-    send_literal(target, prompt, command)
-    result = command(["tmux", "send-keys", "-t", target, "Tab"])
+def recover_stalled(target, command=run_command,
+                    sleep=time.sleep):
+    """Clear any stale multiline composer, submit only /goal resume, verify UI."""
+    result = command(["tmux", "send-keys", "-t", target, "C-c"])
     if result.returncode:
-        raise RuntimeError("tmux queue failed")
-    send_literal(target, "/goal resume", command)
-    result = command(["tmux", "send-keys", "-t", target, "Tab"])
-    if result.returncode:
-        raise RuntimeError("tmux resume failed")
+        raise RuntimeError("unable to clear stalled Codex composer")
+    ui, pane, program = tmux_state(target, command)
+    if ui != "stalled" or program not in {"codex", "codex-linux-x64"}:
+        raise RuntimeError("stalled Codex changed while clearing composer")
+    if "Ask Codex to do anything" not in "\n".join(pane.splitlines()[-12:]):
+        raise RuntimeError("Codex draft not confirmed empty after Ctrl-C")
+    # Do not queue a follow-up or press Tab. It combines the slash command
+    # with an unsent multiline prompt in Codex's composer (live regression).
+    send_literal(target, RESUME_COMMAND, command)
+    for delay in (0.4, 0.8, 1.5, 2.0):
+        sleep(delay)
+        ui, _pane, program = tmux_state(target, command)
+        if ui == "active" and program in {"codex", "codex-linux-x64"}:
+            return
+        if ui in {"missing", "approval_pending", "paused"}:
+            raise RuntimeError(f"Codex changed to {ui} during resume")
+    raise RuntimeError("Codex did not become active after standalone /goal resume")
+
 
 
 def relaunch_exact_session(target, run_dir, cwd, codex_bin, command=run_command):
@@ -258,7 +269,7 @@ def tick(args, command=run_command, now=None):
                 write_json(state_path, state)
                 try:
                     if action == "resume":
-                        recover_stalled(args.tmux_target, target, command)
+                        recover_stalled(args.tmux_target, command)
                     else:
                         relaunch_exact_session(args.tmux_target, run_dir,
                                                args.cwd, args.codex_binary, command)
