@@ -47,7 +47,10 @@ class FakeCommands:
         elif argv[0] == "ps":
             stdout = "/path/bin/codex -c memories.use_memories=false\n" if self.process else ""
         elif argv[:2] == ["tmux", "send-keys"]:
-            if argv[-1] == "C-c":
+            if argv[-1] == "Escape" and "Task is still running" in self.screen:
+                self.screen = ("Goal stalled (/goal resume)\n"
+                               "› Ask Codex to do anything\n")
+            elif argv[-1] == "C-c":
                 if self.clear_succeeds:
                     self.draft = ""
                     self.screen = ("Goal stalled (/goal resume)\n"
@@ -101,6 +104,34 @@ class WatchdogTest(unittest.TestCase):
         self.assertEqual(report["counts"]["partial"], 1)
         self.assertEqual(cmd.sent(), 0)
         self.assertTrue((self.root / "e2e_watchdog_status.json").is_file())
+
+    def test_exit_chooser_safe_escape_then_resume(self):
+        screen = ("Task is still running\nChoose what happens to the current task.\n"
+                  "› 1. Cancel task\n2. Run in background\n3. Exit\n"
+                  "enter select · esc back")
+        cmd = FakeCommands(screen=screen)
+        self.assertEqual(watchdog.ui_status(screen), "exit_menu")
+        with unittest.mock.patch.object(watchdog.time, "sleep", return_value=None):
+            report = watchdog.tick(self.args, command=cmd, now=10000)
+        self.assertEqual(report["action"], "exit_menu_recover")
+        self.assertTrue(report["executed"])
+        sends = [c[-1] for c in cmd.calls if c[:2] == ("tmux", "send-keys")]
+        self.assertEqual(sends, ["Escape", "C-c", "/goal resume", "Enter"])
+        self.assertNotIn("Tab", str(cmd.calls))
+        self.assertEqual(watchdog.ui_status(cmd.screen), "active")
+
+    def test_approval_and_unknown_exit_like_menu_fail_closed(self):
+        screen = ("Task is still running\nChoose what happens to the current task.\n"
+                  "› 1. Cancel task\n2. Run in background\n3. Exit\n"
+                  "enter select · esc back\nReviewing approval request")
+        cmd = FakeCommands(screen=screen)
+        report = watchdog.tick(self.args, command=cmd, now=10000)
+        self.assertEqual(report["action"], "hold")
+        self.assertEqual(cmd.sent(), 0)
+        cmd.screen = "Task is still running\n1. Cancel task\n3. Exit"
+        other = watchdog.tick(self.args, command=cmd, now=12000)
+        self.assertEqual(other["action"], "hold")
+        self.assertEqual(cmd.sent(), 0)
 
     def test_resume_stalled_at_most_twice_per_unchanged_ledger(self):
         cmd = FakeCommands(screen="GPT-6-Luna medium · Goal stalled (/goal resume)")
