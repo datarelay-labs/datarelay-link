@@ -17,6 +17,11 @@ and never creates a second actor while Codex is alive.
   PASS, SCOPED PASS, FAIL, measured-only and AI/MCP exclusions are terminal
   for scheduling. Remaining environment-blocked assertions are reported but never
   silently promoted to PASS.
+- When Codex shows the exact "Task is still running" exit chooser,
+  the watcher sends Escape only (never Cancel task, Run in background or Exit),
+  verifies it returned to a stalled Goal, and resumes that Goal. Unknown exit
+  menus and approval screens remain untouched. This covers the overnight
+  input-pending failure observed on November 10.
 - After a stall, the watcher clears a stale multiline draft with Ctrl-C,
   verifies the blank composer, submits only the standalone /goal resume command
   to the same tmux pane, and verifies the UI actually changes to Pursuing goal.
