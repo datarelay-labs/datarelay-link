@@ -78,11 +78,18 @@ def load_ledger(run_dir):
 
 def ui_status(terminal):
     lines = terminal.splitlines()[-23:]
-    tail = "\\n".join(lines)
+    tail = "\n".join(lines)
     if APPROVAL.search(tail):
         return "approval_pending"
-    # The captured pane may retain the previous stalled footer immediately
-    # after a successful resume. Interpret the *newest* status label.
+    # Codex Ctrl-C/exit chooser can remain open indefinitely despite a live
+    # actor. Only recognize the exact non-approval, non-destructive menu.
+    if all(token in tail for token in (
+        "Task is still running",
+        "Choose what happens to the current task.",
+        "Cancel task", "Run in background", "Exit",
+        "enter select", "esc back",
+    )):
+        return "exit_menu"
     for line in reversed(lines):
         if "Pursuing goal" in line:
             return "active"
@@ -170,6 +177,23 @@ def recover_stalled(target, command=run_command,
         if ui in {"missing", "approval_pending", "paused"}:
             raise RuntimeError(f"Codex changed to {ui} during resume")
     raise RuntimeError("Codex did not become active after standalone /goal resume")
+
+
+def recover_exit_menu(target, command=run_command, sleep=time.sleep):
+    """Back out of Codex's exit chooser without selecting cancel/exit."""
+    ui, _pane, program = tmux_state(target, command)
+    if ui != "exit_menu" or program not in {"codex", "codex-linux-x64"}:
+        raise RuntimeError("not the verified Codex exit chooser")
+    result = command(["tmux", "send-keys", "-t", target, "Escape"])
+    if result.returncode:
+        raise RuntimeError("failed to dismiss Codex exit chooser")
+    sleep(0.8)
+    ui, _pane, program = tmux_state(target, command)
+    if ui == "active" and program in {"codex", "codex-linux-x64"}:
+        return
+    if ui != "stalled" or program not in {"codex", "codex-linux-x64"}:
+        raise RuntimeError("unexpected Codex state after dismissing exit chooser")
+    recover_stalled(target, command, sleep)
 
 
 
@@ -260,13 +284,15 @@ def evaluate(run_dir, target, state, ui, pane_program, running, now,
             action, reason = "hold", "actor missing; no replacement unless exact session safe"
     elif ui == "active":
         pass
+    elif ui == "exit_menu" and pane_program in {"codex", "codex-linux-x64"}:
+        action, reason = "exit_menu_recover", "verified Codex exit chooser blocks Goal"
     elif ui == "stalled" and pane_program in {"codex", "codex-linux-x64"}:
         action, reason = "resume", f"stalled Codex with runnable partial assertion {selected}"
     elif ui == "stalled":
         action, reason = "hold", "stalled UI but pane is not owned by Codex"
     else:
         action, reason = "hold", "UI state not authoritative; fail closed"
-    if action in {"resume", "relaunch"}:
+    if action in {"resume", "relaunch", "exit_menu_recover"}:
         if action == "relaunch" and (
             sum(now - t < 3600 for t in restart_history) >= 3 or
             len(restart_history) >= 12
@@ -276,8 +302,8 @@ def evaluate(run_dir, target, state, ui, pane_program, running, now,
             now - float(state.get("last_relaunch_attempt", 0)) < 90
         ):
             action, reason = "cooldown", "prior relaunch within 90s"
-        elif action == "resume" and now - float(state.get("last_attempt", 0)) < cooldown:
-            action, reason = "cooldown", "prior Goal resume within cooldown"
+        elif action in {"resume", "exit_menu_recover"} and now - float(state.get("last_attempt", 0)) < cooldown:
+            action, reason = "cooldown", "prior Goal recovery within cooldown"
     report = {
         "time_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(now)),
         "ui": ui, "pane_program": pane_program, "actor_running": running,
@@ -315,13 +341,13 @@ def tick(args, command=run_command, now=None):
         if args.mode != "status":
             state.update(digest=report["digest"], last_ui=ui,
                          last_seen=report["time_utc"])
-            if action in {"resume", "relaunch"}:
+            if action in {"resume", "relaunch", "exit_menu_recover"}:
                 # Persist the attempt before interacting: crash can't cause duplicate resumption.
                 state["last_attempt"] = now
                 state["attempts"] = int(state.get("attempts", 0)) + 1
                 target = report["selected_scenario"]
                 by_target = dict(state.get("attempts_by_target", {}))
-                if action == "resume" and target:
+                if action in {"resume", "exit_menu_recover"} and target:
                     by_target[target] = by_target.get(target, 0) + 1
                 state["attempts_by_target"] = by_target
                 if action == "relaunch":
@@ -331,6 +357,8 @@ def tick(args, command=run_command, now=None):
                 try:
                     if action == "resume":
                         recover_stalled(args.tmux_target, command)
+                    elif action == "exit_menu_recover":
+                        recover_exit_menu(args.tmux_target, command)
                     else:
                         relaunch_exact_session(args.tmux_target, run_dir,
                                                args.cwd, args.codex_binary, command)
