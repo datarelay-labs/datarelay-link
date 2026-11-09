@@ -10,6 +10,10 @@ user_unit="$HOME/.config/systemd/user/drlink-codex-e2e.service"
 if [[ -z "${XDG_RUNTIME_DIR:-}" ]]; then export XDG_RUNTIME_DIR="/run/user/$(id -u)"; fi
 test -f "$run_dir/SCENARIO_TRACKER.tsv"
 test -r "$src"
+test -s "$run_dir/codex_session_id.txt" || {
+  echo "ERROR: pin the exact resumable Codex session in $run_dir/codex_session_id.txt" >&2
+  exit 2
+}
 mkdir -p "$HOME/.config/systemd/user"
 install -m 0755 "$src" "$run_dir/e2e_codex_watchdog.py"
 cat > "$run_dir/supervisor.sh" <<'EOF'
@@ -18,7 +22,7 @@ set -euo pipefail
 exec /usr/bin/python3 /home/aella/drlink-validation/codex-e2e-supervised-20261105/e2e_codex_watchdog.py \
   watch --run-dir /home/aella/drlink-validation/codex-e2e-supervised-20261105 \
   --tmux-target codex:0.0 --interval-seconds 60 --cooldown-seconds 900 \
-  --max-attempts 2
+  --max-attempts 2 --allow-relaunch
 EOF
 chmod 0755 "$run_dir/supervisor.sh"
 systemctl --user stop drlink-codex-e2e.service || true
