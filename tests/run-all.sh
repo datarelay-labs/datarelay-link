@@ -70,6 +70,7 @@ python3 tests/test-v24-sqlite-row-dependencies.py
 python3 tests/test-zero-touch-command-exit.py
 python3 tests/test-zero-touch-doc-contract.py
 python3 tests/test-zero-touch-guided-preflight.py
+python3 tests/test-operator-input-validation.py
 python3 tests/test-zero-touch-operator-command-bound.py
 # E2E defect regressions must run in the full suite as well as focused PR checks.
 bash tests/test-agent-candidate-payload.sh

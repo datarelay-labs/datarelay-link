@@ -1765,9 +1765,8 @@ elif kind == "target_port":
         fail("invalid target port; must be an integer 1-65535")
     print(str(port))
 elif kind == "ssh_user":
-    if not text:
-        fail("SSH user is required.")
-    if not re.fullmatch(r"[A-Za-z0-9._@-]{1,32}", text):
+    # A blank SSH login is valid: it is only an optional command-example hint.
+    if text and not re.fullmatch(r"[A-Za-z0-9._@-]{1,32}", text):
         fail("invalid ssh_user")
     print(text)
 else:

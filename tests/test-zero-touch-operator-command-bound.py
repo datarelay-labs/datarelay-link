@@ -36,9 +36,8 @@ HASH = "c" * 64
 
 class CompactZeroTouchContract(unittest.TestCase):
     def test_linux_and_macos_default_install_commands_have_bounded_length(self):
-        self.assertEqual(
-            cli.short_url_host_for_cfg({"bootstrap_hostname": HOST}), HOST
-        )
+        with mock.patch.object(cli, "_test_root", return_value="/tmp/zt-test"):
+            self.assertEqual(cli.short_url_host_for_cfg({"bootstrap_hostname": HOST}), "")
         for platform in ("linux", "macos"):
             self.assertEqual(
                 cli.parse_args(["--one-line", "--platform", platform]).platform,
@@ -102,7 +101,8 @@ class CompactZeroTouchContract(unittest.TestCase):
             self.assertEqual(
                 cli.short_url_host_for_cfg({"public_url_host": HOST}), ""
             )
-        self.assertEqual(cli.short_url_host_for_cfg({"bootstrap_hostname": HOST}), HOST)
+        with mock.patch.object(cli, "_test_root", return_value="/tmp/zt-test"):
+            self.assertEqual(cli.short_url_host_for_cfg({"bootstrap_hostname": HOST}), "")
         self.assertEqual(zt.short_url_for_ticket(HOST, TICKET).count("/i/"), 1)
 
     def test_public_https_probe_requires_real_allocator_fail_closed_signature(self):

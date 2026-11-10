@@ -36,6 +36,7 @@ python3 tests/test-mcp-owner-default-access.py
 python3 tests/test-client-installer-url-hostname.py
 python3 tests/test-zero-touch-operator-command-bound.py
 python3 tests/test-zero-touch-guided-preflight.py
+python3 tests/test-operator-input-validation.py
 python3 tests/test-zero-touch-doc-contract.py
 bash tests/test-zero-touch-short-url.sh
 python3 tests/test-cli-feature-scenario-remediation.py
