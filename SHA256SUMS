@@ -459,7 +459,7 @@ eeb138cf81ff0c3a3ae62fa80ab0abc96686cd5d7857625fa0882877c19fb24b  tests/test-mcp
 19cb6c4448dc058568304d89d4324c6dfec42f4f6f98a8acab789dd57d57e30e  tests/test-mcp-bridge-job-metrics.py
 f754ad1848fe4cd83124238e2363bd08f04ec3f3dbd981f8b996c8c0aead88f7  tests/test-mcp-bridge-scale-target.py
 a4e6adeeb8e6407f0b5cd83e222378cc2343d60a05e09fc6b5429600facb3a9c  tests/test-mcp-bridge-workers.py
-a5d4effd12e642d5b4d4acc297b11e13f7915fa25942785dfb2abd1675d70c45  tests/test-mcp-full-control-rollout.py
+649f50c85e46363bdd83480f263e82574e00de1f541ca621d6d3bb301d168705  tests/test-mcp-full-control-rollout.py
 44fc7bcf1f44c08e180008071ef5b036e561a384958a44e1a185d4203127de52  tests/test-mcp-native-direct-upgrade.py
 2fd0eaf87686918632486fee1604b0d5150300f8c6b9c0e14f8a51df4daa5e76  tests/test-mcp-native-domain.py
 93040d816de1702728f6104ef871e3955711d94c007ac9b417085c2341b8a21a  tests/test-mcp-native-letsencrypt-preflight.py
