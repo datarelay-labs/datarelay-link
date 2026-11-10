@@ -84,7 +84,9 @@ PY
 
 export FRP_DEPLOY_TEST_ROOT="$TREE"
 OUT="$WORKDIR/one-line.out"
-python3 "$ROOT/tools/frp-create-client" --one-line --client-name short-zt --note 'pkg' \
+# The zt1 package/pinned-CA long command remains an explicit advanced mode.
+# Default compact issuance must still enforce public TLS or a matching IP SAN.
+python3 "$ROOT/tools/frp-create-client" --one-line --long-bootstrap --client-name short-zt --note 'pkg' \
   >"$OUT" || { cat "$OUT"; fail "create one-line"; }
 grep -q 'Zero-touch Agent command' "$OUT" || fail "header"
 grep -q "curl -fsSL --proto =https --cacert" "$OUT" || { cat "$OUT"; fail "pinned installer curl missing"; }
