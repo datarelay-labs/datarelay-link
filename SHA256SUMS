@@ -582,7 +582,7 @@ d3b8ecf1faa4992cbcec2fb17f02b7c183d64f35f1fb66841a00fcab48546f64  tests/test-v24
 0628f50cc83764e07322b5978b58de4940bf62572ccc266801a8a4eb3182521f  tests/test-v24-bundle-preview-writer-isolation.py
 4fc3682165a09fd76e3177256af081b854ee2d253f519551dd652cbdea836185  tests/test-v24-bundle-stale-plan-safety.py
 ddd0d3bf93c2a3034f9bcc4b2c7a17d3968258b14c4ffb37a56bc83f389efb81  tests/test-v24-cli-ai-master-closure.py
-a76840f10434b9549fc83329d617f899d5bf70ebb5946e4270e41ebc2fc7c976  tests/test-v24-cli-ai-master.py
+c407df8ac291662b62caccf83310dbcc1737e2fca13b3bb044b47a70d3b549b3  tests/test-v24-cli-ai-master.py
 72eda3ae30d6eff3bba98d1de9f117074b930d47e66e9f93f22e53f4832f153a  tests/test-v24-cli-slice-a.py
 b2c2479dd9c88eccb2bc062d5a673965b61f537de68a8b1697939ce708fb4f2c  tests/test-v24-cli-workflow-semantic-parity.py
 dd4ec916d3d50bc24e48f8ff609645b6df9ea554b1d28e835755569147094af4  tests/test-v24-denied-upload-response.py
@@ -592,7 +592,7 @@ dd4ec916d3d50bc24e48f8ff609645b6df9ea554b1d28e835755569147094af4  tests/test-v24
 3822316fac4e8e2409977b60b572f90739b98e709b3c4c0056fadbd469a39028  tests/test-v24-e2e-readiness-targeted.py
 f93ff0b877c5b311bb9e24a3f88b69285443847dfd4f2c30ec5002a584f06137  tests/test-v24-empty-state-cli.py
 3f7b91f904b43a3c5583eaa6f87909fd0a0c1c1486a8f43cb3cd06d0055d2c20  tests/test-v24-false-pass-hardening.py
-3c2d33e8960c88ffc4f7e9f64bc4d9a4c3c31f398b6cdb89c15036c97f890405  tests/test-v24-final-closure.py
+fd0d033b1154fe5b3d7899244d48e1441d7439689caac865ad7cec56c3a8f949  tests/test-v24-final-closure.py
 8971a6114878ddbd6f3c59bfbeeb65863491397415e9feff6b22798d22bba5e9  tests/test-v24-group-policy-test-false-assurance.py
 c6a0f179c34e24c700d058f2a5fbfda4301a76ef13f0655891a3f2c0e5333407  tests/test-v24-internet-runtime-parity.py
 2201f0fc51a6e0ab769f11077804d83a9066f58614d3d634089e559674e4568a  tests/test-v24-legacy-update-check-readonly.sh
