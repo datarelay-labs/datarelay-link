@@ -930,6 +930,14 @@ frp_server_upgrade_restore_snapshot_files() {
   fi
 
   python3 "$py" restore --root "$(frp_server_snapshot_root)" --dest "$dest" || return 1
+  # A-020: file-level snapshot restore replaces the Egress configuration
+  # inode and may erase its dedicated-reader ACL or restore root:root 0640.
+  # Reapply the existing least-privilege sandbox account/ACL preparation
+  # *after* restore and *before* any Egress runtime restart. Never open the
+  # config world-readable or skip health verification on failure.
+  if [[ -f "$(frp_server_fs /etc/systemd/system/drlink-egress.service)" ]]; then
+    frp_server_upgrade_ensure_egress_account || return 1
+  fi
   if ! frp_server_skip_systemd && ! frp_server_test_mode; then
     frp_server_systemctl daemon-reload || true
   fi

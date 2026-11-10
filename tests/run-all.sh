@@ -273,6 +273,7 @@ python3 tests/test-machine-id-validation.py
 ./tests/test-support-bundle.sh
 python3 tests/test-support-canonical-policy.py
 python3 tests/test-service-profiles.py
+python3 tests/test-client-installer-url-hostname.py
 ./tests/test-service-profiles.sh
 ./tests/test-user-facing-branding.sh
 ./tests/test-legacy-identity-migration.sh

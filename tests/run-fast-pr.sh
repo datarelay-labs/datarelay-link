@@ -33,6 +33,7 @@ python3 tests/test-v24-managed-host-liveness.py
 python3 tests/test-cli-inventory-selection-journey.py
 python3 tests/test-enrolled-routed-target-parity.py
 python3 tests/test-mcp-owner-default-access.py
+python3 tests/test-client-installer-url-hostname.py
 python3 tests/test-zero-touch-operator-command-bound.py
 python3 tests/test-zero-touch-guided-preflight.py
 python3 tests/test-zero-touch-doc-contract.py
