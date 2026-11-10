@@ -131,6 +131,39 @@ class CompactZeroTouchContract(unittest.TestCase):
                     cli.short_url_host_for_cfg({"public_hostname": HOST}), ""
                 )
 
+    def test_explicit_bootstrap_fqdn_requires_stock_ca_https_proof(self):
+        # An administrator-configured hostname is NOT evidence that client
+        # machines trust its certificate or that /i/ is the real handler.
+        import urllib.error
+        cfg = {
+            "bootstrap_hostname": HOST,
+            "allocator_public_url": "https://192.0.2.20:6099/enroll",
+        }
+        class FakeOpener:
+            def __init__(self, valid):
+                self.valid = valid
+            def open(self, url, timeout=0):
+                if not self.valid:
+                    raise urllib.error.URLError(ssl.SSLCertVerificationError(
+                        "self-signed or mismatched bootstrap certificate"
+                    ))
+                raise urllib.error.HTTPError(
+                    url, 404, "Not Found", {}, io.BytesIO(b"bootstrap unavailable\n")
+                )
+        with mock.patch.object(cli, "_test_root", return_value=""), \
+             mock.patch.object(cli, "preflight_installer_url"):
+            with mock.patch("urllib.request.build_opener", return_value=FakeOpener(False)):
+                with self.assertRaises(SystemExit):
+                    cli.validate_zero_touch_prerequisites(
+                        cfg, "linux", "https://example.test/installer.sh", HASH
+                    )
+            with mock.patch("urllib.request.build_opener", return_value=FakeOpener(True)):
+                host, private = cli.validate_zero_touch_prerequisites(
+                    cfg, "linux", "https://example.test/installer.sh", HASH
+                )
+                self.assertEqual(host, HOST)
+                self.assertIsNone(private)
+
     def test_private_ca_numeric_ip_has_compact_verified_command(self):
         import frp_pki
         with tempfile.TemporaryDirectory(prefix="drlink-ip-bootstrap-") as tmp:

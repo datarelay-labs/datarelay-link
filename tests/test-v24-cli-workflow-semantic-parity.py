@@ -710,5 +710,57 @@ class AgentShowStatusRuntime(_Base):
         self.assertNotIn('Server          : Connected', current)
 
 
+class AgentPausedRemoteServiceMutation(_Base):
+    def test_create_while_paused_does_not_activate_runtime(self):
+        v24.set_service_object(
+            self.plane, "paused-mutation-http", type="tcp", port=18080, oneshot=True
+        )
+        self.plane.close()
+        _agent_root(self.tmp)
+        self.plane = ControlPlane(self.tmp)
+        from drlink_agent_lifecycle import load_lifecycle_intent, set_lifecycle_intent
+        import drlink_v24_runtime as runtime
+        set_lifecycle_intent("paused", self.tmp)
+        with mock.patch.object(runtime, "apply_agent_runtime", return_value={"ok": True}) as apply:
+            v24.set_remote_service_agent(
+                self.plane,
+                "paused-mutation-web",
+                destination="this-host",
+                service="paused-mutation-http",
+                enabled=True,
+                oneshot=True,
+                root=self.tmp,
+                server_reachable=True,
+            )
+        self.assertFalse(apply.called, "Remote Service mutation must preserve paused runtime intent")
+        row = self.plane.conn.execute(
+            "SELECT status, reason, endpoint_port FROM agent_remote_services WHERE name = ?",
+            ("paused-mutation-web",),
+        ).fetchone()
+        self.assertIsNotNone(row)
+        self.assertIsNotNone(row["endpoint_port"])
+        self.assertEqual(load_lifecycle_intent(self.tmp), "paused")
+        self.assertEqual(str(row["status"]).upper(), "DEGRADED")
+        self.assertIn("intentionally paused", row["reason"].lower())
+        v24.set_remote_service_agent(
+            self.plane,
+            "paused-mutation-web",
+            destination="this-host",
+            service="paused-mutation-http",
+            enabled=False,
+            oneshot=True,
+            root=self.tmp,
+            server_reachable=True,
+        )
+        self.assertFalse(apply.called, "Disabling while paused must not restart the runtime")
+        row = self.plane.conn.execute(
+            "SELECT enabled, status FROM agent_remote_services WHERE name = ?",
+            ("paused-mutation-web",),
+        ).fetchone()
+        self.assertEqual(int(row["enabled"]), 0)
+        self.assertEqual(str(row["status"]).upper(), "DISABLED")
+        self.assertEqual(load_lifecycle_intent(self.tmp), "paused")
+
+
 if __name__ == "__main__":
     unittest.main()

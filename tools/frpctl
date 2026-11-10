@@ -1969,7 +1969,9 @@ frpctl_zt_prompt_service_fields() {
   fi
   if [[ "$preset" == "ssh" ]]; then
     while true; do
-      user="$(frpctl_read "SSH user: " "")" || return 1
+      user="$(frpctl_read "SSH user [optional]: " "")" || return 1
+      # SSH username affects connection examples only, not service authorization.
+      [[ -z "$user" ]] && break
       if user="$(frpctl_zt_validate_field ssh_user "$user")"; then
         break
       fi

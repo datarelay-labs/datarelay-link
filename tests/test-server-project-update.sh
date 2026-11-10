@@ -885,6 +885,20 @@ if "drlink-mcp-bridge.service" not in txn[start:end]:
 print("ok")
 PY
 pass "PROJECT_UPDATE_ROLLBACK_EGRESS_TCP_RUNTIME"
+# A-020: rollback restores file ownership/mode, which may remove the dedicated
+# Egress reader's ACL. The canonical least-privilege sandbox preparation must
+# run AFTER snapshot restoration and BEFORE restarting the Egress service.
+python3 - "$ROOT/lib/frp-server-upgrade.sh" <<'PYROLLBACK'
+from pathlib import Path
+import sys
+text = Path(sys.argv[1]).read_text(encoding="utf-8")
+body = text.split('frp_server_upgrade_restore_snapshot_files() {', 1)[1].split('frp_server_upgrade_rollback() {', 1)[0]
+restore = body.find('python3 "$py" restore --root')
+repair = body.find('frp_server_upgrade_ensure_egress_account || return 1')
+restart = body.find('frp_server_restart_unit drlink-egress')
+assert 0 <= restore < repair < restart, 'A-020: restore must repair Egress permissions before restart'
+PYROLLBACK
+pass "A020_ROLLBACK_EGRESS_PERMISSIONS_ORDER"
 
 # Stale MCP bridge process and generated frontend must converge on project update.
 seed_stale_oauth_runtime() {
