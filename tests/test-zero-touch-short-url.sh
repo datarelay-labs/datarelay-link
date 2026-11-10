@@ -218,8 +218,28 @@ pass "PUBLIC_URL_HOST_IP_ADVANCED_ONLY"
 
 python3 "$ROOT/tools/frp-server-set" bootstrap-hostname bootstrap.example.com >/dev/null
 
+# Positive command-shape/allocator lifecycle uses a synthetic approved host.
+# The real public-trust gate is tested separately with strict TLS errors;
+# this test has no publicly trusted TLS endpoint. Test-only monkeypatch lives
+# in this isolated Python subprocess and never alters product security checks.
+cat >"$WORKDIR/qualified-short-url-fixture.py" <<'PY_QUALIFIED'
+import importlib.machinery
+import sys
+from pathlib import Path
+script = Path(sys.argv[1])
+mod = importlib.machinery.SourceFileLoader("zt_short_url_fixture", str(script)).load_module()
+def approved_fixture_hostname(cfg, **kwargs):
+    assert cfg.get("bootstrap_hostname") == "bootstrap.example.com", "fixture must be explicit"
+    return "bootstrap.example.com"
+mod.short_url_host_for_cfg = approved_fixture_hostname
+raise SystemExit(mod.main(sys.argv[2:]))
+PY_QUALIFIED
+frp_create_client_qualified_fixture() {
+  python3 "$WORKDIR/qualified-short-url-fixture.py" "$ROOT/tools/frp-create-client" "$@"
+}
+
 OUT_MGMT="$WORKDIR/mgmt.out"
-python3 "$ROOT/tools/frp-create-client" --one-line --client-name short-mgmt --note 'mgmt' \
+frp_create_client_qualified_fixture --one-line --client-name short-mgmt --note 'mgmt' \
   >"$OUT_MGMT" || fail "mgmt short url"
 grep -E -q "curl -fsSL https://bootstrap\\.example\\.com/i/[A-Za-z0-9_-]{22}" \
   "$OUT_MGMT" || { cat "$OUT_MGMT"; fail "mgmt short URL shape"; }
@@ -229,7 +249,7 @@ fi
 pass "MANAGEMENT_ONLY_SHORT_URL"
 
 OUT_SSH="$WORKDIR/ssh.out"
-python3 "$ROOT/tools/frp-create-client" --one-line --ssh --ssh-user aella \
+frp_create_client_qualified_fixture --one-line --ssh --ssh-user aella \
   --client-name short-ssh --note 'ssh' >"$OUT_SSH" || fail "ssh short url"
 grep -E -q "curl -fsSL https://bootstrap\\.example\\.com/i/[A-Za-z0-9_-]{22}" "$OUT_SSH" \
   || { cat "$OUT_SSH"; fail "ssh short URL shape"; }
@@ -241,14 +261,14 @@ cat >"$SERVICES" <<'JSON'
  {"id":"http","preset":"http","local_ip":"127.0.0.1","local_port":8080}]
 JSON
 OUT_MULTI="$WORKDIR/multi.out"
-python3 "$ROOT/tools/frp-create-client" --one-line --services-file "$SERVICES" \
+frp_create_client_qualified_fixture --one-line --services-file "$SERVICES" \
   --client-name short-multi --note 'multi' >"$OUT_MULTI" || fail "multi short url"
 grep -E -q "curl -fsSL https://bootstrap\\.example\\.com/i/[A-Za-z0-9_-]{22}" "$OUT_MULTI" \
   || { cat "$OUT_MULTI"; fail "multi short URL shape"; }
 pass "MULTI_SERVICE_SHORT_URL"
 
 OUT_WINDOWS="$WORKDIR/windows.out"
-python3 "$ROOT/tools/frp-create-client" --one-line --platform windows --rdp \
+frp_create_client_qualified_fixture --one-line --platform windows --rdp \
   --client-name short-rdp --note 'rdp' >"$OUT_WINDOWS" \
   || fail "Windows short URL command"
 grep -q 'curl.exe -fsSLo' "$OUT_WINDOWS" \
@@ -467,7 +487,7 @@ pass "EXPIRATION_GET"
 
 python3 "$ROOT/tools/frp-server-set" bootstrap-hostname bootstrap.example.com >/dev/null
 OUT_REV="$WORKDIR/rev.out"
-python3 "$ROOT/tools/frp-create-client" --one-line --client-name rev-test --note 'rev' \
+frp_create_client_qualified_fixture --one-line --client-name rev-test --note 'rev' \
   >"$OUT_REV" || fail "create rev ticket"
 TICKET2="$(python3 - "$OUT_REV" <<'PY'
 import re
@@ -496,7 +516,7 @@ curl -sSk -o /dev/null -w '%{http_code}' \
 pass "REVOCATION_GET"
 
 OUT_DONE="$WORKDIR/done.out"
-python3 "$ROOT/tools/frp-create-client" --one-line --client-name done-test --note 'done' \
+frp_create_client_qualified_fixture --one-line --client-name done-test --note 'done' \
   >"$OUT_DONE" || fail "create done ticket"
 TICKET3="$(python3 - "$OUT_DONE" <<'PY'
 import re
@@ -621,7 +641,7 @@ time.sleep(0.05)
 print('ok')
 PY
 # Need a fresh unused ticket for GET (previous ticket was completed).
-TICKET2="$(python3 "$ROOT/tools/frp-create-client" --one-line --ssh --ssh-user testuser \
+TICKET2="$(frp_create_client_qualified_fixture --one-line --ssh --ssh-user testuser \
   --client-name short-url-reload --note reload-cfg 2>"$WORKDIR/create-reload.err" \
   | python3 -c "import re,sys; t=sys.stdin.read(); m=re.search(r\"/i/([A-Za-z0-9_-]{22}|bt1\\.[0-9a-f]+\\.[0-9a-f]+)\", t); print(m.group(1) if m else '')")"
 [[ -n "$TICKET2" ]] || { cat "$WORKDIR/create-reload.err"; fail "create reload ticket"; }
