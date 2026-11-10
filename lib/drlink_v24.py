@@ -7637,6 +7637,7 @@ def set_remote_service_agent(
     # the runtime behind that pause.
     runtime_ok = False
     runtime_error = ""
+    runtime_attempted = False
     from drlink_agent_lifecycle import load_lifecycle_intent
     lifecycle_paused = load_lifecycle_intent(root) == "paused"
     if en and lifecycle_paused and not destination_identity_reason:
@@ -7656,6 +7657,7 @@ def set_remote_service_agent(
         and server_reachable
         and not destination_identity_reason
     ):
+        runtime_attempted = True
         try:
             import drlink_v24_runtime as runtime
 
@@ -7853,6 +7855,12 @@ def set_remote_service_agent(
     else:
         _clear_agent_mgmt_side_effects(plane_db)
 
+    # S-009: an online activation attempt can save desired state but fail to
+    # activate the actual runtime. This is not a successful enable operation.
+    # The flag is explicit so offline/unallocated/paused saved intent still
+    # returns success while CLI callers fail nonzero on an attempted activation
+    # that never reached independently verified HEALTHY.
+    result["activation_failed"] = bool(runtime_attempted and status != "HEALTHY")
     result["view"] = {
         "name": name,
         "destination": dest_token,

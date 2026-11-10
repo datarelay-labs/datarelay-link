@@ -282,7 +282,7 @@ def _agent_service_status(plane, row, runtime_level, management_verified=None):
         return 'DISABLED'
     from drlink_agent_lifecycle import load_lifecycle_intent
     if load_lifecycle_intent(plane.root) == 'paused':
-        return 'DEGRADED'
+        return 'PAUSED'
     stored = str(row['status'] or 'DEGRADED')
     if stored == 'HEALTHY':
         if (
@@ -1608,7 +1608,7 @@ def handle_set(plane: ControlPlane, rest: list[str]) -> Optional[int]:
                 server_reachable=reachable,
             )
         sys.stdout.write(v24.format_remote_service_view(result.get("view") or {"name": name, "destination": "-", "service": "-", "status": "HEALTHY", "endpoint": "-"}))
-        return 0
+        return 1 if result.get("activation_failed") else 0
     return None
 
 
