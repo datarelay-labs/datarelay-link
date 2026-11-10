@@ -1693,7 +1693,10 @@ Remote Service user-facing states:
 HEALTHY
 DEGRADED
 DISABLED
+PAUSED
 ```
+
+`PAUSED` means the Agent runtime was intentionally paused; it is distinct from a degraded service.
 
 ## HEALTHY
 
@@ -5162,7 +5165,7 @@ A v2.4 CLI implementation is conformant only if the following can all be demonst
 - Agent local `show/set/unset remote-service` works.
 - Direct `This Host` flow works.
 - Relay Host flow works without a separate Relay-specific configuration object.
-- `HEALTHY / DEGRADED / DISABLED` transitions are correct.
+- `HEALTHY / DEGRADED / DISABLED / PAUSED` transitions are correct.
 - Offline create/edit can remain DEGRADED/Pending allocation and synchronize after reconnect.
 - Offline Remote Service deletion eventually releases its Server-side endpoint reservation after reconnect.
 - Endpoint/port survives restart/disconnect/disable.
