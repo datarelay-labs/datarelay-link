@@ -105,7 +105,9 @@ class PublicGrammarClosure(unittest.TestCase):
 
     def test_INTERNET_ACCESS_TEST_NAMED_GRAMMAR(self):
         self._cli("set", "network-object", "a", "type", "ip", "value", "198.51.100.10")
-        self._cli("set", "network-object", "b", "type", "fqdn", "value", "example.com")
+        # This case verifies the public named-selector CLI grammar. Keep it
+        # independent of external DNS; FQDN resolution has separate coverage.
+        self._cli("set", "network-object", "b", "type", "ip", "value", "1.1.1.1")
         r = self._cli(
             "test",
             "internet-access",

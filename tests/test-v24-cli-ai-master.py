@@ -142,12 +142,18 @@ class V24MasterScenarios(unittest.TestCase):
             enabled=True,
             oneshot=True,
         )
+
+        def resolve_example(hostname):
+            self.assertEqual(hostname, "example.com")
+            return ["1.1.1.1"]
+
         allowed = v24.evaluate_selector_policy(
             self.plane,
             "internet",
             source_name="src",
             destination_name="dst",
             service_name="https",
+            resolve_fn=resolve_example,
         )
         self.assertEqual(allowed["result"], "ALLOW")
         v24.set_policy_enforcement(self.plane, "internet", False, confirm=True)
@@ -157,6 +163,7 @@ class V24MasterScenarios(unittest.TestCase):
             source_name="src",
             destination_name="dst",
             service_name="https",
+            resolve_fn=resolve_example,
         )
         self.assertEqual(denied["result"], "DENY")
 
