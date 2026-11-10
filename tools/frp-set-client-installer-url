@@ -14,7 +14,9 @@ Usage:
 from __future__ import annotations
 
 import importlib.util
+import ipaddress
 import os
+import re
 import sys
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -63,6 +65,24 @@ def validate_https_installer_url(url: str) -> str:
         fail('Agent installer URL must use https')
     if not parsed.hostname:
         fail('Agent installer URL hostname is required')
+    host = parsed.hostname
+    # urlsplit accepts invalid DNS label syntax (for example bad..example).
+    # Validate the hostname before saving an installer endpoint as trusted state.
+    try:
+        ipaddress.ip_address(host)
+    except ValueError:
+        try:
+            dns_name = host.encode('idna').decode('ascii')
+        except UnicodeError:
+            fail('Agent installer URL hostname is invalid')
+        labels = dns_name.split('.')
+        if (len(dns_name) > 253 or not all(
+            re.fullmatch(r'[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?', label)
+            for label in labels
+        )):
+            fail('Agent installer URL hostname is invalid')
+    if parsed.netloc.endswith(':'):
+        fail('Agent installer URL port is invalid')
     if parsed.username is not None or parsed.password is not None:
         fail('Agent installer URL must not contain embedded credentials')
     if port is not None and not (1 <= port <= 65535):

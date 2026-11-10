@@ -983,6 +983,16 @@ def set_policy_enforcement(plane_db, family: str, enabled: bool, *, confirm: Opt
             "Reset the policy before changing enforcement.\n\nNo changes were applied." % title
         )
 
+    current_enforcement = str(pol["enforcement"] or "enabled").lower()
+    desired_enforcement = "enabled" if enabled else "disabled"
+    if current_enforcement == desired_enforcement:
+        return {
+            "entity": {"type": "%s-access" % plane, "id": plane, "name": plane},
+            "operation": "enable" if enabled else "disable",
+            "revision": plane_db.current_revision(),
+            "no_change": True,
+        }
+
     def write():
         plane_db.conn.execute(
             "UPDATE access_policies SET enforcement = ?, row_version = row_version + 1, updated_at = ? WHERE plane = ?",
@@ -994,7 +1004,6 @@ def set_policy_enforcement(plane_db, family: str, enabled: bool, *, confirm: Opt
         }
 
     impact = None
-    current_enforcement = str(pol["enforcement"] or "enabled").lower()
     enabled_rules = _count_blocking_rules(plane_db, plane)
     if not enabled and current_enforcement == "enabled":
         if plane in ("internet", "ai"):
