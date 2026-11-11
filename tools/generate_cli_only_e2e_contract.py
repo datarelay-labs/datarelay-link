@@ -41,6 +41,7 @@ INTRO = """# Data Relay Link v2.4.0 — CLI-only Full Functional E2E (100 scenar
 > **Safety:** preserve current authorization, exact live platform/tool refusals, other actors, host ownership and management access; never reroute a denied effect.
 > **Candidate:** do not infer installed Source HEAD from a Git checkout; record each installed Server/Agent's provenance.
 > **Test environment:** LXC/LXD is excluded by owner decision (2026-11-02). Use authorized native hosts for user E2E; isolated processes/temporary ports provide supporting evidence only.
+> **Owner test-resource budget (2026-11-11):** at most **30 simultaneously reserved** run-owned endpoints on the functional E2E Server across all pools and concurrent lanes. A shared RUN_ID ledger guarded by `tools/e2e_port_allocation_budget.py` is mandatory before each new reservation. Exhaustion of an actual pool larger than 30 is NOT tested by creating hundreds of services; record `POOL_EXHAUSTION=NOT_TESTED_BUDGET_LIMIT`, with the corresponding mandatory assertion PARTIAL/NOT_RUN, not PASS. The one max+1 rejection probe is allowed only for a proven isolated test pool of 29 or fewer slots and must not allocate a 31st port. Follow canonical A-013/S-013/S-020 and test-writer isolation rules.
 
 ## 1. Scope and complete original-ID traceability
 
