@@ -389,6 +389,7 @@ python3 tests/test-e2e-owner-preflight-procedure.py
 # These are deterministic non-live regressions; real CLI/soak runs keep
 # their independent owner-scoped RUN_ID and do not block unrelated CI.
 python3 tests/test-cli-only-e2e-contract.py
+python3 tests/test-e2e-port-budget.py
 python3 tests/test-cli-only-e2e-persistent-load.py
 python3 tests/test-v24-e2e-actionable-doc-parity.py
 python3 tests/test-cli-rule-selector-and-runtime-recovery.py
