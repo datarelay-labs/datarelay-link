@@ -1188,7 +1188,7 @@ def run_remote_service_wizard(plane: ControlPlane, name: str) -> int:
                     }
                 )
             )
-            return 0
+            return 1 if result.get("activation_failed") else 0
     except WizardCancelled:
         sys.stdout.write(_cancel_message())
         return 0

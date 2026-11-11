@@ -26,6 +26,10 @@ spec.loader.exec_module(rollout)
 
 class RolloutTests(unittest.TestCase):
     def setUp(self):
+        # The rollout rejects group/world-writable paths. Test fixtures must
+        # stay private even when the calling shell inherits a permissive umask
+        # (for example 0002 in shared developer environments).
+        self._previous_umask = os.umask(0o077)
         self.temp = tempfile.TemporaryDirectory(prefix="native-mcp-rollout-")
         self.root = Path(self.temp.name)
         self.layout = rollout.Layout(self.root / "installed")
@@ -73,6 +77,16 @@ class RolloutTests(unittest.TestCase):
         for item in reversed(self.patches):
             item.stop()
         self.temp.cleanup()
+        os.umask(self._previous_umask)
+
+    def test_fixture_tree_is_private_under_shared_umask(self):
+        for path in (self.layout.root, *self.layout.root.rglob("*")):
+            if path.exists():
+                self.assertEqual(
+                    path.stat().st_mode & 0o022,
+                    0,
+                    "rollout fixture is group/world writable: %s" % path,
+                )
 
     def install(self):
         return rollout.apply(self.root, self.head, self.settings, self.layout)

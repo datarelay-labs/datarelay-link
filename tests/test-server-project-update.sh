@@ -865,9 +865,12 @@ python3 - "$ROOT/lib/frp-server-upgrade.sh" <<'PY'
 from pathlib import Path
 import sys
 text = Path(sys.argv[1]).read_text(encoding="utf-8")
-# Locate restore_snapshot_files body.
-start = text.index("frp_server_upgrade_restore_snapshot_files()")
-chunk = text[start:start + 2500]
+# Read the whole function, not an arbitrary 2500-character prefix.
+# Additional fail-closed rollback checks must not silently shorten coverage
+# of the later Agent/egress/MCP restarts (A-020 regression).
+start = text.index("frp_server_upgrade_restore_snapshot_files() {")
+end = text.index("frp_server_upgrade_rollback() {", start)
+chunk = text[start:end]
 for unit in ("drlink-egress", "drlink-tcp-egress", "drlink-access", "drlink-server", "drlink-allocator", "drlink-mcp-bridge"):
     if f"frp_server_restart_unit {unit}" not in chunk:
         raise SystemExit("restore_snapshot_files missing restart: %s" % unit)

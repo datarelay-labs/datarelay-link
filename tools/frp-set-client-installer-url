@@ -66,9 +66,8 @@ def validate_https_installer_url(url: str) -> str:
     host = parsed.hostname
     if not host:
         fail('Agent installer URL hostname is required')
-    # urlsplit accepts malformed DNS names such as bad..example. Reuse the
-    # authoritative Server DNS-name validator, but retain literal IP / local
-    # fixture support for valid, strictly verified HTTPS installer endpoints.
+    # Reject invalid URLs before config mutation, using the canonical Server
+    # hostname validation and retaining valid private-IP/local test endpoints.
     try:
         ipaddress.ip_address(host)
     except ValueError:
@@ -80,6 +79,8 @@ def validate_https_installer_url(url: str) -> str:
                 server_config.validate_public_hostname(host, required=True)
             except server_config.ConfigError:
                 fail('Agent installer URL has an invalid DNS hostname')
+    if parsed.netloc.endswith(':'):
+        fail('Agent installer URL port is invalid')
     if parsed.username is not None or parsed.password is not None:
         fail('Agent installer URL must not contain embedded credentials')
     if port is not None and not (1 <= port <= 65535):

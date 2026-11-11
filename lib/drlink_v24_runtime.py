@@ -573,9 +573,15 @@ def _supervised_invocation(root=None):
     return ''
 
 
-def _wait_supervised_runtime(root, host_id, desired):
+def _wait_supervised_runtime(root, host_id, desired, *, timeout_seconds=60):
     import time
-    until = time.monotonic() + 60
+    # Explicit fault injection must terminate the public operation rather than
+    # consume the primary and rollback wait windows (S-021).
+    if str(os.environ.get("DRLINK_FAULT_RUNTIME_RESTART") or "").strip().lower() in (
+        "1", "yes", "y", "true"
+    ):
+        raise ControlPlaneError("Agent runtime restart failed (injected fault)")
+    until = time.monotonic() + timeout_seconds
     while time.monotonic() < until:
         if _current_runtime_ready(root, host_id, desired):
             return
@@ -1045,7 +1051,11 @@ def _apply_agent_runtime_serialized(
             if artifacts_written and backup_toml is not None:
                 _atomic_write_text(prev_toml, backup_toml)
             if isolated_attempted and backup_toml is not None:
-                _wait_supervised_runtime(root, host_id, state.get('services') or {})
+                # Do not repeat a full 60-second wait after the first failure:
+                # preserve a bounded recovery attempt and return a truthful
+                # RECOVERY_REQUIRED status when prior runtime is unverified.
+                _wait_supervised_runtime(
+                    root, host_id, state.get('services') or {}, timeout_seconds=15)
             elif restart_attempted and backup_toml is not None:
                 _restart_frpc(root)
             elif reload_attempted and backup_toml is not None:
