@@ -97,6 +97,12 @@ Existing run/ledger formats are not migrated mid-flight. Treat this schema as a 
 
 Record lock owner, acquired/released UTC, resource key, baseline state snapshot/hash, mutation manifest and final state comparison. Failed cleanup/lock release is a blocker for subsequent dependent lanes, not an invitation to reset other workers' environment. The ownership rule extends to process PID/TTY, TCP port, DNS name, endpoint allocation, private CA/PKI, system service, backup artifact and client enrollment. Preserve immutable release and historical test evidence.
 
+### 7.1 Owner's bounded endpoint-allocation rule (2026-11-11)
+
+For **new** Full User E2E and CLI-only runs, the owner has imposed an operational hard cap of 30 simultaneously live **and** 30 distinct RUN_ID-owned public endpoint port allocations **combined across hosts and normal/Fixed TCP pools**, not per lane/scenario. Use the per-RUN_ID locked admission/confirmation ledger documented in [FULL_USER_E2E_SCENARIOS.md §1.4.2](FULL_USER_E2E_SCENARIOS.md); the test runner must admit before issuing a public allocation and confirm/clean up after the real CLI operation. Reuse same-run S-013 evidence in A-013/S-020/C-003; never create 100+ public ports as a substitute for a valid capacity boundary.
+
+Isolated product-supported normal and Fixed TCP pools with a **combined** range of at most 30 distinct ports (for example, 15+15) may each prove true max+1 failure and recovery without breaching the cap. If actual real pools are larger and a small isolated pool cannot be configured through supported CLI, preserve the untested max/max+1 assertion as PARTIAL/BLOCKED rather than claiming coverage. This **does not** narrow product capacity, apply a numeric CPS/connection limit, waive platform/support assertions, approve other applicability exclusions, qualify a release, or rewrite an active/frozen RUN_ID. The 100 CLI-only **scenario IDs** remain unchanged.
+
 ## 8. Performance and Soak treatment (G)
 
 Use independent performance jobs with 60-second warmup and 300-second steady measurements when required by the current contract; ensure throughput, CPS, p50/p95/p99, errors, CPU/RSS/FD, data-integrity checks and baseline/recovery data are collected. Keep a short reconnection/continuous-traffic check in functional coverage to expose quick leaks and stale sessions. Separate longer resource-growth, gradual degradation and reconnection accumulation evidence into the mandatory 3,600-second soak when qualification requires it.

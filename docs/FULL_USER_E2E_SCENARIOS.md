@@ -601,6 +601,20 @@ Performance and function-under-load stop/continuation rules:
 
 Keep `FULL_USER_E2E_SCOPE=PRODUCT_FUNCTIONAL_PERFORMANCE_OPERATIONAL`. Do not reintroduce source-level implementation diagnosis or separate security/compliance audit work during the active run.
 
+### 1.4.2 Owner-directed E2E endpoint allocation cap — effective for new runs (2026-11-11)
+
+**Resource budget, not product capacity:** A Full User E2E or CLI-only E2E runner MUST NOT create more than **30 simultaneously live, RUN_ID-owned public endpoint allocations across all participating test hosts, both normal and Fixed TCP pools combined**. Also limit **distinct public endpoint port numbers created by that RUN_ID to 30**. This is a single shared limit, **not 30 per host, pool, scenario, lane or retry**. Active allocations belonging to other runs/real services are not test budget; preserve them and count them as occupied when assessing whether disposable capacity is available. The product's actual pool size, documented upper limits and release requirements are not changed.
+
+Before each public `drlink` Remote Service create/restore/update that may allocate an additional endpoint, reserve one slot with `tools/e2e_port_budget.py` in the shared RUN_ID ledger under the controller; after the real public CLI action, confirm the observed allocated port. Rejection of the admission check means **do not issue** the allocation. Confirming an unexpected 31st distinct port is a **budget violation requiring immediate owned-resource cleanup**, not a legitimate reason to forge an E2E PASS. Release a slot only after actual public `drlink` deletion/release plus independent inventory read-back, linked to an existing evidence receipt. Run concurrent users through this one locked ledger. The budget tool is only a guard/record and does not substitute for real Direct User, AI-assisted User or traffic proof.
+
+For `A-013`, `S-013`, `S-020`, `C-003` and performance/soak stress:
+1. Reuse compatible same-RUN_ID evidence; a single exhaustive allocation run may satisfy overlapping pool assertions. Do not run a second 30-object exhaustion pass solely for another scenario ID.
+2. Prefer **two independently configurable, isolated disposable pools** whose **combined public port ranges have at most 30 distinct ports** (for example, 15 normal + 15 Fixed TCP), when supported. For each pool of size N≤30, prove N-1, N, **one rejected N+1 request (not an allocated endpoint)**, delete one owner and reuse. A single pool may use all 30 only if the other pool's full-boundary assertion is honestly left PARTIAL/BLOCKED. Serial execution does not reset the same-RUN_ID 30-distinct-port budget.
+3. If the public product **cannot** configure safe isolated pools with a combined ≤30-port range and its real pools are larger, test low/mid/near-budget allocation counts (up to 30 **across both classes combined**) and unique allocation, no duplicate, delete/reuse and data-plane reachability within the budget. **Do not exhaust the larger real pool, do not issue a 31st successful allocation to simulate rejection, and do not change global/default/production pools**. Mark unproven real maximum/max+1 assertions `PARTIAL` or `BLOCKED_ENVIRONMENT` with explicit prerequisite and keep aggregate release qualification unqualified; do not invent `PASS` or `NOT_APPLICABLE`.
+4. Port allocations are **different from** active TCP connections, CPS, requests, Zero-Touch ticket counts and the separate **100 original CLI-only scenario IDs**. This 30-endpoint budget does not silently waive any applicable performance, concurrency, security-negative, soak or platform requirement.
+
+Retain a per-run high-water mark, distinct allocated ports, real owner/port mapping, rejected admission/real pool-limit evidence, deletion/reuse read-back, no leaked reservation and eventual zero RUN_ID-owned allocations. Preserve an existing frozen run and its source HEAD; this instruction governs future runs only.
+
 ## 1.5 Parallel execution scheduler
 
 Parallel execution is the default and is a completion requirement, not an optimization.
@@ -2473,7 +2487,7 @@ Use the current authoritative limits from the CLI/AI Master and release validati
 
 ## A-013 — Endpoint pools and allocation lifecycle — MANDATORY
 
-Exercise normal Remote Service and Fixed TCP pools.
+Exercise normal Remote Service and Fixed TCP pools, using the shared **maximum-30 live/distinct run-owned public endpoint budget** in section 1.4.2. Reuse the same-run S-013 capacity evidence; no second full exhaustion for this ID.
 
 Verify:
 
@@ -2706,11 +2720,11 @@ Delete a Remote Service while Agent-to-Server connectivity is unavailable. Verif
 
 ## S-013 — Endpoint-pool exhaustion and recovery — MANDATORY
 
-Using disposable capacity, exercise normal and Fixed TCP pools separately with a deterministic procedure:
+Using disposable capacity, exercise normal and Fixed TCP pools separately with a deterministic procedure **subject to section 1.4.2's global maximum of 30 live/distinct RUN_ID-owned endpoint ports**. The steps below prove actual max+1 only when safely isolated product-configurable pools have a combined range of at most 30 distinct public ports in the RUN_ID. For a larger non-isolatable pool, stop after 30 and retain the unproven maximum assertion as PARTIAL/BLOCKED; never allocate the real full range.
 
 1. identify the pool/range under test from public product status/config (not from memorized lab values);
-2. allocate until maximum capacity is reached and record the exact max live allocations;
-3. attempt max+1 and verify explicit rejection with no duplicate live allocation;
+2. **only for an isolated product-configured pool within the combined 30-port RUN_ID budget**, allocate until its actual maximum and record the max live allocations; for any larger non-isolatable pool, stop at the remaining budget and mark full-pool exhaustion unproven;
+3. **only after proving that the isolated pool really is full**, attempt max+1 once and verify explicit rejection with no additional live endpoint; never request a 31st success against a larger pool;
 4. delete exactly one owner/reservation;
 5. prove capacity returned and that a retry reuses the freed capacity without creating a duplicate live allocation;
 6. distinguish stale Server inventory/presentation from live Agent allocation: inventory alone is not proof of a live data-plane endpoint.
@@ -2739,7 +2753,7 @@ Exercise omitted Resource, omitted field, explicit lists, state absent, invalid 
 
 Exercise 0/empty where valid, 1, maximum-1, maximum, and maximum+1 for each user-visible bounded capacity such as Zero-Touch issuance, endpoint pools, bulk enrollment, and exposed concurrency limits.
 
-For endpoint pools, follow the same deterministic identify-range → max → max+1 → delete-one-owner → reuse procedure as S-013, and distinguish stale inventory from live allocation. Same-run evidence that already closed an identical pool assertion under section 1.4.1 may be reused instead of repeating exhaustion.
+For endpoint pools, follow S-013 **within the global maximum-30 live/distinct endpoint budget in section 1.4.2**. A true max/max+1 assertion requires a product-supported disposable pool no larger than 30; otherwise retain PARTIAL/BLOCKED for the unavailable full-capacity boundary. Distinguish stale inventory from live allocation. Reuse the same-run S-013 evidence instead of repeating exhaustion.
 
 ## S-021 — Failure during mutation/activation — MANDATORY on disposable environment
 
@@ -2826,7 +2840,7 @@ Verify:
 
 ## C-003 — Parallel Remote Service creation and endpoint allocation — MANDATORY
 
-On multiple Agent Hosts at the same time, create normal TCP and Fixed TCP Remote Services.
+On multiple Agent Hosts at the same time, create normal TCP and Fixed TCP Remote Services. **All parallel creators share one maximum-30 live/distinct endpoint budget per RUN_ID (section 1.4.2); do not independently allocate 30 on every host or lane.**
 
 Verify:
 
@@ -3362,7 +3376,7 @@ Measure command latency and verify read-only operations do not mutate state. Any
 
 ## P-023 — Maximum available topology mixed-stress operation — MANDATORY
 
-This is the final production-uncertainty stress gate. Use **all suitable reachable test hosts** and the maximum practical independent load sources/targets available in the current environment. The purpose is not to produce a marketing benchmark; it is to discover failures that appear only when multiple real operational activities collide.
+This is the final production-uncertainty stress gate. Use **all suitable reachable test hosts** and the maximum practical independent load sources/targets available in the current environment, **without exceeding the shared maximum-30 live/distinct RUN_ID-owned public endpoint allocation budget (section 1.4.2)**. The purpose is not to produce a marketing benchmark; it is to discover failures that appear only when multiple real operational activities collide.
 
 If persistent functional data-path failures already make an all-host PASS impossible, collect the minimum mixed-stress diagnostic sample needed to characterize control-plane responsiveness under residual load, classify dependent saturation claims with `FAIL_PRECONDITION` / inherited FAIL per section 1.4.1, and do not repeat full-topology soak/saturation solely for this label. AI/MCP stress elements remain gated on the functional MCP prerequisite.
 
