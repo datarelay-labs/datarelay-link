@@ -4,11 +4,12 @@
 > **Source:** `docs/FULL_USER_E2E_SCENARIOS.md` (all 116 original IDs and headings preserved in its canonical document).
 > **Product baseline:** v2.4.0 **includes** AI Access and MCP Bridge; they are excluded **only from this test profile**, not removed from the product.
 > **Executor:** current owner-selected runtime (default `CHATGPT_CHAT`); current explicit instruction overrides historical Codex-only text.
-> **Canonical Full User E2E SHA256:** `23a609689a9a41eadbbed8d22a6805df725809a473b9465d004f820b42b1b759`
+> **Canonical Full User E2E SHA256:** `b0e3ca47f56432f6d9179f785fd63ca26c632d3e9fcb74d61d4d54021f627426`
 > **Generation:** `python3 tools/generate_cli_only_e2e_contract.py --write`; `--check` verifies no source drift.
 > **Safety:** preserve current authorization, exact live platform/tool refusals, other actors, host ownership and management access; never reroute a denied effect.
 > **Candidate:** do not infer installed Source HEAD from a Git checkout; record each installed Server/Agent's provenance.
 > **Test environment:** LXC/LXD is excluded by owner decision (2026-11-02). Use authorized native hosts for user E2E; isolated processes/temporary ports provide supporting evidence only.
+> **Owner test-resource budget (2026-11-11):** at most **30 simultaneously reserved** run-owned endpoints on the functional E2E Server across all pools and concurrent lanes. A shared RUN_ID ledger guarded by `tools/e2e_port_allocation_budget.py` is mandatory before each new reservation. Exhaustion of an actual pool larger than 30 is NOT tested by creating hundreds of services; record `POOL_EXHAUSTION=NOT_TESTED_BUDGET_LIMIT`, with the corresponding mandatory assertion PARTIAL/NOT_RUN, not PASS. The one max+1 rejection probe is allowed only for a proven isolated test pool of 29 or fewer slots and must not allocate a 31st port. Follow canonical A-013/S-013/S-020 and test-writer isolation rules.
 
 ## 1. Scope and complete original-ID traceability
 
@@ -1072,7 +1073,7 @@ Verify:
 - disable/restart/disconnect preserves reservation;
 - delete releases reservation;
 - cross-pool in-place edit is rejected;
-- configured pool exhaustion returns a truthful error or DEGRADED/Pending allocation according to whether allocation was available at apply time;
+- configured **bounded** pool exhaustion (only when an isolated pool of at most 29 slots is available) returns a truthful error or DEGRADED/Pending allocation according to whether allocation was available at apply time; for a larger shared pool, exercise at most 30 slots and mark actual exhaustion PARTIAL/NOT_RUN;
 - later available capacity allows expected recovery.
 
 
@@ -1198,6 +1199,16 @@ Verify no change to an optional friendly hostname silently changes control/alloc
 
 ## A-019 — Prior-stable upgrade to candidate — MANDATORY when an upgrade path is claimed
 
+**Source authenticity prerequisite:** A valid prior-stable version, its
+verified installer/artifact identity and a separately assigned disposable
+host with known recoverable starting state must be available. Do not label
+candidate-to-candidate reinstall, reused older-run evidence or an unknown
+archive as a cross-version upgrade. If the authentic prior-stable artifact
+or a safe target is unavailable, mark just this upgrade cell
+`BLOCKED_ENVIRONMENT` / `FAIL_PRECONDITION` with the exact prerequisite
+and execute independent candidate-only lifecycle tests. Never substitute a
+synthetic historical source or weaken identity/trust checks.
+
 On each applicable real platform, start from the actual currently supported prior stable release and update using only the supported public CLI/install path.
 
 An empty prior-stable Server is **insufficient** for full PASS. Before upgrade, the prior-stable fixture must contain meaningful non-empty state created or freshly staged for this RUN_ID, including at least:
@@ -1310,8 +1321,8 @@ Delete a Remote Service while Agent-to-Server connectivity is unavailable. Verif
 Using disposable capacity, exercise normal and Fixed TCP pools separately with a deterministic procedure:
 
 1. identify the pool/range under test from public product status/config (not from memorized lab values);
-2. allocate until maximum capacity is reached and record the exact max live allocations;
-3. attempt max+1 and verify explicit rejection with no duplicate live allocation;
+2. use a disposable isolated pool with no more than 29 usable slots if supported; allocate up to its actual capacity **without exceeding 30 simultaneous run-owned endpoints across all pools**; if a larger pool is the only option, stop at 30 and record bounded-capacity evidence rather than claiming full exhaustion;
+3. only for a verified isolated pool of at most 29 slots, attempt max+1 once as an **expected-rejected** operation and prove no 31st endpoint was created; otherwise record `POOL_EXHAUSTION=NOT_TESTED_BUDGET_LIMIT` and mark this sub-assertion PARTIAL/NOT_RUN;
 4. delete exactly one owner/reservation;
 5. prove capacity returned and that a retry reuses the freed capacity without creating a duplicate live allocation;
 6. distinguish stale Server inventory/presentation from live Agent allocation: inventory alone is not proof of a live data-plane endpoint.
@@ -1345,7 +1356,7 @@ Exercise omitted Resource, omitted field, explicit lists, state absent, invalid 
 
 Exercise 0/empty where valid, 1, maximum-1, maximum, and maximum+1 for each user-visible bounded capacity such as Zero-Touch issuance, endpoint pools, bulk enrollment, and exposed concurrency limits.
 
-For endpoint pools, follow the same deterministic identify-range → max → max+1 → delete-one-owner → reuse procedure as S-013, and distinguish stale inventory from live allocation. Same-run evidence that already closed an identical pool assertion under section 1.4.1 may be reused instead of repeating exhaustion.
+For endpoint pools, follow S-013 **only within the global 30-allocation ceiling**: identify the actual pool, use max/max+1 only for a safely isolated pool of at most 29 slots, otherwise collect bounded evidence and mark full exhaustion PARTIAL/NOT_RUN. Distinguish stale inventory from live allocation. Same-run evidence that already closed an identical pool assertion under section 1.4.1 may be reused instead of repeating exhaustion.
 
 
 ## S-021 — Failure during mutation/activation — MANDATORY on disposable environment
@@ -1536,7 +1547,18 @@ Expected outcome must be deterministic and leave no duplicate endpoint, orphaned
 
 ## C-012 — All-host simultaneous reboot recovery — MANDATORY on disposable/approved hosts
 
-Reboot all applicable Agent test hosts within the same test window.
+**Management-path safety prerequisite:** Before scheduling this wave, verify
+each participating host has a working independent out-of-band/console recovery
+route that does not rely exclusively on the host's rebooted reverse-SSH
+session, and that its restart is within the explicitly disposable/approved
+scope. Preserve unrelated reverse-SSH tasks, the functional Server and other
+test actors' resources. If this cannot be demonstrated for a host, do **not**
+reboot that host merely to satisfy all-host coverage; mark the host cell
+`BLOCKED_MANAGEMENT_PATH` with the actual management-path evidence and
+continue safe independent cases. Sequential single-host reboot evidence can
+support O-010/C-013 but is not a PASS for the missing simultaneous C-012 cell.
+
+Reboot all safely qualified Agent test hosts within the same test window.
 
 After recovery, use CLI on every host plus Server CLI inventory to verify:
 
