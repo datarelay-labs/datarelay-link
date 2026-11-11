@@ -4,7 +4,7 @@
 > **Source:** `docs/FULL_USER_E2E_SCENARIOS.md` (all 116 original IDs and headings preserved in its canonical document).
 > **Product baseline:** v2.4.0 **includes** AI Access and MCP Bridge; they are excluded **only from this test profile**, not removed from the product.
 > **Executor:** current owner-selected runtime (default `CHATGPT_CHAT`); current explicit instruction overrides historical Codex-only text.
-> **Canonical Full User E2E SHA256:** `7b7581528518547194a81fd6fce84a438b133c5a5b1e6635f778b316aab54792`
+> **Canonical Full User E2E SHA256:** `7fe045904894b48060369db7c0ce9bce197c4927ed9b83f24b474a7215a8e4bd`
 > **Generation:** `python3 tools/generate_cli_only_e2e_contract.py --write`; `--check` verifies no source drift.
 > **Safety:** preserve current authorization, exact live platform/tool refusals, other actors, host ownership and management access; never reroute a denied effect.
 > **Candidate:** do not infer installed Source HEAD from a Git checkout; record each installed Server/Agent's provenance.
@@ -46,6 +46,8 @@
 
 - Run real User, Operator, Administrator, Incident Responder and Platform Maintainer missions through the visible CLI. Vary fresh/existing/stale state, command order, direct/REPL/wizard presentation, selector/role/negative input, previous failed mutation, and recovery wherever applicable. Capture genuine public `drlink` behavior before looking at implementation.
 - Use actual suitable Linux/Windows/macOS Agent and target hosts where present; preserve native OS and all-host limitation receipts. Do not require hypothetical host tiers or an unrelated extra VM.
+- **Mandatory 30-port allocation ceiling:** Across normal+Fixed TCP pools, all CLI-only E2E scenarios and concurrent workers sharing one functional Server must create **no more than 30 simultaneous test-owned endpoint reservations in total**. Count pending and other E2E lane reservations before each mutation. Run `python3 tools/e2e_endpoint_budget.py --active-owned <N> --other-e2e-owned <N> --planned-new <N>` with counts from actual public CLI state; deny a proposed 31st live allocation. This test safety limit is **not the product pool limit**.
+- For S-013/S-020, only try max+1 after safely configuring an isolated disposable pool with actual capacity <=30 and confirming it is full; then require a real rejection with no new live reservation. For a larger/immutable/default 100-port pool, use at most 30 allocations, **do not attempt port 31**, retain `NATIVE_POOL_EXHAUSTION=NOT_PROVEN_BUDGET_LIMIT` and mark native max assertions `PARTIAL` / `FAIL_PRECONDITION` rather than synthetic PASS. Normal/Fixed TCP tests run sequentially and release prior test-owned allocations; C-003/P-023 also share the same aggregate ceiling.
 - Functional load requires **60-second warmup**, **300-second steady state for every applicable case**, and **P-013 3,600-second functional soak** once representative real application data paths work. **P-019 8h/24h is optional until explicitly selected.**
 - Exact labels retained for machine audit: `WARMUP=60s`, `STEADY_STATE_EACH_CASE=300s`, `SOAK=3600s`, `EXTENDED_SOAK=8h`, `ENDURANCE_SOAK=24h`; only the last two require explicit selection.
 - Run independent persistent workloads via managed `tmux`/systemd/equivalent when a connection cannot guarantee process lifetime. Retain PID/session, start/end UTC, real 60/300/3600-second samples and terminal results; do not claim elapsed PASS from an active PID or timer.
@@ -1058,7 +1060,7 @@ Verify:
 - disable/restart/disconnect preserves reservation;
 - delete releases reservation;
 - cross-pool in-place edit is rejected;
-- configured pool exhaustion returns a truthful error or DEGRADED/Pending allocation according to whether allocation was available at apply time;
+- configured pool exhaustion returns a truthful error or DEGRADED/Pending allocation according to whether allocation was available at apply time, **only when a genuinely exhausted <=30-port isolated pool can be verified under section 1.5.1**;
 - later available capacity allows expected recovery.
 
 
@@ -1293,16 +1295,16 @@ Delete a Remote Service while Agent-to-Server connectivity is unavailable. Verif
 
 ## S-013 — Endpoint-pool exhaustion and recovery — MANDATORY
 
-Using disposable capacity, exercise normal and Fixed TCP pools separately with a deterministic procedure:
+Using disposable capacity, exercise normal and Fixed TCP pools **sequentially** under the aggregate 30-port E2E limit in section 1.5.1:
 
-1. identify the pool/range under test from public product status/config (not from memorized lab values);
-2. allocate until maximum capacity is reached and record the exact max live allocations;
-3. attempt max+1 and verify explicit rejection with no duplicate live allocation;
-4. delete exactly one owner/reservation;
-5. prove capacity returned and that a retry reuses the freed capacity without creating a duplicate live allocation;
+1. identify the actual pool/range under test from public product status/config (not memorized lab values), inventory other E2E allocations and check the budget before every mutation;
+2. if safe, configure an isolated disposable pool with at most 30 ports; allocate up to **its actual capacity** without ever exceeding 30 live test-owned reservations across both pools and all lanes;
+3. only with that isolated pool truly full, attempt max+1, verify explicit rejection and **zero change** in live reservations; otherwise record `NATIVE_POOL_EXHAUSTION=NOT_PROVEN_BUDGET_LIMIT` and do **not** make a 31st request against the larger default pool;
+4. delete exactly one run-owned reservation; verify capacity returned and a retry reuses the freed slot without creating a duplicate;
+5. release the current pool's run-owned reservations **before** repeating the separate test on the other pool;
 6. distinguish stale Server inventory/presentation from live Agent allocation: inventory alone is not proof of a live data-plane endpoint.
 
-Verify explicit allocation failure, no duplicate endpoint assignment, capacity return on deletion, and recovery when capacity becomes available.
+Verify no duplicate endpoint assignment, capacity return and recovery. **Do not report a full native exhaustion PASS** for a 100-port pool tested with just 30 reservations. A product's default limit remains unchanged by this test limit.
 
 
 ## S-014 — Name, reserved-token, duplicate, and selector corner cases — MANDATORY
@@ -1331,7 +1333,7 @@ Exercise omitted Resource, omitted field, explicit lists, state absent, invalid 
 
 Exercise 0/empty where valid, 1, maximum-1, maximum, and maximum+1 for each user-visible bounded capacity such as Zero-Touch issuance, endpoint pools, bulk enrollment, and exposed concurrency limits.
 
-For endpoint pools, follow the same deterministic identify-range → max → max+1 → delete-one-owner → reuse procedure as S-013, and distinguish stale inventory from live allocation. Same-run evidence that already closed an identical pool assertion under section 1.4.1 may be reused instead of repeating exhaustion.
+For endpoint pools, apply the **aggregate 30-port** budget and the isolated <=30-port full-pool prerequisites from sections 1.5.1 and S-013. A 100-port default pool must **not** be filled to 100 or subjected to an unsafe 31st allocation merely to satisfy max/max+1. Without a genuinely bounded pool, keep the native maximum boundary `PARTIAL` / `FAIL_PRECONDITION`, while recording the valid 0/1/29/30 observations. Distinguish stale inventory from live allocation; reuse already-proven same-run S-013 evidence instead of repeating exhaustion.
 
 
 ## S-021 — Failure during mutation/activation — MANDATORY on disposable environment
@@ -1426,7 +1428,7 @@ Verify:
 
 ## C-003 — Parallel Remote Service creation and endpoint allocation — MANDATORY
 
-On multiple Agent Hosts at the same time, create normal TCP and Fixed TCP Remote Services.
+On multiple Agent Hosts at the same time, create normal TCP and Fixed TCP Remote Services. **Share the single 30-live-endpoint limit of section 1.5.1 across every concurrent Agent/role and both pools; do not allocate 30 per Agent.**
 
 Verify:
 
@@ -1983,7 +1985,7 @@ At the high-load stage, overlap as many applicable activities as the real topolo
 - all-host simultaneous traffic;
 - Internet Access allowed and denied application traffic;
 - new enrollment and Agent reconnect activity;
-- Remote Service create/edit/disable/enable/delete on independent hosts;
+- Remote Service create/edit/disable/enable/delete on independent hosts, strictly within the aggregate **30 live E2E-owned endpoint** ceiling in section 1.5.1;
 - Remote/Internet Access policy reads/tests and selected isolated mutations;
 - ConfigurationBundle test/diff and isolated apply;
 - diagnostics/audit/history/support-bundle reads;
