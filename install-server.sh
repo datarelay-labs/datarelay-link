@@ -2336,8 +2336,10 @@ frp_server_health_allocator() {
 }
 
 frp_server_health_mcp_bridge() {
-  # MCP bridge readiness: unit active AND GET /healthz == 200.
-  local url code attempt
+  # A systemd "active" process may still be importing modules and not yet
+  # listening. Use the same bounded readiness policy as the allocator, rather
+  # than ten fixed 0.5s probes that can trigger unnecessary rollback.
+  local url code timeout interval start now announced=0
   if [[ "${FRP_INSTALL_HOOK_HEALTH_FAIL:-}" == "1" ]]; then
     echo "ERROR: simulated health check failure" >&2
     return 1
@@ -2350,17 +2352,35 @@ frp_server_health_mcp_bridge() {
     return 0
   fi
   frp_wait_unit_active drlink-mcp-bridge || return 1
+  timeout="$(frp_allocator_ready_timeout_sec)"
+  interval="$(frp_allocator_ready_interval_sec)"
   url="http://127.0.0.1:6103/healthz"
+  start="$(date +%s)"
   code="000"
-  for attempt in 1 2 3 4 5 6 7 8 9 10; do
-    code="$(curl -sS -o /dev/null -w '%{http_code}' --connect-timeout 2 --max-time 5 "$url" 2>/dev/null || echo 000)"
-    if [[ "$code" == "200" ]]; then
-      return 0
+  while true; do
+    if ! frp_server_systemctl is-active --quiet drlink-mcp-bridge; then
+      echo "ERROR: MCP bridge stopped before /healthz became ready" >&2
+      frp_print_unit_diagnostics drlink-mcp-bridge
+      return 1
     fi
-    sleep 0.5
+    if code="$(frp_server_curl -sS -o /dev/null -w '%{http_code}' --connect-timeout 2 --max-time 5 "$url" 2>/dev/null)"; then
+      if [[ "$code" == "200" ]]; then
+        return 0
+      fi
+    fi
+    code="${code:-000}"
+    now="$(date +%s)"
+    if (( now - start >= timeout )); then
+      echo "ERROR: MCP bridge /healthz not ready within ${timeout}s (last HTTP ${code}, expected 200)" >&2
+      frp_print_unit_diagnostics drlink-mcp-bridge
+      return 1
+    fi
+    if [[ "$announced" == "0" ]]; then
+      echo "Waiting for MCP bridge HTTP listener on ${url} ..." >&2
+      announced=1
+    fi
+    frp_server_sleep "$interval"
   done
-  echo "ERROR: MCP bridge /healthz returned ${code} (expected 200)" >&2
-  return 1
 }
 
 frp_server_health_access() {

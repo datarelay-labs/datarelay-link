@@ -25,6 +25,7 @@ echo "=== public CLI / contract regressions ==="
 bash tests/test-orphan-suite-coverage.sh
 python3 tests/test-worktree-audit.py
 bash tests/test-server-install-config.sh
+bash tests/test-mcp-bridge-readiness.sh
 ./tests/test-cli-catalog-parity.sh
 python3 tests/test-public-cli-grammar-parity.py
 # User-visible list -> immutable selector -> detail, plus Zero-Touch LAN authority.
