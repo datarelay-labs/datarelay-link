@@ -2335,9 +2335,46 @@ frp_server_health_allocator() {
   frp_wait_allocator_ready "$port"
 }
 
+frp_server_wait_http_ready() {
+  # Shared Access/MCP readiness contract: service active AND one local HTTP
+  # /healthz request returns 200. A Type=simple service is active before bind;
+  # wait for actual readiness, bounded by the allocator's existing 30s policy.
+  # Keep the body private (health payloads may contain operational details).
+  local unit="$1" url="$2" label="$3"
+  local timeout interval start now code="000" announced=0
+  timeout="$(frp_allocator_ready_timeout_sec)"
+  interval="$(frp_allocator_ready_interval_sec)"
+  start="$(date +%s)"
+  frp_wait_unit_active "$unit" || return 1
+  while true; do
+    if ! frp_server_systemctl is-active --quiet "$unit"; then
+      echo "ERROR: ${label} stopped before /healthz became ready" >&2
+      frp_print_unit_diagnostics "$unit"
+      return 1
+    fi
+    # Exactly one request per attempt. Do not honor ambient HTTP proxy env
+    # for a loopback service. Avoid old '000000' concatenation on curl errors.
+    if code="$(frp_server_curl --noproxy '*' -sS -o /dev/null -w '%{http_code}' --connect-timeout 2 --max-time 5 "$url" 2>/dev/null)"; then
+      if [[ "$code" == "200" ]]; then
+        return 0
+      fi
+    fi
+    [[ "$code" =~ ^[0-9]{3}$ ]] || code="000"
+    now="$(date +%s)"
+    if (( now - start >= timeout )); then
+      echo "ERROR: ${label} /healthz not ready within ${timeout}s (last HTTP ${code}, expected 200)" >&2
+      frp_print_unit_diagnostics "$unit"
+      return 1
+    fi
+    if [[ "$announced" == "0" ]]; then
+      echo "Waiting for ${label} HTTP listener on ${url} ..." >&2
+      announced=1
+    fi
+    frp_server_sleep "$interval"
+  done
+}
+
 frp_server_health_mcp_bridge() {
-  # MCP bridge readiness: unit active AND GET /healthz == 200.
-  local url code attempt
   if [[ "${FRP_INSTALL_HOOK_HEALTH_FAIL:-}" == "1" ]]; then
     echo "ERROR: simulated health check failure" >&2
     return 1
@@ -2349,23 +2386,12 @@ frp_server_health_mcp_bridge() {
   if frp_server_skip_systemd; then
     return 0
   fi
-  frp_wait_unit_active drlink-mcp-bridge || return 1
-  url="http://127.0.0.1:6103/healthz"
-  code="000"
-  for attempt in 1 2 3 4 5 6 7 8 9 10; do
-    code="$(curl -sS -o /dev/null -w '%{http_code}' --connect-timeout 2 --max-time 5 "$url" 2>/dev/null || echo 000)"
-    if [[ "$code" == "200" ]]; then
-      return 0
-    fi
-    sleep 0.5
-  done
-  echo "ERROR: MCP bridge /healthz returned ${code} (expected 200)" >&2
-  return 1
+  frp_server_wait_http_ready drlink-mcp-bridge "http://127.0.0.1:6103/healthz" "MCP bridge"
 }
 
 frp_server_health_access() {
-  # Access plugin readiness: unit active AND GET /healthz == 200.
-  local addr url code attempt
+  # Access and MCP use the same bounded, fail-closed HTTP readiness gate.
+  local addr url
   if [[ "${FRP_INSTALL_HOOK_HEALTH_FAIL:-}" == "1" ]]; then
     echo "ERROR: simulated health check failure" >&2
     return 1
@@ -2373,7 +2399,6 @@ frp_server_health_access() {
   if frp_server_skip_systemd; then
     return 0
   fi
-  frp_wait_unit_active drlink-access || return 1
   addr="${FRP_ACCESS_PLUGIN_ADDR:-127.0.0.1:6101}"
   if [[ -r "$(frp_server_fs /etc/drlink/config.json)" ]]; then
     addr="$(python3 - "$(frp_server_fs /etc/drlink/config.json)" <<'PY' 2>/dev/null || true
@@ -2389,22 +2414,7 @@ PY
   fi
   [[ -n "$addr" ]] || addr="127.0.0.1:6101"
   url="http://${addr}/healthz"
-  # systemd can report active before the plugin binds; retry briefly.
-  code="000"
-  body=""
-  for attempt in 1 2 3 4 5 6 7 8 9 10; do
-    body="$(curl -sS --connect-timeout 2 --max-time 5 "$url" 2>/dev/null || true)"
-    code="$(curl -sS -o /dev/null -w '%{http_code}' --connect-timeout 2 --max-time 5 "$url" 2>/dev/null || echo 000)"
-    if [[ "$code" == "200" ]]; then
-      return 0
-    fi
-    sleep 0.5
-  done
-  echo "ERROR: access plugin /healthz returned ${code} (expected 200)" >&2
-  if [[ -n "$body" ]]; then
-    echo "ERROR: access plugin /healthz body: ${body}" >&2
-  fi
-  return 1
+  frp_server_wait_http_ready drlink-access "$url" "access plugin"
 }
 
 frp_server_health_egress() {

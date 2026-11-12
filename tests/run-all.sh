@@ -115,6 +115,8 @@ python3 tests/test-qualified-artifacts.py
 ./tests/test-qual-gate-truthfulness.sh
 ./tests/test-public-hostname.sh
 ./tests/test-allocator-ready.sh
+./tests/test-mcp-bridge-readiness.sh
+./tests/test-access-plugin-readiness.sh
 ./tests/test-create-client.sh
 ./tests/test-zero-touch-bootstrap.sh
 ./tests/test-pending-enroll-recovery.sh
