@@ -21,6 +21,7 @@ root = Path(sys.argv[1])
   'bootstrap_dir': '/var/lib/drlink/bootstrap',
   'tls_ca_cert': '/etc/drlink/pki/ca.crt',
   'allocator_public_url': 'https://example.test/enroll',
+  'bootstrap_hostname': 'example.test',
   'client_installer_url': 'https://example.test/bootstrap-client.sh',
 }) + '\n')
 PY
