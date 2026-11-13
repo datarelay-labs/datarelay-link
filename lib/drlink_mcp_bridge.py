@@ -15,20 +15,30 @@ public ``test ai-access``. Legacy ai_access_rules are not an authority.
 from __future__ import annotations
 
 from html import escape as html_escape
+import contextlib
+import functools
 import json
+import logging
 import os
 import re
+import shutil
+import signal
+import sqlite3
+import tempfile
 import threading
 import time
+import traceback
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from socketserver import ThreadingMixIn
 from typing import Any, Optional
 from urllib.parse import parse_qs, urlencode, urlparse, urlsplit
 
 from drlink_ai_agent import AgentLoop, execute_local
+from drlink_db_watch import get_watcher
 from drlink_mcp_server_executor import ExecutorDenied, execute_as_unprivileged_user
 from drlink_control_db import ControlPlaneError, resolve_root
 from drlink_control_plane import (
+    clamp_claim_wait_ms,
     AI_CAPABILITIES,
     ControlPlane,
     path_allowed,
@@ -40,6 +50,10 @@ from frp_client_registry import request_source_ip
 import drlink_v24 as v24
 
 MCP_PROTOCOL_VERSION = "2026-07-28"
+# A result wait wakes on the completion commit (AUD-21 step 2). When no change
+# signal arrives it rereads the database at least this often, so a missed signal
+# costs latency and never a result.
+RESULT_WAIT_FALLBACK_SECONDS = 1.0
 # Handshake-era versions accepted via classic initialize (OpenAI Plugin / older MCP hosts).
 HANDSHAKE_PROTOCOL_VERSIONS = ("2024-11-05", "2025-03-26", "2025-06-18", "2025-11-25")
 LATEST_HANDSHAKE_VERSION = "2025-11-25"
@@ -57,6 +71,7 @@ SERVER_INFO_META = "io.modelcontextprotocol/serverInfo"
 WWW_AUTHENTICATE_META = "mcp/www_authenticate"
 DEFAULT_LISTEN = "127.0.0.1"
 DEFAULT_PORT = 6103
+MAX_WORKERS = 32
 HEADER_MISMATCH = -32020
 UNSUPPORTED_PROTOCOL_VERSION = -32022
 INVALID_PARAMS = -32602
@@ -399,6 +414,82 @@ def _jsonrpc_error(req_id, code, message, data=None):
     return {"jsonrpc": "2.0", "id": req_id, "error": err}
 
 
+LOG = logging.getLogger("drlink.mcp_bridge")
+# Exception types whose message is safe to log (no caller-controlled secrets).
+_LOGGABLE_DETAIL_TYPES = (sqlite3.Error, OSError, TimeoutError)
+
+
+def _new_correlation_id() -> str:
+    return "mcp-" + os.urandom(6).hex()
+
+
+class _DispatchedJobError(Exception):
+    """An error after enqueue: the job may have run, so the call must not be retried."""
+
+    def __init__(self, job_id: str, correlation_id: str):
+        super().__init__("dispatched job failed")
+        self.job_id = job_id
+        self.correlation_id = correlation_id
+
+
+# AUD-21 D5: how many endpoint dispatches one Bridge worker process lets run at once.
+DEFAULT_DISPATCH_BUDGET = 64
+BUSY_RETRY_AFTER_MS = 1000
+_BUSY_LOG_EVERY = 100
+
+
+def _dispatch_budget_from_env() -> int:
+    raw = os.environ.get("DRLINK_MCP_DISPATCH_BUDGET", "").strip()
+    if not raw:
+        return DEFAULT_DISPATCH_BUDGET
+    try:
+        value = int(raw)
+    except ValueError:
+        value = 0
+    if value < 1:
+        LOG.warning("DRLINK_MCP_DISPATCH_BUDGET must be an integer >= 1; using %d", DEFAULT_DISPATCH_BUDGET)
+        return DEFAULT_DISPATCH_BUDGET
+    return value
+
+
+class _BusyError(Exception):
+    """The worker is at its dispatch budget: nothing was audited or enqueued, so a retry is safe."""
+
+
+def _log_internal_error(exc: BaseException, *, tool: str, correlation_id: Optional[str] = None,
+                        job_id: Optional[str] = None, what: str = "internal error") -> str:
+    """Record why a tools/call became `internal error`; return a correlation id.
+
+    The JSON-RPC response stays generic. The log carries the exception class,
+    the innermost frames and, only for DB/OS errors, a short message. Arguments,
+    tokens and caller-supplied text are never logged, and the tool name is
+    reduced to a known value so it cannot inject log lines.
+    """
+    correlation_id = correlation_id or _new_correlation_id()
+    known_tools = {entry[0] for entry in TOOL_DEFS}
+    safe_tool = tool if tool in known_tools else "unknown"
+    frames = traceback.extract_tb(exc.__traceback__)[-6:]
+    where = " <- ".join(
+        "%s:%s:%s" % (os.path.basename(frame.filename), frame.lineno, frame.name)
+        for frame in reversed(frames)
+    ) or "-"
+    detail = ""
+    if isinstance(exc, _LOGGABLE_DETAIL_TYPES):
+        detail = " detail=%r" % (str(exc)[:200],)
+    LOG.error(
+        "mcp tools/call %s cid=%s%s tool=%s exc=%s.%s%s where=%s",
+        what,
+        correlation_id,
+        " job=%s" % job_id if job_id else "",
+        safe_tool,
+        type(exc).__module__,
+        type(exc).__name__,
+        detail,
+        where,
+    )
+    return correlation_id
+
+
 def _jsonrpc_result(req_id, result):
     return {"jsonrpc": "2.0", "id": req_id, "result": _with_server_meta(result)}
 
@@ -485,6 +576,78 @@ def _negotiate_handshake_version(requested: Optional[str]) -> Optional[str]:
         return requested
     return None
 
+class SharedRateLimiter:
+    """Per-source request budgets shared by the Bridge worker processes (AUD-21 D7).
+
+    Each worker used to count in its own memory, which would multiply every limit by the number
+    of workers; dividing the limit by the number of workers would reject legitimate bursts when
+    the kernel spreads connections unevenly. The counters live in a private SQLite file that is
+    not durable (``synchronous=OFF``) and is removed with the supervisor, so they reset with the
+    service exactly as the in-memory counters did.
+    """
+
+    _PRUNE_EVERY = 500
+
+    def __init__(self, path: str):
+        self.path = path
+        # One connection per limiter, used by one thread at a time (the lock is held for a
+        # few microseconds); BEGIN IMMEDIATE serializes the worker processes with each other.
+        self._lock = threading.Lock()
+        self._calls = 0
+        self._connection = sqlite3.connect(
+            path, timeout=5.0, isolation_level=None, check_same_thread=False
+        )
+        # The workers start together and open the new file at the same moment. Switching it to
+        # WAL can answer "database is locked" at once instead of waiting (about one open in
+        # eight), which killed the worker at startup; retry within the same 5 s budget.
+        deadline = time.monotonic() + 5.0
+        while True:
+            try:
+                self._connection.execute("PRAGMA journal_mode=WAL")
+                self._connection.execute("PRAGMA synchronous=OFF")
+                self._connection.execute(
+                    "CREATE TABLE IF NOT EXISTS rate_hits("
+                    "key TEXT PRIMARY KEY, window_start REAL NOT NULL, hits INTEGER NOT NULL)"
+                )
+                break
+            except sqlite3.OperationalError as exc:
+                if "locked" not in str(exc) or time.monotonic() >= deadline:
+                    raise
+                time.sleep(0.01)
+
+    def limited(self, key: str, *, limit: int, window_s: float, now: Optional[float] = None) -> bool:
+        """Count one hit for ``key``; True when this hit is over ``limit`` in the current window."""
+        now = time.time() if now is None else now
+        with self._lock:
+            return self._count(self._connection, key, limit, window_s, now)
+
+    def _count(self, connection, key: str, limit: int, window_s: float, now: float) -> bool:
+        connection.execute("BEGIN IMMEDIATE")
+        try:
+            row = connection.execute(
+                "SELECT window_start, hits FROM rate_hits WHERE key = ?", (key,)
+            ).fetchone()
+            if row is None or now - row[0] >= window_s:
+                connection.execute(
+                    "INSERT INTO rate_hits(key, window_start, hits) VALUES (?, ?, 1) "
+                    "ON CONFLICT(key) DO UPDATE SET window_start = excluded.window_start, hits = 1",
+                    (key, now),
+                )
+                over = False
+            else:
+                hits = int(row[1]) + 1
+                connection.execute("UPDATE rate_hits SET hits = ? WHERE key = ?", (hits, key))
+                over = hits > limit
+            self._calls += 1
+            if self._calls % self._PRUNE_EVERY == 0:
+                connection.execute("DELETE FROM rate_hits WHERE ? - window_start > 3600", (now,))
+            connection.execute("COMMIT")
+        except Exception:
+            connection.execute("ROLLBACK")
+            raise
+        return over
+
+
 class MCPBridge:
     def __init__(self, root: Optional[str] = None, plane: Optional[ControlPlane] = None, *, auto_agents: bool = False):
         self.root = root or resolve_root()
@@ -499,6 +662,68 @@ class MCPBridge:
         # Production default is False: Managed Host workers claim jobs themselves.
         # auto_agents is a hermetic test seam only (see refresh_local_agents).
         self.auto_agents = auto_agents
+        # Set by serve() in worker processes (AUD-21 D7); a single process keeps these defaults.
+        self.worker_index = 0
+        self.worker_count = 1
+        self._shared_rate: Optional[SharedRateLimiter] = None
+        # AUD-21 D5: per-process call budget for endpoint (Agent queue) dispatches.
+        self.dispatch_budget = _dispatch_budget_from_env()
+        self.inflight = 0
+        self.busy_refused = 0
+        self._budget_lock = threading.Lock()
+
+    @contextlib.contextmanager
+    def _dispatch_slot(self, tool: str):
+        """Hold one dispatch slot for the whole call, or refuse with `_BusyError`.
+
+        Counted: only calls that reach the Agent job queue. A refusal happens before the
+        intent row and the enqueue, so it leaves no audit row and no job; it is only
+        counted and logged (first refusal, then every 100th; never with arguments).
+        """
+        with self._budget_lock:
+            if self.inflight >= self.dispatch_budget:
+                self.busy_refused += 1
+                refused = self.busy_refused
+                inflight = self.inflight
+                refuse = True
+            else:
+                self.inflight += 1
+                refuse = False
+        if refuse:
+            if refused == 1 or refused % _BUSY_LOG_EVERY == 0:
+                LOG.warning("mcp dispatch busy: refused=%d budget=%d inflight=%d tool=%s",
+                            refused, self.dispatch_budget, inflight, tool)
+            raise _BusyError()
+        try:
+            yield
+        finally:
+            with self._budget_lock:
+                self.inflight -= 1
+
+    def warm_up(self) -> None:
+        """Build lazily created state once, so the first real calls do not pay for it."""
+        try:
+            import drlink_mcp_full_control  # noqa: F401
+
+            with self.plane.request_scope():
+                v24.evaluate_ai_access_v24(self.plane, identity="", destination="", permission="")
+                self.plane.status()
+                self.canonical_resource()
+        except Exception:  # warm-up never decides anything and must not stop a worker
+            logging.getLogger(__name__).debug("warm-up skipped", exc_info=True)
+
+    def _full_control_runtime(self, full):
+        """The one runtime: in this process, or the shared one when workers are running."""
+        path = os.environ.get("DRLINK_MCP_FULLCONTROL_SOCKET", "")
+        with self._lock:
+            if path:
+                remote = getattr(self, "_remote_full", None)
+                if remote is None or remote.path != path:
+                    remote = self._remote_full = full.RemoteFullControlRuntime(path)
+                return remote
+            if not hasattr(self, "_native_full"):
+                self._native_full = full.FullControlRuntime()
+            return self._native_full
 
     def _native_public_url(self) -> Optional[str]:
         """Opt-in public identity for the separately deployed Native Server MCP.
@@ -959,10 +1184,29 @@ class MCPBridge:
             try:
                 result = self.call_tool(principal, name, args or {})
                 return 200, _jsonrpc_result(req_id, result)
+            except _DispatchedJobError as exc:
+                # After enqueue the command may have run: never invite a retry (D4).
+                cause = exc.__cause__ or exc
+                correlation_id = _log_internal_error(
+                    cause, tool=name, correlation_id=exc.correlation_id, job_id=exc.job_id
+                )
+                return 200, _jsonrpc_error(
+                    req_id, -32603, "internal error",
+                    {"correlation_id": correlation_id, "job_id": exc.job_id, "retryable": False},
+                )
+            except _BusyError:
+                # Refused before any audit row or job exists, so the caller may retry (D5).
+                return 200, _jsonrpc_error(
+                    req_id, -32001, "busy",
+                    {"retryable": True, "retry_after_ms": BUSY_RETRY_AFTER_MS},
+                )
             except ControlPlaneError as exc:
                 return 200, _jsonrpc_result(req_id, _text_result("DENY: %s" % exc, is_error=True))
-            except Exception:
-                return 200, _jsonrpc_error(req_id, -32603, "internal error")
+            except Exception as exc:
+                correlation_id = _log_internal_error(exc, tool=name)
+                return 200, _jsonrpc_error(
+                    req_id, -32603, "internal error", {"correlation_id": correlation_id}
+                )
         return 404, _jsonrpc_error(req_id, -32601, "Method not found")
 
     def _authorize(self, principal, endpoint: str, capability: str, operand=None) -> dict:
@@ -1007,10 +1251,7 @@ class MCPBridge:
                 raise full.FullControlDenied(argument_error)
             account = full.configured_account()
             owner = str(principal["id"] or "")
-            with self._lock:
-                if not hasattr(self, "_native_full"):
-                    self._native_full = full.FullControlRuntime()
-                runtime = self._native_full
+            runtime = self._full_control_runtime(full)
             operation = aliases.get(name, name)
             if name in job_tools:
                 operand = runtime.context(owner, str(arguments.get("job_id") or ""))
@@ -1258,27 +1499,53 @@ class MCPBridge:
         if decision.get("winner") and not patterns:
             patterns = list(decision["winner"].get("paths") or [])
         timeout = decision.get("exec_timeout") or 30
-        payload = self._dispatch_endpoint(
-            principal=principal,
-            client_id=client["id"],
-            endpoint_object_id=ep["id"],
-            capability=name,
-            arguments=arguments,
-            patterns=patterns,
-            timeout=int(timeout),
-        )
-        duration_ms = int((time.monotonic() - start) * 1000)
-        op_result = payload.get("result") or "ALLOW"
-        self.plane.record_ai_activity(
-            principal=principal["name"],
-            endpoint=endpoint,
-            capability=name,
-            result=op_result,
-            rule=self._rule_name(decision),
-            operand=operand,
-            duration_ms=duration_ms,
-        )
+        # Budget (AUD-21 D5): taken after authorization and availability, before the
+        # intent row; held until the completion audit has been attempted.
+        with self._dispatch_slot(name):
+            # Intent first (AUD-21 D4): if this row cannot be written the call fails
+            # closed here, before anything is enqueued.
+            correlation_id = _new_correlation_id()
+            self.plane.record_ai_activity(
+                principal=principal["name"],
+                endpoint=endpoint,
+                capability=name,
+                result="DISPATCHING",
+                rule=self._rule_name(decision),
+                operand=operand,
+                correlation_id=correlation_id,
+            )
+            job_id, payload = self._dispatch_endpoint(
+                principal=principal,
+                client_id=client["id"],
+                endpoint_object_id=ep["id"],
+                capability=name,
+                arguments=arguments,
+                patterns=patterns,
+                timeout=int(timeout),
+                correlation_id=correlation_id,
+            )
+            duration_ms = int((time.monotonic() - start) * 1000)
+            op_result = payload.get("result") or "ALLOW"
+            audit_failed = False
+            try:
+                self.plane.record_ai_activity(
+                    principal=principal["name"],
+                    endpoint=endpoint,
+                    capability=name,
+                    result=op_result,
+                    rule=self._rule_name(decision),
+                    operand=operand,
+                    duration_ms=duration_ms,
+                    correlation_id=correlation_id,
+                )
+            except Exception as exc:
+                # The command has run: a failed completion write never replaces its result.
+                _log_internal_error(exc, tool=name, correlation_id=correlation_id, job_id=job_id,
+                                    what="completion audit write failed")
+                audit_failed = True
         safe = dict(payload)
+        if audit_failed:
+            safe.update({"audit_status": "failed", "job_id": job_id, "retryable": False})
         if name not in ("read_file", "download_file"):
             safe.pop("content_b64", None)
         is_error = op_result not in ("ALLOW",)
@@ -1287,8 +1554,9 @@ class MCPBridge:
             return _structured_result(safe, text=json.dumps(safe, indent=2), is_error=is_error)
         return _text_result(json.dumps(safe, indent=2), is_error=is_error)
 
-    def _dispatch_endpoint(self, *, principal, client_id, endpoint_object_id, capability, arguments, patterns, timeout):
-        """Dispatch through the client AI agent job path, not a local MCP server."""
+    def _dispatch_endpoint(self, *, principal, client_id, endpoint_object_id, capability, arguments,
+                           patterns, timeout, correlation_id):
+        """Dispatch through the client AI agent job path; return ``(job_id, payload)``."""
         with self._lock:
             job_id = self.plane.enqueue_ai_job(
                 principal_id=principal["id"],
@@ -1298,7 +1566,16 @@ class MCPBridge:
                 arguments=arguments,
                 patterns=patterns,
                 timeout=timeout,
+                correlation_id=correlation_id,
             )
+        try:
+            return job_id, self._await_job_result(job_id, client_id, capability, arguments,
+                                                  patterns, timeout)
+        except Exception as exc:
+            raise _DispatchedJobError(job_id, correlation_id) from exc
+
+    def _await_job_result(self, job_id, client_id, capability, arguments, patterns, timeout):
+        """Wait for the Agent's result of an enqueued job (or time it out)."""
         if client_id in self._agents:
             wait_for = max(2.0, float(timeout) + 2.0)
         else:
@@ -1308,30 +1585,47 @@ class MCPBridge:
             if os.environ.get("DRLINK_TEST_ROOT") and os.environ.get("DRLINK_AI_TEST_LOCAL_EXEC") != "1":
                 wait_for = min(wait_for, 5.0)
         deadline = time.monotonic() + wait_for
-        while time.monotonic() < deadline:
-            with self._lock:
-                if job_id in self._job_results:
-                    return self._job_results.pop(job_id)
-            job = self.plane.get_ai_job(job_id)
-            if job and job.get("status") == "done":
+        watcher = get_watcher(self.plane.db_file)
+        # Wake only for THIS job reaching a terminal status, not for every
+        # commit in the Control DB (a herd of waits made 30 calls take seconds).
+        sub = watcher.subscribe("job", job_id)
+        try:
+            while time.monotonic() < deadline:
+                # Clear the signal BEFORE looking, so a completion that commits
+                # between the look and the wait is never missed (AUD-21 step 2, D3).
+                sub.clear()
                 with self._lock:
                     if job_id in self._job_results:
                         return self._job_results.pop(job_id)
-                consumed = self.plane.consume_ai_job_result(job_id)
-                if consumed is not None:
-                    return consumed
-            if job and job.get("status") in (
-                "timeout",
-                "cancelled",
-                "expired",
-                "recovery_required",
-            ):
-                result = (job.get("result") or {}) if isinstance(job.get("result"), dict) else {}
-                return {
-                    "result": str(job.get("status") or "TIMEOUT").upper(),
-                    "error": result.get("error") or "agent did not complete the job",
-                }
-            time.sleep(0.05)
+                job = self.plane.get_ai_job(job_id)
+                if job and job.get("status") == "done":
+                    with self._lock:
+                        if job_id in self._job_results:
+                            return self._job_results.pop(job_id)
+                    consumed = self.plane.consume_ai_job_result(job_id)
+                    if consumed is not None:
+                        return consumed
+                if job and job.get("status") in (
+                    "timeout",
+                    "cancelled",
+                    "expired",
+                    "recovery_required",
+                ):
+                    result = (job.get("result") or {}) if isinstance(job.get("result"), dict) else {}
+                    return {
+                        "result": str(job.get("status") or "TIMEOUT").upper(),
+                        "error": result.get("error") or "agent did not complete the job",
+                    }
+                remaining = deadline - time.monotonic()
+                if watcher.ready:
+                    # Wake on the completion commit; the bounded wait is the fallback
+                    # that rereads the database if a signal is ever missed.
+                    sub.wait(max(0.0, min(remaining, RESULT_WAIT_FALLBACK_SECONDS)))
+                else:
+                    # No change feed (in-memory or missing database): keep the short poll.
+                    time.sleep(min(0.05, max(0.0, remaining)))
+        finally:
+            sub.close()
         with self._lock:
             if job_id in self._job_results:
                 return self._job_results.pop(job_id)
@@ -1374,15 +1668,34 @@ class MCPBridge:
 
 class ThreadingHTTPServer(ThreadingMixIn, HTTPServer):
     daemon_threads = True
+    # Python's default of 5 resets bursts of simultaneous connects (AUD-21).
+    request_queue_size = 128
     allow_reuse_address = True
 
 
 def make_handler(bridge: MCPBridge):
+    def _scoped(method):
+        """Run one HTTP request on its own pooled SQLite connection (AUD-21)."""
+
+        @functools.wraps(method)
+        def wrapper(self, *args, **kwargs):
+            scope = getattr(bridge.plane, "request_scope", None)
+            with (scope() if scope is not None else contextlib.nullcontext()):
+                return method(self, *args, **kwargs)
+
+        return wrapper
+
     class Handler(BaseHTTPRequestHandler):
         protocol_version = "HTTP/1.1"
 
         def log_message(self, fmt, *args):
             return
+
+        def end_headers(self):
+            # Name the worker so operators and tests can tell which process answered.
+            if getattr(bridge, "worker_count", 1) > 1:
+                self.send_header("X-DRLink-Worker", str(bridge.worker_index))
+            super().end_headers()
 
         def _send(self, code, payload, extra_headers=None, raw=None):
             if raw is None:
@@ -1423,6 +1736,13 @@ def make_handler(bridge: MCPBridge):
             if source is None:
                 source = public_rate_source(self._client_addr(), self.headers)
             key = "%s:%s" % (bucket, source)
+            shared = getattr(bridge, "_shared_rate", None)
+            if shared is not None:
+                try:
+                    return shared.limited(key, limit=limit, window_s=window_s)
+                except Exception:
+                    logging.getLogger(__name__).warning(
+                        "shared rate limiter unavailable; this worker counts on its own")
             now = time.time()
             with bridge._lock:
                 hits = getattr(bridge, "_rate_hits", None)
@@ -1446,6 +1766,7 @@ def make_handler(bridge: MCPBridge):
         def _www_auth(self):
             return bridge.www_authenticate_value()
 
+        @_scoped
         def do_GET(self):
             if self._origin_denied():
                 return
@@ -1635,6 +1956,7 @@ def make_handler(bridge: MCPBridge):
                 return
             self._send(404, {"error": "not found"})
 
+        @_scoped
         def do_DELETE(self):
             # 2026-07-28 removed protocol-level sessions; DELETE is not a session
             # terminator. Answer 405 so official SDKs fail closed rather than hang.
@@ -1643,6 +1965,7 @@ def make_handler(bridge: MCPBridge):
             self.send_header("Content-Length", "0")
             self.end_headers()
 
+        @_scoped
         def do_OPTIONS(self):
             parsed = urlparse(self.path)
             if parsed.path.startswith("/.well-known/") or parsed.path.startswith("/oauth/") or parsed.path in (
@@ -1656,6 +1979,7 @@ def make_handler(bridge: MCPBridge):
             self.send_header("Content-Length", "0")
             self.end_headers()
 
+        @_scoped
         def do_POST(self):
             if self._origin_denied():
                 return
@@ -1764,8 +2088,16 @@ def make_handler(bridge: MCPBridge):
                     return
                 try:
                     if parsed.path.endswith("/claim"):
-                        with bridge._lock:
-                            jobs = bridge.plane.claim_ai_jobs(client_id, int(body.get("limit") or 4))
+                        limit = int(body.get("limit") or 4)
+                        wait_ms = clamp_claim_wait_ms(body.get("wait_ms"))
+                        if wait_ms:
+                            # Held claim (AUD-21 step 2): answer the moment a job is
+                            # queued for this host. It must not hold the Bridge lock
+                            # while it waits.
+                            jobs = bridge.plane.claim_ai_jobs_held(client_id, limit, wait_ms)
+                        else:
+                            with bridge._lock:
+                                jobs = bridge.plane.claim_ai_jobs(client_id, limit)
                         self._send(200, {"jobs": jobs})
                         return
                     full = body.get("result") or {}
@@ -1816,7 +2148,128 @@ def make_handler(bridge: MCPBridge):
     return Handler
 
 
-def serve(host=DEFAULT_LISTEN, port=DEFAULT_PORT, root=None):
+class _ReusePortServer(ThreadingHTTPServer):
+    """Lets several worker processes listen on one port; the kernel spreads new connections."""
+
+    allow_reuse_port = True
+
+
+def _clamp_workers(value) -> int:
+    try:
+        count = int(value)
+    except (TypeError, ValueError):
+        count = 1
+    return max(1, min(count, MAX_WORKERS))
+
+
+def _run_worker(host, port, root, index, count, rundir) -> None:
+    signal.signal(signal.SIGTERM, signal.SIG_DFL)
+    signal.signal(signal.SIGINT, signal.SIG_DFL)
+    bridge = MCPBridge(root=root, auto_agents=False)
+    bridge.listen_host = host
+    bridge.listen_port = int(port)
+    bridge.worker_index = index
+    bridge.worker_count = count
+    bridge._shared_rate = SharedRateLimiter(os.path.join(rundir, "rate.sqlite"))
+    bridge.warm_up()
+    _ReusePortServer((host, int(port)), make_handler(bridge)).serve_forever()
+
+
+def _run_full_control(path) -> None:
+    signal.signal(signal.SIGTERM, signal.SIG_DFL)
+    signal.signal(signal.SIGINT, signal.SIG_DFL)
+    import drlink_mcp_full_control as full
+
+    full.serve_full_control(path)
+    threading.Event().wait()
+
+
+def _supervise(host, port, root, count) -> None:
+    """Run ``count`` Bridge workers and the one full-control process; restart what dies.
+
+    Nothing below opens a database, a socket or a thread in this process before it forks,
+    so every child starts clean. SIGTERM/SIGINT stop the children and then this process.
+    """
+    rundir = tempfile.mkdtemp(prefix="drlink-mcp-")
+    os.chmod(rundir, 0o700)
+    full_control_path = os.path.join(rundir, "fullcontrol.sock")
+    os.environ["DRLINK_MCP_FULLCONTROL_SOCKET"] = full_control_path
+    resolved_root = root or resolve_root()
+    slots: dict = {}
+    started: dict = {}
+    state = {"stopping": False}
+
+    def spawn(slot: str) -> None:
+        pid = os.fork()
+        if pid == 0:
+            code = 0
+            try:
+                if slot == "full-control":
+                    _run_full_control(full_control_path)
+                else:
+                    _run_worker(host, port, resolved_root, int(slot), count, rundir)
+            except BaseException:
+                traceback.print_exc()
+                code = 1
+            finally:
+                os._exit(code)
+        slots[slot] = pid
+        started[slot] = time.monotonic()
+
+    def request_stop(_signum, _frame) -> None:
+        state["stopping"] = True
+
+    signal.signal(signal.SIGTERM, request_stop)
+    signal.signal(signal.SIGINT, request_stop)
+    try:
+        spawn("full-control")
+        for index in range(count):
+            spawn(str(index))
+        while not state["stopping"]:
+            try:
+                pid, _status = os.waitpid(-1, os.WNOHANG)
+            except ChildProcessError:
+                break
+            if pid == 0:
+                time.sleep(0.2)
+                continue
+            slot = next((name for name, child in slots.items() if child == pid), None)
+            if slot is None:
+                continue
+            # At most one restart per second per slot, so a worker that cannot start does not spin.
+            time.sleep(max(0.0, 1.0 - (time.monotonic() - started[slot])))
+            if not state["stopping"]:
+                spawn(slot)
+    finally:
+        for pid in list(slots.values()):
+            try:
+                os.kill(pid, signal.SIGTERM)
+            except OSError:
+                pass
+        deadline = time.monotonic() + 5.0
+        for pid in list(slots.values()):
+            while time.monotonic() < deadline:
+                try:
+                    done, _ = os.waitpid(pid, os.WNOHANG)
+                except ChildProcessError:
+                    break
+                if done:
+                    break
+                time.sleep(0.05)
+            else:
+                try:
+                    os.kill(pid, signal.SIGKILL)
+                    os.waitpid(pid, 0)
+                except OSError:
+                    pass
+        shutil.rmtree(rundir, ignore_errors=True)
+
+
+def serve(host=DEFAULT_LISTEN, port=DEFAULT_PORT, root=None, workers=None):
+    count = _clamp_workers(os.environ.get("DRLINK_MCP_WORKERS", "1") if workers is None else workers)
+    if count > 1:
+        _supervise(host, int(port), root, count)
+        return
     # Production bridge never starts Server-local Managed Host impersonation loops.
     bridge = MCPBridge(root=root, auto_agents=False)
     bridge.listen_host = host
@@ -1831,8 +2284,14 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description="Data Relay Link MCP Bridge")
     parser.add_argument("--listen", default=os.environ.get("DRLINK_MCP_LISTEN", DEFAULT_LISTEN))
     parser.add_argument("--port", type=int, default=int(os.environ.get("DRLINK_MCP_PORT", DEFAULT_PORT)))
+    parser.add_argument(
+        "--workers",
+        type=int,
+        default=_clamp_workers(os.environ.get("DRLINK_MCP_WORKERS", "1")),
+        help="Bridge worker processes sharing the port (1 = a single process, the default)",
+    )
     args = parser.parse_args(argv)
-    serve(args.listen, args.port)
+    serve(args.listen, args.port, workers=args.workers)
 
 
 if __name__ == "__main__":

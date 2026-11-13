@@ -75,6 +75,9 @@ def seed_tree(root: Path, retention_days: int | None) -> None:
         "token_file": "/etc/frp/server_token",
         "tls_ca_cert": "/etc/drlink/pki/ca.crt",
         "allocator_public_url": "https://example.test/enroll",
+        # Compact Zero-Touch requires an explicit public TLS bootstrap hostname
+        # (or a Private-CA IP plan) since 6f1302d7; the fixture opts in explicitly.
+        "bootstrap_hostname": "example.test",
         "client_installer_url": "https://example.test/dist/bootstrap-client.sh",
     }
     if retention_days is not None:

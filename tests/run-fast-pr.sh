@@ -113,6 +113,21 @@ python3 tests/test-mcp-server-full-control.py
 python3 tests/test-mcp-server-full-control-public.py
 python3 tests/test-mcp-full-control-rollout.py
 python3 tests/test-mcp-server-self.py
+python3 tests/test-mcp-bridge-internal-error-logging.py
+python3 tests/test-mcp-bridge-intent-audit.py
+python3 tests/test-mcp-bridge-job-metrics.py
+python3 tests/test-mcp-bridge-call-budget.py
+python3 tests/test-mcp-bridge-db-ownership.py
+python3 tests/test-db-change-watcher.py
+python3 tests/test-db-topic-wake.py
+python3 tests/test-held-claim-wake.py
+python3 tests/test-agent-held-claim.py
+python3 tests/test-mcp-bridge-held-claim.py
+python3 tests/test-mcp-bridge-workers.py
+python3 tests/test-ai-access-eval-equivalence.py
+python3 tests/test-ai-jobs-schema-once.py
+python3 tests/test-mcp-agent-dispatch-latency.py
+python3 tests/test-mcp-bridge-concurrent-calls.py
 python3 tests/test-mcp-public-tls-lifecycle.py \
   McpTlsLifecycleTests.test_stopped_frontend_does_not_block_private_ca_or_import_recovery \
   McpTlsLifecycleTests.test_http01_publication_still_denies_unavailable_frontend_worker

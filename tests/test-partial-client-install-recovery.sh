@@ -184,6 +184,98 @@ export FRP_CLIENT_TEST_ROOT="$DP1"
 [[ "$(frp_client_install_class)" == "complete" ]] || fail "FINAL_INSTALL_CLASS"
 pass "DP1_PARTIAL_AUTO_REPAIR"
 
+# --- DP2-DP4 repair must not hide a command that names a different Server ----
+write_allocator_ca() {
+  local tree="$1" key
+  mkdir -p "$tree/etc/drlink"
+  key="$(mktemp)"
+  openssl req -x509 -newkey rsa:2048 -nodes -days 1 -subj "/CN=partial-repair-fixture" \
+    -keyout "$key" -out "$tree/etc/drlink/allocator-ca.crt" >/dev/null 2>&1
+  rm -f "$key"
+}
+
+prepare_dp_remnant() {
+  local tree="$1"
+  write_state "$tree"
+  write_toml_identity "$tree"
+  write_frpc "$tree/usr/local/bin/frpc"
+  printf '#!/bin/sh\necho frp-client\n' >"$tree/usr/local/bin/frp-client"
+  chmod 0755 "$tree/usr/local/bin/frp-client"
+}
+
+run_repair_with_ca() {
+  # $1=tree $2=FRP_ALLOCATOR_CA_SHA256 value ("" leaves it unset); sets RUN_RC and RUN_PREFIX
+  local tree="$1" ca="$2"
+  RUN_PREFIX="$WORKDIR/$(basename "$tree")"
+  export FRP_CLIENT_TEST_ROOT="$tree"
+  export FRP_ZERO_TOUCH=1
+  export FRP_ALLOCATOR_URL='https://198.51.100.20:6099/enroll'
+  export FRP_BOOTSTRAP_TICKET='bt1.unused.ticket'
+  export FRP_CLIENT_HOOK_LOG="$RUN_PREFIX.hook"
+  : >"$FRP_CLIENT_HOOK_LOG"
+  if [[ -n "$ca" ]]; then
+    export FRP_ALLOCATOR_CA_SHA256="$ca"
+  else
+    unset FRP_ALLOCATOR_CA_SHA256
+  fi
+  set +e
+  frp_client_main >"$RUN_PREFIX.out" 2>"$RUN_PREFIX.err"
+  RUN_RC=$?
+  set -e
+  unset FRP_ZERO_TOUCH FRP_BOOTSTRAP_TICKET FRP_ALLOCATOR_CA_SHA256
+}
+
+DP2="$WORKDIR/dp2"
+prepare_dp_remnant "$DP2"
+write_allocator_ca "$DP2"
+OTHER_CA="$(printf 'a%.0s' $(seq 1 64))"
+KEY2_BEFORE="$(sha256sum "$DP2/etc/frp/client-identity.key" | awk '{print $1}')"
+TOML2_BEFORE="$(sha256sum "$DP2/etc/frp/frpc.toml" | awk '{print $1}')"
+STATE2_BEFORE="$(sha256sum "$DP2/etc/frp/client-state.json" | awk '{print $1}')"
+run_repair_with_ca "$DP2" "$OTHER_CA"
+[[ "$RUN_RC" -ne 0 ]] || fail "DP2_DIFFERENT_SERVER_REPAIR_MUST_REFUSE"
+grep -qi 'different Data Relay Link Server' "$RUN_PREFIX.err" || fail "DP2 mismatch wording"
+if grep -q 'Repair complete' "$RUN_PREFIX.out" "$RUN_PREFIX.err"; then
+  fail "DP2 reported repair success for a different Server"
+fi
+grep -q 'RECOVERY_REQUIRED' "$RUN_PREFIX.out" "$RUN_PREFIX.err" || fail "DP2 recovery class"
+grep -q 'Bootstrap Ticket was not used' "$RUN_PREFIX.err" || fail "DP2 ticket-not-used wording"
+[[ ! -e "$DP2/usr/local/bin/drlink" ]] || fail "DP2 mutated the install tree"
+[[ "$(sha256sum "$DP2/etc/frp/client-identity.key" | awk '{print $1}')" == "$KEY2_BEFORE" ]] \
+  || fail "DP2 identity changed"
+[[ "$(sha256sum "$DP2/etc/frp/frpc.toml" | awk '{print $1}')" == "$TOML2_BEFORE" ]] \
+  || fail "DP2 toml changed"
+[[ "$(sha256sum "$DP2/etc/frp/client-state.json" | awk '{print $1}')" == "$STATE2_BEFORE" ]] \
+  || fail "DP2 state changed"
+if grep -q bootstrap_redeem "$RUN_PREFIX.hook"; then
+  fail "DP2 redeemed ticket"
+fi
+pass "DP2_DIFFERENT_SERVER_REPAIR_REFUSED"
+
+# Control: the same Server (fingerprint written in a different case) still repairs.
+DP3="$WORKDIR/dp3"
+prepare_dp_remnant "$DP3"
+write_allocator_ca "$DP3"
+CA3="$(openssl x509 -in "$DP3/etc/drlink/allocator-ca.crt" -outform DER | sha256sum | awk '{print $1}')"
+run_repair_with_ca "$DP3" "$(printf '%s' "$CA3" | tr 'a-f' 'A-F')"
+[[ "$RUN_RC" -eq 0 ]] || { cat "$RUN_PREFIX.out" "$RUN_PREFIX.err" >&2; fail "DP3_SAME_SERVER_REPAIR"; }
+grep -q 'Repair complete' "$RUN_PREFIX.err" || fail "DP3 repair wording"
+[[ -x "$DP3/usr/local/bin/drlink" ]] || fail "DP3 CLI not restored"
+pass "DP3_SAME_SERVER_REPAIR_STILL_WORKS"
+
+# Boundary: without an installed CA or without a supplied fingerprint nothing can be
+# compared, so the established repair behavior is unchanged.
+DP4="$WORKDIR/dp4"
+prepare_dp_remnant "$DP4"
+run_repair_with_ca "$DP4" "$OTHER_CA"
+[[ "$RUN_RC" -eq 0 ]] || { cat "$RUN_PREFIX.out" "$RUN_PREFIX.err" >&2; fail "DP4_NO_INSTALLED_CA_REPAIR"; }
+DP5="$WORKDIR/dp5"
+prepare_dp_remnant "$DP5"
+write_allocator_ca "$DP5"
+run_repair_with_ca "$DP5" ""
+[[ "$RUN_RC" -eq 0 ]] || { cat "$RUN_PREFIX.out" "$RUN_PREFIX.err" >&2; fail "DP5_NO_INPUT_FINGERPRINT_REPAIR"; }
+pass "DP4_DP5_UNCOMPARABLE_INPUT_KEEPS_REPAIR"
+
 # --- Complete install protection -------------------------------------------
 COMPLETE="$WORKDIR/complete"
 write_state "$COMPLETE"

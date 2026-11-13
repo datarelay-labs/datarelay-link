@@ -589,6 +589,7 @@ CREATE TABLE ai_activity (
   duration_ms INTEGER,
   revision INTEGER,
   operand_summary TEXT,
+  correlation_id TEXT,
   FOREIGN KEY (principal_id) REFERENCES ai_principals(id)
 );
 
@@ -607,7 +608,12 @@ CREATE TABLE ai_jobs (
   deadline_at TEXT,
   claim_token TEXT,
   attempt_id TEXT,
-  claimed_at TEXT
+  claimed_at TEXT,
+  correlation_id TEXT,
+  enqueued_ms INTEGER,
+  queue_ms INTEGER,
+  run_ms INTEGER,
+  total_ms INTEGER
 );
 
 CREATE INDEX IF NOT EXISTS idx_ai_jobs_claim
@@ -813,17 +819,27 @@ def _ai_job_client_id_from_payload(payload_json: object) -> Optional[str]:
     return value or None
 
 
-def ensure_ai_jobs_safety_schema(conn: sqlite3.Connection) -> None:
-    """Additive AI job fairness/attempt columns without bumping SCHEMA_VERSION."""
+def ensure_ai_jobs_safety_schema(conn: sqlite3.Connection) -> bool:
+    """Additive AI job fairness/attempt columns without bumping SCHEMA_VERSION.
+
+    Returns True once the ai_jobs table exists and carries the full schema,
+    False when there is no ai_jobs table yet (nothing was applied).
+    """
     cols = {str(row[1]) for row in conn.execute("PRAGMA table_info(ai_jobs)")}
     if not cols:
-        return
+        return False
     for name, ddl in (
         ("client_id", "ALTER TABLE ai_jobs ADD COLUMN client_id TEXT"),
         ("deadline_at", "ALTER TABLE ai_jobs ADD COLUMN deadline_at TEXT"),
         ("claim_token", "ALTER TABLE ai_jobs ADD COLUMN claim_token TEXT"),
         ("attempt_id", "ALTER TABLE ai_jobs ADD COLUMN attempt_id TEXT"),
         ("claimed_at", "ALTER TABLE ai_jobs ADD COLUMN claimed_at TEXT"),
+        # Per-job latency (AUD-21 D6): epoch ms at enqueue, then the three spans.
+        ("correlation_id", "ALTER TABLE ai_jobs ADD COLUMN correlation_id TEXT"),
+        ("enqueued_ms", "ALTER TABLE ai_jobs ADD COLUMN enqueued_ms INTEGER"),
+        ("queue_ms", "ALTER TABLE ai_jobs ADD COLUMN queue_ms INTEGER"),
+        ("run_ms", "ALTER TABLE ai_jobs ADD COLUMN run_ms INTEGER"),
+        ("total_ms", "ALTER TABLE ai_jobs ADD COLUMN total_ms INTEGER"),
     ):
         if name not in cols:
             conn.execute(ddl)
@@ -850,6 +866,55 @@ def ensure_ai_jobs_safety_schema(conn: sqlite3.Connection) -> None:
         "CREATE INDEX IF NOT EXISTS idx_ai_jobs_claim "
         "ON ai_jobs(status, client_id, created_at)"
     )
+    return True
+
+
+class MarkableConnection(sqlite3.Connection):
+    """sqlite3.Connection that can carry per-connection marks.
+
+    The stock class has no instance dictionary, so nothing can be attached to
+    it. A mark lives exactly as long as the connection does: a new connection
+    (pool refill, database replaced, restore) starts without one.
+    """
+
+
+_AI_JOBS_SCHEMA_MARK = "_drlink_ai_jobs_schema_cookie"
+
+
+def _schema_cookie(conn) -> Optional[int]:
+    """SQLite schema cookie: changes whenever the database schema changes."""
+    try:
+        row = conn.execute("PRAGMA schema_version").fetchone()
+    except sqlite3.Error:
+        return None
+    return int(row[0]) if row is not None else None
+
+
+def ensure_ai_jobs_safety_schema_once(conn) -> None:
+    """Run ``ensure_ai_jobs_safety_schema`` unless this connection already did.
+
+    claim/enqueue/complete call this on every request; re-inspecting an
+    unchanged schema each time was a measurable share of Bridge CPU (AUD-21).
+    The connection is marked only after a complete, committed pass and the
+    mark records the schema cookie, so it never outlives a schema change. It
+    stays unmarked (full check every time) when the table is missing, a
+    transaction is open (the DDL could still be rolled back), or the
+    connection cannot carry a mark (stock sqlite3.Connection, test doubles).
+    """
+    mark = getattr(conn, _AI_JOBS_SCHEMA_MARK, None)
+    if mark is not None and _schema_cookie(conn) == mark:
+        return
+    if not ensure_ai_jobs_safety_schema(conn):
+        return
+    if getattr(conn, "in_transaction", True):
+        return
+    cookie = _schema_cookie(conn)
+    if cookie is None:
+        return
+    try:
+        setattr(conn, _AI_JOBS_SCHEMA_MARK, cookie)
+    except AttributeError:
+        pass
 
 
 def ensure_ai_auth_schema(conn: sqlite3.Connection) -> None:
@@ -881,6 +946,17 @@ def ensure_ai_auth_schema(conn: sqlite3.Connection) -> None:
     ensure_oauth_pending_completion_schema(conn)
     ensure_enrollment_plans_schema(conn)
     ensure_ai_jobs_safety_schema(conn)
+    ensure_ai_activity_correlation_schema(conn)
+
+
+def ensure_ai_activity_correlation_schema(conn: sqlite3.Connection) -> None:
+    """Additive ai_activity.correlation_id (AUD-21 D4) without SCHEMA_VERSION bump.
+
+    The intent row and the completion row of one dispatched call share it.
+    """
+    cols = {str(row[1]) for row in conn.execute("PRAGMA table_info(ai_activity)")}
+    if cols and "correlation_id" not in cols:
+        conn.execute("ALTER TABLE ai_activity ADD COLUMN correlation_id TEXT")
 
 
 def ensure_oauth_pending_completion_schema(conn: sqlite3.Connection) -> None:
@@ -1024,6 +1100,36 @@ def initialize(conn: sqlite3.Connection) -> None:
         ensure_ai_auth_schema(conn)
         return
     raise ControlPlaneError("Unknown control DB schema %s" % found)
+
+
+def connect_worker(path: Optional[Path] = None, root: Optional[str] = None) -> sqlite3.Connection:
+    """Open a lightweight pooled connection to an already initialized Control DB.
+
+    Unlike connect() this never changes persistent database state (no journal_mode
+    or application_id write) and does no schema inspection, so opening one costs
+    about 1.7 ms instead of about 4 ms and takes no write lock. Settings that are
+    per connection and matter for safety are applied every time.
+    """
+    target = Path(path) if path else db_path(root)
+    if not target.exists():
+        raise ControlPlaneError("Control DB does not exist: %s" % target)
+    conn = sqlite3.connect(
+        "file:%s" % target,
+        uri=True,
+        isolation_level=None,
+        timeout=BUSY_TIMEOUT_MS / 1000.0,
+        check_same_thread=False,
+        factory=MarkableConnection,
+    )
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA foreign_keys = ON")
+    conn.execute("PRAGMA synchronous = FULL")
+    conn.execute("PRAGMA busy_timeout = %s" % BUSY_TIMEOUT_MS)
+    try:
+        conn.execute("PRAGMA trusted_schema = OFF")
+    except sqlite3.Error:
+        pass
+    return conn
 
 
 def open_control_db(root: Optional[str] = None, *, create: bool = True) -> sqlite3.Connection:

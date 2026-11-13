@@ -149,6 +149,12 @@ retry with a fresh Server-issued command. Keys alone do not constitute a
 partial installed Agent. Committed configuration/state, installed CLI or
 service definitions still use the guarded partial-install recovery path;
 pending redeemed enrollment retains its existing crash-safe resume contract.
+That recovery restores software for the Server the Agent is already enrolled
+to. When a supplied command carries a Server CA fingerprint that differs from
+the installed allocator CA, recovery is refused with `RECOVERY_REQUIRED`: the
+Bootstrap Ticket is not used and identity and configuration are unchanged.
+Without an installed CA or a usable supplied fingerprint nothing can be
+compared and recovery proceeds as before.
 
 Runtime policy readers reopen the canonical database when restore replaces its
 file identity. Agent activation requires connection and proxy-success evidence

@@ -20,6 +20,9 @@ import pwd
 import secrets
 import select
 import signal
+import socket
+import socketserver
+import struct
 import subprocess
 import sys
 import threading
@@ -417,3 +420,134 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+
+
+# --- One runtime for several Bridge worker processes (AUD-21 D7) ------------------------------
+#
+# The jobs above are OS processes, timers and threads of ONE Bridge process, so a job started by
+# worker A cannot be polled by worker B. With several workers the runtime lives in one extra
+# process and the workers reach it over a private Unix socket. The worker still evaluates AI
+# Access for every call; the runtime still checks job ownership itself. Same methods, same
+# arguments, same FullControlDenied.
+
+_REMOTE_METHODS = frozenset({"context", "start", "poll", "send", "stop"})
+_IPC_MAX_BYTES = 4 * 1024 * 1024
+
+
+def _peer_is_service_user(connection: socket.socket) -> bool:
+    try:
+        creds = connection.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, struct.calcsize("3i"))
+        _pid, uid, _gid = struct.unpack("3i", creds)
+    except (OSError, AttributeError, struct.error):
+        return False
+    return uid == os.geteuid()
+
+
+class _FullControlHandler(socketserver.StreamRequestHandler):
+    def _reply(self, message: dict) -> None:
+        try:
+            self.wfile.write(json.dumps(message).encode("utf-8") + b"\n")
+        except OSError:
+            pass
+
+    def handle(self) -> None:
+        try:
+            if not _peer_is_service_user(self.request):
+                raise FullControlDenied("Peer is not the Bridge service account")
+            line = self.rfile.readline(_IPC_MAX_BYTES + 1)
+            if not line or len(line) > _IPC_MAX_BYTES:
+                raise FullControlDenied("Invalid full-control request")
+            request = json.loads(line.decode("utf-8"))
+            method = request.get("method")
+            if method not in _REMOTE_METHODS:
+                raise FullControlDenied("Unknown full-control method")
+            args = request.get("args") or []
+            kwargs = request.get("kwargs") or {}
+            if not isinstance(args, list) or not isinstance(kwargs, dict):
+                raise FullControlDenied("Invalid full-control request")
+            result = getattr(self.server.runtime, method)(*args, **kwargs)
+            self._reply({"result": result})
+        except FullControlDenied as exc:
+            self._reply({"error": {"message": str(exc)}})
+        except Exception:
+            self._reply({"error": {"message": "Native full-control operation failed"}})
+
+
+class _FullControlServer(socketserver.ThreadingMixIn, socketserver.UnixStreamServer):
+    daemon_threads = True
+    request_queue_size = 64
+
+
+def serve_full_control(path: str, runtime: "FullControlRuntime | None" = None) -> _FullControlServer:
+    """Serve ``runtime`` on a private Unix socket in a background thread; return the server."""
+    directory = os.path.dirname(os.path.abspath(path))
+    info = os.stat(directory)
+    if info.st_uid != os.geteuid() or info.st_mode & 0o077:
+        raise FullControlDenied("The full-control socket directory must be private")
+    if os.path.lexists(path):
+        os.unlink(path)
+    previous = os.umask(0o177)
+    try:
+        server = _FullControlServer(path, _FullControlHandler)
+    finally:
+        os.umask(previous)
+    os.chmod(path, 0o600)
+    server.runtime = runtime if runtime is not None else FullControlRuntime()
+    thread = threading.Thread(target=server.serve_forever, name="drlink-full-control", daemon=True)
+    thread.start()
+    return server
+
+
+class RemoteFullControlRuntime:
+    """Client side of serve_full_control(); a drop-in for FullControlRuntime in a worker."""
+
+    def __init__(self, path: str, *, timeout: float = 30.0):
+        self.path = path
+        self.timeout = timeout
+
+    def _call(self, method: str, *args: Any, **kwargs: Any) -> Any:
+        payload = json.dumps({"method": method, "args": list(args), "kwargs": kwargs}).encode("utf-8") + b"\n"
+        try:
+            with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as connection:
+                connection.settimeout(self.timeout)
+                connection.connect(self.path)
+                connection.sendall(payload)
+                chunks = []
+                size = 0
+                while True:
+                    chunk = connection.recv(65536)
+                    if not chunk:
+                        break
+                    chunks.append(chunk)
+                    size += len(chunk)
+                    if chunk.endswith(b"\n") or size > _IPC_MAX_BYTES:
+                        break
+            reply = json.loads(b"".join(chunks).decode("utf-8"))
+        except (OSError, ValueError):
+            raise FullControlDenied("Native full-control service is unavailable") from None
+        if not isinstance(reply, dict):
+            raise FullControlDenied("Native full-control service is unavailable")
+        error = reply.get("error")
+        if error:
+            raise FullControlDenied(str(error.get("message") or "Native full-control operation failed"))
+        return reply.get("result")
+
+    def context(self, owner: str, identifier: str) -> str:
+        return self._call("context", owner, identifier)
+
+    def start(self, owner: str, args: dict, patterns: list, *, git: bool = False) -> dict:
+        return self._call("start", owner, args, patterns, git=git)
+
+    def poll(self, owner: str, identifier: str, *, stdout_cursor: int = 0,
+             stderr_cursor: int = 0, wait_ms: int = 0) -> dict:
+        return self._call("poll", owner, identifier, stdout_cursor=stdout_cursor,
+                          stderr_cursor=stderr_cursor, wait_ms=wait_ms)
+
+    def send(self, owner: str, identifier: str, data: str, *, eof: bool = False) -> dict:
+        return self._call("send", owner, identifier, data, eof=eof)
+
+    def stop(self, owner: str, identifier: str) -> dict:
+        return self._call("stop", owner, identifier)
+
+    def close(self) -> None:
+        return None

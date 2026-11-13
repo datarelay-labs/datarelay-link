@@ -174,12 +174,12 @@ def private_ca_ip_linux_command(allocator_url, ca_sha256, handle):
     url = short_url_for_ticket(authority, handle)
     inner = (
         "set -euo pipefail;umask 077;d=$(mktemp -d);trap 'rm -rf \"$d\"' EXIT;"
-        "printf 'GET /ca.crt HTTP/1.0\\r\\nHost: %s\\r\\nConnection: close\\r\\n\\r\\n'|"
+        # Keep OpenSSL's unauthenticated public-CA retrieval path: Linux
+        # enrollment never uses --insecure, even for the CA-only request.
+        # HTTP/1.0 closes by default; X509 parsing normalizes the sole pinned CA.
+        "printf 'GET /ca.crt HTTP/1.0\\r\\nHost: %s\\r\\n\\r\\n'|"
         "openssl s_client -quiet -connect %s:%s 2>/dev/null|"
-        # A peer may omit TLS close_notify after sending its complete public
-        # CA PEM. The untrusted read alone can ignore that socket-close error;
-        # subsequent DER parsing + exact fingerprint and strict TLS cannot.
-        "sed -n '/^-----BEGIN CERTIFICATE-----/,/^-----END CERTIFICATE-----/p' >\"$d/ca\" || :;"
+        "sed -n '/BEGIN CERTIFICATE/,/END CERTIFICATE/p' >\"$d/ca\" || :;"
         "test \"$(openssl x509 -in \"$d/ca\" -outform DER|openssl dgst -sha256|awk '{print $NF}')\" = %s;"
         "openssl x509 -in \"$d/ca\" -out \"$d/trust\";"
         "curl -fsSL --max-redirs 0 --proto '=https' --tlsv1.2 --cacert \"$d/trust\" %s -o \"$d/stage1\";"
@@ -213,15 +213,15 @@ def private_ca_ip_windows_command(allocator_url, ca_sha256, stage1_sha256, handl
         "try{& curl.exe -fsSL --max-redirs 0 --insecure -o $ca 'https://%s/ca.crt';"
         "if($LASTEXITCODE){throw 'public CA retrieval failed'};"
         "$cert=New-Object Security.Cryptography.X509Certificates.X509Certificate2($ca);"
-        "$fp=[BitConverter]::ToString([Security.Cryptography.SHA256]::Create().ComputeHash($cert.RawData)).Replace('-','').ToLowerInvariant();"
+        "$fp=[BitConverter]::ToString([Security.Cryptography.SHA256]::Create().ComputeHash($cert.RawData)).Replace('-','');"
         "if($fp -ne '%s'){throw 'CA fingerprint mismatch'};"
-        "$pem='-----BEGIN CERTIFICATE-----'+[Environment]::NewLine+"
-        "[Convert]::ToBase64String($cert.RawData,[Base64FormattingOptions]::InsertLineBreaks)+"
-        "[Environment]::NewLine+'-----END CERTIFICATE-----'+[Environment]::NewLine;"
+        '$pem="-----BEGIN CERTIFICATE-----`n"+'
+        '[Convert]::ToBase64String($cert.RawData,[Base64FormattingOptions]::InsertLineBreaks)+'
+        '"`n-----END CERTIFICATE-----`n";'
         "[IO.File]::WriteAllText($ca,$pem);"
         "& curl.exe -fsSL --max-redirs 0 --proto '=https' --cacert $ca -o $st '%s';"
         "if($LASTEXITCODE){throw 'verified stage-1 fetch failed'};"
-        "if((Get-FileHash -Algorithm SHA256 -LiteralPath $st).Hash.ToLowerInvariant() -ne '%s'){throw 'stage-1 hash mismatch'};"
+        "if((Get-FileHash -LiteralPath $st).Hash -ne '%s'){throw 'stage-1 hash mismatch'};"
         "& powershell.exe -NoProfile -ExecutionPolicy Bypass -File $st;"
         "$rc=$LASTEXITCODE;if($rc -ne 0){exit $rc}"
         "}finally{Remove-Item -LiteralPath $ca,$st -Force -ErrorAction SilentlyContinue}"

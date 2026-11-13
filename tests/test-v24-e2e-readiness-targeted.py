@@ -35,11 +35,12 @@ class AgentStaleAckTests(unittest.TestCase):
             "CREATE TABLE agent_remote_services ("
             "name TEXT PRIMARY KEY, status TEXT, reason TEXT, runtime_verified INTEGER, "
             "pending_allocation INTEGER, endpoint_port INTEGER, delete_pending INTEGER, "
-            "enabled INTEGER, updated_at TEXT)"
+            "enabled INTEGER, updated_at TEXT, "
+            "enrollment_seed INTEGER NOT NULL DEFAULT 0)"
         )
         self.db.execute(
             "INSERT INTO agent_remote_services VALUES ("
-            "'owned-service','DEGRADED','Runtime activation pending.',0,1,NULL,0,1,'before')"
+            "'owned-service','DEGRADED','Runtime activation pending.',0,1,NULL,0,1,'before',0)"
         )
         self.plane = SimpleNamespace(conn=self.db, root="/invalid-fixture", _batch_mode=False)
 

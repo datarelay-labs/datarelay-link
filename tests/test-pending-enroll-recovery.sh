@@ -149,7 +149,7 @@ ln -sfn "$ALLOC_ROOT/server_token" "$LIVE_TREE/etc/frp/server_token"
 issue_ticket() {
   local note="$1"
   FRP_DEPLOY_TEST_ROOT="$LIVE_TREE" python3 "$ROOT/tools/frp-create-client" \
-    --one-line --ssh --ssh-user "$SSH_USER" --note "$note"
+    --one-line --long-bootstrap --ssh --ssh-user "$SSH_USER" --note "$note"
 }
 
 run_client() {

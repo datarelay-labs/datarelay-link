@@ -571,6 +571,37 @@ frp_client_partial_recovery_guidance() {
   echo "Do not invent a new Enrollment Code for a reserved partial Agent install." >&2
 }
 
+# Repair restores software for the Server this Agent is already enrolled to. When
+# the command names a Server CA that differs from the installed allocator CA, it
+# was issued by another Server: repair must not report success for it. Without an
+# installed CA or a usable supplied fingerprint nothing can be compared and the
+# established repair behavior is unchanged.
+frp_client_repair_server_matches_input() {
+  local expected actual dest
+  expected="${FRP_ALLOCATOR_CA_SHA256:-}"
+  [[ -n "$expected" ]] || return 0
+  dest="$(frp_allocator_ca_path)"
+  [[ -f "$dest" ]] || return 0
+  expected="$(frp_normalize_ca_fingerprint "$expected")" || return 0
+  actual="$(frp_ca_fingerprint_file "$dest" 2>/dev/null)" || return 0
+  [[ "$actual" == "$expected" ]]
+}
+
+frp_client_repair_server_mismatch_guidance() {
+  echo "ERROR: this host is already enrolled to a different Data Relay Link Server." >&2
+  echo "The Server CA fingerprint in this command does not match the one installed on this Agent." >&2
+  echo "Nothing was changed. This Agent's identity and configuration were preserved." >&2
+  if frp_zero_touch_active; then
+    echo "The Bootstrap Ticket was not used." >&2
+  fi
+  echo "To keep the current Server, do not run a command issued by another Server." >&2
+  if [[ -x "$(frp_client_path /usr/local/sbin/uninstall-client.sh)" ]] \
+    || [[ -x "$(frp_client_path /usr/local/bin/uninstall-client.sh)" ]]; then
+    echo "To enroll this host to the Server that issued this command, uninstall locally," >&2
+    echo "then run the command again." >&2
+  fi
+}
+
 frp_client_existing_install_message() {
   if frp_zero_touch_active; then
     echo "This Agent is already installed." >&2
@@ -663,6 +694,11 @@ frp_client_main() {
       && [[ "$FRP_RESUME_PENDING" != "1" ]] \
       && [[ "$FRP_REPLACE_PENDING" != "1" ]]; then
     if frp_client_partial_is_safe_to_repair; then
+      if ! frp_client_repair_server_matches_input; then
+        frp_client_repair_server_mismatch_guidance
+        frp_emit_failure_class RECOVERY_REQUIRED
+        return 1
+      fi
       frp_client_repair_partial_install "${_FRP_INSTALL_CLIENT_DIR}" || return 1
       return 0
     fi

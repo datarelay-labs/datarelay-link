@@ -6,9 +6,11 @@ SQLite is the SSOT. Runtime artifacts under /var/lib/drlink/runtime/ are derived
 from __future__ import annotations
 
 import base64
+import contextlib
 import hashlib
 import ipaddress
 import json
+import logging
 import os
 import re
 import secrets
@@ -29,8 +31,9 @@ from drlink_control_db import (
     ControlPlaneError,
     DatabaseCorruptError,
     SchemaTooNewError,
+    connect_worker,
     db_path,
-    ensure_ai_jobs_safety_schema,
+    ensure_ai_jobs_safety_schema_once,
     integrity_check,
     open_control_db,
     open_control_db_readonly,
@@ -133,6 +136,23 @@ MANAGED_HOST_LIVENESS_SECONDS = 120
 # Persist liveness well inside the TTL so claim polls do not rewrite the row
 # on every poll. 30s is safely inside the 120s freshness bound.
 MANAGED_HOST_LIVENESS_REFRESH_SECONDS = 30
+# Held claim (AUD-21 step 2): an Agent may ask the Server to hold an empty claim
+# for up to this long and answer the moment a job is queued for that host. It
+# fits inside MANAGED_HOST_LIVENESS_SECONDS (120 s) and a front end's default
+# 60 s read timeout.
+MAX_CLAIM_WAIT_MS = 25000
+# A held claim re-reads the database at least this often even if no change
+# signal arrives, so a missed signal costs latency, never a lost job.
+CLAIM_HOLD_FALLBACK_POLL_SECONDS = 1.0
+
+
+def clamp_claim_wait_ms(value: Any) -> int:
+    """Return a usable ``wait_ms``: an integer in [0, MAX_CLAIM_WAIT_MS]."""
+    try:
+        number = int(value)
+    except (TypeError, ValueError):
+        return 0
+    return max(0, min(number, MAX_CLAIM_WAIT_MS))
 # Independent Agent lifecycle heartbeat. This is transport/product presence,
 # not AI executor activity; macOS and other Agents without an AI worker use it.
 AGENT_HEARTBEAT_SECONDS = 120
@@ -158,6 +178,11 @@ class ConfirmationRequired(ControlPlaneError):
 
 class ConcurrencyError(ControlPlaneError):
     pass
+
+
+def _epoch_ms() -> int:
+    """Wall-clock milliseconds; comparable across the Bridge and allocator processes."""
+    return int(time.time() * 1000)
 
 
 def _new_id(prefix: str) -> str:
@@ -352,7 +377,13 @@ def coherent_read(function):
     return read
 
 
+LOG = logging.getLogger("drlink.control_plane")
+
+
 class ControlPlane:
+    # Idle pooled request connections kept for reuse (opening one costs ~1.7 ms).
+    WORKER_POOL_IDLE_MAX = 32
+
     def __init__(
         self,
         root: Optional[str] = None,
@@ -364,6 +395,14 @@ class ControlPlane:
         self.db_file = db_path(root)
         self.runtime = runtime_dir(root)
         self._read_only = bool(read_only and conn is None)
+        # A caller-supplied connection (doctor, support bundle, in-memory preview)
+        # is the only connection this plane may use. Pooled request connections
+        # apply only to planes that opened the on-disk Control DB themselves.
+        self._injected_conn = conn is not None
+        self._tls = threading.local()
+        self._worker_pool: list = []
+        self._worker_pool_lock = threading.Lock()
+        self._worker_generation = 0
         self.conn = conn or (
             open_control_db_readonly(root) if self._read_only else open_control_db(root)
         )
@@ -377,12 +416,122 @@ class ControlPlane:
         # reverse if the local transaction rolls back. Not a distributed txn.
         self._agent_mgmt_side_effects: list = []
 
+    # --- connection ownership ---------------------------------------------
+    # One sqlite3 connection must never be used by two threads at once: that
+    # produced SQLITE_MISUSE and interleaved cursors under concurrent MCP calls
+    # (AUD-21). `conn` resolves to the calling thread's request-scoped connection
+    # when inside request_scope(), otherwise to the primary connection, so the
+    # existing `plane.conn` call sites keep working unchanged.
+    @property
+    def conn(self):
+        scoped = getattr(self.__dict__.get("_tls"), "conn", None)
+        if scoped is not None:
+            return scoped
+        return self.__dict__.get("_primary_conn")
+
+    @conn.setter
+    def conn(self, value) -> None:
+        self.__dict__["_primary_conn"] = value
+
+    @staticmethod
+    def _close_quietly(conn) -> None:
+        if conn is None:
+            return
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+    def _open_worker_conn(self):
+        if getattr(self, "_read_only", False):
+            return open_control_db_readonly(self.root)
+        return connect_worker(root=self.root)
+
+    def _borrow_worker_conn(self):
+        with self._worker_pool_lock:
+            generation = self._worker_generation
+            while self._worker_pool:
+                conn, conn_generation = self._worker_pool.pop()
+                if conn_generation == generation:
+                    return conn, generation
+                self._close_quietly(conn)
+        return self._open_worker_conn(), generation
+
+    def _return_worker_conn(self, conn, generation) -> None:
+        keep = True
+        try:
+            if conn.in_transaction:
+                # Work left open by a request must not leak to the next borrower.
+                LOG.warning("request ended with an open transaction; rolled back")
+                conn.execute("ROLLBACK")
+        except sqlite3.Error:
+            keep = False
+        with self._worker_pool_lock:
+            if (
+                keep
+                and generation == self._worker_generation
+                and len(self._worker_pool) < self.WORKER_POOL_IDLE_MAX
+            ):
+                self._worker_pool.append((conn, generation))
+                return
+        self._close_quietly(conn)
+
+    def _borrow_probe_conn(self):
+        """A connection for a held claim's wake-up probe: pooled, or private when it cannot be.
+
+        A plane built on a caller-supplied or read-only connection has no request pool, so it
+        keeps opening a private connection (``generation`` None marks that case).
+        """
+        if self.__dict__.get("_injected_conn") or getattr(self, "_read_only", False):
+            return connect_worker(path=self.db_file), None
+        return self._borrow_worker_conn()
+
+    def _return_probe_conn(self, conn, generation) -> None:
+        if generation is None:
+            self._close_quietly(conn)
+        else:
+            self._return_worker_conn(conn, generation)
+
+    def _invalidate_worker_pool(self) -> None:
+        """Drop idle pooled connections (database replaced, or plane closing)."""
+        with self._worker_pool_lock:
+            self._worker_generation += 1
+            stale, self._worker_pool = self._worker_pool, []
+        for conn, _generation in stale:
+            self._close_quietly(conn)
+
+    @contextlib.contextmanager
+    def request_scope(self):
+        """Lend the calling thread a pooled connection for one request.
+
+        No-op for a plane built on a caller-supplied connection and when this
+        thread is already inside a scope.
+        """
+        tls = self._tls
+        if self.__dict__.get("_injected_conn") or getattr(tls, "conn", None) is not None:
+            yield self
+            return
+        conn, generation = self._borrow_worker_conn()
+        tls.conn = conn
+        tls.generation = generation
+        try:
+            yield self
+        finally:
+            # _ensure_live_conn may have swapped the connection mid-request.
+            conn_now = getattr(tls, "conn", None) or conn
+            generation_now = getattr(tls, "generation", generation)
+            tls.conn = None
+            tls.generation = None
+            self._return_worker_conn(conn_now, generation_now)
+
     def close(self) -> None:
         releaser = getattr(self, "_release_isolated_conn_lock", None)
         self._release_isolated_conn_lock = None
         try:
-            if self.conn is not None:
-                self.conn.close()
+            self._invalidate_worker_pool()
+            primary = self.__dict__.get("_primary_conn")
+            if primary is not None:
+                primary.close()
                 self.conn = None
         finally:
             if releaser is not None:
@@ -405,17 +554,20 @@ class ControlPlane:
         ident = self._db_file_ident()
         if ident is None or ident == getattr(self, "_db_ident", None):
             return
-        try:
-            if self.conn is not None:
-                self.conn.close()
-        except Exception:
-            pass
+        self._close_quietly(self.__dict__.get("_primary_conn"))
         self.conn = (
             open_control_db_readonly(self.root)
             if getattr(self, "_read_only", False)
             else open_control_db(self.root)
         )
         self._db_ident = ident
+        # Pooled connections still point at the replaced file.
+        self._invalidate_worker_pool()
+        tls = self._tls
+        if getattr(tls, "conn", None) is not None:
+            self._close_quietly(tls.conn)
+            tls.conn = self._open_worker_conn()
+            tls.generation = self._worker_generation
 
     # --- revision / audit -------------------------------------------------
     def current_revision(self) -> int:
@@ -625,12 +777,9 @@ class ControlPlane:
             if db_member is None:
                 raise ControlPlaneError("backup drlink.db unreadable")
             payload = db_member.read()
-        # Close live connection so the on-disk DB can be replaced safely.
-        try:
-            if self.conn is not None:
-                self.conn.close()
-        except Exception:
-            pass
+        # Close live connections so the on-disk DB can be replaced safely.
+        self._invalidate_worker_pool()
+        self._close_quietly(self.__dict__.get("_primary_conn"))
         self.conn = None
         db_file = Path(self.db_file)
         db_file.parent.mkdir(parents=True, exist_ok=True)
@@ -4940,6 +5089,17 @@ class ControlPlane:
         wanted = str(resource or stored)
         if wanted != stored:
             return None
+        # Claim the presented refresh token atomically before anything is issued. The SELECT
+        # above only validates; two requests (threads or Bridge worker processes) can both
+        # pass it, and only one of them may redeem the token (AUD-21 D7).
+        claimed = self.conn.execute(
+            "UPDATE ai_oauth_tokens SET revoked_at = ? "
+            "WHERE token_hash = ? AND kind = 'refresh' AND revoked_at IS NULL "
+            "RETURNING token_hash",
+            (now, digest),
+        ).fetchone()
+        if claimed is None:
+            return None
         # Rotate: revoke presented refresh (+ sibling access tokens for same client/resource).
         self.conn.execute(
             "UPDATE ai_oauth_tokens SET revoked_at = ? WHERE client_id = ? AND resource = ? "
@@ -5092,8 +5252,9 @@ class ControlPlane:
         arguments: dict,
         patterns: list[str],
         timeout: Optional[int],
+        correlation_id: Optional[str] = None,
     ) -> str:
-        ensure_ai_jobs_safety_schema(self.conn)
+        ensure_ai_jobs_safety_schema_once(self.conn)
         job_id = _new_id("job")
         now = utc_now_iso()
         timeout_seconds = int(timeout or 30)
@@ -5110,8 +5271,8 @@ class ControlPlane:
         self.conn.execute(
             "INSERT INTO ai_jobs(id, principal_id, endpoint_object_id, capability, payload_json, "
             "status, result_json, created_at, updated_at, timeout_seconds, client_id, deadline_at, "
-            "claim_token, attempt_id, claimed_at) "
-            "VALUES (?, ?, ?, ?, ?, 'queued', NULL, ?, ?, ?, ?, ?, NULL, NULL, NULL)",
+            "claim_token, attempt_id, claimed_at, correlation_id, enqueued_ms) "
+            "VALUES (?, ?, ?, ?, ?, 'queued', NULL, ?, ?, ?, ?, ?, NULL, NULL, NULL, ?, ?)",
             (
                 job_id,
                 principal_id,
@@ -5123,6 +5284,8 @@ class ControlPlane:
                 timeout_seconds,
                 client_id,
                 deadline_at,
+                correlation_id,
+                _epoch_ms(),
             ),
         )
         return job_id
@@ -5300,7 +5463,7 @@ class ControlPlane:
         return True
 
     def claim_ai_jobs(self, client_id: str, limit: int = 4) -> list[dict]:
-        ensure_ai_jobs_safety_schema(self.conn)
+        ensure_ai_jobs_safety_schema_once(self.conn)
         self.assert_ai_job_claimant(client_id)
         self.refresh_managed_host_liveness(client_id)
         now = utc_now_iso()
@@ -5325,8 +5488,9 @@ class ControlPlane:
             attempt_id = _new_id("att")
             self.conn.execute(
                 "UPDATE ai_jobs SET status = 'running', claim_token = ?, attempt_id = ?, "
-                "claimed_at = ?, updated_at = ? WHERE id = ? AND status = 'queued'",
-                (claim_token, attempt_id, now, now, row["id"]),
+                "claimed_at = ?, updated_at = ?, queue_ms = MAX(0, ? - enqueued_ms) "
+                "WHERE id = ? AND status = 'queued'",
+                (claim_token, attempt_id, now, now, _epoch_ms(), row["id"]),
             )
             if self.conn.execute("SELECT changes()").fetchone()[0]:
                 claimed.append(
@@ -5343,6 +5507,59 @@ class ControlPlane:
                 )
         self.commit_if_autonomous()
         return claimed
+
+    def claim_ai_jobs_held(self, client_id: str, limit: int = 4, wait_ms: int = 0) -> list[dict]:
+        """Claim like ``claim_ai_jobs``, but hold an empty claim for ``wait_ms``.
+
+        With no job queued the call waits for a change to the Control DB (any
+        connection, any process) and answers as soon as a job is queued for this
+        host, so an idle Agent picks work up in milliseconds instead of at its
+        next poll. The database stays the source of truth: the generation is
+        read before each look, so a commit between the look and the wait is
+        never missed, and the wait itself is bounded by a fallback poll.
+        """
+        jobs = self.claim_ai_jobs(client_id, limit)
+        wait_s = clamp_claim_wait_ms(wait_ms) / 1000.0
+        if jobs or wait_s <= 0:
+            return jobs
+        # Server-only helpers, imported here so the Agent-only client bundle (which
+        # carries this module but not these two) never needs them.
+        from drlink_db_watch import get_watcher
+        from frp_bounded_server import parked_slot
+
+        watcher = get_watcher(self.db_file)
+        deadline = time.monotonic() + wait_s
+        # A connection of its own: this thread may sit here for 25 s and must not
+        # share the request connection while it waits. It comes from the request pool
+        # and goes back to it: opening one per claim cost about 11 % of the Bridge CPU
+        # under 30 simultaneous calls (AUD-21 5d, perf).
+        probe, probe_generation = self._borrow_probe_conn()
+        # Subscribe BEFORE the first look: a job queued after this point wakes
+        # only this host's claim (not every held claim), and one queued before it
+        # is seen by the look itself.
+        sub = watcher.subscribe("claim", client_id)
+        try:
+            while True:
+                sub.clear()
+                queued = probe.execute(
+                    "SELECT 1 FROM ai_jobs WHERE status = 'queued' AND client_id = ? LIMIT 1",
+                    (client_id,),
+                ).fetchone()
+                if queued is not None:
+                    jobs = self.claim_ai_jobs(client_id, limit)
+                    if jobs:
+                        return jobs
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    return []
+                with parked_slot() as parked:
+                    if not parked:
+                        # Too many held requests: answer empty now, the Agent asks again.
+                        return []
+                    sub.wait(min(remaining, CLAIM_HOLD_FALLBACK_POLL_SECONDS))
+        finally:
+            sub.close()
+            self._return_probe_conn(probe, probe_generation)
 
     def _store_ai_job_result_blob(self, job_id: str, result: dict) -> None:
         """Persist the full in-memory result so MCP Bridge can return file bytes."""
@@ -5380,7 +5597,7 @@ class ControlPlane:
 
     def terminalize_ai_job(self, job_id: str, status: str = "timeout") -> dict:
         """Move a non-terminal job to a fail-closed terminal status."""
-        ensure_ai_jobs_safety_schema(self.conn)
+        ensure_ai_jobs_safety_schema_once(self.conn)
         terminal = str(status or "timeout").strip().lower()
         if terminal not in ("timeout", "cancelled", "expired", "recovery_required"):
             raise ControlPlaneError("invalid AI job terminal status")
@@ -5403,7 +5620,7 @@ class ControlPlane:
         claim_token: Optional[str] = None,
         attempt_id: Optional[str] = None,
     ) -> None:
-        ensure_ai_jobs_safety_schema(self.conn)
+        ensure_ai_jobs_safety_schema_once(self.conn)
         self.assert_ai_job_claimant(client_id)
         self.refresh_managed_host_liveness(client_id)
         row = self.conn.execute("SELECT * FROM ai_jobs WHERE id = ?", (job_id,)).fetchone()
@@ -5441,10 +5658,12 @@ class ControlPlane:
             safe["stderr"] = stderr[:256]
             safe["stderr_truncated"] = True
         now = utc_now_iso()
+        done_ms = _epoch_ms()
         self.conn.execute(
-            "UPDATE ai_jobs SET status = 'done', result_json = ?, updated_at = ? "
+            "UPDATE ai_jobs SET status = 'done', result_json = ?, updated_at = ?, "
+            "total_ms = MAX(0, ? - enqueued_ms), run_ms = MAX(0, ? - enqueued_ms - queue_ms) "
             "WHERE id = ? AND status = 'running' AND claim_token = ?",
-            (json.dumps(safe, sort_keys=True)[:8000], now, job_id, expected_token),
+            (json.dumps(safe, sort_keys=True)[:8000], now, done_ms, done_ms, job_id, expected_token),
         )
         if not self.conn.execute("SELECT changes()").fetchone()[0]:
             raise ControlPlaneError("AI job completion lost the claim race")
@@ -5954,29 +6173,41 @@ class ControlPlane:
         rule: Optional[str] = None,
         duration_ms: Optional[int] = None,
         operand: Optional[str] = None,
+        correlation_id: Optional[str] = None,
     ) -> None:
         p = self.get_principal(principal)
         summary = str(operand or "")
         if len(summary) > 200:
             summary = summary[:197] + "..."
-        self.conn.execute(
-            "INSERT INTO ai_activity(timestamp, principal_id, principal_name, endpoint_id, endpoint_name, "
-            "capability, matched_rule, result, duration_ms, revision, operand_summary) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (
-                utc_now_iso(),
-                p["id"] if p else None,
-                principal,
-                None,
-                endpoint,
-                capability,
-                rule or "",
-                result,
-                duration_ms,
-                self.current_revision(),
-                summary,
-            ),
+        values = (
+            utc_now_iso(),
+            p["id"] if p else None,
+            principal,
+            None,
+            endpoint,
+            capability,
+            rule or "",
+            result,
+            duration_ms,
+            self.current_revision(),
+            summary,
         )
+        # Only dispatched calls carry a correlation id (AUD-21 D4); every other
+        # audit row keeps the original statement.
+        if correlation_id is None:
+            self.conn.execute(
+                "INSERT INTO ai_activity(timestamp, principal_id, principal_name, endpoint_id, endpoint_name, "
+                "capability, matched_rule, result, duration_ms, revision, operand_summary) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                values,
+            )
+        else:
+            self.conn.execute(
+                "INSERT INTO ai_activity(timestamp, principal_id, principal_name, endpoint_id, endpoint_name, "
+                "capability, matched_rule, result, duration_ms, revision, operand_summary, correlation_id) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                values + (correlation_id,),
+            )
         self.conn.execute(
             "INSERT INTO audit_events(timestamp, revision, actor, action, entity_type, "
             "entity_id, operation, before_summary, after_summary, impact_summary, result) "
@@ -6426,7 +6657,7 @@ class ControlPlane:
         Mutating in-flight work becomes recovery_required; other nonterminal work
         becomes expired.
         """
-        ensure_ai_jobs_safety_schema(self.conn)
+        ensure_ai_jobs_safety_schema_once(self.conn)
         now = utc_now_iso()
         rows = list(
             self.conn.execute(
