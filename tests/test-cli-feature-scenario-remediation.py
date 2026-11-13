@@ -972,7 +972,7 @@ os.replace(sys.argv[1] + ".tmp", sys.argv[1])
 while True:
     time.sleep(1)
 ''')
-        runner = "import sys,os;sys.path.insert(0,sys.argv[1]);from frp_ctl_repl import _run_backend;assert _run_backend([sys.executable,sys.argv[2],sys.argv[3]],os.environ.copy()) is None;print('PROMPT_RECOVERED')"
+        runner = "import sys,os,signal;signal.signal(signal.SIGINT,signal.default_int_handler);sys.path.insert(0,sys.argv[1]);from frp_ctl_repl import _run_backend;assert _run_backend([sys.executable,sys.argv[2],sys.argv[3]],os.environ.copy()) is None;print('PROMPT_RECOVERED')"
         proc = subprocess.Popen([sys.executable, "-c", runner, str(LIB), str(backend), str(pids)],
                                 stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         owned = []
