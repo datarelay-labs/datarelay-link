@@ -55,6 +55,33 @@ class AiIdentityUnsetCredentialCleanup(unittest.TestCase):
         self.assertIsNone(self.plane.get_principal("bot"))
         self.assertEqual(self._count("ai_oauth_clients", pid), 0)
 
+    def test_unset_identity_with_pending_oauth_request_succeeds(self):
+        # F-014: an interrupted `set ai-identity` (Interactive AI) leaves the
+        # identity with a client row and an unapproved pending OAuth request.
+        # Both belong to the identity; unset must remove them instead of
+        # failing with the "referenced dependency" message.
+        self.plane.set_ai_principal("ghost", enabled=False)
+        self.plane.configure_ai_auth("ghost", "oauth")
+        pid = self.plane.get_principal("ghost")["id"]
+        self.plane.conn.execute(
+            "INSERT INTO ai_oauth_pending(id, principal_id, client_id, redirect_uri, code_challenge, "
+            "resource, scope, state, created_at, completion_token, status, expires_at, decision_at, "
+            "consumed_at, code_plain, source_addr) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', '', '', '')",
+            (
+                "oap_test_pending", pid, "ghost", "http://127.0.0.1:8765/callback", "challenge",
+                "drlink://ai", "drlink.ai offline_access", "state", "2026-11-13T03:32:03Z",
+                "completion-token", "pending", "2026-11-13T03:42:03Z",
+            ),
+        )
+        self.plane.conn.commit()
+        self.assertEqual(self._count("ai_oauth_pending", pid), 1)
+
+        self.plane.unset_ai_principal("ghost", confirm=True)
+
+        self.assertIsNone(self.plane.get_principal("ghost"))
+        self.assertEqual(self._count("ai_oauth_pending", pid), 0)
+        self.assertEqual(self._count("ai_oauth_clients", pid), 0)
+
     def test_unset_identity_without_oauth_still_succeeds(self):
         self.plane.set_ai_principal("plain", enabled=False)
         self.plane.unset_ai_principal("plain", confirm=True)
