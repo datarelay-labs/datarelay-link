@@ -3767,7 +3767,16 @@ class ControlPlane:
             )
 
         def write():
-            self.conn.execute("DELETE FROM ai_sessions WHERE principal_id = ?", (existing["id"],))
+            # Credential/session rows are owned by the identity (F-006): remove
+            # them with it so an unreferenced identity is always deletable.
+            for table in (
+                "ai_sessions",
+                "ai_oauth_codes",
+                "ai_oauth_tokens",
+                "ai_oauth_pending",
+                "ai_oauth_clients",
+            ):
+                self.conn.execute("DELETE FROM %s WHERE principal_id = ?" % table, (existing["id"],))
             self.conn.execute("DELETE FROM ai_principals WHERE id = ?", (existing["id"],))
             return {"entity": {"type": "ai-principal", "id": existing["id"], "name": name}, "operation": "delete"}
 

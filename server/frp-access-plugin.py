@@ -60,7 +60,7 @@ except SystemExit as exc:
     _BOUNDED = None
     _BOUNDED_LOAD_ERROR = str(exc) or "ERROR: missing frp_bounded_server.py"
 
-ACCESS_MAX_CONCURRENT = int(os.environ.get("FRP_ACCESS_MAX_CONCURRENT", "32"))
+ACCESS_MAX_CONCURRENT = int(os.environ.get("FRP_ACCESS_MAX_CONCURRENT", "512"))
 # NewUserConn authorization is read-only, but each SQLite reader owns a file
 # descriptor. Keep a smaller DB-reader bound under the HTTP worker bound.
 ACCESS_DB_MAX_CONCURRENT = 8
@@ -92,7 +92,7 @@ if _BOUNDED is not None:
         # HTTPServer inherits TCPServer's backlog of 5. That queues only a
         # fraction of the authorized worker capacity and makes connection
         # bursts wait for TCP retransmission before policy code even runs.
-        request_queue_size = ACCESS_MAX_CONCURRENT
+        request_queue_size = ACCESS_MAX_CONCURRENT * 2
         request_timeout = 30.0
         daemon_threads = True
         reject_callback = staticmethod(_reject_busy)
