@@ -27,6 +27,10 @@ function Write-FrpTestPass {
 }
 
 function Remove-FrpWindowsTestRoot {
+    if ($env:FRP_WINDOWS_ROOT) {
+        $anchorDir = ([string]$env:FRP_WINDOWS_ROOT + '.machine-id-anchor')
+        if (Test-Path -LiteralPath $anchorDir) { Remove-Item -LiteralPath $anchorDir -Recurse -Force -ErrorAction SilentlyContinue }
+    }
     if ($env:FRP_WINDOWS_ROOT -and (Test-Path -LiteralPath $env:FRP_WINDOWS_ROOT)) {
         Remove-Item -LiteralPath $env:FRP_WINDOWS_ROOT -Recurse -Force -ErrorAction SilentlyContinue
     }

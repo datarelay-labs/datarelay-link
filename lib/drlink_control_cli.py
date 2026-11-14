@@ -151,7 +151,13 @@ def _configuration_apply(plane: ControlPlane, rest):
 
     sys.stdout.write(format_v24_plan(plan).replace("No changes were applied.\n", ""))
     confirm = False
-    if _bundle_has_mutation(plan):
+    base_rev = getattr(plan, "base_revision", None)
+    current_rev = getattr(plan, "current_revision", None)
+    stale = (base_rev is not None and current_rev is not None
+             and int(base_rev) != int(current_rev))
+    # A stale Bundle can only fail with REVISION_CONFLICT; do not ask the
+    # operator to confirm something the apply path will certainly reject (F-007).
+    if _bundle_has_mutation(plan) and not stale:
         decision = _approve_configuration_mutation()
         if decision == "cancel":
             return 0
@@ -258,6 +264,18 @@ def _run(fn, *args, **kwargs):
         if _confirm_from_stdin(str(exc)):
             kwargs = dict(kwargs)
             kwargs["confirm"] = True
+            # F-011: carry the reviewed row version into the confirmed retry so
+            # an edit committed during the prompt is rejected, not overwritten.
+            reviewed = (getattr(exc, "impact", None) or {}).get("expected_row_version")
+            if reviewed is not None and "expected_row_version" not in kwargs:
+                import inspect
+
+                try:
+                    accepts = "expected_row_version" in inspect.signature(fn).parameters
+                except (TypeError, ValueError):
+                    accepts = False
+                if accepts:
+                    kwargs["expected_row_version"] = int(reviewed)
             return fn(*args, **kwargs)
         sys.stdout.write("Cancelled.\nNo changes were applied.\n")
         return {"cancelled": True}

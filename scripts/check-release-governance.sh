@@ -15,6 +15,9 @@
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
+# Avoid shared /tmp/version-consistency.out collisions across CI users.
+WORKDIR="$(mktemp -d)"
+trap 'rm -rf "$WORKDIR"' EXIT
 
 fail_count=0
 pass() { echo "PASS $1"; }
@@ -37,9 +40,9 @@ else
 fi
 grep -q "PROJECT_VERSION:-${PROJECT_VERSION}" lib/frp-common.sh &&
   pass "VERSION_SSOT_COMMON_DEFAULT" || fail "VERSION_SSOT_COMMON_DEFAULT"
-./scripts/check-version-consistency.sh >/tmp/version-consistency.out 2>&1 &&
+./scripts/check-version-consistency.sh >"$WORKDIR/version-consistency.out" 2>&1 &&
   pass "VERSION_SSOT_CONSISTENT" || {
-    cat /tmp/version-consistency.out >&2
+    cat "$WORKDIR/version-consistency.out" >&2
     fail "VERSION_SSOT_CONSISTENT"
   }
 

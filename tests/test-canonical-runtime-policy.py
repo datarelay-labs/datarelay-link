@@ -100,6 +100,116 @@ class RuntimePolicyTests(unittest.TestCase):
         self.assertEqual(allow["decision"], RP.DECISION_ALLOW)
         self.assertEqual(deny["decision"], RP.DECISION_DENY)
 
+    def test_routed_relay_uses_actual_target_not_relay_host_policy_oracle(self):
+        # U-004 historical helper ALLOW / live IMPLICIT_DENY: the helper
+        # evaluated the Relay Managed Host, whereas a routed service must
+        # evaluate its actual LAN Target against the same ingress source.
+        self.plane.set_object_type("lan-target", "network")
+        self.plane.set_object_value("lan-target", "192.0.2.77")
+        self.plane.set_published_service(
+            self.mid, "u004-lan", service_type="tcp",
+            target_mode="routed", target_host="lan-target", target_port=22,
+            enabled=True, public_port=6002,
+        )
+        source = "198.51.100.9"
+        proxy = RP.expected_proxy_name("labhost", self.mid, "u004-lan")
+        self.assertEqual(
+            self.plane.evaluate_remote_access(source, "lab", "tcp", 22)["action"],
+            "ALLOW",  # wrong destination; not proof for the routed service
+        )
+        self.assertEqual(
+            self.plane.evaluate_remote_access(source, "lan-target", "tcp", 22)["action"],
+            "DENY",
+        )
+        routed = RP.authorize_remote(
+            self.plane, proxy_name=proxy, source_ip=source + ":41213"
+        )
+        self.assertEqual(routed["destination"], "lan-target")
+        self.assertEqual(routed["decision"], RP.DECISION_DENY)
+        self.assertEqual(routed["reason"], RP.REASON_IMPLICIT_DENY)
+        self.plane.set_rule("remote", "allow-lan-target")
+        self.plane.set_rule_source("remote", "allow-lan-target", "office")
+        self.plane.set_rule_destination("remote", "allow-lan-target", "lan-target")
+        self.plane.set_rule_service("remote", "allow-lan-target", "tcp", 22)
+        self.plane.set_rule_action("remote", "allow-lan-target", "allow")
+        self.plane.set_rule_enabled("remote", "allow-lan-target", True)
+        self.assertEqual(
+            self.plane.evaluate_remote_access(source, "lan-target", "tcp", 22)["action"],
+            "ALLOW",
+        )
+        routed = RP.authorize_remote(
+            self.plane, proxy_name=proxy, source_ip=source + ":41213"
+        )
+        self.assertEqual(routed["decision"], RP.DECISION_ALLOW)
+        self.assertEqual(
+            RP.authorize_remote(
+                self.plane, proxy_name=proxy, source_ip="203.0.113.9:41213"
+            )["decision"],
+            RP.DECISION_DENY,
+        )
+
+    def test_routed_lan_public_cli_oracle_matches_runtime_destination(self):
+        # Public user syntax must test the service's actual LAN target, not
+        # the Relay Agent. The historical U-004 test used the latter.
+        from contextlib import redirect_stdout
+        import io
+        import drlink_control_cli as cli
+
+        config = Path(self.tmp) / "etc/drlink"
+        config.mkdir(parents=True, exist_ok=True)
+        (config / "config.json").write_text('{"role":"server"}\n', encoding="utf-8")
+        self.plane.set_object_type("lan-target", "network")
+        self.plane.set_object_value("lan-target", "192.0.2.77")
+        v24.set_service_object(
+            self.plane, "lan-ssh", type="tcp", port=22, oneshot=True
+        )
+        self.plane.set_published_service(
+            self.mid, "routed-ssh", service_type="ssh",
+            target_mode="routed", target_host="lan-target", target_port=22,
+            enabled=True, public_port=6011,
+        )
+        proxy = RP.expected_proxy_name("labhost", self.mid, "routed-ssh")
+
+        def explain(destination):
+            output = io.StringIO()
+            with redirect_stdout(output):
+                status = cli.dispatch(
+                    ["test", "remote-access", "source", "office",
+                     "destination", destination, "service", "lan-ssh"],
+                    root=self.tmp, plane=self.plane,
+                )
+            self.assertEqual(status, 0)
+            return output.getvalue()
+
+        self.assertIn("Effective Result:\n  ALLOW", explain("lab"))
+        self.assertIn("Effective Result:\n  DENY", explain("lan-target"))
+        verdict = RP.authorize_remote(
+            self.plane, proxy_name=proxy, source_ip="198.51.100.9:55550"
+        )
+        self.assertEqual(verdict["destination"], "lan-target")
+        self.assertEqual(verdict["reason"], RP.REASON_IMPLICIT_DENY)
+
+        self.plane.set_rule("remote", "routed-lan-allow")
+        self.plane.set_rule_source("remote", "routed-lan-allow", "office")
+        self.plane.set_rule_destination(
+            "remote", "routed-lan-allow", "lan-target"
+        )
+        self.plane.set_rule_service("remote", "routed-lan-allow", "tcp", 22)
+        self.plane.set_rule_action("remote", "routed-lan-allow", "allow")
+        self.plane.set_rule_enabled("remote", "routed-lan-allow", True)
+
+        self.assertIn("Effective Result:\n  ALLOW", explain("lan-target"))
+        self.assertEqual(
+            RP.authorize_remote(
+                self.plane, proxy_name=proxy, source_ip="198.51.100.9:55550"
+            )["decision"], RP.DECISION_ALLOW,
+        )
+        self.assertEqual(
+            RP.authorize_remote(
+                self.plane, proxy_name=proxy, source_ip="203.0.113.9:55550"
+            )["decision"], RP.DECISION_DENY,
+        )
+
     def test_implicit_allow_reason_matches_accepted_decision(self):
         self.plane.conn.execute("UPDATE access_policies SET mode='blacklist', enforcement='enabled' WHERE plane='remote'")
         self.plane.conn.commit()

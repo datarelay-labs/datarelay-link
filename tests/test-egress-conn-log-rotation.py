@@ -11,9 +11,11 @@ import os
 import stat
 import tempfile
 import unittest
+from unittest import mock
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+from egress_log_test_contract import assert_private_log
 
 
 def _load(name: str, rel: str):
@@ -31,6 +33,10 @@ class EgressConnLogRotation(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory(prefix="drlink-egress-rot-")
         self.root = Path(self.tmp.name)
+        # Root-run tests must never repair permissions on the installed Server.
+        sandbox = mock.patch.dict(os.environ, {"FRP_DEPLOY_TEST_ROOT": str(self.root)})
+        sandbox.start()
+        self.addCleanup(sandbox.stop)
         self.parent = self.root / "var/log/drlink"
         self.egress_dir = self.parent / "egress"
         self.egress_dir.mkdir(parents=True)
@@ -71,7 +77,7 @@ class EgressConnLogRotation(unittest.TestCase):
         self._emit("first", pad=20)
         self.assertTrue(self.log_path.is_file())
         mode_before = stat.S_IMODE(self.log_path.stat().st_mode)
-        self.assertEqual(mode_before, 0o600)
+        assert_private_log(self, self.log_path)
 
         # Seed an over-threshold file, then emit once to force rename+recreate.
         # Directory write is required for os.replace → connections.jsonl.1.
@@ -92,7 +98,7 @@ class EgressConnLogRotation(unittest.TestCase):
             len(seed),
             "active log must be recreated, not left as the over-threshold seed",
         )
-        self.assertEqual(stat.S_IMODE(self.log_path.stat().st_mode), 0o600)
+        assert_private_log(self, self.log_path)
 
         # Continued append after rotation.
         before = self.log_path.stat().st_size

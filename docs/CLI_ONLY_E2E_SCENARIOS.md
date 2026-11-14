@@ -4,10 +4,11 @@
 > **Source:** `docs/FULL_USER_E2E_SCENARIOS.md` (all 116 original IDs and headings preserved in its canonical document).
 > **Product baseline:** v2.4.0 **includes** AI Access and MCP Bridge; they are excluded **only from this test profile**, not removed from the product.
 > **Executor:** current owner-selected runtime (default `CHATGPT_CHAT`); current explicit instruction overrides historical Codex-only text.
-> **Canonical Full User E2E SHA256:** `7b7581528518547194a81fd6fce84a438b133c5a5b1e6635f778b316aab54792`
+> **Canonical Full User E2E SHA256:** `23a609689a9a41eadbbed8d22a6805df725809a473b9465d004f820b42b1b759`
 > **Generation:** `python3 tools/generate_cli_only_e2e_contract.py --write`; `--check` verifies no source drift.
 > **Safety:** preserve current authorization, exact live platform/tool refusals, other actors, host ownership and management access; never reroute a denied effect.
 > **Candidate:** do not infer installed Source HEAD from a Git checkout; record each installed Server/Agent's provenance.
+> **Test environment:** LXC/LXD is excluded by owner decision (2026-11-02). Use authorized native hosts for user E2E; isolated processes/temporary ports provide supporting evidence only.
 
 ## 1. Scope and complete original-ID traceability
 
@@ -24,7 +25,7 @@
 1. Resolve `datarelay-labs/datarelay-link`, read `AGENTS.md`, `.engineering/project.yaml`, current installed candidate identities and this entire executable contract before the first user action.
 2. Inspect branch/HEAD/dirty status, active owners and existing RUN_ID/processes **once**. Do not start a competing actor, repin its candidate, edit its owned state or replace its evidence. Use independent safe resources/hosts. A live actor owns only its own mutable scope, not the entire lab.
 3. **There is no global LAB_GO** or `phase-state.json`, universal host-GO, AI/MCP/OAuth readiness, FCS completion, whole CI wait, newly created VM/snapshot or repeated owner permission required to begin an independently runnable CLI scenario.
-4. Dirty worktree: never build a falsely qualified candidate from uncommitted source. Continue public CLI observations against a truthfully pinned existing installation, with its actual `INSTALLED_HEAD`; only exact matching candidate evidence may become candidate PASS.
+4. Dirty worktree: never build a falsely qualified candidate from uncommitted source. Continue public CLI observations against a truthfully pinned existing installation, with its actual `INSTALLED_HEAD`; only an exact installed HEAD or a cryptographically verified generated-only provenance commit whose first content parent matches the installed Source HEAD may qualify for candidate PASS. Never accept an older ancestor, another branch or product-file changes in that provenance commit.
 5. Missing prerequisite blocks only the dependent action. `ENVIRONMENT_BLOCKER` must mean demonstrated host/topology/required external resource unavailability, not a personal preference, stale report, absent release SLO or unstarted setup work.
 6. Historical platform/tool refusal is **evidence to re-check under present policy**, not a permanent ban. An actual current denial remains binding for that **exact operation**: do not bypass it by changing executor, sandbox, host, command, identity, permissions or route. Record tool, host, attempted command, literal error and impact, continue independent checks. High-risk production/credential/permission/release effects still need their own authority.
 7. Separate the functional Server (`frp-e2e-server`) from the owner-assigned public DNS/hostname Server (`frp-release-server`) when applicable. Ordinary CLI, lifecycle, traffic, concurrency and performance use the functional Server; public hostname/DNS-specific substeps use the approved DNS target. Missing DNS affects only those substeps.
@@ -307,7 +308,20 @@ Server:
 
 ~~~text
 show managed-host <RELAY_HOST> remote-services
+test remote-access source <ACTUAL_INGRESS_SOURCE> destination <TARGET_OBJECT> service <SERVICE_OBJECT>
 ~~~
+
+**Policy oracle for a routed LAN service:** Confirm the Remote Access rule
+and the policy-test command use the **actual target** (<TARGET_OBJECT> shown
+in the Remote Service's Destination), not the Relay Agent's own Managed
+Host object. The source selector must match the IP observed at the Server's
+ingress for the real external client (which may differ from its local IP
+after NAT). Use the same source + target + service tuple for the explanation
+test, then independently verify real application traffic. An ALLOW result
+for the Relay Agent destination is not proof that traffic to a different LAN
+target is allowed. Do not broaden a security rule just to pass a test.
+Record the observed ingress IP, target and service identity alongside the
+access-policy log decision and actual connection result.
 
 External user connects to the returned public Endpoint.
 

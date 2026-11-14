@@ -21,6 +21,7 @@ param(
     [Parameter(Position = 8)][string]$Extra4,
 
     [switch]$Check,
+    [switch]$Yes,
     [switch]$Force,
     [string]$DownloadUrl,
     [string]$ExpectedSha256,
@@ -41,6 +42,7 @@ $ErrorActionPreference = 'Stop'
 
 # --- Canonical v2.4 public grammar ---
 $script:FrpUpdateMode = 'engine'
+$script:FrpUninstallApproved = $false
 $normalized = $false
 $script:V24Destination = $null
 $script:V24Service = $null
@@ -55,6 +57,10 @@ foreach ($legacyNamed in @('Force','DownloadUrl','ExpectedSha256','Preset','Name
         Write-Host 'Use the positional v2.4 command grammar shown by: drlink help'
         exit 2
     }
+}
+if ($Yes -and -not ($cmdLower -eq 'system' -and $subLower -eq 'uninstall')) {
+    Write-Host 'ERROR: --yes is supported only for system uninstall.'
+    exit 2
 }
 if ($Check -and -not ($cmdLower -eq 'system' -and $subLower -eq 'update' -and $Id -in @('product','engine','check-engine'))) {
     Write-Host 'ERROR: -Check is supported only with system update product|engine|check-engine.'
@@ -249,7 +255,13 @@ switch -Regex ($cmdLower) {
                 $Id = $null
                 $Command = 'support-bundle'
             }
-            'uninstall' { Assert-FrpNoTrailingAfterSubcommand; $Command = 'uninstall' }
+            'uninstall' {
+                # A literal positional --yes is the only non-interactive
+                # confirmation. It is rejected by all other command paths.
+                Assert-FrpNoTrailingAfterSubcommand
+                $script:FrpUninstallApproved = [bool]$Yes
+                $Command = 'uninstall'
+            }
             'update' {
                 Assert-FrpNoTrailingAfterId
                 $Command = 'update'
@@ -386,7 +398,7 @@ system
   system export configuration <FILE>
   system diff configuration <file|->
   system apply configuration <file|->
-  system uninstall
+  system uninstall [--yes]
 
 menu
 help
@@ -791,6 +803,23 @@ function Invoke-FrpClientUpdate {
 
 
 function Invoke-FrpClientUninstall {
+    # No lifecycle notification, runtime stop, registry mutation or file
+    # removal before this explicit operator confirmation.
+    if (-not $script:FrpUninstallApproved) {
+        Write-Host 'This removes local Data Relay Link Agent software, identity and configuration.'
+        Write-Host 'Server-side records and public reservations will remain.'
+        $answer = $null
+        try {
+            $answer = Read-Host 'Remove local Data Relay Link Agent? [y/N]'
+        } catch {
+            Write-Host 'Cancelled. No changes were applied.'
+            return 1
+        }
+        if ([string]$answer -notin @('y','yes','Y','YES')) {
+            Write-Host 'Cancelled. No changes were applied.'
+            return 1
+        }
+    }
     if (-not (Enter-FrpClientLock)) { return 1 }
     try {
         return (Invoke-FrpClientUninstallLocked)
@@ -806,7 +835,7 @@ function Invoke-FrpClientUninstallLocked {
     Write-Host 'WHAT WILL BE REMOVED'
     Write-Host ''
     Write-Host 'Local Data Relay Link software'
-    Write-Host 'Local Agent Host identity'
+    Write-Host 'Local Agent enrollment keys and credentials'
     Write-Host 'Local Agent Host configuration'
     Write-Host 'Local service state'
     Write-Host 'Local autostart configuration'
@@ -818,6 +847,17 @@ function Invoke-FrpClientUninstallLocked {
     Write-Host 'Public port reservations'
     Write-Host 'Server-side policy state'
     Write-Host ''
+    # Seed the non-secret machine binding for agents upgraded from a release
+    # that stored its entire identity inside the removable product directory.
+    # Refuse removal on corrupt/conflicting identity instead of silently
+    # abandoning the Server-managed host and its reserved public ports.
+    try {
+        $null = Get-FrpOrCreateClientId
+    } catch {
+        Write-Host ("ERROR: cannot preserve persistent machine identity before uninstall: {0}" -f $_.Exception.Message)
+        Write-Host 'ERROR: leaving product files in place; repair Agent identity first.'
+        return 1
+    }
     try {
         $null = Invoke-FrpAgentLifecycle -State 'disconnected'
         Write-Host 'Signed disconnect notification sent to the Server.'

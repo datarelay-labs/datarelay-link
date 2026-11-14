@@ -211,7 +211,7 @@ def hux_cons_006(env: ScenarioEnv) -> None:
         ]
 
         def counts(self):
-            return {"PASS": 0, "WARN": 0, "FAIL": 1, "ERROR": 0, "INFO": 0, "NOT_APPLICABLE": 0}
+            return {"PASS": 0, "WARN": 0, "FAIL": 1, "ERROR": 0, "INFO": 0, "NOT_TESTED": 0, "NOT_APPLICABLE": 0}
 
         def overall(self):
             return "FAIL"

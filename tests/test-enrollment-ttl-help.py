@@ -58,7 +58,7 @@ def seed_server_tree(root: Path) -> dict:
             "--pki-dir",
             str(root / "etc/drlink/pki"),
             "--public-host",
-            "example.test",
+            "203.0.113.10",
         ],
         check=True,
         capture_output=True,
@@ -75,10 +75,9 @@ def seed_server_tree(root: Path) -> dict:
         "bootstrap_dir": "/var/lib/drlink/bootstrap",
         "token_file": "/etc/frp/server_token",
         "tls_ca_cert": "/etc/drlink/pki/ca.crt",
-        "allocator_public_url": "https://example.test/enroll",
-        # Compact Zero-Touch requires an explicit public TLS bootstrap hostname
-        # (or a Private-CA IP plan) since 6f1302d7; the fixture opts in explicitly.
-        "bootstrap_hostname": "example.test",
+        # The fixture uses a Private CA with an exact matching IP SAN;
+        # an invented DNS name is not a qualified public Zero-Touch issuer.
+        "allocator_public_url": "https://203.0.113.10:8443/enroll",
         "client_installer_url": "https://example.test/dist/bootstrap-client.sh",
         "enrollment_retention_days": 30,
     }

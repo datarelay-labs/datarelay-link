@@ -983,6 +983,16 @@ def set_policy_enforcement(plane_db, family: str, enabled: bool, *, confirm: Opt
             "Reset the policy before changing enforcement.\n\nNo changes were applied." % title
         )
 
+    current_enforcement = str(pol["enforcement"] or "enabled").lower()
+    desired_enforcement = "enabled" if enabled else "disabled"
+    if current_enforcement == desired_enforcement:
+        return {
+            "entity": {"type": "%s-access" % plane, "id": plane, "name": plane},
+            "operation": "enable" if enabled else "disable",
+            "revision": plane_db.current_revision(),
+            "no_change": True,
+        }
+
     def write():
         plane_db.conn.execute(
             "UPDATE access_policies SET enforcement = ?, row_version = row_version + 1, updated_at = ? WHERE plane = ?",
@@ -994,7 +1004,6 @@ def set_policy_enforcement(plane_db, family: str, enabled: bool, *, confirm: Opt
         }
 
     impact = None
-    current_enforcement = str(pol["enforcement"] or "enabled").lower()
     enabled_rules = _count_blocking_rules(plane_db, plane)
     if not enabled and current_enforcement == "enabled":
         if plane in ("internet", "ai"):
@@ -3856,10 +3865,19 @@ def set_access_rule(
     enabled: Optional[bool] = None,
     oneshot: bool = False,
     confirm: Optional[bool] = None,
+    expected_row_version: Optional[int] = None,
 ) -> dict:
     plane = _plane_key(family)
     name = validate_public_name(name, "Rule name")
     existing = plane_db._get_rule(plane, name)
+    # F-011: bind the commit to the rule version the operator reviewed.
+    bound_row_version = None
+    if existing is not None:
+        bound_row_version = (
+            int(expected_row_version)
+            if expected_row_version is not None
+            else int(existing["row_version"])
+        )
     if oneshot and existing is None:
         missing = []
         if source is None:
@@ -3977,9 +3995,15 @@ def set_access_rule(
                 ensure_policy_mode(plane_db, plane, mode, oneshot=False)
             if enabled is not None:
                 plane_db.conn.execute(
-                    "UPDATE policy_rules SET enabled = ?, row_version = row_version + 1, updated_at = ? WHERE id = ?",
+                    "UPDATE policy_rules SET enabled = ?, updated_at = ? WHERE id = ?",
                     (1 if enabled else 0, utc_now_iso(), rule_id),
                 )
+            # F-011: every update (selector, service, mode or enabled) advances
+            # the rule version so concurrent editors are detectable.
+            plane_db.conn.execute(
+                "UPDATE policy_rules SET row_version = row_version + 1, updated_at = ? WHERE id = ?",
+                (utc_now_iso(), rule_id),
+            )
             op = "update"
         if source is not None:
             kind, ref = _resolve_network_selector(plane_db, source, plane=plane, field="source")
@@ -4042,10 +4066,17 @@ def set_access_rule(
             enabled=enabled,
         )
 
+    if impact is not None and bound_row_version is not None:
+        impact = dict(impact)
+        impact["expected_row_version"] = bound_row_version
+    expected = None
+    if existing is not None:
+        expected = {"rows": [("policy_rules", existing["id"], bound_row_version)]}
     return plane_db._mutate(
         "set %s-access %s" % (plane, name),
         "set access rule",
         write,
+        expected=expected,
         impact=impact,
         confirm=confirm,
     )
@@ -7622,16 +7653,33 @@ def set_remote_service_agent(
         }
         return result
 
-    # Runtime activation: desired DB alone must never imply HEALTHY.
+    # Runtime activation: desired DB alone must never imply HEALTHY. A
+    # deliberate Agent pause is an independent lifecycle intent; configuration
+    # edits may update desired state and Server reservations but must not start
+    # the runtime behind that pause.
     runtime_ok = False
     runtime_error = ""
-    if (
+    runtime_attempted = False
+    from drlink_agent_lifecycle import load_lifecycle_intent
+    lifecycle_paused = load_lifecycle_intent(root) == "paused"
+    if en and lifecycle_paused and not destination_identity_reason:
+        status = "DEGRADED"
+        if not pending and endpoint_port is not None:
+            reason = "Agent runtime is intentionally paused."
+        else:
+            reason = reason or "Agent runtime is intentionally paused."
+        _persist_status(status, reason)
+        if live_mgmt:
+            _push_agent_remote_service_status(plane_db, root=root, names=[name])
+        _clear_agent_mgmt_side_effects(plane_db)
+    elif (
         en
         and endpoint_port is not None
         and pending == 0
         and server_reachable
         and not destination_identity_reason
     ):
+        runtime_attempted = True
         try:
             import drlink_v24_runtime as runtime
 
@@ -7788,6 +7836,15 @@ def set_remote_service_agent(
         if live_mgmt:
             _push_agent_remote_service_status(plane_db, root=root, names=[name])
         _clear_agent_mgmt_side_effects(plane_db)
+    elif not en and lifecycle_paused:
+        # Pause already keeps the runtime stopped. Updating a disabled desired
+        # service while paused must not restart an empty runtime generation.
+        status = "DISABLED"
+        reason = DISABLED_OPERATOR_REASON
+        _persist_status(status, reason)
+        if live_mgmt:
+            _push_agent_remote_service_status(plane_db, root=root, names=[name])
+        _clear_agent_mgmt_side_effects(plane_db)
     elif not en:
         # Disabled desired state is not proof the old frpc listener stopped.
         try:
@@ -7820,6 +7877,12 @@ def set_remote_service_agent(
     else:
         _clear_agent_mgmt_side_effects(plane_db)
 
+    # S-009: an online activation attempt can save desired state but fail to
+    # activate the actual runtime. This is not a successful enable operation.
+    # The flag is explicit so offline/unallocated/paused saved intent still
+    # returns success while CLI callers fail nonzero on an attempted activation
+    # that never reached independently verified HEALTHY.
+    result["activation_failed"] = bool(runtime_attempted and status != "HEALTHY")
     result["view"] = {
         "name": name,
         "destination": dest_token,
