@@ -40,6 +40,7 @@ INTRO = """# Data Relay Link v2.4.0 — CLI-only Full Functional E2E (100 scenar
 > **Generation:** `python3 tools/generate_cli_only_e2e_contract.py --write`; `--check` verifies no source drift.
 > **Safety:** preserve current authorization, exact live platform/tool refusals, other actors, host ownership and management access; never reroute a denied effect.
 > **Candidate:** do not infer installed Source HEAD from a Git checkout; record each installed Server/Agent's provenance.
+> **Test environment:** LXC/LXD is excluded by owner decision (2026-11-02). Use authorized native hosts for user E2E; isolated processes/temporary ports provide supporting evidence only.
 
 ## 1. Scope and complete original-ID traceability
 
@@ -56,7 +57,7 @@ INTRO = """# Data Relay Link v2.4.0 — CLI-only Full Functional E2E (100 scenar
 1. Resolve `datarelay-labs/datarelay-link`, read `AGENTS.md`, `.engineering/project.yaml`, current installed candidate identities and this entire executable contract before the first user action.
 2. Inspect branch/HEAD/dirty status, active owners and existing RUN_ID/processes **once**. Do not start a competing actor, repin its candidate, edit its owned state or replace its evidence. Use independent safe resources/hosts. A live actor owns only its own mutable scope, not the entire lab.
 3. **There is no global LAB_GO** or `phase-state.json`, universal host-GO, AI/MCP/OAuth readiness, FCS completion, whole CI wait, newly created VM/snapshot or repeated owner permission required to begin an independently runnable CLI scenario.
-4. Dirty worktree: never build a falsely qualified candidate from uncommitted source. Continue public CLI observations against a truthfully pinned existing installation, with its actual `INSTALLED_HEAD`; only exact matching candidate evidence may become candidate PASS.
+4. Dirty worktree: never build a falsely qualified candidate from uncommitted source. Continue public CLI observations against a truthfully pinned existing installation, with its actual `INSTALLED_HEAD`; only an exact installed HEAD or a cryptographically verified generated-only provenance commit whose first content parent matches the installed Source HEAD may qualify for candidate PASS. Never accept an older ancestor, another branch or product-file changes in that provenance commit.
 5. Missing prerequisite blocks only the dependent action. `ENVIRONMENT_BLOCKER` must mean demonstrated host/topology/required external resource unavailability, not a personal preference, stale report, absent release SLO or unstarted setup work.
 6. Historical platform/tool refusal is **evidence to re-check under present policy**, not a permanent ban. An actual current denial remains binding for that **exact operation**: do not bypass it by changing executor, sandbox, host, command, identity, permissions or route. Record tool, host, attempted command, literal error and impact, continue independent checks. High-risk production/credential/permission/release effects still need their own authority.
 7. Separate the functional Server (`frp-e2e-server`) from the owner-assigned public DNS/hostname Server (`frp-release-server`) when applicable. Ordinary CLI, lifecycle, traffic, concurrency and performance use the functional Server; public hostname/DNS-specific substeps use the approved DNS target. Missing DNS affects only those substeps.

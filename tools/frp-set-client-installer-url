@@ -14,7 +14,9 @@ Usage:
 from __future__ import annotations
 
 import importlib.util
+import ipaddress
 import os
+import re
 import sys
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -61,8 +63,24 @@ def validate_https_installer_url(url: str) -> str:
         fail('Agent installer URL is malformed')
     if parsed.scheme != 'https':
         fail('Agent installer URL must use https')
-    if not parsed.hostname:
+    host = parsed.hostname
+    if not host:
         fail('Agent installer URL hostname is required')
+    # Reject invalid URLs before config mutation, using the canonical Server
+    # hostname validation and retaining valid private-IP/local test endpoints.
+    try:
+        ipaddress.ip_address(host)
+    except ValueError:
+        if re.fullmatch(r'[0-9.]+', host):
+            fail('Agent installer URL hostname is not a valid IP address')
+        if host != 'localhost':
+            server_config = _load('frp_server_config', 'frp_server_config.py')
+            try:
+                server_config.validate_public_hostname(host, required=True)
+            except server_config.ConfigError:
+                fail('Agent installer URL has an invalid DNS hostname')
+    if parsed.netloc.endswith(':'):
+        fail('Agent installer URL port is invalid')
     if parsed.username is not None or parsed.password is not None:
         fail('Agent installer URL must not contain embedded credentials')
     if port is not None and not (1 <= port <= 65535):

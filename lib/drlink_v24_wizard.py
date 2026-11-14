@@ -926,8 +926,8 @@ def run_access_rule_wizard(plane: ControlPlane, family: str, name: str) -> int:
                 "wizard access rule",
                 lambda: _apply_inline_then(plane, session, apply_fn),
             )
-            sys.stdout.write("%s rule set: %s\n" % (family, name))
-            return 0
+            from drlink_v24_cli import _access_rule_activation_result
+            return _access_rule_activation_result(plane, family, name)
     except WizardCancelled:
         sys.stdout.write(_cancel_message())
         return 0
@@ -1188,7 +1188,7 @@ def run_remote_service_wizard(plane: ControlPlane, name: str) -> int:
                     }
                 )
             )
-            return 0
+            return 1 if result.get("activation_failed") else 0
     except WizardCancelled:
         sys.stdout.write(_cancel_message())
         return 0

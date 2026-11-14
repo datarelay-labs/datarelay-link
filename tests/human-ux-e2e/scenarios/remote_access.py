@@ -108,7 +108,7 @@ def hux_ra_003(env: ScenarioEnv) -> None:
     h = env.ensure_server()
     _create_rule(h.server_plane, "ra-dis")
     s = CliSession(root=h.server_root, context=ExecutionContext.DRLINK_SERVER, recorder=env.recorder)
-    r = s.run("set", "remote-access", "ra-dis", "disabled")
+    r = s.run("set", "remote-access", "ra-dis", "disabled", confirm=True)
     expect_true(r.rc == 0, "disable failed", evidence=r.combined)
 
 
@@ -124,7 +124,8 @@ def hux_ra_004(env: ScenarioEnv) -> None:
     h = env.ensure_server()
     _create_rule(h.server_plane, "ra-chg", enabled=True)
     s = CliSession(root=h.server_root, context=ExecutionContext.DRLINK_SERVER, recorder=env.recorder)
-    s.run("set", "remote-access", "ra-chg", "disabled")
+    disabled = s.run("set", "remote-access", "ra-chg", "disabled", confirm=True)
+    expect_true(disabled.rc == 0, "disable failed", evidence=disabled.combined)
     r = s.run(
         "test",
         "remote-access",
@@ -156,7 +157,7 @@ def hux_ra_005(env: ScenarioEnv) -> None:
     h = env.ensure_server()
     _create_rule(h.server_plane, "ra-en", enabled=False)
     s = CliSession(root=h.server_root, context=ExecutionContext.DRLINK_SERVER, recorder=env.recorder)
-    r = s.run("set", "remote-access", "ra-en", "enabled")
+    r = s.run("set", "remote-access", "ra-en", "enabled", confirm=True)
     expect_true(r.rc == 0, "enable failed", evidence=r.combined)
 
 
@@ -172,7 +173,7 @@ def hux_ra_006(env: ScenarioEnv) -> None:
     h = env.ensure_server()
     _create_rule(h.server_plane, "ra-del")
     s = CliSession(root=h.server_root, context=ExecutionContext.DRLINK_SERVER, recorder=env.recorder)
-    r = s.run("unset", "remote-access", "ra-del")
+    r = s.run("unset", "remote-access", "ra-del", confirm=True)
     expect_true(r.rc == 0, "delete failed", evidence=r.combined)
 
 

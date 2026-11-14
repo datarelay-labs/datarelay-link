@@ -33,13 +33,22 @@ python3 tests/test-v24-managed-host-liveness.py
 python3 tests/test-cli-inventory-selection-journey.py
 python3 tests/test-enrolled-routed-target-parity.py
 python3 tests/test-mcp-owner-default-access.py
+python3 tests/test-client-installer-url-hostname.py
 python3 tests/test-zero-touch-operator-command-bound.py
 python3 tests/test-zero-touch-guided-preflight.py
+python3 tests/test-operator-input-validation.py
+python3 tests/test-remote-service-activation-exit.py
 python3 tests/test-zero-touch-doc-contract.py
 bash tests/test-zero-touch-short-url.sh
 python3 tests/test-cli-feature-scenario-remediation.py
 python3 tests/test-cli-only-e2e-delta-triage.py
+# Immutable candidate=provenance commit; installed CLI Source HEAD=content parent.
+python3 tests/test-e2e-candidate-identity.py
+python3 tests/test-cli-only-e2e-contract.py
+python3 tests/test-e2e-lab-readiness.py
 python3 tests/test-guided-configuration-input.py
+python3 tests/test-human-ux-cli-session-timeout.py
+python3 tests/test-access-plugin-newuserconn-burst.py
 python3 tests/test-repl-live-inventory.py
 python3 tests/test-client-python-runtime.py
 python3 tests/test-cli-reconciliation-role-parser-regression.py
@@ -85,6 +94,7 @@ bash tests/test-client-upgrade-enrolled-state.sh
 bash tests/test-client-upgrade-legacy-supervisor.sh
 python3 tests/test-agent-bundle-fresh-catalog.py
 python3 tests/test-short-url-qualified-provenance.py
+python3 tests/test-short-url-derived-installer.py
 python3 tests/test-legacy-backup-migration.py
 python3 tests/test-egress-runtime-no-list-permission.py
 python3 tests/test-v24-upgrade-reconcile.py
@@ -100,6 +110,7 @@ python3 tests/test-v24-bundle-duplicate-mapping-keys.py
 python3 tests/test-v24-doc-consistency.py
 python3 tests/test-v24-cli-ai-master-closure.py
 python3 tests/test-v24-cli-workflow-semantic-parity.py
+python3 tests/test-v24-rule-activation-ack.py
 python3 tests/test-v24-readonly-selector-operands.py
 python3 tests/test-v24-admin-concurrency-ux.py
 python3 tests/test-v24-reference-delete-serialization.py

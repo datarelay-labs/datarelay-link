@@ -36,9 +36,11 @@ HASH = "c" * 64
 
 class CompactZeroTouchContract(unittest.TestCase):
     def test_linux_and_macos_default_install_commands_have_bounded_length(self):
-        self.assertEqual(
-            cli.short_url_host_for_cfg({"bootstrap_hostname": HOST}), HOST
-        )
+        # Operator-selected hostname alone must not bypass public trust checks.
+        with mock.patch.object(cli, "_test_root", return_value="/tmp/zt-test"):
+            self.assertEqual(
+                cli.short_url_host_for_cfg({"bootstrap_hostname": HOST}), ""
+            )
         for platform in ("linux", "macos"):
             self.assertEqual(
                 cli.parse_args(["--one-line", "--platform", platform]).platform,
@@ -102,7 +104,8 @@ class CompactZeroTouchContract(unittest.TestCase):
             self.assertEqual(
                 cli.short_url_host_for_cfg({"public_url_host": HOST}), ""
             )
-        self.assertEqual(cli.short_url_host_for_cfg({"bootstrap_hostname": HOST}), HOST)
+        with mock.patch.object(cli, "_test_root", return_value="/tmp/zt-test"):
+            self.assertEqual(cli.short_url_host_for_cfg({"bootstrap_hostname": HOST}), "")
         self.assertEqual(zt.short_url_for_ticket(HOST, TICKET).count("/i/"), 1)
 
     def test_public_https_probe_requires_real_allocator_fail_closed_signature(self):
@@ -121,15 +124,66 @@ class CompactZeroTouchContract(unittest.TestCase):
             with mock.patch("urllib.request.build_opener", return_value=FakeOpener(
                 b"bootstrap unavailable\n"
             )):
-                self.assertEqual(
-                    cli.short_url_host_for_cfg({"public_hostname": HOST}), HOST
-                )
+                for field in ("public_hostname", "bootstrap_hostname"):
+                    with self.subTest(field=field):
+                        self.assertEqual(
+                            cli.short_url_host_for_cfg({field: HOST}), HOST
+                        )
             with mock.patch("urllib.request.build_opener", return_value=FakeOpener(
                 b"<html>generic nginx 404</html>\n"
             )):
-                self.assertEqual(
-                    cli.short_url_host_for_cfg({"public_hostname": HOST}), ""
+                for field in ("public_hostname", "bootstrap_hostname"):
+                    with self.subTest(field=field):
+                        self.assertEqual(
+                            cli.short_url_host_for_cfg({field: HOST}), ""
+                        )
+
+    def test_explicit_bootstrap_private_ca_tls_rejected_before_issuance(self):
+        import ssl
+        class UntrustedOpener:
+            def open(self, url, timeout=0):
+                raise ssl.SSLCertVerificationError("private CA not in public trust roots")
+        with mock.patch.object(cli, "_test_root", return_value=""), \
+             mock.patch("urllib.request.build_opener", return_value=UntrustedOpener()):
+            self.assertEqual(cli.short_url_host_for_cfg({"bootstrap_hostname": HOST}), "")
+            with self.assertRaises(SystemExit):
+                cli.validate_zero_touch_prerequisites(
+                    {"bootstrap_hostname": HOST, "allocator_public_url": "https://127.0.0.1:6099/enroll"},
+                    "linux", "https://example.test/install.sh", HASH
                 )
+
+    def test_explicit_bootstrap_fqdn_requires_stock_ca_https_proof(self):
+        # An administrator-configured hostname is NOT evidence that client
+        # machines trust its certificate or that /i/ is the real handler.
+        import urllib.error
+        cfg = {
+            "bootstrap_hostname": HOST,
+            "allocator_public_url": "https://192.0.2.20:6099/enroll",
+        }
+        class FakeOpener:
+            def __init__(self, valid):
+                self.valid = valid
+            def open(self, url, timeout=0):
+                if not self.valid:
+                    raise urllib.error.URLError(ssl.SSLCertVerificationError(
+                        "self-signed or mismatched bootstrap certificate"
+                    ))
+                raise urllib.error.HTTPError(
+                    url, 404, "Not Found", {}, io.BytesIO(b"bootstrap unavailable\n")
+                )
+        with mock.patch.object(cli, "_test_root", return_value=""), \
+             mock.patch.object(cli, "preflight_installer_url"):
+            with mock.patch("urllib.request.build_opener", return_value=FakeOpener(False)):
+                with self.assertRaises(SystemExit):
+                    cli.validate_zero_touch_prerequisites(
+                        cfg, "linux", "https://example.test/installer.sh", HASH
+                    )
+            with mock.patch("urllib.request.build_opener", return_value=FakeOpener(True)):
+                host, private = cli.validate_zero_touch_prerequisites(
+                    cfg, "linux", "https://example.test/installer.sh", HASH
+                )
+                self.assertEqual(host, HOST)
+                self.assertIsNone(private)
 
     def test_private_ca_numeric_ip_has_compact_verified_command(self):
         import frp_pki

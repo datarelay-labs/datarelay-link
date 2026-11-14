@@ -61,6 +61,7 @@ python3 tests/test-mcp-owner-default-access.py
 python3 tests/test-runtime-generation-atomicity.py
 python3 tests/test-server-fixed-pool-migration.py
 python3 tests/test-short-url-qualified-provenance.py
+python3 tests/test-short-url-derived-installer.py
 python3 tests/test-v24-agent-bundle-absent-idempotency.py
 python3 tests/test-v24-bundle-preview-writer-isolation.py
 python3 tests/test-v24-remote-binding-uniqueness.py
@@ -69,6 +70,7 @@ python3 tests/test-v24-sqlite-row-dependencies.py
 python3 tests/test-zero-touch-command-exit.py
 python3 tests/test-zero-touch-doc-contract.py
 python3 tests/test-zero-touch-guided-preflight.py
+python3 tests/test-operator-input-validation.py
 python3 tests/test-zero-touch-operator-command-bound.py
 # E2E defect regressions must run in the full suite as well as focused PR checks.
 bash tests/test-agent-candidate-payload.sh
@@ -244,6 +246,7 @@ python3 tests/test-v24-access-rule-lost-update.py
 python3 tests/test-v24-ai-identity-unset-credential-cleanup.py
 python3 tests/test-v24-stale-apply-no-confirmation-prompt.py
 python3 tests/test-v24-usage-error-newline.py
+python3 tests/test-access-plugin-newuserconn-burst.py
 python3 tests/test-egress-conn-log-traverse-only.py
 python3 tests/test-egress-conn-log-rotation.py
 python3 tests/test-egress-conn-log-rotation-concurrency.py
@@ -281,6 +284,7 @@ python3 tests/test-machine-id-validation.py
 ./tests/test-support-bundle.sh
 python3 tests/test-support-canonical-policy.py
 python3 tests/test-service-profiles.py
+python3 tests/test-client-installer-url-hostname.py
 ./tests/test-service-profiles.sh
 ./tests/test-user-facing-branding.sh
 ./tests/test-legacy-identity-migration.sh
@@ -338,6 +342,7 @@ python3 tests/test-v24-reference-delete-upsert-race.py
 python3 tests/test-v24-bootstrap-catalog-convergence.py
 python3 tests/test-v24-managed-host-policy.py
 python3 tests/test-v24-runtime-allocator.py
+python3 tests/test-remote-service-activation-exit.py
 python3 tests/test-doctor-agent-runtime-projection.py
 python3 tests/test-agent-idle-runtime-health.py
 python3 tests/test-v24-mgmt-api-auth.py
@@ -349,6 +354,7 @@ python3 tests/test-v24-doc-consistency.py
 python3 tests/test-v24-ai-policy-cli-parity.py
 python3 tests/test-v24-manual-e2e-findings.py
 python3 tests/test-v24-cli-workflow-semantic-parity.py
+python3 tests/test-v24-rule-activation-ack.py
 python3 tests/test-v24-readonly-selector-operands.py
 python3 tests/test-v24-revision-rollback.py
 python3 tests/test-v24-direct-revision-guard.py
@@ -399,12 +405,14 @@ python3 tests/test-e2e-owner-preflight-procedure.py
 # These are deterministic non-live regressions; real CLI/soak runs keep
 # their independent owner-scoped RUN_ID and do not block unrelated CI.
 python3 tests/test-cli-only-e2e-contract.py
+python3 tests/test-e2e-candidate-identity.py
 python3 tests/test-cli-only-e2e-persistent-load.py
 python3 tests/test-v24-e2e-actionable-doc-parity.py
 python3 tests/test-cli-rule-selector-and-runtime-recovery.py
 python3 tests/test-doctor-proxy-identity.py
 python3 tests/test-full-e2e-public-recovery-regressions.py
 python3 tests/test-guided-configuration-input.py
+python3 tests/test-human-ux-cli-session-timeout.py
 python3 tests/test-v24-ai-completion-delivery.py
 python3 tests/test-v24-denied-upload-response.py
 bash tests/test-v24-legacy-update-check-readonly.sh

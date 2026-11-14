@@ -2075,7 +2075,9 @@ WORKFLOWS = (
         ),
         "Zero-Touch enrollment is the recommended path. Use "
         "'set enrollment bulk' for bounded multi-ticket issuance "
-        "(max 10 per request, max 10 active unused).",
+        "(max 10 per request, max 10 active unused). "
+        "Remote Services are created on the Agent Host through 'sudo drlink'; "
+        "the Server manages their public endpoints.",
         "server",
     ),
     (

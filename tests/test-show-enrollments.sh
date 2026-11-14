@@ -10,7 +10,9 @@ mkdir -p \
   "$TREE/var/lib/drlink/enrollments" \
   "$TREE/var/lib/drlink/bootstrap"
 
-python3 "$ROOT/lib/frp_pki.py" ensure --pki-dir "$TREE/etc/drlink/pki" --public-host example.test >/dev/null
+# A hermetic Private-CA endpoint must carry an IP SAN matching the allocator.
+# An invented DNS name is not a publicly trusted compact Zero-Touch issuer.
+python3 "$ROOT/lib/frp_pki.py" ensure --pki-dir "$TREE/etc/drlink/pki" --public-host 203.0.113.10 >/dev/null
 python3 - "$TREE" <<'PY'
 import json, sys
 from pathlib import Path
@@ -20,8 +22,10 @@ root = Path(sys.argv[1])
   'enrollments_dir': '/var/lib/drlink/enrollments',
   'bootstrap_dir': '/var/lib/drlink/bootstrap',
   'tls_ca_cert': '/etc/drlink/pki/ca.crt',
-  'allocator_public_url': 'https://example.test/enroll',
-  'bootstrap_hostname': 'example.test',
+  'deployment_mode': 'direct',
+  'public_ip': '203.0.113.10',
+  'frp_control_public_port': 8443,
+  'allocator_public_url': 'https://203.0.113.10:8443/enroll',
   'client_installer_url': 'https://example.test/bootstrap-client.sh',
 }) + '\n')
 PY

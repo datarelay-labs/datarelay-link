@@ -1297,10 +1297,26 @@ frpctl_nav_workflow manage_host
             state.chmod(0)
             try:
                 env = dict(os.environ, FRP_CTL_TEST_ROOT=temp, FRP_DEPLOY_TEST_ROOT=temp)
+                # The root-managed integration runner can bypass mode 000:
+                # execute only this negative permission fixture as a readable
+                # unprivileged repository user, not as the privileged runner.
+                runner = {}
+                if hasattr(os, "geteuid") and os.geteuid() == 0:
+                    import pwd
+                    readable_parent = next(
+                        (candidate for candidate in ROOT.parents
+                         if candidate.stat().st_uid not in (0,)),
+                        None,
+                    )
+                    uid = (readable_parent.stat().st_uid if readable_parent is not None
+                           else pwd.getpwnam("nobody").pw_uid)
+                    runner = {"user": uid, "group": pwd.getpwuid(uid).pw_gid}
+                    root.chmod(0o755)
                 # A user launches the canonical public CLI, not its private dispatcher.
                 proc = subprocess.run(
                     ["bash", str(ROOT / "tools/drlink"), "system", "version"],
                     env=env, text=True, capture_output=True, timeout=30,
+                    **runner,
                 )
             finally:
                 state.chmod(0o755)

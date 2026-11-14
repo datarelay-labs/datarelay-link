@@ -60,6 +60,12 @@ except SystemExit as exc:
     _BOUNDED = None
     _BOUNDED_LOAD_ERROR = str(exc) or "ERROR: missing frp_bounded_server.py"
 
+# NewUserConn bursts may require one independent auth request per new FRP
+# connection. Preserve a finite overload reject rather than an unbounded
+# thread pool; SQLite read-only reader capacity stays independently bounded
+# below. 512 slots (listen backlog twice that) absorb the qualified 64-connection
+# burst (P-006) with headroom; the 96-slot default of the CLI100 candidate lineage
+# addressed the same finding with a smaller bound and is superseded by this one.
 ACCESS_MAX_CONCURRENT = int(os.environ.get("FRP_ACCESS_MAX_CONCURRENT", "512"))
 # NewUserConn authorization is read-only, but each SQLite reader owns a file
 # descriptor. Keep a smaller DB-reader bound under the HTTP worker bound.
