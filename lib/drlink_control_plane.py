@@ -42,6 +42,27 @@ from drlink_control_db import (
     utc_now_iso,
 )
 
+#: Newest rollback snapshots kept in ``revision_snapshots`` (OBS-P005). The
+#: ledger (``config_revisions``) and audit trail are never pruned.
+REVISION_SNAPSHOT_RETENTION_DEFAULT = 100
+
+
+def revision_snapshot_retention() -> int:
+    """Return how many newest snapshots to keep; 0 means keep every snapshot.
+
+    ``DRLINK_REVISION_SNAPSHOT_RETENTION`` overrides the default. An invalid or
+    negative value falls back to the default instead of disabling retention.
+    """
+    raw = str(os.environ.get("DRLINK_REVISION_SNAPSHOT_RETENTION") or "").strip()
+    if not raw:
+        return REVISION_SNAPSHOT_RETENTION_DEFAULT
+    try:
+        value = int(raw)
+    except ValueError:
+        return REVISION_SNAPSHOT_RETENTION_DEFAULT
+    return value if value >= 0 else REVISION_SNAPSHOT_RETENTION_DEFAULT
+
+
 class OAuthScopeError(ControlPlaneError):
     """OAuth request exceeds the server/client scope contract."""
 
@@ -615,7 +636,33 @@ class ControlPlane:
             "INSERT INTO revision_snapshots(revision, snapshot_json) VALUES (?, ?)",
             (rev, payload),
         )
+        retention = revision_snapshot_retention()
+        if retention:
+            self._prune_revision_snapshots(retention)
         return rev
+
+    def _prune_revision_snapshots(self, keep_last: int) -> int:
+        """Delete rollback snapshots older than the newest ``keep_last``.
+
+        Only ``revision_snapshots`` rows are removed. ``config_revisions`` (the
+        revision ledger) and ``audit_events`` are never touched, so history,
+        optimistic concurrency and audit stay complete; a pruned revision just
+        reports "has no rollback snapshot". Every snapshot is a full
+        ConfigurationBundle and the table dominates the control DB (about 85%
+        of the production file), so it drives the O(DB size) integrity scan that
+        NewUserConn runs per connection (OBS-P005). Runs inside the caller's
+        transaction. Returns the number of snapshots deleted.
+        """
+        keep_last = int(keep_last)
+        if keep_last < 1:
+            raise ControlPlaneError("snapshot retention must be at least 1")
+        cursor = self.conn.execute(
+            "DELETE FROM revision_snapshots WHERE revision <= ("
+            "SELECT revision FROM revision_snapshots "
+            "ORDER BY revision DESC LIMIT 1 OFFSET ?)",
+            (keep_last,),
+        )
+        return int(cursor.rowcount or 0)
 
     def advance_restored_revision(self, previous_revision: int) -> int:
         """Restore data, never a reusable optimistic-concurrency token.
@@ -649,8 +696,13 @@ class ControlPlane:
             (int(revision),),
         ).fetchone()
         if row is None:
+            keep = revision_snapshot_retention()
+            hint = (
+                " (rollback snapshots are kept for the newest %d revisions)" % keep
+                if keep else ""
+            )
             raise ControlPlaneError(
-                "revision %s has no rollback snapshot" % int(revision)
+                "revision %s has no rollback snapshot%s" % (int(revision), hint)
             )
         try:
             payload = json.loads(str(row["snapshot_json"] or "{}"))

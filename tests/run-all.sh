@@ -251,6 +251,7 @@ python3 tests/test-egress-shared-parent-permissions.py
 python3 tests/test-egress-concurrency-isolation.py
 python3 tests/test-p013-policy-hotpath.py
 python3 tests/test-access-plugin-integrity-hotpath.py
+python3 tests/test-revision-snapshot-retention.py
 python3 tests/test-egress-parent-traverse.py
 python3 tests/test-egress-runtime-no-list-permission.py
 python3 tests/test-egress-create-safe-default.py

@@ -107,6 +107,7 @@ python3 tests/test-v24-reference-delete-upsert-race.py
 python3 tests/test-v24-network-object-remote-reference.py
 python3 tests/test-p013-policy-hotpath.py
 python3 tests/test-access-plugin-integrity-hotpath.py
+python3 tests/test-revision-snapshot-retention.py
 python3 tests/test-v24-offline-tombstone-duplicate.py
 
 echo "=== Native MCP full-control regressions ==="
