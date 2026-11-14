@@ -2227,6 +2227,13 @@ frpctl_guided_manual_enrollment() {
   client_name="$(frpctl_read "Managed Host name [optional]: " "")" || return 1
   lifetime="$(frpctl_read "Lifetime [1h]: " "1h")" || return 1
   [[ -n "$lifetime" ]] || lifetime=1h
+  # Fail before Review for invalid lifetimes (same principle as bulk issuance):
+  # the operator must not confirm a value the backend will refuse (F-004).
+  if [[ ! "$lifetime" =~ ^([0-9]+)[sSmMhHdD]$ ]] || (( 10#${BASH_REMATCH[1]:0:18} < 1 )); then
+    echo "ERROR: Lifetime must be a positive duration such as 30m, 1h or 1d. No enrollment was issued." >&2
+    echo "Retry: drlink set enrollment" >&2
+    return 2
+  fi
   note="$(frpctl_read "Note [optional]: " "")" || return 1
   echo
   echo "Review"

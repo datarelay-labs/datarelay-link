@@ -294,9 +294,17 @@ def authorize_remote(
     *,
     proxy_name: str,
     source_ip: str,
+    validated_revision: Optional[int] = None,
 ) -> dict:
-    """Authorize an inbound NewUserConn using canonical Remote Access rules."""
-    gen = generation_status(plane, "remote")
+    """Authorize an inbound NewUserConn using canonical Remote Access rules.
+
+    validated_revision is passed only by a caller that already ran the full
+    integrity/foreign-key scan for this exact DB state (see the access plugin's
+    PolicyCache). The request's own connection still re-reads the revision and
+    every plane generation and fails closed on any mismatch. Without it the
+    complete scan runs, as before.
+    """
+    gen = generation_status(plane, "remote", validated_revision=validated_revision)
     result = {
         "timestamp": None,
         "client_id": None,

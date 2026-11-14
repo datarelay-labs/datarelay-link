@@ -241,10 +241,12 @@ class ParkedSlotTests(unittest.TestCase):
         srv.gate.set()
         for _ in range(3):
             self.assertEqual(_get(srv.server_address[1]), b"ok")
-        # The worker releases its slot just after the response is flushed, so
-        # give it a moment instead of racing the client.
-        self.assertTrue(srv._slot_sem.acquire(timeout=2.0))
-        srv._slot_sem.release()
+            # The worker releases its slot just after the response is flushed.
+            # A bounded server rejects a connection that arrives while the only
+            # slot is still held, so wait for the release before the next
+            # request instead of racing the worker (flaky under CPU load).
+            self.assertTrue(srv._slot_sem.acquire(timeout=2.0))
+            srv._slot_sem.release()
 
     def test_parking_is_refused_above_the_cap(self):
         srv = _make_server(max_concurrent=8, max_parked=2)

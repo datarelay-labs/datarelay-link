@@ -236,12 +236,22 @@ python3 tests/test-fixed-tcp-egress.py
 ./tests/test-fixed-tcp-egress.sh
 python3 tests/test-tcp-egress-admission-ordering.py
 python3 tests/test-bounded-server-slot-release.py
+# E2E-run 20261112 findings F-004..F-012 (root-cause regressions)
+python3 tests/test-access-plugin-burst-capacity.py
+python3 tests/test-bootstrap-ca-pin-mismatch-message.py
+./tests/test-frpctl-manual-enrollment-lifetime.sh
+python3 tests/test-v24-access-rule-lost-update.py
+python3 tests/test-v24-ai-identity-unset-credential-cleanup.py
+python3 tests/test-v24-stale-apply-no-confirmation-prompt.py
+python3 tests/test-v24-usage-error-newline.py
 python3 tests/test-egress-conn-log-traverse-only.py
 python3 tests/test-egress-conn-log-rotation.py
 python3 tests/test-egress-conn-log-rotation-concurrency.py
 python3 tests/test-egress-shared-parent-permissions.py
 python3 tests/test-egress-concurrency-isolation.py
 python3 tests/test-p013-policy-hotpath.py
+python3 tests/test-access-plugin-integrity-hotpath.py
+python3 tests/test-revision-snapshot-retention.py
 python3 tests/test-egress-parent-traverse.py
 python3 tests/test-egress-runtime-no-list-permission.py
 python3 tests/test-egress-create-safe-default.py

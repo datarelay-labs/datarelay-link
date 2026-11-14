@@ -3856,10 +3856,19 @@ def set_access_rule(
     enabled: Optional[bool] = None,
     oneshot: bool = False,
     confirm: Optional[bool] = None,
+    expected_row_version: Optional[int] = None,
 ) -> dict:
     plane = _plane_key(family)
     name = validate_public_name(name, "Rule name")
     existing = plane_db._get_rule(plane, name)
+    # F-011: bind the commit to the rule version the operator reviewed.
+    bound_row_version = None
+    if existing is not None:
+        bound_row_version = (
+            int(expected_row_version)
+            if expected_row_version is not None
+            else int(existing["row_version"])
+        )
     if oneshot and existing is None:
         missing = []
         if source is None:
@@ -3977,9 +3986,15 @@ def set_access_rule(
                 ensure_policy_mode(plane_db, plane, mode, oneshot=False)
             if enabled is not None:
                 plane_db.conn.execute(
-                    "UPDATE policy_rules SET enabled = ?, row_version = row_version + 1, updated_at = ? WHERE id = ?",
+                    "UPDATE policy_rules SET enabled = ?, updated_at = ? WHERE id = ?",
                     (1 if enabled else 0, utc_now_iso(), rule_id),
                 )
+            # F-011: every update (selector, service, mode or enabled) advances
+            # the rule version so concurrent editors are detectable.
+            plane_db.conn.execute(
+                "UPDATE policy_rules SET row_version = row_version + 1, updated_at = ? WHERE id = ?",
+                (utc_now_iso(), rule_id),
+            )
             op = "update"
         if source is not None:
             kind, ref = _resolve_network_selector(plane_db, source, plane=plane, field="source")
@@ -4042,10 +4057,17 @@ def set_access_rule(
             enabled=enabled,
         )
 
+    if impact is not None and bound_row_version is not None:
+        impact = dict(impact)
+        impact["expected_row_version"] = bound_row_version
+    expected = None
+    if existing is not None:
+        expected = {"rows": [("policy_rules", existing["id"], bound_row_version)]}
     return plane_db._mutate(
         "set %s-access %s" % (plane, name),
         "set access rule",
         write,
+        expected=expected,
         impact=impact,
         confirm=confirm,
     )
