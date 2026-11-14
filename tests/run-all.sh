@@ -240,6 +240,7 @@ python3 tests/test-tcp-egress-admission-ordering.py
 python3 tests/test-bounded-server-slot-release.py
 # E2E-run 20261112 findings F-004..F-012 (root-cause regressions)
 python3 tests/test-access-plugin-burst-capacity.py
+python3 tests/test-access-plugin-db-reader-bound.py
 python3 tests/test-bootstrap-ca-pin-mismatch-message.py
 ./tests/test-frpctl-manual-enrollment-lifetime.sh
 python3 tests/test-v24-access-rule-lost-update.py

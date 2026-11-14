@@ -68,8 +68,24 @@ except SystemExit as exc:
 # addressed the same finding with a smaller bound and is superseded by this one.
 ACCESS_MAX_CONCURRENT = int(os.environ.get("FRP_ACCESS_MAX_CONCURRENT", "512"))
 # NewUserConn authorization is read-only, but each SQLite reader owns a file
-# descriptor. Keep a smaller DB-reader bound under the HTTP worker bound.
-ACCESS_DB_MAX_CONCURRENT = 8
+# descriptor, and each authorization (open, integrity/FK scan, proxy map, ACL) is CPU-bound. Keep a small DB-reader
+# bound under the HTTP worker bound. Running many at once is SLOWER in total because the readers contend for the GIL
+# and SQLite: on the live control DB (OBS-P005 B, 16 requesters) a bound of 1/2/4/8/unbounded gave 82/91/54/36/26
+# authorizations per second, so the previous bound of 8 capped Relay Remote Service at ~28 new connections per second.
+# 2 is the measured throughput optimum; the 512 HTTP slots above still absorb a burst and overload still fails closed.
+# FRP_ACCESS_DB_MAX_CONCURRENT overrides it; invalid or non-positive values fall back to the default.
+_ACCESS_DB_MAX_CONCURRENT_DEFAULT = 2
+
+
+def _db_max_concurrent_from_env() -> int:
+    try:
+        value = int(os.environ.get("FRP_ACCESS_DB_MAX_CONCURRENT", "") or _ACCESS_DB_MAX_CONCURRENT_DEFAULT)
+    except ValueError:
+        return _ACCESS_DB_MAX_CONCURRENT_DEFAULT
+    return value if value >= 1 else _ACCESS_DB_MAX_CONCURRENT_DEFAULT
+
+
+ACCESS_DB_MAX_CONCURRENT = _db_max_concurrent_from_env()
 # The full SQLite integrity/foreign-key scan is O(control DB size): ~44 ms CPU at 7 MB, 94% of the per-connection
 # cost measured on the shared Server (OBS-P005). DEFAULT 0 KEEPS THE EXISTING CONTRACT: one full fail-closed scan per
 # NewUserConn (test-access-control: test_newuserconn_integrity_scan_count). A value N>0 is an OPT-IN trade-off (owner
