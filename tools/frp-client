@@ -81,11 +81,10 @@ item = {
 }
 if preset == 'ssh':
     ssh_user = str(raw.get('ssh_user', '') or '').strip()
-    if not ssh_user:
-        raise SystemExit('ERROR: ssh_user is required for ssh services')
-    if not re.fullmatch(r'[A-Za-z0-9._@-]{1,32}', ssh_user):
-        raise SystemExit('ERROR: invalid ssh_user')
-    item['ssh_user'] = ssh_user
+    if ssh_user:
+        if not re.fullmatch(r'[A-Za-z0-9._@-]{1,32}', ssh_user):
+            raise SystemExit('ERROR: invalid ssh_user')
+        item['ssh_user'] = ssh_user
 try:
     HC.copy_health_check(raw, item)
 except HC.HealthCheckError as exc:
@@ -381,10 +380,7 @@ PY
   host="$(read_tty "Target host [${old_host}]: " "$old_host")"
   frp_ux_target_port_help "$preset"
   port="$(read_tty "Target port [${old_port}]: " "$old_port")"
-  user="$old_user"
-  if [[ "$preset" == ssh ]]; then
-    frp_prompt_ssh_user user "$old_user"
-  fi
+  user="$old_user"  # Preserve legacy metadata; do not request SSH credentials.
   maybe_warn_connectivity "$host" "$port" "TCP"
   if ! python3 - "$CANDIDATE_FILE" "$sid" "$name" "$host" "$port" "$user" <<'PY'
 import json, re, sys
@@ -409,11 +405,12 @@ item['name'] = name.strip() or sid
 item['local_ip'] = host
 item['local_port'] = local_port
 if item.get('preset') == 'ssh':
-    if not str(user or '').strip():
-        raise SystemExit('ERROR: ssh_user is required for ssh services')
-    if not re.fullmatch(r'[A-Za-z0-9._@-]{1,32}', user):
-        raise SystemExit('ERROR: invalid ssh_user')
-    item['ssh_user'] = user
+    if user:
+        if not re.fullmatch(r'[A-Za-z0-9._@-]{1,32}', user):
+            raise SystemExit('ERROR: invalid ssh_user')
+        item['ssh_user'] = user
+    else:
+        item.pop('ssh_user', None)
 path.write_text(json.dumps(state, indent=2, sort_keys=True) + '\n', encoding='utf-8')
 PY
   then
@@ -1341,8 +1338,7 @@ frp_client_add_service_cli() {
     return $?
   fi
   case "$preset" in
-    ssh) sid="${sid:-ssh}"; name="${name:-SSH}"; port="${port:-22}"; [[ -n "$user" ]] || {
-      echo "ERROR: --ssh-user is required for ssh services" >&2; return 2; } ;;
+    ssh) sid="${sid:-ssh}"; name="${name:-SSH}"; port="${port:-22}" ;;
     http) sid="${sid:-http}"; name="${name:-HTTP}"; port="${port:-80}" ;;
     https) sid="${sid:-https}"; name="${name:-HTTPS}"; port="${port:-443}" ;;
     custom)

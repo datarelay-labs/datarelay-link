@@ -951,17 +951,6 @@ def normalize_ssh_user(raw):
     return str(raw).strip()
 
 
-def validate_prompt_ssh_user(raw):
-    user = normalize_ssh_user(raw)
-    if not user:
-        return '', 'SSH username cannot be blank.'
-    if any(ord(c) < 32 or 127 <= ord(c) <= 159 for c in user):
-        return '', 'SSH username must not contain control characters or newlines'
-    if not SSH_USER_RE.fullmatch(user):
-        return '', 'invalid ssh_user'
-    return user, ''
-
-
 def validate_prompt_label(raw):
     text = '' if raw is None else str(raw).strip()
     if not text:
@@ -1022,42 +1011,6 @@ def _enrollment_track_hints(tracking_id=''):
         '  unset removes the retained record.',
     ]
     return lines
-
-
-def prompt_zero_touch_ssh(existing_user, existing_port, port_explicit):
-    print()
-    print('SSH service setup')
-    print('=================')
-    print()
-    print('SSH username is optional connection-example metadata.')
-    print('It is not required for Agent installation or enrollment.')
-    print('Leave blank to show <username> in connection examples.')
-    print()
-
-    user = normalize_ssh_user(existing_user)
-    if not user:
-        while True:
-            entered = read_prompt('SSH username [optional]: ')
-            if not str(entered or '').strip():
-                user = ''
-                break
-            user, err = validate_prompt_ssh_user(entered)
-            if user:
-                break
-            sys.stderr.write('ERROR: %s\n' % err)
-
-    port = existing_port
-    if not port_explicit:
-        while True:
-            entered = normalize_ssh_user(read_prompt('SSH port [22]: '))
-            if not entered:
-                port = 22
-                break
-            port = coerce_port(entered)
-            if port is not None:
-                break
-            sys.stderr.write('ERROR: invalid SSH port; must be an integer 1-65535\n')
-    return user, port
 
 
 def print_client_configuration(name, note, services=None, ssh_user='', ssh_port=None):

@@ -413,7 +413,7 @@ def validate_profiles_state(state: dict) -> None:
         validate_target_port(profile.get("local_port"))
         preset = str(profile.get("preset") or "").lower()
         if preset == "ssh":
-            validate_ssh_user(profile.get("ssh_user") or "", required=True)
+            validate_ssh_user(profile.get("ssh_user") or "")
         elif profile.get("ssh_user"):
             validate_ssh_user(profile.get("ssh_user") or "")
         if "description" in profile and profile.get("description") is not None:
@@ -516,7 +516,7 @@ def create_profile(
     local_ip = validate_target_host(local_ip)
     local_port = validate_target_port(local_port)
     description = validate_description(description)
-    ssh_user = validate_ssh_user(ssh_user, required=(preset == "ssh"))
+    ssh_user = validate_ssh_user(ssh_user)
     health = normalize_health_check_optional(health_check)
 
     profiles = state.setdefault("profiles", {})
@@ -579,7 +579,7 @@ def update_profile(state: dict, selector: str, prop: str, value: str) -> tuple[s
         if preset == "ssh":
             if ssh_user_inline:
                 profile["ssh_user"] = validate_ssh_user(ssh_user_inline, required=True)
-            validate_ssh_user(profile.get("ssh_user") or "", required=True)
+            validate_ssh_user(profile.get("ssh_user") or "")
         elif "local_port" not in profile and preset in DEFAULT_PORTS:
             profile["local_port"] = DEFAULT_PORTS[preset]
         if preset != "ssh":
@@ -643,9 +643,9 @@ def update_profile(state: dict, selector: str, prop: str, value: str) -> tuple[s
     if prop.startswith("health") and profile.get("health_check") is None:
         profile.pop("health_check", None)
     profile["updated_at"] = utc_now_iso()
-    # Re-validate ssh requirement after preset/ssh mutations.
+    # Re-validate supplied SSH login metadata after preset/SSH changes.
     if str(profile.get("preset") or "") == "ssh":
-        validate_ssh_user(profile.get("ssh_user") or "", required=True)
+        validate_ssh_user(profile.get("ssh_user") or "")
     reject_forbidden_fields(profile)
     return pid, profile, old
 
@@ -691,7 +691,9 @@ def profile_to_service_payload(
         "local_port": validate_target_port(profile.get("local_port")),
     }
     if preset == "ssh":
-        payload["ssh_user"] = validate_ssh_user(profile.get("ssh_user") or "", required=True)
+        user = validate_ssh_user(profile.get("ssh_user") or "")
+        if user:
+            payload["ssh_user"] = user
     health = normalize_health_check_optional(profile.get("health_check"))
     if health:
         payload["health_check"] = health

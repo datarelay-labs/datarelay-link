@@ -156,7 +156,7 @@ for platform in linux windows macos; do
   esac
   run_repl "$SERVER" "$WORKDIR/zt-invalid-$platform.out" \
     "set enrollment zero-touch" "$platform_id" "draft-$platform" "keep-$platform" \
-    "ec2-user" "$option" "aella" 22 exit \
+    "ec2-user" "$option" 22 exit \
     || fail "F005 invalid configuration selector $platform"
   grep -q "ERROR: select 1-${platform_hi}" "$WORKDIR/zt-invalid-$platform.out" \
     || fail "F005 invalid selector feedback missing for $platform"
@@ -172,21 +172,21 @@ pass "F005_ZERO_TOUCH_INVALID_SELECTION_PRESERVES_DRAFT"
 # --- Guided: SSH only ---
 # set enrollment zero-touch → platform(Linux) → identity → SSH only
 run_repl "$SERVER" "$WORKDIR/zt-ssh.out" \
-  "set enrollment zero-touch" 1 office-ssh "Seoul office" 1 aella 22 exit \
+  "set enrollment zero-touch" 1 office-ssh "Seoul office" 1 22 exit \
   || fail "zero-touch ssh guided"
 grep -qiE 'Connect a Managed Host|Managed Host details|zero-touch|Zero-Touch' "$WORKDIR/zt-ssh.out" || fail "zero-touch heading"
 grep -q '1) SSH only' "$WORKDIR/zt-ssh.out" || fail "ssh only option"
-grep -q 'DISPATCH frp-create-client --platform linux --one-line --ssh --ssh-user aella --ssh-port 22 --client-name office-ssh --note Seoul office' \
+grep -q 'DISPATCH frp-create-client --platform linux --one-line --ssh --ssh-user  --ssh-port 22 --client-name office-ssh --note Seoul office' \
   "$WORKDIR/zt-ssh.out" || fail "ssh only dispatch"
 pass "ZERO_TOUCH_SSH_GUIDED"
 
 # --- Guided: macOS uses the real bash Zero-Touch path (same installer as Linux) ---
 run_repl "$SERVER" "$WORKDIR/zt-macos.out" \
-  "set enrollment zero-touch" 3 office-mac "Mac lab" 1 aella 22 exit \
+  "set enrollment zero-touch" 3 office-mac "Mac lab" 1 22 exit \
   || fail "zero-touch macOS guided"
 grep -q '3) macOS' "$WORKDIR/zt-macos.out" || fail "macOS platform option missing"
 grep -q '4) Back' "$WORKDIR/zt-macos.out" || fail "platform Back must be option 4"
-grep -q 'DISPATCH frp-create-client --platform linux --one-line --ssh --ssh-user aella --ssh-port 22 --client-name office-mac --note Mac lab' \
+grep -q 'DISPATCH frp-create-client --platform linux --one-line --ssh --ssh-user  --ssh-port 22 --client-name office-mac --note Mac lab' \
   "$WORKDIR/zt-macos.out" || fail "macOS must use bash/linux Zero-Touch dispatch"
 pass "MACOS_PUBLIC_ONBOARDING_DISCOVERABLE"
 pass "MACOS_MENU_DEAD_END_NO"
@@ -217,7 +217,7 @@ if grep -q 'DISPATCH frp-create-client --one-line' "$WORKDIR/zt-mgmt-menu.out"; 
 fi
 # Blank description accepted without a second Managed Host details prompt.
 run_repl "$SERVER" "$WORKDIR/zt-blank-note.out" \
-  "set enrollment zero-touch" 1 blank-desc "" 1 aella 22 exit \
+  "set enrollment zero-touch" 1 blank-desc "" 1 22 exit \
   || fail "blank description guided"
 ident_count="$(grep -c 'Managed Host details' "$WORKDIR/zt-blank-note.out" || true)"
 [[ "$ident_count" == "1" ]] || fail "CLIENT_IDENTIFICATION_PROMPT_COUNT expected 1 got $ident_count"
@@ -230,33 +230,29 @@ grep -qF -- '--note' "$WORKDIR/zt-blank-note.out" \
 pass "MANAGEMENT_ONLY_INITIAL_ONBOARDING_REMOVED"
 pass "ZERO_TOUCH_SINGLE_IDENTIFICATION_PROMPT"
 
-# Blank optional SSH username is collected once, then passed explicitly.
+# No SSH login prompt is shown; transport configuration needs only the port.
 run_repl "$SERVER" "$WORKDIR/zt-blank-user.out" \
-  "set enrollment zero-touch" 1 blank-ssh "" 1 "" 22 exit \
-  || fail "blank ssh username guided"
-user_prompts="$(grep -c 'SSH username is optional connection-example metadata.' "$WORKDIR/zt-blank-user.out" || true)"
-[[ "$user_prompts" == "1" ]] || fail "SSH username prompt count expected 1 got $user_prompts"
-python3 - "$WORKDIR/zt-blank-user.out" <<'PY' || fail "blank ssh user not passed explicitly"
+  "set enrollment zero-touch" 1 blank-ssh "" 1 22 exit \
+  || fail "zero-touch SSH with no username"
+! grep -q 'SSH username \[optional\]' "$WORKDIR/zt-blank-user.out" \
+  || fail "SSH login identity must not be requested"
+python3 - "$WORKDIR/zt-blank-user.out" <<'PY_AUDIT' || fail "blank SSH metadata missing"
 import json, sys
 text = open(sys.argv[1], encoding="utf-8").read()
 lines = [ln for ln in text.splitlines() if ln.startswith("DISPATCH_ARGV\t")]
 if not lines:
     raise SystemExit("missing DISPATCH_ARGV")
 argv = json.loads(lines[-1].split("\t", 1)[1])
-if "--ssh-user" not in argv:
-    raise SystemExit(argv)
-if argv[argv.index("--ssh-user") + 1] != "":
-    raise SystemExit(argv)
-if "--ssh-port" not in argv:
-    raise SystemExit(argv)
-PY
-pass "SSH_USERNAME_PROMPTED_ONCE"
+assert argv[argv.index("--ssh-user") + 1] == "", argv
+assert argv[argv.index("--ssh-port") + 1] == "22", argv
+PY_AUDIT
+pass "SSH_USERNAME_NOT_PROMPTED"
 
 # --- Guided: multi-service SSH+HTTP ---
 run_repl "$SERVER" "$WORKDIR/zt-multi-http.out" \
   "set enrollment zero-touch" 1 multi-http "" \
   2 \
-  1 "" "" "" aella \
+  1 "" "" "" \
   2 "" "" "" \
   5 \
   exit \
@@ -279,8 +275,8 @@ ssh = items[0]
 http = items[1]
 if ssh.get("local_ip") != "127.0.0.1" or int(ssh.get("local_port")) != 22:
     raise SystemExit("ssh target")
-if ssh.get("ssh_user") != "aella":
-    raise SystemExit("ssh user")
+if "ssh_user" in ssh:
+    raise SystemExit("unexpected ssh login metadata")
 if http.get("local_ip") != "127.0.0.1" or int(http.get("local_port")) != 80:
     raise SystemExit("http target")
 PY
@@ -291,7 +287,7 @@ pass "ZERO_TOUCH_MULTI_SERVICE_SSH_HTTP"
 run_repl "$SERVER" "$WORKDIR/zt-multi-https.out" \
   "set enrollment zero-touch" 1 multi-https "" \
   2 \
-  1 "" "" "" aella \
+  1 "" "" "" \
   3 "" "" "" \
   5 \
   exit \
@@ -313,7 +309,7 @@ pass "ZERO_TOUCH_MULTI_SERVICE_SSH_HTTPS"
 run_repl "$SERVER" "$WORKDIR/zt-lan.out" \
   "set enrollment zero-touch" 1 lan-client "lan note" \
   2 \
-  1 ssh 10.10.10.20 22 ops \
+  1 ssh 10.10.10.20 22 \
   2 web 10.10.10.30 80 \
   5 \
   exit \
@@ -326,7 +322,7 @@ items = json.loads(m.group(1))
 assert items[0]["preset"] == "ssh"
 assert items[0]["local_ip"] == "10.10.10.20"
 assert int(items[0]["local_port"]) == 22
-assert items[0]["ssh_user"] == "ops"
+assert "ssh_user" not in items[0]
 assert items[1]["preset"] == "http"
 assert items[1]["local_ip"] == "10.10.10.30"
 assert int(items[1]["local_port"]) == 80
