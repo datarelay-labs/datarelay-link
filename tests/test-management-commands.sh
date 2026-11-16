@@ -274,7 +274,7 @@ PY
 python3 "$ROOT/tools/frp-clients" >"$WORKDIR/legacy-clients.out"
 grep -q 'legacy / unspecified' "$WORKDIR/legacy-clients.out" || fail "legacy SSH user display"
 python3 "$ROOT/tools/frp-client-info" legacy-ssh services >"$WORKDIR/legacy-info.out"
-grep -q 'legacy / unspecified' "$WORKDIR/legacy-info.out" || fail "legacy SSH info display"
+grep -qF '<username>@' "$WORKDIR/legacy-info.out" || fail "SSH connection placeholder missing"
 python3 - "$TREE/var/lib/drlink/registry.json" <<'PY' || fail "list mutated legacy record"
 import json,sys
 from pathlib import Path

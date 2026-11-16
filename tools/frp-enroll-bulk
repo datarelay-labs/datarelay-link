@@ -82,9 +82,9 @@ def _audit_emit(event, **kwargs):
 
 def main(argv=None):
     parser = PublicBulkArgumentParser(description='Create independent one-time enrollment commands')
-    parser.add_argument('csv_path', nargs='?', metavar='CSV', help='CSV file with label,ssh_user,note columns')
+    parser.add_argument('csv_path', nargs='?', metavar='CSV', help='CSV file with label,note columns (ssh_user optional)')
     parser.add_argument('--count', type=int, help='number of management-only enrollments')
-    parser.add_argument('--csv', dest='csv_option', metavar='PATH', help='CSV file with label,ssh_user,note columns')
+    parser.add_argument('--csv', dest='csv_option', metavar='PATH', help='CSV file with label,note columns (legacy ssh_user optional)')
     parser.add_argument('--label-prefix', default='client', help='label prefix for --count')
     parser.add_argument('--ssh-user', default='', help='SSH user for every --count row')
     parser.add_argument('--note', default='', help='note for every --count row')
@@ -129,9 +129,9 @@ def main(argv=None):
         try:
             with open(csv_path, newline='', encoding='utf-8-sig') as handle:
                 reader = csv.DictReader(handle)
-                required = {'label', 'ssh_user', 'note'}
+                required = {'label', 'note'}
                 if not reader.fieldnames or not required.issubset(set(reader.fieldnames)):
-                    parser.error('CSV header must contain label,ssh_user,note')
+                    parser.error('CSV header must contain label,note (legacy ssh_user optional)')
                 rows = [(row.get('label'), row.get('ssh_user'), row.get('note')) for row in reader]
         except (OSError, UnicodeError, csv.Error):
             raise SystemExit('ERROR: cannot read CSV. Check the file path, permissions and UTF-8 CSV format, then retry set enrollment bulk.')

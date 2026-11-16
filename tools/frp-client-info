@@ -206,7 +206,8 @@ def print_services():
                     access_host or 'host',
                 ))
         else:
-            print('  legacy / unspecified')
+            print('  ssh -p %s <username>@%s' % (
+                ssh.get('remote_port') or '-', access_host or 'host'))
 
 
 def print_tags():

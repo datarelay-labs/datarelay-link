@@ -1257,17 +1257,7 @@ EOF
   esac
 }
 
-frp_ux_ssh_user_help() {
-  cat <<'EOF'
-SSH user (optional connection example)
-  Operating-system username shown in the generated SSH command only.
 
-  This does NOT create an operating-system account,
-  change a password, or configure SSH authentication.
-  Leave blank to show <username> in connection examples.
-
-EOF
-}
 
 frp_ux_add_service_menu() {
   cat <<'EOF'
@@ -1350,7 +1340,6 @@ frp_ux_print_all_guidance() {
   frp_ux_target_port_help http
   frp_ux_target_port_help https
   frp_ux_target_port_help custom
-  frp_ux_ssh_user_help
   frp_ux_add_service_menu
   frp_ux_empty_services_help
   frp_ux_configured_services_help
@@ -1392,18 +1381,7 @@ frp_prompt_target_port() {
   done
 }
 
-frp_prompt_ssh_user() {
-  local out_var="$1"
-  local default="${2:-${FRP_SSH_USER:-}}"
-  local _frp_user_tmp=""
-  frp_ux_ssh_user_help
-  if [[ -n "$default" ]]; then
-    _frp_user_tmp="$(read_tty "SSH user [optional, ${default}]: " "$default")"
-  else
-    _frp_user_tmp="$(read_tty "SSH user [optional]: " "")"
-  fi
-  printf -v "$out_var" '%s' "$_frp_user_tmp"
-}
+
 
 frp_ux_prompt_new_service() {
   local dest="${1:-}"
@@ -1417,9 +1395,9 @@ frp_ux_prompt_new_service() {
         frp_prompt_service_id ssh sid
         frp_prompt_target_host 127.0.0.1 host
         frp_prompt_target_port ssh 22 port
-        frp_prompt_ssh_user user
         maybe_warn_connectivity "$host" "$port" "SSH"
-        _frp_new_payload="$(service_payload ssh "$sid" SSH "$host" "$port" "$user")"
+        # Legacy FRP_SSH_USER is explicit metadata, not an interactive prompt.
+        _frp_new_payload="$(service_payload ssh "$sid" SSH "$host" "$port" "${FRP_SSH_USER:-}")"
         ;;
       2)
         frp_prompt_service_id http sid

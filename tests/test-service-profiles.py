@@ -83,11 +83,16 @@ class ServiceProfilesTests(unittest.TestCase):
         with self.assertRaises(PROF.ProfileError):
             PROF.reject_forbidden_fields({"access_list_id": "acl_1"})
 
-    def test_ssh_requires_user(self):
-        with self.assertRaises(PROF.ProfileError):
-            PROF.create_profile(
-                self.state, "ssh1", preset="ssh", local_ip="127.0.0.1", local_port=22
-            )
+    def test_ssh_user_optional(self):
+        pid, rec = PROF.create_profile(
+            self.state, "ssh1", preset="ssh", local_ip="127.0.0.1", local_port=22
+        )
+        self.assertNotIn("ssh_user", rec)
+        PROF.validate_profiles_state(self.state)
+        self.assertNotIn("ssh_user", PROF.profile_to_service_payload(rec))
+        PROF.update_profile(self.state, pid, "preset", "http")
+        PROF.update_profile(self.state, pid, "preset", "ssh")
+        self.assertNotIn("ssh_user", self.state["profiles"][pid])
 
     def test_profile_to_service_payload(self):
         _pid, rec = PROF.create_profile(
