@@ -514,19 +514,9 @@ create_zero_touch_windows() {
   rc=$?
   set -uo pipefail
   if [[ "$rc" -eq 0 ]]; then
-    python3 - "$out" "$enc_out" <<'PY'
-import base64, re, sys
-text = open(sys.argv[1], encoding="utf-8").read()
-line = next((l for l in text.splitlines() if l.startswith("powershell.exe -NoProfile")), "")
-m = re.match(r"powershell\.exe -NoProfile -ExecutionPolicy Bypass -Command '(.*)'\s*$", line)
-if not m:
-    raise SystemExit("missing windows one-line command")
-# Official -Command uses '' escapes; EncodedCommand needs the decoded script body.
-script = m.group(1).replace("''", "'")
-open(sys.argv[2], "w", encoding="utf-8").write(
-    base64.b64encode(script.encode("utf-16le")).decode("ascii")
-)
-PY
+    # Shared, unit-tested parser (tests/test-real-e2e-windows-command-parse.py):
+    # accepts -Command, -EncodedCommand and the raw private-CA IP script form.
+    python3 "$ROOT/tests/lib/real_e2e_windows_command.py" "$out" "$enc_out"
     rc=$?
   fi
   if [[ "$rc" -eq 0 ]] && grep -qE 'Managed Host name[[:space:]]*:[[:space:]]*1$|SSH port[[:space:]]*:[[:space:]]*1$' "$out"; then
