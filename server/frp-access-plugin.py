@@ -86,6 +86,17 @@ def _db_max_concurrent_from_env() -> int:
 
 
 ACCESS_DB_MAX_CONCURRENT = _db_max_concurrent_from_env()
+# OPT-IN (owner decision), DEFAULT OFF. Opening + closing a read-only SQLite connection for every authorization
+# (connect, PRAGMAs, schema parse, close) is ~60% of the per-request CPU. With FRP_ACCESS_CONNECTION_REUSE=1 a request
+# that finished cleanly parks its connection for the next request (at most ACCESS_DB_MAX_CONCURRENT of them).
+# Nothing about the POLICY is retained: every request still starts a fresh read transaction (new WAL snapshot),
+# runs the complete integrity + foreign-key scan, re-reads the revision/generations and re-evaluates the policy.
+# A replaced DB file, an open transaction or any fault discards the connection.
+ACCESS_CONNECTION_REUSE = os.environ.get("FRP_ACCESS_CONNECTION_REUSE", "").strip().lower() in ("1", "true", "yes", "on")
+# A verdict reached through one of these reasons means the request did NOT run on a healthy, consistent database.
+_REUSE_FAULT_REASONS = frozenset(
+    {RP.REASON_DB_UNAVAILABLE, RP.REASON_AUTHORIZATION_ERROR, RP.REASON_GENERATION_MISMATCH}
+)
 # The full SQLite integrity/foreign-key scan is O(control DB size): ~44 ms CPU at 7 MB, 94% of the per-connection
 # cost measured on the shared Server (OBS-P005). DEFAULT 0 KEEPS THE EXISTING CONTRACT: one full fail-closed scan per
 # NewUserConn (test-access-control: test_newuserconn_integrity_scan_count). A value N>0 is an OPT-IN trade-off (owner
@@ -144,6 +155,8 @@ class PolicyCache:
         self._inner = RP.ControlPlaneCache(config_path)
         self._reader_slots = threading.BoundedSemaphore(ACCESS_DB_MAX_CONCURRENT)
         self._meta_lock = threading.RLock()
+        self._idle = []  # parked read-only planes (reuse mode only); never holds a reader slot
+        self._idle_lock = threading.Lock()
         self._validate_lock = threading.Lock()
         self._validated = None  # (db/wal file fingerprint, revision, monotonic time) of the last healthy full scan
         self._root = None
@@ -182,6 +195,7 @@ class PolicyCache:
         self.load_error = self._inner.load_error
         self.fingerprint = self._inner.fingerprint
         self._close_inner_plane()
+        self._drop_idle()
 
     def snapshot(self):
         """Compatibility snapshot for non-threaded tests/legacy callers."""
@@ -215,7 +229,9 @@ class PolicyCache:
         self._reader_slots.acquire()
         plane = None
         try:
-            plane = RP.ControlPlane(root, read_only=True)
+            plane = self._checkout_idle(root, db)
+            if plane is None:
+                plane = RP.ControlPlane(root, read_only=True)
         except Exception as exc:
             if plane is not None:
                 try:
@@ -234,6 +250,76 @@ class PolicyCache:
         except Exception:
             plane._access_validated_revision = None  # fail closed to the complete scan
         return plane, None, cfg
+
+    def _checkout_idle(self, root, db):
+        """Return a parked plane that is still safe to reuse, else None (caller opens a fresh one).
+
+        Called with a reader slot held. A parked plane is discarded unless its connection is outside any transaction,
+        its database path and file identity (st_dev, st_ino) are unchanged (a restore/rollback replaces the file), and
+        it belongs to the same root.
+        """
+        if not ACCESS_CONNECTION_REUSE:
+            return None
+        while True:
+            with self._idle_lock:
+                if not self._idle:
+                    return None
+                plane = self._idle.pop()
+            try:
+                conn = plane.conn
+                ident = plane._db_file_ident()
+                if (
+                    conn is not None
+                    and not conn.in_transaction
+                    and plane.root == root
+                    and plane.db_file == db
+                    and ident is not None
+                    and ident == plane._db_ident
+                ):
+                    return plane
+            except Exception:
+                pass
+            self._discard(plane)
+
+    @staticmethod
+    def _discard(plane):
+        try:
+            plane.close()
+        except Exception:
+            pass
+
+    def _drop_idle(self):
+        with self._idle_lock:
+            stale, self._idle = self._idle, []
+        for plane in stale:
+            self._discard(plane)
+
+    def release_isolated(self, plane, reusable=False):
+        """End one request's use of a plane from open_isolated(): park it for reuse, or close it.
+
+        ``reusable`` is True only for a request that completed without a fault. The reader slot is always given back
+        here, so a parked connection never holds one.
+        """
+        if plane is None:
+            return
+        if not (ACCESS_CONNECTION_REUSE and reusable) or not self._park(plane):
+            self._discard(plane)
+
+    def _park(self, plane):
+        try:
+            conn = plane.conn
+            if conn is None or conn.in_transaction or plane._db_file_ident() != plane._db_ident:
+                return False
+            with self._idle_lock:
+                if len(self._idle) >= ACCESS_DB_MAX_CONCURRENT:
+                    return False
+                # The slot is handed back explicitly below; close() must not release it a second time.
+                plane._release_isolated_conn_lock = None
+                self._idle.append(plane)
+        except Exception:
+            return False
+        self._release_reader_slot()
+        return True
 
     @staticmethod
     def _db_fingerprint(root):
@@ -327,13 +413,16 @@ def make_handler(cache: PolicyCache, plugin_path: str):
             self.end_headers()
             self.wfile.write(body)
 
-        def _close_plane(self, plane):
+        def _close_plane(self, plane, reusable=False):
             if plane is None:
                 return
             try:
-                plane.close()
+                cache.release_isolated(plane, reusable)
             except Exception:
-                pass
+                try:
+                    plane.close()
+                except Exception:
+                    pass
 
         def do_GET(self):
             def _handle():
@@ -398,6 +487,7 @@ def make_handler(cache: PolicyCache, plugin_path: str):
                     return
 
                 plane = None
+                reusable = False
                 proxy_name = str(content.get("proxy_name") or "")
                 remote_addr = str(content.get("remote_addr") or "")
                 try:
@@ -451,6 +541,7 @@ def make_handler(cache: PolicyCache, plugin_path: str):
                         )
                         return
                     # Logging must not affect allow/deny.
+                    reusable = str(verdict.get("reason") or "") not in _REUSE_FAULT_REASONS
                     if ACL is not None:
                         try:
                             ACL.emit_conn_log(verdict, cfg=cfg)
@@ -465,7 +556,7 @@ def make_handler(cache: PolicyCache, plugin_path: str):
                             {"reject": True, "reject_reason": reason, "unchange": True},
                         )
                 finally:
-                    self._close_plane(plane)
+                    self._close_plane(plane, reusable)
 
             self._with_slot(_handle)
 

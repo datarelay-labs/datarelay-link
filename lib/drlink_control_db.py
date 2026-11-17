@@ -1138,8 +1138,12 @@ def open_control_db(root: Optional[str] = None, *, create: bool = True) -> sqlit
     return conn
 
 
-def open_control_db_readonly(root: Optional[str] = None) -> sqlite3.Connection:
-    return connect_read_only(root=root)
+def open_control_db_readonly(
+    root: Optional[str] = None, *, path: Optional[Path] = None
+) -> sqlite3.Connection:
+    # ``path`` lets a caller that already resolved the live DB (ControlPlane) avoid re-probing the host
+    # markers; the connection, PRAGMAs and schema checks are identical.
+    return connect_read_only(path=path, root=root)
 
 
 def pragma_snapshot(conn: sqlite3.Connection) -> dict:

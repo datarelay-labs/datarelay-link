@@ -413,8 +413,10 @@ class ControlPlane:
         read_only: bool = False,
     ):
         self.root = root
+        # Resolve the live DB once: db_path() probes several host marker files and used to run three times
+        # per request plane (db_file, runtime_dir, read-only connect). runtime_dir() is db_path().parent/runtime.
         self.db_file = db_path(root)
-        self.runtime = runtime_dir(root)
+        self.runtime = self.db_file.parent / "runtime"
         self._read_only = bool(read_only and conn is None)
         # A caller-supplied connection (doctor, support bundle, in-memory preview)
         # is the only connection this plane may use. Pooled request connections
@@ -425,7 +427,9 @@ class ControlPlane:
         self._worker_pool_lock = threading.Lock()
         self._worker_generation = 0
         self.conn = conn or (
-            open_control_db_readonly(root) if self._read_only else open_control_db(root)
+            open_control_db_readonly(root, path=self.db_file)
+            if self._read_only
+            else open_control_db(root)
         )
         self._db_ident = self._db_file_ident()
         self._batch_mode = False

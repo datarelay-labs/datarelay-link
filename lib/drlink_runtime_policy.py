@@ -188,59 +188,61 @@ def build_proxy_map(plane: ControlPlane) -> dict[str, dict]:
         from drlink_v24_runtime import remote_service_proxy_id
     except Exception:
         remote_service_proxy_id = None
-    for client in plane.conn.execute("SELECT * FROM clients"):
-        hostname = client["hostname"] or ""
-        mid = client["id"]
-        label = client["label"] or ""
-        for svc in plane.conn.execute(
-            "SELECT * FROM published_services WHERE client_id = ? AND released = 0",
-            (mid,),
-        ):
-            # v2.4 Remote Services use stable rs-<name> runtime ids; enrollment
-            # services keep their historical id (== published name).
-            historical_sid = str(svc["name"]).strip().lower()
-            sid = historical_sid
-            meta = plane.conn.execute(
-                "SELECT * FROM remote_service_meta WHERE service_id = ?",
-                (svc["id"],),
-            ).fetchone()
-            if meta is not None and remote_service_proxy_id is not None:
-                sid = remote_service_proxy_id(svc["name"])
-            name = expected_proxy_name(hostname, mid, sid)
-            entry = {
-                "client_id": mid,
-                "service_id": sid,
-                "public_port": svc["public_port"],
-                "client_label": label,
-                "hostname": hostname,
-                "enabled": bool(svc["enabled"]),
-                "target_mode": svc["target_mode"],
-                "target_host": svc["target_host"],
-                "target_port": int(svc["target_port"] or 0),
-                "service_type": svc["service_type"],
-                "protocol": "tcp",
-                "published_id": svc["id"],
-                "destination_name": str(meta["destination_name"] or "") if meta is not None else "",
-                "destination_client_id": (
-                    str(meta["destination_client_id"] or "").strip() or None
-                    if meta is not None
-                    else None
-                ),
-                "service_object_id": meta["service_object_id"] if meta is not None else None,
-                "has_remote_meta": meta is not None,
-            }
-            names = [name]
-            # Zero-Touch/enrollment agents may still be running the historical
-            # published-service proxy id when runtime metadata is attached after
-            # enrollment. Authorize that exact identity as an alias of the same
-            # authoritative service; policy evaluation remains identical.
-            if meta is not None and historical_sid != sid:
-                names.append(expected_proxy_name(hostname, mid, historical_sid))
-            for proxy_name in names:
-                if proxy_name in mapping or proxy_name in collisions:
-                    collisions.setdefault(proxy_name, [mapping.pop(proxy_name, None)]).append(entry)
-                    continue
-                mapping[proxy_name] = entry
+    # One JOIN replaces the former per-client / per-service / per-meta lookups (1 + C + 2S queries). Rows come
+    # from the same read snapshot and keep the legacy iteration order: clients by rowid, then each client's
+    # unreleased services by name (the UNIQUE(client_id, name) index order the per-client query used).
+    # remote_service_meta.service_id is its PRIMARY KEY, so the LEFT JOIN yields at most one meta row.
+    for svc in plane.conn.execute(
+        "SELECT c.id AS _client_id, c.hostname AS _client_hostname, c.label AS _client_label, p.*, "
+        "m.service_id AS _meta_service_id, m.destination_name AS _meta_destination_name, "
+        "m.destination_client_id AS _meta_destination_client_id, m.service_object_id AS _meta_service_object_id "
+        "FROM clients c JOIN published_services p ON p.client_id = c.id AND p.released = 0 "
+        "LEFT JOIN remote_service_meta m ON m.service_id = p.id "
+        "ORDER BY c.rowid, p.name"
+    ):
+        hostname = svc["_client_hostname"] or ""
+        mid = svc["_client_id"]
+        label = svc["_client_label"] or ""
+        # v2.4 Remote Services use stable rs-<name> runtime ids; enrollment
+        # services keep their historical id (== published name).
+        historical_sid = str(svc["name"]).strip().lower()
+        sid = historical_sid
+        has_meta = svc["_meta_service_id"] is not None
+        if has_meta and remote_service_proxy_id is not None:
+            sid = remote_service_proxy_id(svc["name"])
+        name = expected_proxy_name(hostname, mid, sid)
+        entry = {
+            "client_id": mid,
+            "service_id": sid,
+            "public_port": svc["public_port"],
+            "client_label": label,
+            "hostname": hostname,
+            "enabled": bool(svc["enabled"]),
+            "target_mode": svc["target_mode"],
+            "target_host": svc["target_host"],
+            "target_port": int(svc["target_port"] or 0),
+            "service_type": svc["service_type"],
+            "protocol": "tcp",
+            "published_id": svc["id"],
+            "destination_name": str(svc["_meta_destination_name"] or "") if has_meta else "",
+            "destination_client_id": (
+                str(svc["_meta_destination_client_id"] or "").strip() or None if has_meta else None
+            ),
+            "service_object_id": svc["_meta_service_object_id"] if has_meta else None,
+            "has_remote_meta": has_meta,
+        }
+        names = [name]
+        # Zero-Touch/enrollment agents may still be running the historical
+        # published-service proxy id when runtime metadata is attached after
+        # enrollment. Authorize that exact identity as an alias of the same
+        # authoritative service; policy evaluation remains identical.
+        if has_meta and historical_sid != sid:
+            names.append(expected_proxy_name(hostname, mid, historical_sid))
+        for proxy_name in names:
+            if proxy_name in mapping or proxy_name in collisions:
+                collisions.setdefault(proxy_name, [mapping.pop(proxy_name, None)]).append(entry)
+                continue
+            mapping[proxy_name] = entry
     if collisions:
         owners = []
         for name, entries in sorted(collisions.items()):
