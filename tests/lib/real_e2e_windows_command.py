@@ -10,6 +10,9 @@ shapes (what ``drlink set enrollment zero-touch`` really prints):
 * ``powershell.exe -NoProfile -ExecutionPolicy Bypass -EncodedCommand <b64>``
 * raw script line starting with ``$ErrorActionPreference=`` (private-CA IP plan)
 
+``--encode-file <script.ps1>`` prints the -EncodedCommand payload of a
+repository script (used for the pre-enrollment probe).
+
 Anything else fails closed with "missing windows one-line command".
 """
 from __future__ import annotations
@@ -28,6 +31,12 @@ _ERROR = "missing windows one-line command"
 
 def _encode(script: str) -> str:
     return base64.b64encode(script.encode("utf-16le")).decode("ascii")
+
+
+def encode_script_file(path) -> str:
+    """Base64 UTF-16LE of a repository PowerShell script (for -EncodedCommand)."""
+    with open(path, encoding="utf-8") as handle:
+        return _encode(handle.read())
 
 
 def extract_encoded_command(text: str) -> str:
@@ -58,6 +67,9 @@ def extract_encoded_command(text: str) -> str:
 
 
 def main(argv: list[str]) -> int:
+    if len(argv) == 3 and argv[1] == "--encode-file":
+        print(encode_script_file(argv[2]))
+        return 0
     if len(argv) != 3:
         raise SystemExit("usage: real_e2e_windows_command.py <cli-output> <encoded-out>")
     with open(argv[1], encoding="utf-8") as handle:

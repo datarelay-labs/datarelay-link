@@ -333,6 +333,8 @@ assert_host_identity() {
   local alias="$1" expected="$2" role="$3"
   local got
   got="$(ssh "${SSH_OPTS[@]}" "$alias" 'hostname' 2>/dev/null || echo unreachable)"
+  # Windows OpenSSH terminates output with CRLF; a CR must never reach the compare.
+  got="${got//$'\r'/}"
   note "$role hostname=$got expected=${expected:-<explicit target only>}"
   if [[ -n "$CONTROLLER_HOST" && "$got" == "$CONTROLLER_HOST" ]]; then
     note "ABORT: SSH target resolves to this E2E controller host $CONTROLLER_HOST"
@@ -615,7 +617,9 @@ scenario_windows_full() {
 
   pin_windows_installer_url || fail_stop
 
-  run_client 04-client-uninstall "powershell.exe -NoProfile -ExecutionPolicy Bypass -Command \"if (Test-Path 'C:\\ProgramData\\drlink\\tools\\frp-client.cmd') { & 'C:\\ProgramData\\drlink\\tools\\frp-client.cmd' uninstall; if (Test-Path 'C:\\ProgramData\\drlink') { exit 1 }; Write-Output UNINSTALL_OK } else { Write-Output NO_INSTALL }\"" || fail_stop
+  local probe_enc
+  probe_enc="$(python3 "$ROOT/tests/lib/real_e2e_windows_command.py" --encode-file "$ROOT/tests/lib/real_e2e_windows_preinstall_probe.ps1")" || fail_stop
+  run_client 04-client-uninstall "powershell.exe -NoProfile -ExecutionPolicy Bypass -EncodedCommand $probe_enc" || fail_stop
   record 03-server-purge SKIP 0 0
   record 05-server-install SKIP 0 0
   MATRIX_INSTALL=PASS
