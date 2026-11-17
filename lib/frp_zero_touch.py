@@ -219,7 +219,7 @@ def private_ca_ip_windows_command(allocator_url, ca_sha256, stage1_sha256, handl
         '[Convert]::ToBase64String($cert.RawData,[Base64FormattingOptions]::InsertLineBreaks)+'
         '"`n-----END CERTIFICATE-----`n";'
         "[IO.File]::WriteAllText($ca,$pem);"
-        "& curl.exe -fsSL --max-redirs 0 --proto '=https' --cacert $ca -o $st '%s';"
+        "& curl.exe -fsSL --max-redirs 0 --proto '=https' --cacert $ca --ssl-revoke-best-effort -o $st '%s';"
         "if($LASTEXITCODE){throw 'verified stage-1 fetch failed'};"
         "if((Get-FileHash -LiteralPath $st).Hash -ne '%s'){throw 'stage-1 hash mismatch'};"
         "& powershell.exe -NoProfile -ExecutionPolicy Bypass -File $st;"

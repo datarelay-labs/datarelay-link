@@ -326,7 +326,7 @@ class CompactZeroTouchContract(unittest.TestCase):
         )
         self.assertLessEqual(len(command), 1300)
         self.assertIn('--insecure -o $ca', command)  # public cert only
-        self.assertIn('--cacert $ca -o $st', command)  # credential protected
+        self.assertIn('--cacert $ca --ssl-revoke-best-effort -o $st', command)  # credential protected
         self.assertEqual(command.count('--insecure'), 1)
         self.assertLess(command.index("CA fingerprint mismatch"), command.index('/i/'))
         self.assertLess(command.index('--cacert'), command.index('Get-FileHash'))
@@ -335,6 +335,26 @@ class CompactZeroTouchContract(unittest.TestCase):
         self.assertIn('WriteAllText', command)  # only one normalized public CA
         self.assertIn('--max-redirs 0', command)  # no credential redirects
         self.assertIn('finally{Remove-Item', command)
+
+    def test_private_ca_windows_stage1_tolerates_unreachable_revocation_endpoint(self):
+        # BUG-05: Schannel cannot reach CRL/OCSP for the private pinned CA, so
+        # curl.exe exits 60 (CERT_TRUST_REVOCATION_STATUS_UNKNOWN). Only the
+        # pinned --cacert stage-1 fetch may use best-effort revocation; global
+        # --ssl-no-revoke and any widening of the --insecure CA fetch are
+        # forbidden, and every other verification step must remain.
+        command = zt.private_ca_ip_windows_command(
+            'https://192.0.2.20:6099/enroll', 'a' * 64, 'b' * 64, HANDLE
+        )
+        self.assertEqual(command.count('--ssl-revoke-best-effort'), 1)
+        self.assertNotIn('--ssl-no-revoke', command)
+        self.assertEqual(command.count('--insecure'), 1)
+        self.assertLess(command.index('--insecure -o $ca'), command.index('--ssl-revoke-best-effort'))
+        self.assertLess(command.index('--cacert $ca'), command.index('--ssl-revoke-best-effort'))
+        self.assertLess(command.index('--ssl-revoke-best-effort'), command.index('-o $st'))
+        self.assertIn("--proto '=https'", command)
+        self.assertLess(command.index('CA fingerprint mismatch'), command.index('--ssl-revoke-best-effort'))
+        self.assertLess(command.index('--ssl-revoke-best-effort'), command.index('stage-1 hash mismatch'))
+        self.assertLessEqual(len(command), 1300)
 
     @unittest.skipUnless(shutil.which('pwsh'), 'PowerShell parser unavailable')
     def test_private_ca_windows_stage_never_executes_before_both_pins(self):
