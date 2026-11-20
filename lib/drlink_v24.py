@@ -5929,6 +5929,54 @@ def _service_dependency_status(plane_db, svc_name: str) -> Optional[str]:
     return None
 
 
+_SERVICE_DEPENDENCY_REASON_PREFIX = "Required Service Object "
+
+
+def _is_recorded_service_dependency_orphan(row, service_reason) -> bool:
+    """True when the row already carries the fail-closed state for its dependency.
+
+    S-025-F1: after `system restore` an Agent-owned Remote Service can outlive its
+    Service Object (an orphan). The Agent keeps the row DEGRADED/unverified with
+    the dependency reason and never deletes or retargets it. Once that state is
+    recorded it is stable: re-running a full reconciliation cannot change it, but
+    it would re-apply every sibling and make the Server record a new revision on
+    every heartbeat.
+    """
+    return bool(
+        service_reason
+        and not row["pending_allocation"]
+        and str(row["status"] or "").upper() == "DEGRADED"
+        and not int(_row_get(row, "runtime_verified") or 0)
+        and str(row["reason"] or "") == service_reason
+    )
+
+
+def _is_stale_service_dependency_orphan(row, service_reason) -> bool:
+    """A recorded Service Object orphan whose Service Object is valid again."""
+    return bool(
+        not service_reason
+        and str(row["status"] or "").upper() == "DEGRADED"
+        and not int(_row_get(row, "runtime_verified") or 0)
+        and str(row["reason"] or "").startswith(_SERVICE_DEPENDENCY_REASON_PREFIX)
+    )
+
+
+def _mark_dependency_degraded(plane_db, row, reason: str) -> bool:
+    """Record a fail-closed dependency state; return False when nothing changed."""
+    if (str(row["status"] or "").upper() == "DEGRADED"
+            and not int(_row_get(row, "runtime_verified") or 0)
+            and str(row["reason"] or "") == reason):
+        return False
+    plane_db.conn.execute(
+        "UPDATE agent_remote_services SET status = 'DEGRADED', runtime_verified = 0, "
+        "reason = ?, updated_at = ? "
+        "WHERE name = ?",
+        (reason, utc_now_iso(), row["name"]),
+    )
+    _commit_if_autonomous(plane_db)
+    return True
+
+
 def _push_agent_remote_service_status(
     plane_db, *, root: Optional[str] = None, names: Optional[list] = None,
     require_ack: bool = False,
@@ -6404,20 +6452,24 @@ def _synchronize_agent_remote_services_locked(plane_db, *, root: Optional[str] =
                 stable = bool(snapshot_rows)
                 degraded = []
                 promotable = set()
+                orphan_keys = set()
                 for row in snapshot_rows:
                     enabled = bool(row["enabled"])
                     status = str(row["status"] or "").upper()
+                    service_reason = _service_dependency_status(
+                        plane_db, row["service_object"]
+                    )
+                    recorded_orphan = _is_recorded_service_dependency_orphan(
+                        row, service_reason)
                     if (row["pending_allocation"]
                         or (enabled and row["endpoint_port"] is None)
-                        or (not enabled and status != "DISABLED")):
+                        or (not enabled and status != "DISABLED"
+                            and not recorded_orphan)):
                         stable = False
                         break
                     destination_reason = _destination_dependency_status(
                         plane_db, row["destination"], root=root,
                         destination_client_id=_row_get(row, "destination_client_id")
-                    )
-                    service_reason = _service_dependency_status(
-                        plane_db, row["service_object"]
                     )
                     # A missing/invalid Service Object changes desired runtime
                     # structure and must still fall through to full fail-closed
@@ -6427,7 +6479,23 @@ def _synchronize_agent_remote_services_locked(plane_db, *, root: Optional[str] =
                     # listener reachable. Keep that stable DEGRADED projection
                     # on the signed status-only path so the lifecycle worker
                     # does not contend with an operator mutation.
+                    if recorded_orphan:
+                        # S-025-F1: an orphan already recorded fail-closed is a
+                        # stable DEGRADED state. Never delete or retarget it,
+                        # never claim it to the Server (it has no Service
+                        # Object there), and never replay siblings for it.
+                        orphan_keys.add(str(row["name"]).lower())
+                        degraded.append({
+                            "name": row["name"],
+                            "reason": service_reason,
+                        })
+                        continue
                     if service_reason:
+                        stable = False
+                        break
+                    if _is_stale_service_dependency_orphan(row, service_reason):
+                        # The Service Object is valid again: let the guarded
+                        # full reconciliation clear the stale orphan state once.
                         stable = False
                         break
                     # An online catalog edit (for example a Service Object port)
@@ -6510,10 +6578,13 @@ def _synchronize_agent_remote_services_locked(plane_db, *, root: Optional[str] =
                         "endpoint_port": row["endpoint_port"],
                     })
                 if stable:
-                    acknowledged = mgmt.report_remote_service_status_on_server(
-                        root=root or getattr(plane_db, "root", None),
-                        services=claims,
-                    )
+                    if claims:
+                        acknowledged = mgmt.report_remote_service_status_on_server(
+                            root=root or getattr(plane_db, "root", None),
+                            services=claims,
+                        )
+                    else:
+                        acknowledged = {"services": []}
                     returned = acknowledged.get("services") if isinstance(acknowledged, dict) else None
                     by_name = {
                         str(item.get("name") or "").lower(): item
@@ -6525,6 +6596,17 @@ def _synchronize_agent_remote_services_locked(plane_db, *, root: Optional[str] =
                     }
                     for original in snapshot_rows:
                         key = str(original["name"]).lower()
+                        if key in orphan_keys:
+                            latest_orphan = plane_db.conn.execute(
+                                "SELECT * FROM agent_remote_services "
+                                "WHERE name=? COLLATE NOCASE AND delete_pending=0",
+                                (original["name"],),
+                            ).fetchone()
+                            if (latest_orphan is None
+                                    or tuple(latest_orphan) != tuple(original)):
+                                verified = False
+                                break
+                            continue
                         item = by_name.get(key)
                         claim = claims_by_name[key]
                         enabled = bool(original["enabled"])
@@ -6658,13 +6740,7 @@ def _synchronize_agent_remote_services_locked(plane_db, *, root: Optional[str] =
                     catalog_error = str(exc).strip() or "Authoritative catalog recheck failed"
             reason = dest_reason or svc_reason
             if reason:
-                plane_db.conn.execute(
-                    "UPDATE agent_remote_services SET status = 'DEGRADED', runtime_verified = 0, "
-                    "reason = ?, updated_at = ? "
-                    "WHERE name = ?",
-                    (reason, utc_now_iso(), row["name"]),
-                )
-                _commit_if_autonomous(plane_db)
+                _mark_dependency_degraded(plane_db, row, reason)
                 updated += 1
                 continue
             # Re-apply to allocate pending endpoints / refresh HEALTHY
