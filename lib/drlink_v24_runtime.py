@@ -1222,6 +1222,38 @@ def mark_runtime_status(plane_db, *, ok: bool, reason: str = "", generation: int
             plane_db.conn.commit()
 
 
+def desired_runtime_drift(
+    plane_db, name: str, *, root: Optional[str] = None,
+) -> bool:
+    """True when the catalog now desires a different runtime than the installed record.
+
+    An online Server catalog edit (for example a Service Object port) changes the
+    desired runtime of an already-published Remote Service while the Agent stays
+    connected. The status-only verification path must not keep re-verifying the old
+    installed target in that case: only the full reconciliation can apply the edit.
+    A missing record or desired entry is not drift (that is a missing proxy, which
+    keeps its own status-only handling), and neither is a disabled/deleted service.
+    """
+    row = plane_db.conn.execute(
+        "SELECT enabled, delete_pending FROM agent_remote_services "
+        "WHERE name = ? COLLATE NOCASE", (name,)
+    ).fetchone()
+    if row is None or not row['enabled'] or row['delete_pending']:
+        return False
+    actual_root = root if root is not None else getattr(plane_db, 'root', None)
+    if _isolated_skip_fixture(actual_root):
+        return False
+    state = load_client_state(actual_root)
+    proxy_id = remote_service_proxy_id(name)
+    record = (state.get('services') or {}).get(proxy_id)
+    if not record:
+        return False
+    desired = build_desired_runtime_services(
+        plane_db, state, root=actual_root, only_name=name
+    ).get(proxy_id)
+    return bool(desired) and record != desired
+
+
 def verified_remote_service_status(
     plane_db, name: str, *, root: Optional[str] = None,
     allow_unverified: bool = False,

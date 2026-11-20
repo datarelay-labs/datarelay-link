@@ -6430,6 +6430,14 @@ def _synchronize_agent_remote_services_locked(plane_db, *, root: Optional[str] =
                     if service_reason:
                         stable = False
                         break
+                    # An online catalog edit (for example a Service Object port)
+                    # leaves the installed target stale. Re-verifying that stale
+                    # target can never converge, so apply it with the full,
+                    # guarded reconciliation instead of reporting DEGRADED.
+                    if enabled and runtime.desired_runtime_drift(
+                            plane_db, row["name"], root=root):
+                        stable = False
+                        break
                     stable_unreachable = (
                         destination_reason == DESTINATION_UNREACHABLE_REASON
                         and enabled

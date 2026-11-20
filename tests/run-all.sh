@@ -69,6 +69,7 @@ python3 tests/test-v24-server-bundle-absent-idempotency.py
 python3 tests/test-v24-sqlite-row-dependencies.py
 python3 tests/test-zero-touch-command-exit.py
 python3 tests/test-agent-lifecycle-reconnect-sync.py
+python3 tests/test-agent-online-catalog-edit-sync.py
 python3 tests/test-zero-touch-doc-contract.py
 python3 tests/test-zero-touch-guided-preflight.py
 python3 tests/test-operator-input-validation.py
