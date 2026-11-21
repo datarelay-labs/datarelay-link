@@ -1990,13 +1990,184 @@ def resource_help(root, role):
         " ".join(cmd["path"])
         for cmd in COMMANDS
         if cmd["path"][0] == root
-        and cmd["destructive"]
+        and is_destructive(cmd)
         and not cmd.get("hidden")
         and role_allows(cmd["roles"], role)
     ]
     if destructive:
         lines.extend(["", "Destructive:", "  " + ", ".join(destructive)])
     return "\n".join(lines) + "\n"
+
+
+# --- U-013: destructive label vs exact impact ---------------------------------
+# "This command is destructive." is reserved for commands that delete or
+# overwrite state. Everything else that changes state prints an exact
+# "Impact:" description instead (what changes, what is kept, who is affected).
+_DESTRUCTIVE_EXTRA = frozenset({
+    ("unset", "remote-access", "policy"),
+    ("unset", "internet-access", "policy"),
+    ("unset", "ai-access", "policy"),
+    ("system", "restore"),
+})
+
+_IMPACT_RISK_FALLBACK = {
+    "outage": "May interrupt active connections while it is applied.",
+    "security_change": "Changes access or security configuration.",
+    "security_widening": "Can broaden access; a y/N confirmation may be required.",
+}
+
+_SET_OBJECT_IMPACT = (
+    "Creates or edits a %s; rules that reference it use the new definition. "
+    "Edits that broaden or materially narrow access ask for y/N confirmation "
+    "first. Nothing is deleted."
+)
+
+_IMPACT_BY_PATH = {
+    ("system", "restore"): (
+        "Replaces the current server state with the archive contents (a "
+        "pre-restore snapshot is taken first) and restarts services."
+    ),
+    ("system", "update", "product"): (
+        "Replaces the installed management software and restarts services; "
+        "active connections may be interrupted. Agent enrollment, the CA, "
+        "tokens and ports are not changed."
+    ),
+    ("system", "update", "engine"): (
+        "Replaces the Relay Engine (FRP) binary and restarts it; active "
+        "connections may be interrupted."
+    ),
+    ("system", "pause"): (
+        "Stops the local relay runtime and disables automatic startup, so "
+        "access through this Agent is interrupted until system resume. "
+        "Identity, registration, Remote Service definitions and Server "
+        "reservations are kept."
+    ),
+    ("system", "restart"): (
+        "Restarts the local relay runtime; active connections may be "
+        "interrupted. Identity, Remote Service definitions, public ports and "
+        "Server registration are kept."
+    ),
+    ("system", "autostart", "disable"): (
+        "The Agent will not start automatically after the next boot; the "
+        "running Agent is not stopped. Use system autostart enable to undo."
+    ),
+    ("system", "synchronize"): (
+        "Allocates pending endpoints, applies earlier requested deletes and "
+        "activates Remote Services; activation may interrupt active "
+        "connections."
+    ),
+    ("system", "rollback"): (
+        "Re-applies a prior configuration revision after validation, diff and "
+        "y/N confirmation; the runtime is re-activated and reverted "
+        "automatically if activation fails."
+    ),
+    ("system", "apply", "configuration"): (
+        "Validates and atomically applies the ConfigurationBundle after diff "
+        "and y/N confirmation; the applied configuration can broaden access."
+    ),
+    ("system", "credential", "rotate", "ai-identity"): (
+        "Invalidates the previous active credential and issues a replacement "
+        "secret once."
+    ),
+    ("system", "credential", "revoke", "ai-identity"): (
+        "Removes active credential material; clients using it are interrupted "
+        "immediately."
+    ),
+    ("system", "credential", "configure", "ai-identity"): (
+        "Changes the authentication mode or OAuth redirect settings of the "
+        "AI Identity; this can change which clients can authenticate."
+    ),
+    ("unset", "mcp-tls"): (
+        "Clears the MCP TLS intent and removes the public MCP route; the "
+        "DRLink-owned certificate and ACME account material is kept. Active "
+        "MCP/OAuth connections may be interrupted."
+    ),
+    ("system", "certificate", "issue"): (
+        "Issues and activates the MCP certificate; activation may interrupt "
+        "MCP connections. The previous valid certificate is kept if "
+        "activation fails."
+    ),
+    ("system", "certificate", "import"): (
+        "Imports and activates the supplied MCP certificate after validation; "
+        "activation may interrupt MCP connections."
+    ),
+    ("system", "certificate", "renew"): (
+        "Renews and activates the MCP certificate when due; activation may "
+        "interrupt MCP connections. The previous valid certificate is kept if "
+        "renewal fails."
+    ),
+    ("set", "remote-service"): (
+        "Creates or edits a Remote Service; editing or disabling can "
+        "interrupt connections that use it."
+    ),
+    ("set", "remote-access", "disabled"): (
+        "Turns Remote Access enforcement off; the saved mode and rules are "
+        "kept, but effective access becomes ALLOW ALL until it is enabled "
+        "again."
+    ),
+    ("set", "internet-access", "enabled"): (
+        "Turns Internet Access enforcement back on using the saved rules; "
+        "traffic that matches them may be allowed again."
+    ),
+    ("set", "internet-access", "disabled"): (
+        "Turns Internet Access enforcement off; saved rules are kept, but "
+        "effective access becomes DENY ALL, which can cause an access outage."
+    ),
+    ("set", "ai-access", "enabled"): (
+        "Turns AI Access enforcement back on using the saved rules; "
+        "operations that match them may be authorized again."
+    ),
+    ("set", "ai-access", "disabled"): (
+        "Turns AI Access enforcement off; saved rules are kept, but "
+        "effective access becomes DENY ALL, which can interrupt AI/MCP "
+        "operations."
+    ),
+    ("unset", "remote-access", "policy"): (
+        "Removes the Remote Access mode and all of its rules; effective "
+        "access becomes ALLOW. Always asks for y/N confirmation."
+    ),
+    ("unset", "internet-access", "policy"): (
+        "Removes the Internet Access mode and all of its rules; effective "
+        "access becomes DENY ALL. Always asks for y/N confirmation."
+    ),
+    ("unset", "ai-access", "policy"): (
+        "Removes the AI Access mode and all of its rules; effective access "
+        "becomes DENY ALL. Always asks for y/N confirmation."
+    ),
+}
+
+
+def is_destructive(cmd):
+    """True only for commands that delete or overwrite state."""
+    path = tuple(cmd["path"])
+    return cmd.get("risk") == "irreversible" or path in _DESTRUCTIVE_EXTRA
+
+
+def command_impact(cmd):
+    """Exact impact sentence for state-changing commands that are not purely
+    destructive deletes; empty string when nothing more needs to be said."""
+    path = tuple(cmd["path"])
+    if path in _IMPACT_BY_PATH:
+        return _IMPACT_BY_PATH[path]
+    if is_destructive(cmd) or not cmd.get("destructive"):
+        return ""
+    if path[0] == "set" and len(path) == 2 and (
+        path[1].endswith("-object") or path[1].endswith("-group")
+    ):
+        return _SET_OBJECT_IMPACT % path[1].replace("-", " ")
+    if path[0] == "set" and len(path) == 2 and path[1].endswith("-access"):
+        return (
+            "Creates or edits one %s rule. Edits that broaden or materially "
+            "narrow access ask for y/N confirmation first; no rule is deleted."
+            % path[1].replace("-", " ").title().replace("Ai ", "AI ")
+        )
+    if path[0] == "unset" and len(path) == 2 and path[1].endswith("-access"):
+        return (
+            "Removes one %s rule. Removals that broaden or materially narrow "
+            "access ask for y/N confirmation first; re-create the rule to "
+            "undo it." % path[1].replace("-", " ").title().replace("Ai ", "AI ")
+        )
+    return _IMPACT_RISK_FALLBACK.get(cmd.get("risk"), "")
 
 
 def command_help(cmd):
@@ -2059,7 +2230,10 @@ def command_help(cmd):
         lines.extend(["", "Examples:"])
         for item in cmd["examples"]:
             lines.append("  %s" % item)
-    if cmd["destructive"]:
+    impact = command_impact(cmd)
+    if impact:
+        lines.extend(["", "Impact: %s" % impact])
+    if is_destructive(cmd):
         lines.extend(["", "This command is destructive."])
     return "\n".join(lines) + "\n"
 
@@ -2610,6 +2784,9 @@ def render_navigation_menu(menu_key, title=None):
         lines.append("%s) %s" % (n, label))
         if description:
             lines.append("   %s" % description)
+    if entries:
+        lines.append("")
+        lines.append(navigation_footer(menu_key))
     return "\n".join(lines) + ("\n" if lines else "")
 
 
@@ -2623,6 +2800,150 @@ def navigation_resolve(menu_key, choice):
     if n < 1 or n > len(entries):
         return None
     return entries[n - 1]
+
+
+# --- U-013: consistent navigation semantics -----------------------------------
+#   ?  context help for the current menu (stay in the menu)
+#   0  previous menu (submenus); not available at a top-level menu
+NAV_ROOT_KEYS = frozenset({"client", "server", "both"})
+
+
+def navigation_is_root(menu_key):
+    return menu_key in NAV_ROOT_KEYS
+
+
+def navigation_exit_number(menu_key):
+    for n, row in enumerate(navigation_entries(menu_key), 1):
+        if row[3] == "exit":
+            return n
+    return None
+
+
+def navigation_back_entry(menu_key):
+    for row in navigation_entries(menu_key):
+        if row[3] == "back":
+            return row
+    return None
+
+
+def navigation_footer(menu_key):
+    if navigation_is_root(menu_key):
+        return "? Help"
+    return "? Help   0 Back"
+
+
+def navigation_title(menu_key):
+    tail = str(menu_key).split(".")[-1].replace("_", " ")
+    return tail.title() if tail else str(menu_key)
+
+
+def _nav_looks_like_command(raw):
+    text = str(raw or "").strip().lower()
+    if not text:
+        return False
+    first = text.split()[0]
+    return first in {
+        "show", "set", "unset", "test", "system", "create", "help", "menu",
+        "exit", "quit",
+    }
+
+
+def navigation_classify(menu_key, choice):
+    """Classify one menu input.
+
+    Returns (kind, entry): kind is one of
+      help    -- `?`; entry None; caller shows navigation_help and stays
+      back    -- `0` in a submenu; entry is the menu's Back row (or None)
+      top     -- `0` at a top-level menu; there is no previous menu; stay
+      select  -- a valid number; entry is the navigation row
+      invalid -- anything else; stay
+    """
+    text = str(choice or "").strip()
+    if text == "?":
+        return ("help", None)
+    if text == "0":
+        if navigation_is_root(menu_key):
+            return ("top", None)
+        return ("back", navigation_back_entry(menu_key))
+    if text.isascii() and text.isdigit():
+        entry = navigation_resolve(menu_key, text)
+        if entry:
+            return ("select", entry)
+    return ("invalid", None)
+
+
+def navigation_help(menu_key):
+    """Context help for one menu level (what the keys do here)."""
+    entries = navigation_entries(menu_key)
+    title = "Menu help \u2014 %s" % navigation_title(menu_key)
+    lines = [title, "-" * len(title), ""]
+    lines.append("Type a number and press Enter to choose an item.")
+    lines.append("  ?   Show this help. You stay in this menu.")
+    exit_n = navigation_exit_number(menu_key)
+    if navigation_is_root(menu_key):
+        if exit_n:
+            lines.append(
+                "  %d   Exit. 0 is not used here because this is the top menu."
+                % exit_n
+            )
+    else:
+        lines.append("  0   Go back to the previous menu.")
+    lines.append("")
+    lines.append("Items:")
+    n = 0
+    for _aid, label, description, _kind, _target in entries:
+        n += 1
+        if description:
+            lines.append("  %d) %s - %s" % (n, label, description))
+        else:
+            lines.append("  %d) %s" % (n, label))
+    lines.append("")
+    lines.append(
+        "To run a command directly, leave the menu and type it at the "
+        "drlink> prompt."
+    )
+    return "\n".join(lines) + "\n"
+
+
+def navigation_top_message(menu_key):
+    exit_n = navigation_exit_number(menu_key)
+    tail = "Enter %d to exit" % exit_n if exit_n else "Use Exit to leave"
+    return "0 is not available here: this is the top menu. %s, or ? for help." % tail
+
+
+def navigation_invalid_message(menu_key, raw=""):
+    """Context-aware guidance for an invalid menu input."""
+    entries = navigation_entries(menu_key)
+    count = len(entries)
+    exit_n = navigation_exit_number(menu_key)
+    root = navigation_is_root(menu_key)
+    if _nav_looks_like_command(raw):
+        if root:
+            leave = (
+                "Choose %d (Exit) to leave this menu, then run the command at "
+                "the drlink> prompt." % exit_n
+                if exit_n
+                else "Leave this menu, then run the command at the drlink> prompt."
+            )
+        else:
+            leave = (
+                "Enter 0 to go back to the previous menu, then choose Exit at "
+                "the top menu and run the command at the drlink> prompt."
+            )
+        return (
+            "ERROR:\n"
+            "This prompt is waiting for a menu selection (1-%d).\n\n"
+            "The entered text looks like a DRLink command.\n\n"
+            "%s\n\n"
+            "No changes were applied." % (count, leave)
+        )
+    if root:
+        extra = " (%d = Exit)" % exit_n if exit_n else ""
+        return "ERROR: select 1-%d%s. Enter ? for help." % (count, extra)
+    return (
+        "ERROR: select 1-%d. Enter ? for help, or 0 to go back to the "
+        "previous menu." % count
+    )
 
 
 # Backwards-compatible guided-menu helpers (flat listing of root domains).

@@ -195,6 +195,8 @@ python3 tests/test-oauth-trusted-proxy-rate.py
 python3 tests/test-public-cli-grammar-parity.py
 python3 tests/test-public-cli-runtime-matrix.py
 python3 tests/test-lifecycle-cli-ux.py
+python3 tests/test-cli-navigation-consistency.py
+./tests/test-legacy-menu-navigation.sh
 python3 tests/test-operational-ux-cli-recovery-closure.py
 python3 tests/test-release-recovery-dual-role-audit-docs-closure.py
 python3 tests/test-repl-live-inventory.py

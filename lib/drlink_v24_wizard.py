@@ -162,6 +162,18 @@ def _looks_like_drlink_command(raw: str) -> bool:
     return bool(DRLINK_CMD_RE.match(text))
 
 
+def _wizard_help(io: WizardIO, step: str, lines: list[str]) -> None:
+    """Context help for the current Wizard step; the caller stays on the step."""
+    _emit(io, "")
+    _emit(io, "Wizard help")
+    _emit(io, "-----------")
+    _emit(io, "Current step: %s" % step)
+    for line in lines:
+        _emit(io, line)
+    _emit(io, "  ?   Show this help. You stay on this step.")
+    _emit(io, "  0   Cancel the Wizard. No changes are applied (c or cancel also work).")
+
+
 def _menu_selection_error(io: WizardIO, raw: str, lo: int, hi: int) -> None:
     if _looks_like_drlink_command(raw):
         _emit(
@@ -169,12 +181,16 @@ def _menu_selection_error(io: WizardIO, raw: str, lo: int, hi: int) -> None:
             "ERROR:\n"
             "This prompt is waiting for a menu selection (%d-%d).\n\n"
             "The entered text looks like a DRLink command.\n\n"
-            "Choose Back/Cancel to leave this Wizard,\n"
+            "Enter 0 to cancel this Wizard,\n"
             "then run the command at the drlink> prompt.\n\n"
             "No changes were applied." % (lo, hi),
         )
         return
-    _emit(io, "ERROR: Invalid selection. Stay on this step.")
+    _emit(
+        io,
+        "ERROR: Invalid selection. Select %d-%d, ? for help, or 0 to cancel. "
+        "Stay on this step." % (lo, hi),
+    )
 
 
 def _ask_choice(io: WizardIO, title: str, options: list[str], *, allow_create: list[tuple[str, str]] = None) -> str:
@@ -194,9 +210,17 @@ def _ask_choice(io: WizardIO, title: str, options: list[str], *, allow_create: l
             _emit(io, "%d) %s" % (idx, label))
             mapping[str(idx)] = token
             idx += 1
-        _emit(io, "c) Cancel")
+        _emit(io, "0) Cancel")
+        _emit(io, "? Help")
         raw = io.ask("Select: ").strip()
-        if _is_cancel(raw):
+        if raw == "?":
+            _wizard_help(
+                io,
+                title.split("\n")[0],
+                ["  1-%d  Choose that option and continue." % max(1, idx - 1)],
+            )
+            continue
+        if raw == "0" or _is_cancel(raw):
             raise WizardCancelled()
         if raw in mapping:
             return mapping[raw]
@@ -207,11 +231,29 @@ def _ask_choice(io: WizardIO, title: str, options: list[str], *, allow_create: l
         _menu_selection_error(io, raw, 1, max(1, idx - 1))
 
 
-def _ask_text(io: WizardIO, prompt: str, *, default: Optional[str] = None, validate: Callable[[str], Optional[str]] = None) -> str:
+def _ask_text(
+    io: WizardIO,
+    prompt: str,
+    *,
+    default: Optional[str] = None,
+    validate: Callable[[str], Optional[str]] = None,
+    help_text: Optional[str] = None,
+) -> str:
     while True:
         suffix = " [%s]" % default if default not in (None, "") else ""
         raw = io.ask("%s%s: " % (prompt, suffix)).strip()
+        if raw == "?":
+            lines = ["  Type a value and press Enter."]
+            if help_text:
+                lines.append("  %s" % help_text)
+            if default not in (None, ""):
+                lines.append("  Press Enter alone to keep the shown default [%s]." % default)
+            _wizard_help(io, prompt, lines)
+            continue
         if _is_cancel(raw):
+            raise WizardCancelled()
+        if raw == "0" and not (validate and validate("0") is None):
+            # `0` cancels unless it is itself a valid value for this field.
             raise WizardCancelled()
         if not raw and default is not None:
             raw = default
@@ -227,15 +269,23 @@ def _ask_yes_no(io: WizardIO, prompt: str, *, default: Optional[bool] = None) ->
     while True:
         hint = " [Y/n]" if default is True else (" [y/N]" if default is False else "")
         raw = io.ask("%s%s: " % (prompt, hint)).strip().lower()
-        if _is_cancel(raw):
+        if raw == "?":
+            lines = ["  Answer y (yes) or n (no) and press Enter."]
+            if default is not None:
+                lines.append(
+                    "  Press Enter alone for the default (%s)." % ("yes" if default else "no")
+                )
+            _wizard_help(io, prompt, lines)
+            continue
+        if raw == "0" or _is_cancel(raw):
             raise WizardCancelled()
         if not raw and default is not None:
             return default
         if raw in ("y", "yes", "1"):
             return True
-        if raw in ("n", "no", "0"):
+        if raw in ("n", "no"):
             return False
-        _emit(io, "ERROR: Enter yes or no. Type cancel to abort.")
+        _emit(io, "ERROR: Enter y or n. Enter ? for help or 0 to cancel.")
 
 
 def _validate_network_value(typ: str, value: str) -> Optional[str]:
@@ -441,13 +491,26 @@ def _review_menu(io: WizardIO, session: WizardSession, lines: list[str]) -> str:
     _emit(io, "1) Apply")
     _emit(io, "2) Edit")
     _emit(io, "3) Cancel")
+    _emit(io, "0) Cancel (same as 3)")
+    _emit(io, "? Help")
     while True:
         raw = io.ask("Select: ").strip()
+        if raw == "?":
+            _wizard_help(
+                io,
+                "Review",
+                [
+                    "  1  Apply the change shown above.",
+                    "  2  Edit the values again.",
+                    "  3  Cancel without applying.",
+                ],
+            )
+            continue
         if raw in ("1", "apply"):
             return "apply"
         if raw in ("2", "edit"):
             return "edit"
-        if raw in ("3", "cancel", "c"):
+        if raw in ("3", "0", "cancel", "c"):
             return "cancel"
         if _looks_like_drlink_command(raw):
             _emit(
@@ -455,12 +518,12 @@ def _review_menu(io: WizardIO, session: WizardSession, lines: list[str]) -> str:
                 "ERROR:\n"
                 "This prompt is waiting for a menu selection (1-3).\n\n"
                 "The entered text looks like a DRLink command.\n\n"
-                "Choose Cancel (3) to leave this Wizard,\n"
+                "Enter 0 to cancel this Wizard,\n"
                 "then run the command at the drlink> prompt.\n\n"
                 "No changes were applied.",
             )
             continue
-        _emit(io, "ERROR: Invalid selection. Type 1, 2, 3, or cancel.")
+        _emit(io, "ERROR: Invalid selection. Type 1, 2, 3, ? for help, or 0 to cancel.")
 
 
 def _cancel_message() -> str:
@@ -609,7 +672,8 @@ def run_service_object_wizard(plane: ControlPlane, name: str) -> int:
                     _emit(io, "%d) %s (TCP/%d)" % (i, label, port))
                 else:
                     _emit(io, "%d) %s" % (i, label))
-            _emit(io, "c) Cancel")
+            _emit(io, "0) Cancel")
+            _emit(io, "? Help")
             _emit(io, "")
             _emit(
                 io,
@@ -617,7 +681,14 @@ def run_service_object_wizard(plane: ControlPlane, name: str) -> int:
                 "Fixed TCP fixes the destination service port; DRLink allocates a stable public port from the Fixed TCP pool.",
             )
             raw = io.ask("Select: ").strip()
-            if _is_cancel(raw):
+            if raw == "?":
+                _wizard_help(
+                    io,
+                    "Service Object type",
+                    ["  1-%d  Choose that preset and continue." % len(presets)],
+                )
+                continue
+            if raw == "0" or _is_cancel(raw):
                 sys.stdout.write(_cancel_message())
                 return 0
             choice = None

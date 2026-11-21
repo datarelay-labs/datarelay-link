@@ -918,7 +918,7 @@ pass "revoked identity recovers with Enrollment Code"
 # Interactive recoverable errors
 export FRP_SSH_USER=aella
 frp_reset_test_input
-export FRP_CLIENT_TEST_INPUT=$'1\n1\nSSH\n\n\n\n9\n2\n99\n3\nabc\n2\n1\n\n\n0\n\n8\n'
+export FRP_CLIENT_TEST_INPUT=$'?\n0\n1\n1\nSSH\n\n\n\n9\n2\n99\n3\nabc\n2\n1\n\n\n70000\n\n8\n'
 if ! "$ROOT/tools/frp-client" >"$WORKDIR/recover.out" 2>"$WORKDIR/recover.err"; then
   fail "interactive recovery should not terminate frp-client"
 fi
@@ -928,6 +928,9 @@ grep -q 'ERROR: select 1-8' "$WORKDIR/recover.err" "$WORKDIR/recover.out" || fai
 grep -q 'invalid service number' "$WORKDIR/recover.err" "$WORKDIR/recover.out" || fail "invalid service number not recovered"
 grep -q 'invalid local_port' "$WORKDIR/recover.err" "$WORKDIR/recover.out" || fail "invalid port not recovered"
 grep -q 'Data Relay Link Agent Management' "$WORKDIR/recover.out" || fail "menu did not continue"
+grep -q 'Menu help' "$WORKDIR/recover.err" "$WORKDIR/recover.out" || fail "? at the top menu must show help"
+grep -q 'this is the top menu' "$WORKDIR/recover.err" "$WORKDIR/recover.out" || fail "0 at the top menu must explain there is no previous menu"
+grep -q 'Enter 8 to exit' "$WORKDIR/recover.err" "$WORKDIR/recover.out" || fail "0 at the top menu must name the Exit number"
 python3 - "$STATE" <<'PY' || fail "recovery corrupted state"
 import json,sys
 from pathlib import Path

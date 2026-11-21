@@ -1882,6 +1882,8 @@ Continuously look for and record:
 - wording that forces the operator to infer hidden implementation concepts rather than product concepts;
 - ambiguous subject such as “it”, “host”, “service”, “policy”, “server”, or “client” where multiple candidates exist in the current workflow;
 - a public CLI command emitting an implementation traceback when stdout closes early (for example a normal pipeline such as `show ... | head`); broken-pipe/EPIPE handling must terminate cleanly without a Python traceback;
+- navigation keys that behave differently between surfaces: `?` must show the help for the **current** menu or Wizard step and keep the operator on it; `0` must go to the previous menu in a submenu, cancel the current Wizard/text entry, and never exit or loop at a top menu (it states that this is the top menu and names the exit number); an error that advertises a key that does not exist at that prompt; end of input (Ctrl-D) that loops instead of leaving the menu (see "Menu and Wizard navigation contract (U-013)" in `docs/DATA_RELAY_LINK_CLI_AI_MASTER_v2.4_FINAL.md`);
+- the sentence "This command is destructive." shown for a command that only changes settings (it is reserved for irreversible or policy-reset/system-restore commands; every other state-changing command must print an exact `Impact:` line), or a destructive command that does not carry it;
 - Server inventory reporting a host or service as connected/HEALTHY when independently observable product control/data-path state contradicts it; keep test-management reachability separate from product reachability.
 
 Maintain a cross-surface terminology ledger throughout the run:
