@@ -9,6 +9,16 @@ CTL="$ROOT/tools/frpctl"
 fn_src="$(awk '/^frpctl_guided_manual_enrollment\(\) \{/{p=1} p{print} p&&/^}/{exit}' "$CTL")"
 [[ -n "$fn_src" ]] || { echo "FAIL could not extract frpctl_guided_manual_enrollment" >&2; exit 1; }
 
+# U-013: wizard prompts go through frpctl_read_step/abort. Stub only the raw reader and
+# use the real helpers from tools/frpctl.
+extract_fn() { awk -v n="$1" '$0 ~ "^"n"\\(\\) \\{"{p=1} p{print} p&&/^}/{exit}' "$CTL"; }
+helpers_src=""
+for _fn in frpctl_step_label frpctl_step_help frpctl_read_step frpctl_read_abort; do
+  _src="$(extract_fn "$_fn")"
+  [[ -n "$_src" ]] || { echo "FAIL could not extract $_fn" >&2; exit 1; }
+  helpers_src+="$_src"$'\n'
+done
+
 run_case() {
   # $1 = lifetime answer; remaining prompts answered with defaults.
   local life="$1"
@@ -22,6 +32,7 @@ run_case() {
       esac
     }
     frpctl_run() { echo "RUN $*"; }
+    eval "$helpers_src"
     eval "$fn_src"
     frpctl_guided_manual_enrollment 2>&1
     echo "RC=$?"
