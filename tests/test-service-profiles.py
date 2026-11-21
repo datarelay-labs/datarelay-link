@@ -83,11 +83,27 @@ class ServiceProfilesTests(unittest.TestCase):
         with self.assertRaises(PROF.ProfileError):
             PROF.reject_forbidden_fields({"access_list_id": "acl_1"})
 
-    def test_ssh_requires_user(self):
+    def test_ssh_user_optional_connection_metadata(self):
+        pid, rec = PROF.create_profile(
+            self.state, "ssh1", preset="ssh", local_ip="127.0.0.1", local_port=22
+        )
+        self.assertNotIn("ssh_user", rec)
+        PROF.validate_profiles_state(self.state)
+        payload = PROF.profile_to_service_payload(rec)
+        self.assertEqual(payload["preset"], "ssh")
+        self.assertNotIn("ssh_user", payload)
+        PROF.update_profile(self.state, pid, "ssh-user", "ubuntu")
+        self.assertEqual(self.state["profiles"][pid]["ssh_user"], "ubuntu")
+        PROF.update_profile(self.state, pid, "ssh-user", "")
+        self.assertNotIn("ssh_user", self.state["profiles"][pid])
         with self.assertRaises(PROF.ProfileError):
-            PROF.create_profile(
-                self.state, "ssh1", preset="ssh", local_ip="127.0.0.1", local_port=22
-            )
+            PROF.update_profile(self.state, pid, "ssh-user", "invalid user")
+        web_id, _ = PROF.create_profile(
+            self.state, "web", preset="http", local_ip="127.0.0.1", local_port=80
+        )
+        PROF.update_profile(self.state, web_id, "preset", "ssh")
+        self.assertNotIn("ssh_user", self.state["profiles"][web_id])
+        PROF.validate_profiles_state(self.state)
 
     def test_profile_to_service_payload(self):
         _pid, rec = PROF.create_profile(

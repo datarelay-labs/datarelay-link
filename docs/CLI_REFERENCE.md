@@ -505,9 +505,11 @@ States:
 HEALTHY
 DEGRADED
 DISABLED
+PAUSED
 ```
 
 A valid but temporarily unreachable destination is saved as `DEGRADED`.
+`PAUSED` means the Agent runtime was intentionally paused; it is distinct from a degraded service.
 
 New valid Remote Service created while the Server is unavailable may show:
 

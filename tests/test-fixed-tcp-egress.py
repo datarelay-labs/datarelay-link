@@ -486,5 +486,154 @@ class FixedTcpRuntimeTests(unittest.TestCase):
         self.assertEqual(decision["reason"], EG.REASON_RELAY_DISABLED)
 
 
+class SQLiteFixedTcpRuntimeTests(unittest.TestCase):
+    """Exercise the current SQLite-backed listener with real loopback traffic.
+
+    The retired JSON listener fixture above is intentionally skipped. This test
+    uses the canonical runtime policy and only a local echo socket. DNS reports
+    a validated public address while the injected connector routes the actual
+    socket to loopback and reports the validated peer, so no external network
+    access occurs.
+    """
+
+    def setUp(self):
+        from drlink_control_plane import ControlPlane
+        import drlink_v24 as v24
+
+        self.tmp = tempfile.TemporaryDirectory(prefix="drlink-fixed-tcp-sqlite-")
+        self.root = Path(self.tmp.name)
+        self.saved_root = os.environ.get("FRP_DEPLOY_TEST_ROOT")
+        os.environ["FRP_DEPLOY_TEST_ROOT"] = str(self.root)
+        cfg_path = self.root / "etc/drlink/config.json"
+        cfg_path.parent.mkdir(parents=True)
+        self.log_path = self.root / "var/log/drlink/egress/connections.jsonl"
+        cfg_path.write_text(json.dumps({
+            "control_plane_root": str(self.root),
+            "egress_conn_log_file": "/var/log/drlink/egress/connections.jsonl",
+        }) + "\n", encoding="utf-8")
+
+        self.plane = ControlPlane(str(self.root))
+        v24.set_network_object(
+            self.plane, "loopback-source", type="cidr", value="127.0.0.1/32", oneshot=True
+        )
+        v24.set_network_object(
+            self.plane, "fixed-destination", type="fqdn", value="fixed.test", oneshot=True
+        )
+        v24.set_service_object(
+            self.plane, "fixed-service", type="tcp", port=443, oneshot=True
+        )
+        v24.set_access_rule(
+            self.plane, "internet", "fixed-allow", mode="whitelist",
+            source="loopback-source", destination="fixed-destination",
+            service="fixed-service", enabled=True, oneshot=True,
+        )
+        fixed = self.plane.set_fixed_tcp(
+            "fixed-relay", dest_host="fixed.test", dest_port=443,
+            listen_port=6210, enabled=True,
+        )
+        self.relay_id = fixed["entity"]["id"]
+        self.plane.compile_runtime()
+        self.plane.close()
+        self.plane = None
+
+        self.echo = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.echo.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        self.echo.bind(("127.0.0.1", 0))
+        self.echo.listen(5)
+        self.echo_port = self.echo.getsockname()[1]
+        self.echo_stop = threading.Event()
+
+        def echo_serve():
+            self.echo.settimeout(0.2)
+            while not self.echo_stop.is_set():
+                try:
+                    conn, _ = self.echo.accept()
+                except socket.timeout:
+                    continue
+                except OSError:
+                    return
+                with conn:
+                    while True:
+                        data = conn.recv(65536)
+                        if not data:
+                            break
+                        conn.sendall(data)
+
+        self.echo_thread = threading.Thread(target=echo_serve, daemon=True)
+        self.echo_thread.start()
+        self.connect_attempts = []
+
+        def connect_fn(ip, port, hostname, timeout):
+            self.assertEqual((ip, port, hostname), ("8.8.8.8", 443, "fixed.test"))
+            self.connect_attempts.append((ip, port, hostname))
+            real = RT.default_connect("127.0.0.1", self.echo_port, hostname, timeout)
+
+            class PeerSocket:
+                def __init__(self, sock):
+                    self.sock = sock
+
+                def getpeername(self):
+                    return ("8.8.8.8", 443)
+
+                def __getattr__(self, name):
+                    return getattr(self.sock, name)
+
+            return PeerSocket(real)
+
+        self.cache = RT.PolicyCache(cfg_path)
+        self.state = TCP.TcpEgressState(
+            self.cache,
+            resolve_fn=lambda hostname: ["8.8.8.8"],
+            connect_fn=connect_fn,
+            max_concurrent=4,
+        )
+        self.server = TCP.RelayServer(("127.0.0.1", 0), self.state, self.relay_id)
+        self.server_thread = threading.Thread(target=self.server.serve_forever, daemon=True)
+        self.server_thread.start()
+        self.listen_port = self.server.server_address[1]
+
+    def tearDown(self):
+        if getattr(self, "server", None):
+            self.server.shutdown()
+            self.server.server_close()
+        if getattr(self, "cache", None) and self.cache._cp is not None:
+            self.cache._cp._close_cached_plane()
+        if getattr(self, "plane", None):
+            self.plane.close()
+        if getattr(self, "echo_stop", None):
+            self.echo_stop.set()
+        if getattr(self, "echo", None):
+            self.echo.close()
+        if self.saved_root is None:
+            os.environ.pop("FRP_DEPLOY_TEST_ROOT", None)
+        else:
+            os.environ["FRP_DEPLOY_TEST_ROOT"] = self.saved_root
+        self.tmp.cleanup()
+
+    def test_sqlite_policy_allows_bidirectional_fixed_tcp_application_data(self):
+        with socket.create_connection(("127.0.0.1", self.listen_port), timeout=2) as client:
+            client.settimeout(2)
+            client.sendall(b"fixed-tcp-application-payload")
+            self.assertEqual(client.recv(128), b"fixed-tcp-application-payload")
+        self.assertEqual(self.connect_attempts, [("8.8.8.8", 443, "fixed.test")])
+
+    def test_sqlite_policy_denies_unmatched_source_before_connect(self):
+        client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        client.settimeout(2)
+        client.bind(("127.0.0.2", 0))
+        try:
+            client.connect(("127.0.0.1", self.listen_port))
+            self.assertEqual(client.recv(1), b"")
+        finally:
+            client.close()
+        self.assertEqual(self.connect_attempts, [])
+        records = [json.loads(line) for line in self.log_path.read_text().splitlines()]
+        self.assertTrue(any(
+            row.get("decision") == EG.DECISION_DENY
+            and row.get("source_ip") == "127.0.0.2"
+            for row in records
+        ), records)
+
+
 if __name__ == "__main__":
     unittest.main()

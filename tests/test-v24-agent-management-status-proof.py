@@ -42,6 +42,20 @@ class CatalogProofTests(unittest.TestCase):
             )
             read.assert_called_once_with("/")
 
+    def test_S008_one_missing_proxy_cannot_reuse_global_healthy_runtime(self):
+        # FRP's aggregate service may be active while one proxy never bound.
+        # A configured target health check is not required for this runtime proof.
+        with (
+            mock.patch("drlink_agent_lifecycle.load_lifecycle_intent", return_value="active"),
+            mock.patch("drlink_v24_runtime.verified_remote_service_status",
+                       return_value=("DEGRADED", "Runtime proxy is not ready in the active generation.")) as proof,
+        ):
+            state = cli._agent_service_status(
+                self.plane, self.healthy_row, "Healthy", management_verified=True
+            )
+        self.assertEqual(state, "DEGRADED")
+        proof.assert_called_once_with(self.plane, "ssh", root="/")
+
     def test_auth_success_can_remain_healthy_and_reuses_one_read(self):
         services = [dict(self.healthy_row, name="ssh"), dict(self.healthy_row, name="web")]
         self.plane.conn = mock.MagicMock()
@@ -52,11 +66,65 @@ class CatalogProofTests(unittest.TestCase):
             mock.patch.object(mgmt, "use_live_mgmt_path", return_value=True),
             mock.patch.object(mgmt, "fetch_server_catalog", return_value={"managedHosts": [{"id": "registered-host"}]}) as read,
             mock.patch("drlink_agent_lifecycle.load_lifecycle_intent", return_value="active"),
+            mock.patch("drlink_v24_runtime.verified_remote_service_status", return_value=("HEALTHY", "")),
             redirect_stdout(io.StringIO()) as output,
         ):
             self.assertEqual(cli.handle_show(self.plane, ["remote-services"]), 0)
         self.assertEqual(output.getvalue().count("HEALTHY"), 2)
         read.assert_called_once_with("/")
+
+    def test_S008_list_checks_each_proxy_without_hiding_healthy_sibling(self):
+        services = [dict(self.healthy_row, name="ssh"), dict(self.healthy_row, name="web")]
+        self.plane.conn = mock.MagicMock()
+        self.plane.conn.execute.return_value = services
+        def verify(_plane, name, *, root):
+            self.assertEqual(root, "/")
+            return ("DEGRADED", "Runtime proxy absent") if name == "ssh" else ("HEALTHY", "")
+        with (
+            mock.patch.object(cli, "_require_agent"),
+            mock.patch.object(cli, "_agent_runtime_level", return_value="Healthy"),
+            mock.patch.object(cli, "_agent_authenticated_management", return_value=True),
+            mock.patch("drlink_agent_lifecycle.load_lifecycle_intent", return_value="active"),
+            mock.patch("drlink_v24_runtime.verified_remote_service_status", side_effect=verify) as proof,
+            redirect_stdout(io.StringIO()) as output,
+        ):
+            self.assertEqual(cli.handle_show(self.plane, ["remote-services"]), 0)
+        lines = output.getvalue().splitlines()
+        ssh = next(line for line in lines if line.startswith("ssh "))
+        web = next(line for line in lines if line.startswith("web "))
+        self.assertTrue(ssh.endswith("DEGRADED"))
+        self.assertTrue(web.endswith("HEALTHY"))
+        self.assertEqual(proof.call_count, 2)
+        self.assertIn("not application availability at the target", output.getvalue())
+
+    def test_S008_per_service_proof_exception_is_never_healthy(self):
+        with (
+            mock.patch("drlink_agent_lifecycle.load_lifecycle_intent", return_value="active"),
+            mock.patch("drlink_v24_runtime.verified_remote_service_status",
+                       side_effect=OSError("private runtime details")),
+        ):
+            self.assertEqual(
+                cli._agent_service_status(self.plane, self.healthy_row, "Healthy", True),
+                "DEGRADED",
+            )
+
+    def test_S008_single_service_does_not_claim_target_listener_verified(self):
+        self.plane.conn = mock.MagicMock()
+        self.plane.conn.execute.return_value.fetchone.return_value = self.healthy_row
+        with (
+            mock.patch.object(cli, "_require_agent"),
+            mock.patch.object(cli, "_agent_runtime_level", return_value="Healthy"),
+            mock.patch.object(cli, "_agent_authenticated_management", return_value=True),
+            mock.patch("drlink_agent_lifecycle.load_lifecycle_intent", return_value="active"),
+            mock.patch("drlink_v24_runtime.verified_remote_service_status",
+                       return_value=("HEALTHY", "")),
+            redirect_stdout(io.StringIO()) as output,
+        ):
+            self.assertEqual(cli.handle_show(self.plane, ["remote-service", "ssh"]), 0)
+        text = output.getvalue()
+        self.assertIn("Status: HEALTHY", text)
+        self.assertIn("Target application availability is not established", text)
+        self.assertIn("test the public endpoint", text)
 
     def test_catalog_denied_projects_all_healthy_rows_degraded_once(self):
         services = [dict(self.healthy_row, name="ssh"), dict(self.healthy_row, name="web")]
@@ -92,6 +160,7 @@ class CatalogProofTests(unittest.TestCase):
             mock.patch.object(mgmt, "use_live_mgmt_path", return_value=False),
             mock.patch.object(mgmt, "fetch_server_catalog") as read,
             mock.patch("drlink_agent_lifecycle.load_lifecycle_intent", return_value="active"),
+            mock.patch("drlink_v24_runtime.verified_remote_service_status", return_value=("HEALTHY", "")),
         ):
             state = cli._agent_authenticated_management(self.plane, "Healthy")
             self.assertIsNone(state)

@@ -3,6 +3,9 @@
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
+# One per-run scratch directory; never reuse shared /tmp/vg-*.out files.
+WORKDIR="$(mktemp -d)"
+trap 'rm -rf "$WORKDIR"' EXIT
 # shellcheck disable=SC1091
 . "$ROOT/VERSION"
 # shellcheck source=../lib/frp-common.sh
@@ -18,13 +21,13 @@ SHORT="$(printf '%s' "$HEAD" | cut -c1-7)"
 [[ "$RELEASE_CHANNEL" == "development" ]] || fail "VERSION RELEASE_CHANNEL"
 [[ -f docs/VERSION_POLICY.md ]] || fail "VERSION_POLICY missing"
 [[ -f RELEASE_MANIFEST.schema.json ]] || fail "schema missing"
-./scripts/check-version-consistency.sh >/tmp/vg-version.out 2>&1 || {
-  cat /tmp/vg-version.out >&2
+./scripts/check-version-consistency.sh >"$WORKDIR/vg-version.out" 2>&1 || {
+  cat "$WORKDIR/vg-version.out" >&2
   fail "version consistency"
 }
 pass "VERSION_SSOT"
-./scripts/check-release-governance.sh >/tmp/vg-gov.out 2>&1 || {
-  cat /tmp/vg-gov.out >&2
+./scripts/check-release-governance.sh >"$WORKDIR/vg-gov.out" 2>&1 || {
+  cat "$WORKDIR/vg-gov.out" >&2
   fail "release governance"
 }
 pass "RELEASE_GOVERNANCE"
@@ -189,8 +192,8 @@ print("OK")
 PYCI
 pass "CI_DEDUP_EXPENSIVE_GATE_POLICY"
 
-python3 tests/test-release-manifest-schema.py >/tmp/vg-schema.out 2>&1 || {
-  cat /tmp/vg-schema.out >&2
+python3 tests/test-release-manifest-schema.py >"$WORKDIR/vg-schema.out" 2>&1 || {
+  cat "$WORKDIR/vg-schema.out" >&2
   fail "manifest schema tests"
 }
 pass "RELEASE_MANIFEST_SCHEMA"
@@ -259,8 +262,7 @@ pass "STABLE_IDENTITY_GUARD"
 pass "PRODUCT_ENGINE_VERSION_SEPARATION"
 
 # --- system version parity across roles -------------------------------------
-WORKDIR="$(mktemp -d)"
-trap 'rm -rf "$WORKDIR"' EXIT
+# WORKDIR and cleanup trap are initialized at process entry.
 for role in client server both; do
   tree="$WORKDIR/$role"
   mkdir -p "$tree/etc/drlink" "$tree/usr/local/lib/drlink"

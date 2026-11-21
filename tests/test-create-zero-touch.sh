@@ -287,6 +287,38 @@ PY
 pass "ZERO_TOUCH_MULTI_SERVICE_GUIDED"
 pass "ZERO_TOUCH_MULTI_SERVICE_SSH_HTTP"
 
+# --- Guided: Choose Remote Services permits a blank optional SSH username ---
+run_repl "$SERVER" "$WORKDIR/zt-multi-ssh-blank-user.out" \
+  "set enrollment zero-touch" 1 multi-ssh-blank "" \
+  2 \
+  1 "" "" "" "" \
+  2 "" "" "" \
+  5 \
+  exit \
+  || fail "zero-touch multi-service blank ssh username"
+if grep -q 'ERROR: SSH user is required\.' "$WORKDIR/zt-multi-ssh-blank-user.out"; then
+  fail "blank optional ssh username rejected in Choose Remote Services path"
+fi
+python3 - "$WORKDIR/zt-multi-ssh-blank-user.out" <<'PY' || fail "blank ssh username multi-service payload"
+import json, re, sys
+text = open(sys.argv[1], encoding="utf-8").read()
+match = re.search(r"^SERVICES_JSON (.+)$", text, re.M)
+if not match:
+    raise SystemExit("missing SERVICES_JSON")
+items = json.loads(match.group(1))
+if [item.get("preset") for item in items] != ["ssh", "http"]:
+    raise SystemExit(items)
+if items[0].get("id") != "ssh" or "ssh_user" in items[0]:
+    raise SystemExit(items[0])
+if items[0].get("local_ip") != "127.0.0.1" or int(items[0].get("local_port")) != 22:
+    raise SystemExit(items[0])
+if items[1].get("id") != "http" or items[1].get("local_ip") != "127.0.0.1" or int(items[1].get("local_port")) != 80:
+    raise SystemExit(items[1])
+PY
+grep -q 'DISPATCH frp-create-client --platform linux --one-line --services-file ' \
+  "$WORKDIR/zt-multi-ssh-blank-user.out" || fail "blank ssh multi-service enrollment dispatch missing"
+pass "ZERO_TOUCH_MULTI_SERVICE_BLANK_SSH_USER_OPTIONAL"
+
 # --- Guided: multi-service SSH+HTTPS ---
 run_repl "$SERVER" "$WORKDIR/zt-multi-https.out" \
   "set enrollment zero-touch" 1 multi-https "" \

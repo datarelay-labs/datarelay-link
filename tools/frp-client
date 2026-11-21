@@ -348,7 +348,7 @@ menu_edit_service() {
   echo "Current Remote Services:"
   echo
   frp_print_state_services "$CANDIDATE_FILE"
-  choice="$(read_tty "Edit service number: " "")"
+  frp_read_step choice "Edit service number: " "" frp_ux_service_number_help || return 0
   if ! sid="$(frp_select_service_id "$choice")"; then
     return 0
   fi
@@ -376,14 +376,14 @@ PY
   echo "Display name"
   echo "  Label shown in status and connection information."
   echo
-  name="$(read_tty "Display name [${old_name}]: " "$old_name")"
+  frp_read_step name "Display name [${old_name}]: " "$old_name" frp_ux_display_name_help || return 0
   frp_ux_target_host_help
-  host="$(read_tty "Target host [${old_host}]: " "$old_host")"
+  frp_read_step host "Target host [${old_host}]: " "$old_host" frp_ux_target_host_help || return 0
   frp_ux_target_port_help "$preset"
-  port="$(read_tty "Target port [${old_port}]: " "$old_port")"
+  frp_read_step port "Target port [${old_port}]: " "$old_port" frp_ux_target_port_help "$preset" || return 0
   user="$old_user"
   if [[ "$preset" == ssh ]]; then
-    frp_prompt_ssh_user user "$old_user"
+    frp_prompt_ssh_user user "$old_user" || return 0
   fi
   maybe_warn_connectivity "$host" "$port" "TCP"
   if ! python3 - "$CANDIDATE_FILE" "$sid" "$name" "$host" "$port" "$user" <<'PY'
@@ -427,7 +427,7 @@ menu_enable_disable() {
   echo "Current Remote Services:"
   echo
   frp_print_state_services "$CANDIDATE_FILE"
-  choice="$(read_tty "Service number: " "")"
+  frp_read_step choice "Service number: " "" frp_ux_service_number_help || return 0
   if ! sid="$(frp_select_service_id "$choice")"; then
     return 0
   fi
@@ -974,10 +974,17 @@ PY
     echo "7) Discard pending changes"
     echo "8) Exit"
     echo
+    echo "? Help"
+    echo
     if [[ "${FRP_CLIENT_TEST_MENU:-}" == "1" ]]; then
       return 0
     fi
-    choice="$(read_tty "Select: " "")"
+    frp_read_menu_choice choice "Select: " || return 0
+    local _frp_nav_rc=0
+    frp_menu_nav top "Agent menu" 8 "$choice" || _frp_nav_rc=$?
+    case "$_frp_nav_rc" in
+      10|11) continue ;;
+    esac
     case "$choice" in
       1) menu_add_service ;;
       2) menu_edit_service ;;
@@ -993,7 +1000,7 @@ PY
         echo "Exit."
         return 0
         ;;
-      *) echo "ERROR: select 1-8" >&2 ;;
+      *) frp_menu_invalid top 8 8 ;;
     esac
   done
 }

@@ -18,6 +18,12 @@ def shell_function(name):
     source = (ROOT / 'tools/frpctl').read_text()
     return name + '() {' + source.split(name + '() {', 1)[1].split('\n}\n', 1)[0] + '\n}\n'
 
+# U-013: prompts are read through the Wizard/menu helpers. These tests stub only the raw
+# line reader (frpctl_read) and exercise the real helpers from tools/frpctl.
+READ_HELPERS = ''.join(shell_function(name) for name in (
+    'frpctl_step_label', 'frpctl_step_help', 'frpctl_read_step', 'frpctl_read_choice',
+    'frpctl_read_abort', 'frpctl_read_text', 'frpctl_menu_help', 'frpctl_read_menu'))
+
 class PublicRecoveryTests(unittest.TestCase):
     def test_readable_role_does_not_mask_unreadable_other_install_state(self):
         script='''frpctl_install_state_unreadable() { return 0; }
@@ -60,7 +66,7 @@ frpctl_lib_candidate() { printf '%s/%s' "$LIB" "$1"; }
     def test_every_named_create_menu_acquires_name_and_empty_cancels(self):
         for resource in ('network-object', 'network-group', 'service-object', 'service-group', 'permission-object', 'permission-group', 'remote-access', 'internet-access', 'ai-access', 'ai-identity'):
             for name in ('owned name with spaces', ''):
-                script = 'frpctl_read() { printf "%s" "$ANSWER"; }; frpctl_dispatch() { printf "ARG:<%s>\\n" "$@"; };\n' + shell_function('frpctl_nav_dispatch_command') + '\nfrpctl_nav_dispatch_command "$COMMAND"'
+                script = 'frpctl_read() { printf "%s" "$ANSWER"; }; ' + READ_HELPERS + ' frpctl_dispatch() { printf "ARG:<%s>\\n" "$@"; };\n' + shell_function('frpctl_nav_dispatch_command') + '\nfrpctl_nav_dispatch_command "$COMMAND"'
                 result = subprocess.run(['bash', '-c', script], env=dict(os.environ, ANSWER=name, COMMAND='set '+resource), capture_output=True, text=True)
                 self.assertEqual(result.returncode, 0, result.stderr)
                 if name:
@@ -85,7 +91,7 @@ frpctl_lib_candidate() { printf '%s/%s' "$LIB" "$1"; }
     def test_rule_create_menu_never_dispatches_enforcement_names(self):
         for resource in ('remote-access','internet-access','ai-access'):
             for name in ('enabled','disabled','ENABLED',' disabled '):
-                script='frpctl_read() { printf "%s" "$ANSWER"; }; frpctl_dispatch() { printf "DISPATCHED"; };\n'+shell_function('frpctl_nav_dispatch_command')+'\nfrpctl_nav_dispatch_command "$COMMAND"'
+                script='frpctl_read() { printf "%s" "$ANSWER"; }; ' + READ_HELPERS + ' frpctl_dispatch() { printf "DISPATCHED"; };\n'+shell_function('frpctl_nav_dispatch_command')+'\nfrpctl_nav_dispatch_command "$COMMAND"'
                 result=subprocess.run(['bash','-c',script],env=dict(os.environ,ANSWER=name,COMMAND='set '+resource),capture_output=True,text=True)
                 self.assertEqual(result.returncode,1)
                 self.assertNotIn('DISPATCHED',result.stdout)
@@ -105,7 +111,7 @@ frpctl_lib_candidate() { printf '%s/%s' "$LIB" "$1"; }
         # non-mutating empty-name cancellation guidance (U-013/O-015).
         for answer in ('', '   '):
             script = (
-                'frpctl_read() { printf "%s" "$ANSWER"; }; '
+                'frpctl_read() { printf "%s" "$ANSWER"; }; ' + READ_HELPERS + ' '
                 'frpctl_dispatch() { printf "DISPATCHED"; };\n'
                 + shell_function('frpctl_nav_prompt_id')
                 + shell_function('frpctl_nav_workflow')

@@ -2944,6 +2944,172 @@ class AgentPushFalseHealthyTests(unittest.TestCase):
         self.assertEqual(server["status"], "HEALTHY")
         self.assertEqual(int(server["runtime_verified"] or 0), 1)
 
+    def _noop_sync_fixture(self, name):
+        """Publish ``name`` through the real Agent path, then promote Agent + Server
+        to HEALTHY/runtime_verified exactly as a live runtime verification would."""
+        from unittest import mock
+
+        with mock.patch.dict(os.environ, {
+            "FRP_DEPLOY_TEST_ROOT": self.agent_tmp,
+            "DRLINK_SKIP_ACTIVATION": "1",
+        }), mock.patch.object(v24, "_probe_tcp", return_value=True):
+            v24.set_remote_service_agent(
+                self.agent, name, destination="this-host", service="ssh",
+                enabled=True, oneshot=True, root=self.agent_tmp, server_reachable=True,
+            )
+            row = self.agent.conn.execute(
+                "SELECT endpoint_port FROM agent_remote_services WHERE name=?", (name,)
+            ).fetchone()
+            port = int(row["endpoint_port"])
+            mgmt.report_remote_service_status_on_server(
+                root=self.agent_tmp,
+                services=[{
+                    "name": name, "status": "HEALTHY", "reason": "",
+                    "runtime_verified": True, "endpoint_port": port,
+                }],
+            )
+        self.agent.conn.execute(
+            "UPDATE agent_remote_services SET status='HEALTHY', reason='', "
+            "runtime_verified=1 WHERE name=?", (name,),
+        )
+        self.agent.conn.commit()
+        server = self._server_status(name)
+        self.assertEqual((server["status"], int(server["runtime_verified"] or 0)), ("HEALTHY", 1))
+
+    def _agent_external_state(self, name):
+        import sqlite3
+
+        conn = sqlite3.connect(
+            "file:%s?mode=ro" % self.agent.db_file, uri=True, isolation_level=None
+        )
+        conn.row_factory = sqlite3.Row
+        try:
+            row = conn.execute(
+                "SELECT status, runtime_verified FROM agent_remote_services WHERE name=?",
+                (name,),
+            ).fetchone()
+            return (str(row["status"]), int(row["runtime_verified"] or 0))
+        finally:
+            conn.close()
+
+    def test_explicit_synchronize_of_verified_unchanged_service_never_flaps_degraded(self):
+        # p52 (S-023 follow-up): an explicit `system synchronize` of a live-verified,
+        # unchanged Remote Service used to commit Agent DEGRADED/rv=0 ("Runtime
+        # activation pending.") before re-verifying, which the Server mirrored for
+        # ~150 ms (HEALTHY -> DEGRADED -> HEALTHY) although nothing changed and the
+        # proxy never stopped serving. A service whose live verification still
+        # holds must stay HEALTHY/verified throughout, on the Agent and the Server.
+        from unittest import mock
+
+        name = "sync-no-flap"
+        self._noop_sync_fixture(name)
+        agent_states = []
+        server_states = []
+        claims = []
+        degraded_writes = []
+
+        def observe():
+            agent_states.append(self._agent_external_state(name))
+            row = self._server_status(name)
+            server_states.append((str(row["status"]), int(row["runtime_verified"] or 0)))
+
+        real_upsert = mgmt.upsert_remote_service_on_server
+        real_report = mgmt.report_remote_service_status_on_server
+
+        def observe_upsert(**kwargs):
+            if kwargs.get("name") == name:
+                observe()
+                claims.append(("upsert", bool(kwargs.get("runtime_verified"))))
+            return real_upsert(**kwargs)
+
+        def observe_report(*, root, services):
+            for item in services:
+                if item.get("name") == name:
+                    observe()
+                    claims.append((
+                        str(item.get("status") or "").upper(),
+                        bool(item.get("runtime_verified")),
+                    ))
+            return real_report(root=root, services=services)
+
+        def trace(statement):
+            compact = statement.lower().replace(" ", "")
+            if (compact.startswith("updateagent_remote_services")
+                    and "status='degraded'" in compact):
+                degraded_writes.append(statement[:160])
+
+        self.agent.conn.set_trace_callback(trace)
+        try:
+            with mock.patch.dict(os.environ, {
+                "FRP_DEPLOY_TEST_ROOT": self.agent_tmp,
+                "DRLINK_SKIP_ACTIVATION": "1",
+            }), mock.patch.object(
+                v24, "_probe_tcp", return_value=True
+            ), mock.patch.object(
+                mgmt, "upsert_remote_service_on_server", side_effect=observe_upsert
+            ), mock.patch.object(
+                mgmt, "report_remote_service_status_on_server", side_effect=observe_report
+            ):
+                result = v24.synchronize_agent_remote_services(
+                    self.agent, root=self.agent_tmp
+                )
+        finally:
+            self.agent.conn.set_trace_callback(None)
+
+        self.assertEqual(result.get("status"), "SYNCHRONIZED", result)
+        self.assertTrue(agent_states, "synchronize never reported the service")
+        self.assertEqual(
+            sorted(set(agent_states)), [("HEALTHY", 1)],
+            "Agent row must never leave HEALTHY/verified for an unchanged live-verified service",
+        )
+        self.assertEqual(
+            sorted(set(server_states)), [("HEALTHY", 1)],
+            "Server must never be demoted for an unchanged live-verified service",
+        )
+        self.assertNotIn(("DEGRADED", False), claims)
+        # The Agent still sends its (unverified) upsert claim; the Server holds the
+        # verified row for an identical publication, which server_states proves above.
+        self.assertEqual(degraded_writes, [], "no Agent DEGRADED write expected")
+        self.assertEqual(self._agent_external_state(name), ("HEALTHY", 1))
+        final = self._server_status(name)
+        self.assertEqual((final["status"], int(final["runtime_verified"] or 0)), ("HEALTHY", 1))
+
+    def test_explicit_synchronize_still_fails_closed_when_live_verification_is_lost(self):
+        # Guard for the p52 fix: holding HEALTHY is only allowed while the LIVE proof
+        # still holds. When the proxy is not live-verified, the Agent must still commit
+        # the fail-closed state before any unverified Server write.
+        from unittest import mock
+        import drlink_v24_runtime as runtime
+
+        name = "sync-lost-proof"
+        self._noop_sync_fixture(name)
+        before_unverified_server_write = []
+        real_upsert = mgmt.upsert_remote_service_on_server
+
+        def observe_upsert(**kwargs):
+            if kwargs.get("name") == name and not kwargs.get("runtime_verified"):
+                before_unverified_server_write.append(self._agent_external_state(name))
+            return real_upsert(**kwargs)
+
+        with mock.patch.dict(os.environ, {
+            "FRP_DEPLOY_TEST_ROOT": self.agent_tmp,
+            "DRLINK_SKIP_ACTIVATION": "1",
+        }), mock.patch.object(
+            v24, "_probe_tcp", return_value=True
+        ), mock.patch.object(
+            runtime, "verified_remote_service_status",
+            return_value=("DEGRADED", "Runtime proxy is not ready in the active generation."),
+        ), mock.patch.object(
+            mgmt, "upsert_remote_service_on_server", side_effect=observe_upsert
+        ):
+            v24.synchronize_agent_remote_services(self.agent, root=self.agent_tmp)
+
+        self.assertTrue(before_unverified_server_write)
+        self.assertEqual(
+            before_unverified_server_write[0], ("DEGRADED", 0),
+            "lost live proof must still fail closed on the Agent before Server demotion",
+        )
+
     def test_synchronize_final_status_push_failure_keeps_agent_degraded(self):
         # Live U-008 e0a3 regression: runtime recovered and public traffic was
         # healthy, but a lost final status projection left Agent HEALTHY while

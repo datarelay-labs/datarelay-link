@@ -439,10 +439,10 @@ def load_server_config():
 def short_url_host_for_cfg(cfg, bootstrap_hostname='', public_hostname=''):
     """Require qualified HTTPS trust before using a public compact bootstrap.
 
-    An administrator-set bootstrap_hostname is explicit trust intent.
-    Otherwise, the configured public DNS endpoint is only eligible after a
-    real stock-OS TLS validation probe. Never infer TLS from the presence of
-    a hostname or disable certificate validation to shorten a command.
+    Explicit bootstrap_hostname selects the intended hostname, not its trust.
+    Both explicit and automatic public DNS endpoints must pass a strict
+    default-trust TLS check and the allocator's exact fail-closed /i/ probe.
+    Never issue a credential for an unverified public short URL.
     """
     scfg = load_server_config()
     cfg = cfg if isinstance(cfg, dict) else {}
@@ -453,11 +453,8 @@ def short_url_host_for_cfg(cfg, bootstrap_hostname='', public_hostname=''):
         except Exception:
             host = ''
     host = str(host or bootstrap_hostname or '').strip().lower()
-    if host:
-        return host
-
     try:
-        candidate = str(
+        candidate = host or str(
             cfg.get('public_hostname')
             or cfg.get('public_url_host')
             or public_hostname
@@ -562,6 +559,22 @@ def validate_zero_touch_prerequisites(cfg, platform, installer, ca_fp, *, long_b
     if not ca_fp:
         fail('allocator CA SHA256 fingerprint is unavailable; cannot generate a secure command')
     compact_host = short_url_host_for_cfg(cfg) if not long_bootstrap else ''
+    # A configured bootstrap_hostname expresses operator intent, NOT public
+    # certificate trust. Probe the same FQDN using the system CA store and
+    # the allocator's exact /i/ failure signature before issuing any ticket.
+    # The public_hostname-only path already performs this proof in
+    # short_url_host_for_cfg; never let the explicit path bypass it.
+    # Hermetic FRP_DEPLOY_TEST_ROOT suites use deliberately invented DNS names;
+    # they assert renderer behavior in a redirected filesystem, not public CA
+    # qualification. No test-root path is eligible as a deployed Server.
+    if compact_host and cfg.get('bootstrap_hostname') and not long_bootstrap and not _test_root():
+        proven = short_url_host_for_cfg({'public_hostname': compact_host})
+        if proven != compact_host:
+            fail('Configured bootstrap hostname failed public HTTPS/TLS and '
+                 'allocator endpoint verification. Fix DNS/certificate/443 '
+                 'frontend, or unset server bootstrap-hostname to use the '
+                 'verified Private-CA numeric-IP bootstrap. '
+                 'No enrollment ticket was issued.')
     private_ip_plan = None
     if not compact_host and not long_bootstrap:
         private_ip_plan = private_ca_ip_bootstrap_plan(cfg, ca_fp)

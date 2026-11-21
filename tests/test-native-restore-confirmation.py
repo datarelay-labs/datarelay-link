@@ -14,11 +14,23 @@ import unittest
 ROOT = Path(__file__).resolve().parents[1]
 
 
+def extract_function(source, name):
+    """Return the real shell function `name` from tools/frpctl (not a stub)."""
+    head = name + "() {"
+    return head + source.split(head, 1)[1].split("\n}\n", 1)[0] + "\n}\n"
+
+
 class NativeRestoreConfirmation(unittest.TestCase):
     def run_boundary(self, answer="", *, tty=False, preflight=0, bypass=False):
         source = (ROOT / "tools/frpctl").read_text()
         function = "frpctl_confirm_restore() {" + source.split(
             "frpctl_confirm_restore() {", 1)[1].split("\n}\n", 1)[0] + "\n}\n"
+        # U-013: the confirmation now reads through the Wizard step helpers. Extract the
+        # real helpers so this boundary test exercises production `?`/`0`/EOF handling
+        # on top of the stubbed raw reader below.
+        helpers = "".join(extract_function(source, name) for name in (
+            "frpctl_step_label", "frpctl_step_help", "frpctl_read_step",
+            "frpctl_read_abort"))
         # Select the canonical dispatch arm, not the guided-menu workflow arm.
         dispatch = source.split('action="$(frpctl_json_get "$result" action)"', 1)[1]
         arm = dispatch.split("    restore_backup)\n", 1)[1].split(
@@ -41,7 +53,7 @@ frpctl_read() {
 frpctl_run() { printf 'mock-invocation:%s\\n' "$*" >> "$CALLS"; return 0; }
 _frpctl_pt=()
 if [[ "$BYPASS" == 1 ]]; then _frpctl_pt=(--yes); fi
-""" + function + """
+""" + helpers + function + """
 boundary_dispatch() {
   local result='fixture'
   _FRP_CTL_RC=0

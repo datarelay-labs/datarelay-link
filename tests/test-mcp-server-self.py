@@ -111,6 +111,13 @@ class ServerSelfMCPTest(unittest.TestCase):
         permission: server-host-info
 """)
 
+    def test_isolated_control_plane_never_reads_host_server_config(self):
+        # Test roots must not fall through to the installed Server identity.
+        # Otherwise missing fixture config may inherit the host public URL.
+        with patch.dict(os.environ, {"DRLINK_SERVER_CONFIG": "", "DRLINK_MCP_PUBLIC_URL": ""}):
+            self.assertEqual(self.plane._read_server_config(), {})
+            self.assertEqual(self.plane.mcp_public_url(), "Not configured")
+
     def test_native_public_https_identity_is_separate_from_frp_direct_mode(self):
         from drlink_control_db import ControlPlaneError
         self.assertNotIn("https://native.xdr.ooo/mcp", self.bridge.canonical_resource())

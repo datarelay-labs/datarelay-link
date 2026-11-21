@@ -952,23 +952,23 @@ def _parse_tls_client_hello_sni(buf: bytes) -> tuple[str, Optional[str]]:
       ('ok', sni_or_None) — complete ClientHello; sni may be None if extension absent
       ('error', reason) — malformed TLS
     """
-    if len(buf) < 5:
-        return "incomplete", None
     # Reassemble handshake message from one or more TLS records.
     pos = 0
     handshake = bytearray()
     while True:
-        if len(buf) < pos + 5:
+        if len(buf) <= pos:
             return "incomplete", None
         content_type = buf[pos]
+        if content_type != 0x16:  # Handshake
+            return "error", "expected TLS handshake record"
+        if len(buf) < pos + 5:
+            return "incomplete", None
         # version = buf[pos+1:pos+3]
         record_len = int.from_bytes(buf[pos + 3 : pos + 5], "big")
         if record_len > 16384:
             return "error", "TLS record too large"
         if len(buf) < pos + 5 + record_len:
             return "incomplete", None
-        if content_type != 0x16:  # Handshake
-            return "error", "expected TLS handshake record"
         fragment = buf[pos + 5 : pos + 5 + record_len]
         pos += 5 + record_len
         handshake.extend(fragment)

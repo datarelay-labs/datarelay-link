@@ -125,7 +125,7 @@ def hux_ia_004(env: ScenarioEnv) -> None:
         "https",
         "enabled",
     )
-    r = s.run("set", "internet-access", "ia-dis", "disabled")
+    r = s.run("set", "internet-access", "ia-dis", "disabled", confirm=True)
     expect_true(r.rc == 0, "disable failed", evidence=r.combined)
 
 
@@ -155,7 +155,7 @@ def hux_ia_005(env: ScenarioEnv) -> None:
         "https",
         "disabled",
     )
-    r = s.run("set", "internet-access", "ia-en", "enabled")
+    r = s.run("set", "internet-access", "ia-en", "enabled", confirm=True)
     expect_true(r.rc == 0, "enable failed", evidence=r.combined)
 
 

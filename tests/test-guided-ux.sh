@@ -94,7 +94,7 @@ assert p['preset']=='https'
 assert p['local_ip']=='127.0.0.1'
 assert int(p['local_port'])==443
 PY
-run_preset $'3\nretry-https\n192.0.2.25\n65536\n0\ninvalid\n443\n' "$WORKDIR/https-retry.json"
+run_preset $'3\nretry-https\n192.0.2.25\n65536\ninvalid\n443\n' "$WORKDIR/https-retry.json"
 python3 - "$WORKDIR/https-retry.json" <<'PY' || fail "invalid port preserves service draft"
 import json,sys
 p=json.loads(open(sys.argv[1]).read())

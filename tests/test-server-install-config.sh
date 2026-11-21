@@ -535,8 +535,9 @@ assert ip_cfg.get('public_hostname') == 'remote.xdr.ooo'
 override = dict(ip_cfg)
 override['bootstrap_hostname'] = 'bootstrap.example.com'
 assert S.short_url_hostname(override) == 'bootstrap.example.com'
-assert mod.short_url_host_for_cfg(override) == 'bootstrap.example.com'
-cmd = zt.short_url_command(mod.short_url_host_for_cfg(override), ticket)
+# Explicit hostname is a selection, not a public trust proof.
+assert mod.short_url_host_for_cfg(override) == ''
+cmd = zt.short_url_command(S.short_url_hostname(override), ticket)
 assert "https://bootstrap.example.com/i/" in cmd, cmd
 print('ok')
 PY

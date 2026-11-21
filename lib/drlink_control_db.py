@@ -33,6 +33,15 @@ class ControlPlaneError(Exception):
     """User-facing control-plane failure."""
 
 
+class NoOpMutation(ControlPlaneError):
+    """A mutation writer found the desired state already current.
+
+    Raised by a writer *before* it changes anything. `_mutate` rolls the open
+    transaction back and records no revision, snapshot, audit row or runtime
+    activation, then re-raises so the caller can return its current state.
+    """
+
+
 class SchemaTooNewError(ControlPlaneError):
     def __init__(self, found: int, supported: int):
         super().__init__(
@@ -1138,8 +1147,12 @@ def open_control_db(root: Optional[str] = None, *, create: bool = True) -> sqlit
     return conn
 
 
-def open_control_db_readonly(root: Optional[str] = None) -> sqlite3.Connection:
-    return connect_read_only(root=root)
+def open_control_db_readonly(
+    root: Optional[str] = None, *, path: Optional[Path] = None
+) -> sqlite3.Connection:
+    # ``path`` lets a caller that already resolved the live DB (ControlPlane) avoid re-probing the host
+    # markers; the connection, PRAGMAs and schema checks are identical.
+    return connect_read_only(path=path, root=root)
 
 
 def pragma_snapshot(conn: sqlite3.Connection) -> dict:
