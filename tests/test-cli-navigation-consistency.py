@@ -343,6 +343,34 @@ class FrpctlMenuBehaviour(unittest.TestCase):
         rc, out = _run_repl(self.server, ["menu", "1"], self.home)
         self.assertLess(out.count("ERROR"), 3, out[-800:])
 
+    def test_scripted_end_of_input_still_leaves_menu_cleanly(self):
+        # Input that simply ends (user finished typing) is a normal way to leave.
+        rc, out = _run_repl(self.server, ["menu", "1"], self.home)
+        self.assertEqual(rc, 0, out[-800:])
+        self.assertIn("End of input. Leaving the menu.", out)
+
+    def test_non_tty_menu_without_input_fails_closed(self):
+        # stdin is not a TTY and no scripted input exists: nothing can be answered, so a
+        # guided/menu command must fail (rc != 0) instead of reporting a clean exit.
+        env = dict(os.environ)
+        for key in [k for k in env if k.startswith("FRP_CTL_TEST") or k.startswith("FRP_CLIENT_TEST")]:
+            env.pop(key)
+        env.update({
+            "FRP_CTL_FORCE_DRLINK": "1", "FRP_CTL_CMD_NAME": "drlink",
+            "FRP_CTL_BIN_DIR": str(ROOT / "tools"),
+            "FRP_CLIENT_LIB": str(ROOT / "lib/frp-client-common.sh"),
+            "FRP_SKIP_SYSTEMD": "1", "HOME": str(self.home),
+            "FRP_CTL_TEST_ROOT": str(self.server), "FRP_DEPLOY_TEST_ROOT": str(self.server),
+            "FRP_CLIENT_TEST_ROOT": str(self.server), "FRP_CTL_DRY_RUN": "1",
+        })
+        for args in (["menu"], ["set", "enrollment", "zero-touch"]):
+            proc = subprocess.run([str(CTL)] + args, env=env, stdin=subprocess.DEVNULL,
+                                  capture_output=True, text=True, timeout=120)
+            out = proc.stdout + proc.stderr
+            self.assertNotEqual(proc.returncode, 0, "%s: %s" % (args, out[-600:]))
+            self.assertIn("no TTY for interactive menu", out)
+            self.assertNotIn("End of input. Leaving the menu.", out)
+
     def test_end_of_input_is_announced_once_and_is_a_normal_exit(self):
         # Ctrl-D / exhausted input at a menu is a normal way to leave (like a shell):
         # say so once, exit 0, never exit silently with a failure status.

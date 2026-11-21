@@ -1290,7 +1290,7 @@ frpctl_nav_workflow() {
         echo "3) Addresses"
         echo "4) Retire Managed Host (reference checks and confirmation required)"
         echo "5) Back"
-        value="$(frpctl_read_menu 5 Back "Select: " "5")" || { frpctl_eof_note; return 0; }
+        value="$(frpctl_read_menu 5 Back "Select: " "5")" || { frpctl_eof_note; return $?; }
         case "$value" in
           1) frpctl_dispatch show managed-host "$id" agent || return $? ;;
           2) frpctl_dispatch show managed-host "$id" remote-services || return $? ;;
@@ -1320,7 +1320,7 @@ frpctl_nav_workflow() {
       echo "1) Edit destination, Service Object or enabled state (review before apply)"
       echo "2) Delete (interactive confirmation required)"
       echo "3) Back"
-      value="$(frpctl_read_menu 3 Back "Select: " "3")" || { frpctl_eof_note; return 0; }
+      value="$(frpctl_read_menu 3 Back "Select: " "3")" || { frpctl_eof_note; return $?; }
       case "$value" in
         1) frpctl_dispatch set remote-service "$id" ;;
         2) frpctl_dispatch unset remote-service "$id" ;;
@@ -1509,7 +1509,7 @@ PY
           echo "4) name"
           echo "5) health-type"
           echo "6) Back"
-          path="$(frpctl_read_menu 6 Back "Select property: " "")" || { frpctl_eof_note; return 0; }
+          path="$(frpctl_read_menu 6 Back "Select property: " "")" || { frpctl_eof_note; return $?; }
           case "$path" in
             1) path="target-host" ;;
             2) path="target-port" ;;
@@ -1556,7 +1556,7 @@ frpctl_nav_loop() {
     if [[ "${FRP_CTL_TEST_MENU:-}" == "1" ]]; then
       return 0
     fi
-    choice="$(frpctl_read "Select: " "")" || { frpctl_eof_note; return 0; }
+    choice="$(frpctl_read "Select: " "")" || { frpctl_eof_note; return $?; }
     nav_cls=""
     action_id=""
     kind=""
@@ -1839,13 +1839,20 @@ frpctl_looks_like_drlink_command() {
 #   ?  show context help for the current prompt and stay on it
 #   0  go back to the previous menu (menus) / cancel (text prompts)
 frpctl_eof_note() {
-  # End of input (Ctrl-D / closed stdin) at a menu is a normal way to leave, like a
-  # shell. Announce it once per process (runs in the main shell, so the flag persists
-  # while it unwinds through nested menus).
+  # End of input (Ctrl-D / scripted input that ran out) at a menu is a normal way to
+  # leave, like a shell. Announce it once per process (runs in the main shell, so the
+  # flag persists while it unwinds through nested menus) and return 0.
+  # When there is no input source at all (stdin is not a TTY and no scripted input),
+  # frpctl_try_read already printed "ERROR: no TTY for interactive menu". That is a
+  # failure, not a user leaving: stay silent here and return 1 so callers fail closed.
+  if [[ -z "${FRP_CTL_TEST_INPUT:-}" && ! -t 0 ]]; then
+    return 1
+  fi
   if [[ -z "${_FRP_CTL_EOF_NOTED:-}" ]]; then
     _FRP_CTL_EOF_NOTED=1
     echo "End of input. Leaving the menu." >&2
   fi
+  return 0
 }
 
 frpctl_menu_help() {
@@ -2250,7 +2257,7 @@ frpctl_zt_run_services() {
     echo "5) Finish"
     echo "6) Cancel"
     echo
-    choice="$(frpctl_read_menu 6 Cancel "Select: " "")" || { frpctl_eof_note; return 0; }
+    choice="$(frpctl_read_menu 6 Cancel "Select: " "")" || { frpctl_eof_note; return $?; }
     case "$choice" in
       1)
         frpctl_zt_prompt_service_fields ssh ssh SSH 127.0.0.1 22 || continue
@@ -2320,7 +2327,7 @@ frpctl_guided_zero_touch_linux() {
     echo "2) Choose Remote Services"
     echo "3) Back"
     echo
-    choice="$(frpctl_read_menu 3 Back "Select: " "")" || { frpctl_eof_note; return 0; }
+    choice="$(frpctl_read_menu 3 Back "Select: " "")" || { frpctl_eof_note; return $?; }
     case "$choice" in
       1) _FRP_ZT_PLATFORM=linux; frpctl_zt_run_ssh; return $? ;;
       2) _FRP_ZT_PLATFORM=linux; frpctl_zt_run_services; return $? ;;
@@ -2342,7 +2349,7 @@ frpctl_guided_zero_touch_windows() {
     echo "3) Choose Remote Services"
     echo "4) Back"
     echo
-    choice="$(frpctl_read_menu 4 Back "Select: " "")" || { frpctl_eof_note; return 0; }
+    choice="$(frpctl_read_menu 4 Back "Select: " "")" || { frpctl_eof_note; return $?; }
     case "$choice" in
       1) frpctl_zt_run_rdp; return $? ;;
       2) _FRP_ZT_PLATFORM=windows; frpctl_zt_run_ssh; return $? ;;
@@ -2366,7 +2373,7 @@ frpctl_guided_zero_touch_macos() {
     echo "2) Choose Remote Services"
     echo "3) Back"
     echo
-    choice="$(frpctl_read_menu 3 Back "Select: " "")" || { frpctl_eof_note; return 0; }
+    choice="$(frpctl_read_menu 3 Back "Select: " "")" || { frpctl_eof_note; return $?; }
     case "$choice" in
       1) _FRP_ZT_PLATFORM=linux; frpctl_zt_run_ssh; return $? ;;
       2) _FRP_ZT_PLATFORM=linux; frpctl_zt_run_services; return $? ;;
@@ -2390,7 +2397,7 @@ frpctl_guided_zero_touch() {
   echo "3) macOS"
   echo "4) Back"
   echo
-  choice="$(frpctl_read_menu 4 Back "Select: " "")" || { frpctl_eof_note; return 0; }
+  choice="$(frpctl_read_menu 4 Back "Select: " "")" || { frpctl_eof_note; return $?; }
   case "$choice" in
     1)
       frpctl_zt_preflight linux || return 1
@@ -2437,7 +2444,7 @@ frpctl_guided_client_onboarding() {
   echo
   echo "3) Back"
   echo
-  choice="$(frpctl_read_menu 3 Back "Select: " "")" || { frpctl_eof_note; return 0; }
+  choice="$(frpctl_read_menu 3 Back "Select: " "")" || { frpctl_eof_note; return $?; }
   case "$choice" in
     1) frpctl_guided_zero_touch ;;
     2) frpctl_guided_manual_enrollment ;;
@@ -2496,7 +2503,7 @@ frpctl_guided_bulk_enrollment() {
   echo "1) Issue by count (1-10)"
   echo "2) Import CSV (label,ssh_user,note; at most 10 rows)"
   echo "3) Cancel"
-  choice="$(frpctl_read_menu 3 Cancel "Select: " "3")" || { frpctl_eof_note; return 0; }
+  choice="$(frpctl_read_menu 3 Cancel "Select: " "3")" || { frpctl_eof_note; return $?; }
   case "$choice" in
     1)
       count="$(frpctl_read_step "Count [1-10]: " "")" || { frpctl_read_abort $?; return $?; }
@@ -2566,7 +2573,7 @@ frpctl_guided_enroll() {
   echo "2) Manual Enrollment Code"
   echo "3) Back"
   echo
-  choice="$(frpctl_read_menu 3 Back "Select: " "")" || { frpctl_eof_note; return 0; }
+  choice="$(frpctl_read_menu 3 Back "Select: " "")" || { frpctl_eof_note; return $?; }
   case "$choice" in
     1)
       frpctl_zt_preflight linux || return 1
@@ -2604,7 +2611,7 @@ frpctl_manage_one_client() {
     echo
     frpctl_print_manage_client_actions
     echo
-    action="$(frpctl_read_menu 7 Back "Select: " "")" || { frpctl_eof_note; return 0; }
+    action="$(frpctl_read_menu 7 Back "Select: " "")" || { frpctl_eof_note; return $?; }
     case "$action" in
       1)
         frpctl_dispatch show client "$mid" || true
@@ -2617,7 +2624,7 @@ frpctl_manage_one_client() {
         echo
         echo "1) Release a service reservation"
         echo "2) Back"
-        sub="$(frpctl_read_menu 2 Back "Select: " "")" || { frpctl_eof_note; return 0; }
+        sub="$(frpctl_read_menu 2 Back "Select: " "")" || { frpctl_eof_note; return $?; }
         case "$sub" in
           1)
             sid="$(frpctl_read_step "Service ID: " "")" || { frpctl_read_abort $?; continue; }
@@ -2638,7 +2645,7 @@ frpctl_manage_one_client() {
         echo "5) Set tag"
         echo "6) Unset tag"
         echo "7) Back"
-        sub="$(frpctl_read_menu 7 Back "Select: " "")" || { frpctl_eof_note; return 0; }
+        sub="$(frpctl_read_menu 7 Back "Select: " "")" || { frpctl_eof_note; return $?; }
         case "$sub" in
           1)
             label="$(frpctl_read_step "New label: " "")" || { frpctl_read_abort $?; continue; }
@@ -2670,7 +2677,7 @@ frpctl_manage_one_client() {
         echo "1) Add Managed Host to group"
         echo "2) Remove Managed Host from group"
         echo "3) Back"
-        sub="$(frpctl_read_menu 3 Back "Select: " "")" || { frpctl_eof_note; return 0; }
+        sub="$(frpctl_read_menu 3 Back "Select: " "")" || { frpctl_eof_note; return $?; }
         case "$sub" in
           1)
             label="$(frpctl_nav_prompt_id "Group name: ")" || continue
@@ -2864,7 +2871,7 @@ frpctl_manage_one_group() {
     echo
     frpctl_print_manage_group_actions
     echo
-    action="$(frpctl_read_menu 7 Back "Select: " "")" || { frpctl_eof_note; return 0; }
+    action="$(frpctl_read_menu 7 Back "Select: " "")" || { frpctl_eof_note; return $?; }
     case "$action" in
       1)
         frpctl_dispatch show managed-host-group "$gid" || true
@@ -2874,7 +2881,7 @@ frpctl_manage_one_group() {
         echo "1) Rename"
         echo "2) Set description"
         echo "3) Back"
-        sub="$(frpctl_read_menu 3 Back "Select: " "")" || { frpctl_eof_note; return 0; }
+        sub="$(frpctl_read_menu 3 Back "Select: " "")" || { frpctl_eof_note; return $?; }
         case "$sub" in
           1)
             name="$(frpctl_read_step "New name: " "")" || { frpctl_read_abort $?; continue; }
@@ -2930,7 +2937,7 @@ frpctl_manage_one_acl() {
     echo "5) Delete ACL"
     echo "6) Back"
     echo
-    action="$(frpctl_read_menu 6 Back "Select: " "")" || { frpctl_eof_note; return 0; }
+    action="$(frpctl_read_menu 6 Back "Select: " "")" || { frpctl_eof_note; return $?; }
     case "$action" in
       1)
         frpctl_dispatch show acl "$acl" || true
@@ -2940,7 +2947,7 @@ frpctl_manage_one_acl() {
         echo "1) Rename"
         echo "2) Set description"
         echo "3) Back"
-        sub="$(frpctl_read_menu 3 Back "Select: " "")" || { frpctl_eof_note; return 0; }
+        sub="$(frpctl_read_menu 3 Back "Select: " "")" || { frpctl_eof_note; return $?; }
         case "$sub" in
           1)
             value="$(frpctl_nav_prompt_id "New name: ")" || continue
@@ -2958,7 +2965,7 @@ frpctl_manage_one_acl() {
         echo "1) Add source"
         echo "2) Remove source"
         echo "3) Back"
-        sub="$(frpctl_read_menu 3 Back "Select: " "")" || { frpctl_eof_note; return 0; }
+        sub="$(frpctl_read_menu 3 Back "Select: " "")" || { frpctl_eof_note; return $?; }
         case "$sub" in
           1)
             value="$(frpctl_nav_prompt_id "Source IP or CIDR: ")" || continue
@@ -2975,7 +2982,7 @@ frpctl_manage_one_acl() {
         echo "1) Assign service"
         echo "2) Remove assignment"
         echo "3) Back"
-        sub="$(frpctl_read_menu 3 Back "Select: " "")" || { frpctl_eof_note; return 0; }
+        sub="$(frpctl_read_menu 3 Back "Select: " "")" || { frpctl_eof_note; return $?; }
         case "$sub" in
           1)
             client="$(frpctl_select_inventory clients "CLIENT: ")" || continue
@@ -3017,7 +3024,7 @@ frpctl_manage_one_service_profile() {
     echo "3) Delete"
     echo "4) Back"
     echo
-    action="$(frpctl_read_menu 4 Back "Select: " "")" || { frpctl_eof_note; return 0; }
+    action="$(frpctl_read_menu 4 Back "Select: " "")" || { frpctl_eof_note; return $?; }
     case "$action" in
       1)
         frpctl_dispatch show service-profile "$profile" || true
@@ -3031,7 +3038,7 @@ frpctl_manage_one_service_profile() {
         echo "5) target-port"
         echo "6) ssh-user"
         echo "7) Back"
-        prop="$(frpctl_read_menu 7 Back "Select property: " "")" || { frpctl_eof_note; return 0; }
+        prop="$(frpctl_read_menu 7 Back "Select property: " "")" || { frpctl_eof_note; return $?; }
         case "$prop" in
           1) prop="name" ;;
           2) prop="description" ;;
@@ -3079,7 +3086,7 @@ frpctl_manage_one_egress_profile() {
     echo "7) Delete"
     echo "8) Back"
     echo
-    action="$(frpctl_read_menu 8 Back "Select: " "")" || { frpctl_eof_note; return 0; }
+    action="$(frpctl_read_menu 8 Back "Select: " "")" || { frpctl_eof_note; return $?; }
     case "$action" in
       1)
         frpctl_dispatch show internet-profile "$profile" || true
@@ -3089,7 +3096,7 @@ frpctl_manage_one_egress_profile() {
         echo "1) Rename"
         echo "2) Set description"
         echo "3) Back"
-        sub="$(frpctl_read_menu 3 Back "Select: " "")" || { frpctl_eof_note; return 0; }
+        sub="$(frpctl_read_menu 3 Back "Select: " "")" || { frpctl_eof_note; return $?; }
         case "$sub" in
           1)
             value="$(frpctl_nav_prompt_id "New name: ")" || continue
@@ -3107,7 +3114,7 @@ frpctl_manage_one_egress_profile() {
         echo "1) Add source"
         echo "2) Remove source"
         echo "3) Back"
-        sub="$(frpctl_read_menu 3 Back "Select: " "")" || { frpctl_eof_note; return 0; }
+        sub="$(frpctl_read_menu 3 Back "Select: " "")" || { frpctl_eof_note; return $?; }
         case "$sub" in
           1)
             value="$(frpctl_nav_prompt_id "Source IP or CIDR: ")" || continue
@@ -3124,7 +3131,7 @@ frpctl_manage_one_egress_profile() {
         echo "1) Add destination"
         echo "2) Remove destination"
         echo "3) Back"
-        sub="$(frpctl_read_menu 3 Back "Select: " "")" || { frpctl_eof_note; return 0; }
+        sub="$(frpctl_read_menu 3 Back "Select: " "")" || { frpctl_eof_note; return $?; }
         case "$sub" in
           1)
             host="$(frpctl_nav_prompt_id "Host: ")" || continue
@@ -3145,7 +3152,7 @@ frpctl_manage_one_egress_profile() {
         echo "1) Enable"
         echo "2) Disable"
         echo "3) Back"
-        sub="$(frpctl_read_menu 3 Back "Select: " "")" || { frpctl_eof_note; return 0; }
+        sub="$(frpctl_read_menu 3 Back "Select: " "")" || { frpctl_eof_note; return $?; }
         case "$sub" in
           1) frpctl_dispatch set internet-profile "$profile" enabled || true ;;
           2) frpctl_dispatch unset internet-profile "$profile" enabled || true ;;
@@ -3183,7 +3190,7 @@ frpctl_manage_one_fixed_tcp() {
     echo "4) Delete"
     echo "5) Back"
     echo
-    action="$(frpctl_read_menu 5 Back "Select: " "")" || { frpctl_eof_note; return 0; }
+    action="$(frpctl_read_menu 5 Back "Select: " "")" || { frpctl_eof_note; return $?; }
     case "$action" in
       1)
         frpctl_dispatch show fixed-tcp "$name" || true
@@ -3193,7 +3200,7 @@ frpctl_manage_one_fixed_tcp() {
         echo "1) Enable"
         echo "2) Disable"
         echo "3) Back"
-        sub="$(frpctl_read_menu 3 Back "Select: " "")" || { frpctl_eof_note; return 0; }
+        sub="$(frpctl_read_menu 3 Back "Select: " "")" || { frpctl_eof_note; return $?; }
         case "$sub" in
           1) frpctl_dispatch set fixed-tcp "$name" enabled || true ;;
           2) frpctl_dispatch unset fixed-tcp "$name" enabled || true ;;
@@ -5288,7 +5295,7 @@ frpctl_system_uninstall() {
     echo "2) Uninstall server role"
     echo "3) Back"
     echo
-    choice="$(frpctl_read_menu 3 Back "Select [3]: " "3")" || { frpctl_eof_note; return 0; }
+    choice="$(frpctl_read_menu 3 Back "Select [3]: " "3")" || { frpctl_eof_note; return $?; }
     case "$choice" in
       1) frpctl_client_uninstall_flow ;;
       2) frpctl_server_uninstall_flow ;;
