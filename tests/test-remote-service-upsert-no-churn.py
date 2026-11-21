@@ -144,6 +144,51 @@ class RemoteServiceUpsertNoChurn(unittest.TestCase):
         self.assertEqual(healthy["status"], "HEALTHY")
         self.assertGreaterEqual(self._max_rev(), rev + 1)
 
+    def _meta(self):
+        return self.plane.conn.execute(
+            "SELECT m.status, m.reason, m.runtime_verified FROM remote_service_meta m "
+            "JOIN published_services s ON s.id = m.service_id WHERE s.name='svc-db'"
+        ).fetchone()
+
+    def test_unverified_republish_of_verified_identical_service_is_noop(self):
+        # p51b: the Agent's explicit `system synchronize` first re-POSTs every
+        # Remote Service with runtime_verified=False (intent before it re-applies
+        # the runtime). When the Server already holds the identical publication as
+        # HEALTHY + runtime_verified, that POST must not demote it to DEGRADED
+        # "Runtime activation pending." and record a revision for a transient state.
+        first = self._upsert(runtime_verified=True)
+        self.assertEqual(first["status"], "HEALTHY")
+        rev, snaps, rv = self._max_rev(), self._snapshot_count(), self._row_version()
+        again = self._upsert(runtime_verified=False)
+        self.assertEqual(again["status"], "HEALTHY")
+        self.assertEqual(again["reason"], "")
+        self.assertEqual(again["endpoint_port"], first["endpoint_port"])
+        self.assertEqual(self._max_rev(), rev, "unverified republish must not add a revision")
+        self.assertEqual(self._snapshot_count(), snaps)
+        self.assertEqual(self._row_version(), rv)
+        meta = self._meta()
+        self.assertEqual(meta["status"], "HEALTHY")
+        self.assertEqual(int(meta["runtime_verified"]), 1)
+
+    def test_unverified_republish_with_changed_intent_still_demotes_and_records(self):
+        self._upsert(runtime_verified=True)
+        rev = self._max_rev()
+        disabled = self._upsert(enabled=False, runtime_verified=False)
+        self.assertEqual(disabled["status"], "DISABLED")
+        self.assertEqual(self._max_rev(), rev + 1)
+        re_enabled = self._upsert(enabled=True, runtime_verified=False)
+        self.assertEqual(re_enabled["status"], "DEGRADED", "re-enable must await runtime verification")
+        self.assertEqual(self._max_rev(), rev + 2)
+        self.assertEqual(int(self._meta()["runtime_verified"]), 0)
+
+    def test_unverified_republish_of_unverified_service_stays_noop_degraded(self):
+        pending = self._upsert(runtime_verified=False)
+        self.assertEqual(pending["status"], "DEGRADED")
+        rev = self._max_rev()
+        again = self._upsert(runtime_verified=False)
+        self.assertEqual(again["status"], "DEGRADED")
+        self.assertEqual(self._max_rev(), rev)
+
 
 if __name__ == "__main__":
     unittest.main()

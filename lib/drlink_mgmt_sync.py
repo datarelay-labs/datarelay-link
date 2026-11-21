@@ -1253,16 +1253,25 @@ def _publication_receipt(row):
 def _remote_service_state_current(plane, pub, *, client_id, target_mode, target_host,
                                   target_port, enabled, endpoint_port, status, reason,
                                   pool_class, service_object_id, destination,
-                                  destination_client_id, runtime_verified) -> bool:
-    """True when the stored publication, meta and port claim already equal the
-    desired Remote Service state, so an upsert would only churn the revision.
+                                  destination_client_id, runtime_verified):
+    """Return the stored (status, reason) when the stored publication, meta and
+    port claim already equal the desired Remote Service state, so an upsert
+    would only churn the revision; otherwise None.
 
-    Fail-safe: any missing row or differing field returns False and the normal
+    An *unverified* re-publish (runtime_verified=False, what every explicit
+    `system synchronize` sends before it re-applies the runtime) of a publication
+    the Server already holds as HEALTHY + runtime_verified is also current: the
+    intent is identical, so demoting it to DEGRADED "Runtime activation pending."
+    would only record a transient state that the runtime verification then
+    reverts without a revision. A runtime failure is still reported by the
+    Agent's status push, which does not depend on this write.
+
+    Fail-safe: any missing row or differing field returns None and the normal
     revision-recording path runs.
     """
     try:
         if int(pub["released"] or 0) != 0:
-            return False
+            return None
         if (
             str(pub["service_type"]) != "tcp"
             or str(pub["target_mode"]) != str(target_mode)
@@ -1272,7 +1281,7 @@ def _remote_service_state_current(plane, pub, *, client_id, target_mode, target_
             or pub["public_port"] is None
             or int(pub["public_port"]) != int(endpoint_port)
         ):
-            return False
+            return None
         meta = plane.conn.execute(
             "SELECT status, pool_class, service_object_id, destination_name, "
             "destination_client_id, pending_allocation, delete_pending, reason, "
@@ -1280,28 +1289,42 @@ def _remote_service_state_current(plane, pub, *, client_id, target_mode, target_
             (pub["id"],),
         ).fetchone()
         if meta is None:
-            return False
+            return None
         if (
-            str(meta["status"]) != str(status)
-            or str(meta["pool_class"]) != str(pool_class)
+            str(meta["pool_class"]) != str(pool_class)
             or str(meta["service_object_id"]) != str(service_object_id)
             or str(meta["destination_name"] or "") != str(destination or "")
             or str(meta["destination_client_id"] or "") != str(destination_client_id or "")
             or int(meta["pending_allocation"] or 0) != 0
             or int(meta["delete_pending"] or 0) != 0
-            or str(meta["reason"] or "") != str(reason or "")
-            or int(meta["runtime_verified"] or 0)
-            != (1 if status == "HEALTHY" and runtime_verified else 0)
         ):
-            return False
+            return None
+        stored_status = str(meta["status"])
+        stored_reason = str(meta["reason"] or "")
+        stored_verified = int(meta["runtime_verified"] or 0)
+        exact = (
+            stored_reason == str(reason or "")
+            and stored_verified == (1 if status == "HEALTHY" and runtime_verified else 0)
+        )
+        verified_hold = (
+            bool(enabled)
+            and not runtime_verified
+            and stored_status == "HEALTHY"
+            and stored_verified == 1
+            and stored_reason == ""
+        )
+        if not ((exact and stored_status == str(status)) or verified_hold):
+            return None
         claim = plane.conn.execute(
             "SELECT 1 FROM port_reservations WHERE public_port = ? AND client_id = ? "
             "AND service_id = ? AND released = 0",
             (int(endpoint_port), client_id, pub["id"]),
         ).fetchone()
-        return claim is not None
+        if claim is None:
+            return None
+        return stored_status, stored_reason
     except (KeyError, TypeError, ValueError):
-        return False
+        return None
 
 
 def _mutate_publication(plane, auth, *args, **kwargs):
@@ -1594,7 +1617,7 @@ def server_upsert_remote_service(plane, auth: MgmtAuthContext, body: dict) -> di
                 "SELECT * FROM published_services WHERE client_id = ? AND name = ?",
                 (client["id"], name),
             ).fetchone()
-            if current_pub is not None and _remote_service_state_current(
+            stored_state = None if current_pub is None else _remote_service_state_current(
                 plane, current_pub, client_id=client["id"],
                 target_mode=target_mode, target_host=target_host,
                 target_port=target_port, enabled=enabled,
@@ -1603,7 +1626,9 @@ def server_upsert_remote_service(plane, auth: MgmtAuthContext, body: dict) -> di
                 destination=destination,
                 destination_client_id=destination_client_id,
                 runtime_verified=runtime_verified,
-            ):
+            )
+            if stored_state is not None:
+                status, reason = stored_state
                 publication = _publication_receipt(current_pub)
                 raise NoOpMutation("Remote Service %s already current" % name)
         nested_prev = getattr(plane, "_batch_mode", False)
