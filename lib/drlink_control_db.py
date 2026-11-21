@@ -33,6 +33,15 @@ class ControlPlaneError(Exception):
     """User-facing control-plane failure."""
 
 
+class NoOpMutation(ControlPlaneError):
+    """A mutation writer found the desired state already current.
+
+    Raised by a writer *before* it changes anything. `_mutate` rolls the open
+    transaction back and records no revision, snapshot, audit row or runtime
+    activation, then re-raises so the caller can return its current state.
+    """
+
+
 class SchemaTooNewError(ControlPlaneError):
     def __init__(self, found: int, supported: int):
         super().__init__(

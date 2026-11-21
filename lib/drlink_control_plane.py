@@ -29,6 +29,7 @@ from typing import Any, Callable, Iterable, Optional
 from drlink_control_db import (
     SCHEMA_VERSION,
     ControlPlaneError,
+    NoOpMutation,
     DatabaseCorruptError,
     SchemaTooNewError,
     connect_worker,
@@ -1076,6 +1077,13 @@ class ControlPlane:
             self._commit_open_transaction()
             if public_expected_revision is not None:
                 self._public_revision_guard_consumed = True
+        except NoOpMutation:
+            # Writer proved the desired state is already current before changing
+            # anything: no revision, no snapshot, no audit, no activation, and no
+            # runtime artifact rewrite.
+            self._rollback_open_transaction()
+            self._cleanup_activation_checkpoint(checkpoint)
+            raise
         except ConfirmationRequired:
             self._rollback_open_transaction()
             if runtime_checkpoint is not None:
