@@ -6312,6 +6312,52 @@ def _demote_agent_runtime_for_reverification(plane_db) -> int:
     return int(cur.rowcount or 0)
 
 
+def _agent_runtime_live_verified(plane_db, *, root: Optional[str] = None) -> bool:
+    """True only when an explicit synchronize would change nothing at runtime.
+
+    Every Remote Service must be enabled, persisted HEALTHY/runtime_verified, free
+    of dependency or desired-runtime drift, and still pass the LIVE per-service
+    proof (rendered proxy present, current systemd/connection-epoch readiness).
+    Persisted HEALTHY alone never qualifies. Tombstones, pending allocations, any
+    disabled row or any non-HEALTHY row make this False so the full fail-closed
+    path runs exactly as before.
+    """
+    import drlink_v24_runtime as runtime
+
+    if plane_db.conn.execute(
+        "SELECT 1 FROM agent_remote_services WHERE delete_pending = 1 LIMIT 1"
+    ).fetchone():
+        return False
+    saw_enabled = False
+    for row in list(plane_db.conn.execute(
+        "SELECT * FROM agent_remote_services WHERE delete_pending = 0"
+    )):
+        status = str(row["status"] or "").upper()
+        if not row["enabled"]:
+            # Conservative: a disabled row can still need one guarded state
+            # transition (for example a vanished dependency), which only the full
+            # reconciliation evaluates in the right order. Never hold in that case.
+            return False
+        if (row["pending_allocation"] or row["endpoint_port"] is None
+                or status != "HEALTHY" or not row["runtime_verified"]):
+            return False
+        if _service_dependency_status(plane_db, row["service_object"]):
+            return False
+        if _destination_dependency_status(
+            plane_db, row["destination"], root=root,
+            destination_client_id=_row_get(row, "destination_client_id"),
+        ):
+            return False
+        if runtime.desired_runtime_drift(plane_db, row["name"], root=root):
+            return False
+        live_status, _live_reason = runtime.verified_remote_service_status(
+            plane_db, row["name"], root=root)
+        if live_status != "HEALTHY":
+            return False
+        saw_enabled = True
+    return saw_enabled
+
+
 def invalidate_runtime_verification_for_restart(*, root: Optional[str] = None) -> dict:
     """Public restart / service-start boundary for Remote Service verification.
 
@@ -6682,7 +6728,18 @@ def _synchronize_agent_remote_services_locked(plane_db, *, root: Optional[str] =
     # runtime generation is re-applied. Commit the same fail-closed state on
     # Agent first so public readers can never observe Agent HEALTHY while the
     # authoritative Server is already DEGRADED.
-    _demote_agent_runtime_for_reverification(plane_db)
+    # An explicit synchronize of services whose LIVE verification still holds
+    # changes nothing at runtime. Demoting them first (DEGRADED/rv=0 mirrored to
+    # the Server) only manufactured a ~150 ms false HEALTHY->DEGRADED->HEALTHY
+    # flap. Hold HEALTHY while the live proof holds; every other case, and any
+    # runtime generation that really changes, still fails closed first.
+    hold_verified = bool(
+        not force_runtime and not catalog_error and not projected
+        and not repaired_lan_seeds
+        and _agent_runtime_live_verified(plane_db, root=root)
+    )
+    if not hold_verified:
+        _demote_agent_runtime_for_reverification(plane_db)
 
     updated = 0
     # Defer runtime restarts to a single apply at the end of this synchronize.
@@ -6755,6 +6812,7 @@ def _synchronize_agent_remote_services_locked(plane_db, *, root: Optional[str] =
                     root=root,
                     server_reachable=True,
                     reconcile_existing=True,
+                    preserve_verified=hold_verified,
                 )
                 if reapplied.get("skipped"):
                     # One bounded retry uses fresh operator intent after a
@@ -6762,6 +6820,7 @@ def _synchronize_agent_remote_services_locked(plane_db, *, root: Optional[str] =
                     set_remote_service_agent(
                         plane_db, row["name"], oneshot=True, root=root,
                         server_reachable=True, reconcile_existing=True,
+                        preserve_verified=hold_verified,
                     )
             except ControlPlaneError as exc:
                 msg = str(exc)
@@ -6819,7 +6878,16 @@ def _synchronize_agent_remote_services_locked(plane_db, *, root: Optional[str] =
 
     # Lifecycle boundary: prior verification is stale until apply_agent_runtime
     # succeeds. Clear before the pre-apply push so reconnect cannot replay it.
-    _invalidate_agent_remote_service_runtime_verification(plane_db)
+    if hold_verified and (
+        catalog_error or reconciliation_error
+        or not _agent_runtime_live_verified(plane_db, root=root)
+    ):
+        # The proof was lost or something changed during reconciliation: fail
+        # closed now, exactly as the non-hold path would have done up front.
+        hold_verified = False
+        _demote_agent_runtime_for_reverification(plane_db)
+    if not hold_verified:
+        _invalidate_agent_remote_service_runtime_verification(plane_db)
     # Reconcile endpoint ownership with Server before runtime projection so a
     # stale Agent claim cannot keep advertising or activating a revoked port.
     _push_agent_remote_service_status(plane_db, root=root)
@@ -6827,7 +6895,16 @@ def _synchronize_agent_remote_services_locked(plane_db, *, root: Optional[str] =
     try:
         import drlink_v24_runtime as runtime
 
-        applied = runtime.apply_agent_runtime(plane_db, root=root, force_reapply=force_runtime)
+        def _fail_closed_before_regeneration():
+            _demote_agent_runtime_for_reverification(plane_db)
+            _push_agent_remote_service_status(plane_db, root=root)
+
+        applied = runtime.apply_agent_runtime(
+            plane_db, root=root, force_reapply=force_runtime,
+            before_generation_change=(
+                _fail_closed_before_regeneration if hold_verified else None
+            ),
+        )
         if not applied.get("ok") and not applied.get("skipped"):
             runtime.mark_runtime_status(
                 plane_db, ok=False, reason=applied.get("error") or "Runtime activation failed"
@@ -7009,6 +7086,7 @@ def set_remote_service_agent(
     root: Optional[str] = None,
     server_reachable: bool = True,
     reconcile_existing: bool = False,
+    preserve_verified: bool = False,
     _local_validation: bool = False,
 ) -> dict:
     name = validate_public_name(name, "Remote Service name")
@@ -7544,6 +7622,25 @@ def set_remote_service_agent(
             status = "DEGRADED"
             reason = DESTINATION_UNREACHABLE_REASON
 
+    # An explicit synchronize of a service whose live proof still holds must not
+    # rewrite its Agent row to DEGRADED/runtime_verified=0: the Server already
+    # answered HEALTHY for the identical, unchanged publication, so the rewrite
+    # only manufactures a transient false DEGRADED (mirrored to the Server).
+    # Every other case keeps the fail-closed write below.
+    keep_verified = bool(
+        preserve_verified and reconcile_existing and live_mgmt and en
+        and existing is not None
+        and status == "HEALTHY" and not pending
+        and not destination_unreachable and not destination_identity_reason
+        and existing["status"] == "HEALTHY"
+        and int(existing["runtime_verified"] or 0) == 1
+        and not (existing["reason"] or "")
+        and endpoint_port is not None
+        and existing["endpoint_port"] == endpoint_port
+    )
+    if keep_verified:
+        reason = ""
+
     now = utc_now_iso()
     client_for_pub = client
 
@@ -7610,11 +7707,12 @@ def set_remote_service_agent(
                     "UPDATE agent_remote_services SET destination=?, destination_client_id=?, "
                     "service_object=?, enabled=?, status=?, endpoint_host=?, endpoint_port=?, "
                     "pending_allocation=?, delete_pending=0, pool_class=?, reason=?, updated_at=?, "
-                    "runtime_verified=0, enrollment_seed=0 WHERE name=? COLLATE NOCASE AND "
-                    + " AND ".join(field + " IS ?" for field in intent_fields),
+                    "runtime_verified=?, enrollment_seed=0 WHERE name=? COLLATE NOCASE AND "
+                    + " AND ".join(field + " IS ?" for field in intent_fields)
+                    + (" AND runtime_verified=1 AND status='HEALTHY'" if keep_verified else ""),
                     (dest_token, destination_client_id, svc_name, 1 if en else 0,
                      status if en else "DISABLED", endpoint_host, endpoint_port,
-                     pending, pool_class, reason, now, name)
+                     pending, pool_class, reason, now, 1 if keep_verified else 0, name)
                     + tuple(_row_get(existing, field) for field in intent_fields),
                 ).rowcount
                 if not updated:

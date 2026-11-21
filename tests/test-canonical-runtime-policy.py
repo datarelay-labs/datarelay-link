@@ -100,6 +100,55 @@ class RuntimePolicyTests(unittest.TestCase):
         self.assertEqual(allow["decision"], RP.DECISION_ALLOW)
         self.assertEqual(deny["decision"], RP.DECISION_DENY)
 
+    def test_remote_authorization_is_independent_of_service_health_record(self):
+        # S-023 (p52): traffic may reach the destination a few seconds before the
+        # Server DB records HEALTHY. That is not an authorization bypass: the
+        # NewUserConn decision comes only from the canonical Remote Access policy,
+        # never from remote_service_meta.status / runtime_verified. A source the
+        # whitelist does not allow stays DENY/IMPLICIT_DENY while the record is
+        # still DEGRADED, and an allowed source gets the same verdict either way.
+        pub = self.plane.conn.execute(
+            "SELECT id FROM published_services WHERE client_id = ? AND name = ?",
+            (self.mid, "ssh"),
+        ).fetchone()
+        sobj = self.plane.conn.execute(
+            "SELECT id FROM service_objects WHERE port = 22 AND lower(type) = 'tcp' "
+            "ORDER BY name LIMIT 1"
+        ).fetchone()
+        self.assertIsNotNone(sobj, "fixture needs the TCP/22 Service Object")
+        proxy = RP.expected_proxy_name("labhost", self.mid, "ssh")
+        verdicts = {}
+        for label, status, verified, reason in (
+            ("pending", "DEGRADED", 0, "Runtime activation pending."),
+            ("verified", "HEALTHY", 1, ""),
+        ):
+            self.plane.conn.execute("DELETE FROM remote_service_meta WHERE service_id = ?", (pub["id"],))
+            self.plane.conn.execute(
+                "INSERT INTO remote_service_meta(service_id, status, pool_class, service_object_id, "
+                "destination_name, destination_client_id, pending_allocation, delete_pending, reason, "
+                "runtime_verified) VALUES (?, ?, 'normal', ?, 'lab', NULL, 0, 0, ?, ?)",
+                (pub["id"], status, sobj["id"] if sobj else None, reason, verified),
+            )
+            self.plane.conn.commit()
+            # The meta row must be a consistent authoritative projection so the
+            # comparison exercises the real has_remote_meta authorization path.
+            from drlink_upgrade_reconcile import server_target_projection_reason
+
+            self.assertIsNone(server_target_projection_reason(
+                self.plane,
+                self.plane.conn.execute("SELECT * FROM published_services WHERE id = ?", (pub["id"],)).fetchone(),
+                self.plane.conn.execute("SELECT * FROM remote_service_meta WHERE service_id = ?", (pub["id"],)).fetchone(),
+            ))
+            denied = RP.authorize_remote(self.plane, proxy_name=proxy, source_ip="203.0.113.9:1")
+            allowed = RP.authorize_remote(self.plane, proxy_name=proxy, source_ip="198.51.100.9:1")
+            verdicts[label] = (
+                (denied["decision"], denied["reason"]),
+                (allowed["decision"], allowed["reason"]),
+            )
+        self.assertEqual(verdicts["pending"], verdicts["verified"],
+                         "authorization must not depend on the DB HEALTHY record")
+        self.assertEqual(verdicts["pending"][0], (RP.DECISION_DENY, RP.REASON_IMPLICIT_DENY))
+
     def test_routed_relay_uses_actual_target_not_relay_host_policy_oracle(self):
         # U-004 historical helper ALLOW / live IMPLICIT_DENY: the helper
         # evaluated the Relay Managed Host, whereas a routed service must

@@ -731,6 +731,7 @@ def apply_agent_runtime(
     root: Optional[str] = None,
     names: Optional[list] = None,
     force_reapply: bool = False,
+    before_generation_change=None,
 ) -> dict:
     """Serialize all Agent runtime applies through activation and restart.
 
@@ -756,7 +757,8 @@ def apply_agent_runtime(
     try:
         with ExclusiveFileLock(lock_path, timeout=180):
             return _apply_agent_runtime_serialized(
-                plane_db, root=root, names=names, force_reapply=force_reapply)
+                plane_db, root=root, names=names, force_reapply=force_reapply,
+                before_generation_change=before_generation_change)
     except LockTimeout:
         return {
             "ok": False, "applied": [], "removed": [], "generation": 0,
@@ -770,6 +772,7 @@ def _apply_agent_runtime_serialized(
     root: Optional[str] = None,
     names: Optional[list] = None,
     force_reapply: bool = False,
+    before_generation_change=None,
 ) -> dict:
     """Render + apply frpc runtime for desired Remote Services.
 
@@ -1001,6 +1004,17 @@ def _apply_agent_runtime_serialized(
                 "ok": False, "applied": [], "removed": [], "generation": 0,
                 "error": "Agent Remote Service intent changed before runtime activation; retry synchronization",
             }
+        # The unchanged-runtime shortcut above was not taken: this apply really
+        # replaces the generation. A caller that deliberately kept verified
+        # services HEALTHY because live proof still held (explicit synchronize of
+        # an unchanged service) must now fail closed first, and publish that, so no
+        # reader ever sees HEALTHY with runtime_verified=0 across the restart. This
+        # is the last intent-snapshot comparison, so the hook may rewrite status.
+        if before_generation_change is not None:
+            try:
+                before_generation_change()
+            except Exception:
+                pass
         # Any changed generation invalidates prior verification until fresh
         # runtime and registered-proxy evidence is obtained.
         # Refresh all included rows after the complete generation is verified.
