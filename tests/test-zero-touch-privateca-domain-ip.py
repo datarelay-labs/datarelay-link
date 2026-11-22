@@ -261,11 +261,66 @@ class PrivateCADomainIPFallback(unittest.TestCase):
         with mock.patch.object(client, "short_url_host_for_cfg", return_value=""), \
              mock.patch.object(client, "preflight_installer_url", return_value=None), \
              mock.patch.object(client, "_pinned_ca_public_endpoint_verified", return_value=False):
-            with self.assertRaises(SystemExit) as raised:
+            messages = io.StringIO()
+            with contextlib.redirect_stderr(messages), self.assertRaises(SystemExit):
                 client.validate_zero_touch_prerequisites(
                     self.cfg, "linux", installer, self.ca
                 )
-        self.assertIn("No enrollment ticket was issued", str(raised.exception))
+        self.assertIn("No enrollment ticket was issued", messages.getvalue())
+
+
+    def test_real_https_probe_pins_ca_san_and_allocator_signature(self):
+        """A real TLS socket exercises positive and negative trust paths."""
+        import http.server
+        import ssl
+        import threading
+
+        tls = frp_pki.ensure_pki(
+            Path(self.tmp.name) / "tls-listener", "127.0.0.1"
+        )
+        class Handler(http.server.BaseHTTPRequestHandler):
+            response_body = b"bootstrap unavailable"
+            response_code = 404
+            def do_GET(self):
+                if self.path != "/i/invalid-qualification-probe":
+                    self.send_error(404)
+                    return
+                self.send_response(type(self).response_code)
+                self.end_headers()
+                self.wfile.write(type(self).response_body)
+            def log_message(self, *args):
+                pass
+
+        server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        tls_context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        tls_context.load_cert_chain(tls["server_crt"], tls["server_key"])
+        server.socket = tls_context.wrap_socket(server.socket, server_side=True)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            url = "https://127.0.0.1:%s/enroll" % server.server_port
+            self.assertTrue(
+                client._pinned_ca_public_endpoint_verified(url, tls["ca_crt"])
+            )
+            # A valid self-signed CA for a different leaf is not trust.
+            self.assertFalse(
+                client._pinned_ca_public_endpoint_verified(
+                    url, str(self.pki_dir / "ca.crt")
+                )
+            )
+            Handler.response_body = b"<html>generic proxy 404</html>"
+            self.assertFalse(
+                client._pinned_ca_public_endpoint_verified(url, tls["ca_crt"])
+            )
+            Handler.response_body = b"bootstrap unavailable"
+            Handler.response_code = 302
+            self.assertFalse(
+                client._pinned_ca_public_endpoint_verified(url, tls["ca_crt"])
+            )
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=3)
 
 
 if __name__ == "__main__":
