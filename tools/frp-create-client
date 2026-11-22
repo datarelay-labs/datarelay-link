@@ -1625,9 +1625,18 @@ def main(argv=None):
         except OSError:
             ca_fp = ''
         installer = resolve_configured_installer_url(cfg, windows=(platform == 'windows'))
-        validate_zero_touch_prerequisites(
+        host, verified_plan = validate_zero_touch_prerequisites(
             cfg, platform, installer, ca_fp, long_bootstrap=a.long_bootstrap
         )
+        if host:
+            print('Zero-Touch verified trust: Public CA DNS (%s)' % host)
+        elif verified_plan:
+            print('Zero-Touch verified trust: Pinned Private CA %s (%s)' % (
+                'DNS' if verified_plan['mode'] == 'private_ca_dns' else 'IP',
+                verified_plan['authority'],
+            ))
+        else:
+            print('Zero-Touch verified trust: Explicit advanced mode')
         print('Zero-Touch prerequisites verified; no ticket was issued.')
         return 0
     enroll_dir = remap(cfg['enrollments_dir'])
