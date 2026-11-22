@@ -19,7 +19,6 @@ def discovery_blob(role):
     chunks = [
         catalog.root_help(role),
         catalog.workflow_help(role),
-        catalog.legacy_help(role),  # rejection text only
         "\n".join(catalog.shell_usage_lines(role)),
         grammar.help_text([], role),
     ]

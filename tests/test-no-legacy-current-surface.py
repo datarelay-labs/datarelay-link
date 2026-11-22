@@ -374,6 +374,8 @@ class LegacyReintroductionGate(unittest.TestCase):
         self.assertNotIn('FRP_SSH_USER=', (ROOT / 'tools/frp-create-client').read_text())
         self.assertNotIn('LEGACY_COMMANDS', (ROOT / 'lib/frp_ctl_grammar.py').read_text())
         self.assertNotIn('_legacy_completion(', (ROOT / 'lib/frp_ctl_grammar.py').read_text())
+        self.assertNotIn('def _rw_', (ROOT / 'lib/frp_cli_catalog.py').read_text())
+        self.assertNotIn('def expand_compat_alias(', (ROOT / 'lib/frp_cli_catalog.py').read_text())
 
 
 if __name__ == "__main__":

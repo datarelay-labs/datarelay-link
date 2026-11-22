@@ -856,157 +856,28 @@ def alias_rows():
 
 
 # --- canonical -> internal verb-first rewrite -----------------------------
-def _rw_client_release(rest):
-    # client release <CLIENT> <SERVICE> … → release service
-    # client release <CLIENT> [--yes] → release client
-    if len(rest) >= 2 and not str(rest[1]).startswith("-"):
-        return ["release", "service", rest[0], rest[1]] + list(rest[2:])
-    return ["release", "client"] + list(rest)
 
 
-def _rw_enrollment_purge(rest):
-    if rest and rest[0] == "--older-than":
-        return ["purge", "enrollments"] + list(rest)
-    return ["purge", "enrollment"] + list(rest)
 
 
-def _rw_group_member(verb):
-    def inner(rest):
-        if len(rest) < 2:
-            return [verb, "client"] + list(rest)
-        return [verb, "client", rest[1], "group", rest[0]] + list(rest[2:])
-
-    return inner
 
 
-def _rw_server_set(rest):
-    if not rest:
-        return ["set", "server"]
-    key = rest[0]
-    if key == "installer-url":
-        return ["set", "installer-url"] + list(rest[1:])
-    if key == "windows-installer-url":
-        return ["set", "windows-installer-url"] + list(rest[1:])
-    if key == "public-hostname":
-        return ["set", "server", "hostname"] + list(rest[1:])
-    return ["set", "server"] + list(rest)
 
 
-def _rw_server_unset(rest):
-    if rest and rest[0] == "public-hostname":
-        return ["unset", "server", "hostname"] + list(rest[1:])
-    return ["unset", "server"] + list(rest)
 
 
-def _rw_egress_set(rest):
-    # Canonical: PROFILE name|description VALUE → flag form for frp-egress.
-    if (
-        len(rest) >= 3
-        and rest[1] in ("name", "description")
-        and not str(rest[0]).startswith("-")
-        and not str(rest[1]).startswith("-")
-    ):
-        return [
-            "set",
-            "egress-profile",
-            rest[0],
-            "--%s" % rest[1],
-            rest[2],
-        ] + list(rest[3:])
-    return ["set", "egress-profile"] + list(rest)
 
 
-def _rw_egress_add_destination(rest):
-    # Keep trailing flags (e.g. --protocol) after host/port.
-    flags = []
-    values = []
-    idx = 0
-    while idx < len(rest):
-        tok = rest[idx]
-        if str(tok).startswith("-"):
-            flags.append(tok)
-            idx += 1
-            if idx < len(rest) and not str(rest[idx]).startswith("-"):
-                flags.append(rest[idx])
-                idx += 1
-            continue
-        values.append(tok)
-        idx += 1
-    if len(values) >= 3:
-        return (
-            ["add", "egress-profile", values[0], "destination", values[1], values[2]]
-            + values[3:]
-            + flags
-        )
-    return ["add", "egress-profile"] + list(rest) + ["destination"]
 
 
-def _rw_egress_add_source(rest):
-    flags = []
-    values = []
-    idx = 0
-    while idx < len(rest):
-        tok = rest[idx]
-        if str(tok).startswith("-"):
-            flags.append(tok)
-            idx += 1
-            if idx < len(rest) and not str(rest[idx]).startswith("-"):
-                flags.append(rest[idx])
-                idx += 1
-            continue
-        values.append(tok)
-        idx += 1
-    if len(values) >= 2:
-        return ["add", "egress-profile", values[0], "source", values[1]] + flags + values[2:]
-    return ["add", "egress-profile"] + list(rest) + ["source"]
 
 
-def _rw_egress_remove(kind):
-    def inner(rest):
-        flags = []
-        values = []
-        idx = 0
-        while idx < len(rest):
-            tok = rest[idx]
-            if str(tok).startswith("-"):
-                flags.append(tok)
-                idx += 1
-                if idx < len(rest) and not str(rest[idx]).startswith("-"):
-                    flags.append(rest[idx])
-                    idx += 1
-                continue
-            values.append(tok)
-            idx += 1
-        if len(values) >= 2:
-            return ["remove", "egress-profile", values[0], kind, values[1]] + flags
-        return ["remove", "egress-profile"] + list(rest) + [kind]
-
-    return inner
 
 
-def _rw_access_remove_expired(rest):
-    """Map access remove-expired <RULE> [--yes] → system cleanup … expired."""
-    if not rest:
-        return ["system", "cleanup", "access-rule"]
-    rule = rest[0]
-    flags = list(rest[1:])
-    if flags and flags[0] == "expired":
-        return ["system", "cleanup", "access-rule", rule] + flags
-    return ["system", "cleanup", "access-rule", rule, "expired"] + flags
 
 
-def _rw_enable_service(rest):
-    # enable service <ID> / service enable <ID> → set service <ID> enabled
-    if not rest:
-        return ["set", "service"]
-    return ["set", "service", rest[0], "enabled"] + list(rest[1:])
 
 
-def _rw_disable_service(rest):
-    # disable service <ID> / service disable <ID> → unset service <ID> enabled
-    if not rest:
-        return ["unset", "service"]
-    return ["unset", "service", rest[0], "enabled"] + list(rest[1:])
 
 
 # v2.4 is an unreleased greenfield public CLI. Resource-first and flat
@@ -1466,13 +1337,6 @@ def to_internal(tokens):
 
 
 
-def expand_compat_alias(tokens):
-    """Compatibility alias expansion is disabled for current product surface.
-
-    Obsolete forms must be rejected by the grammar with an actionable pointer.
-    Returns ``None`` always.
-    """
-    return None
 
 
 def strict_error(tokens):
