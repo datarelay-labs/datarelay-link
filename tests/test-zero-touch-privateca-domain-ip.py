@@ -134,5 +134,104 @@ class PrivateCADomainIPFallback(unittest.TestCase):
         self.assertIsNone(client.private_ca_ip_bootstrap_plan(self.cfg, "f" * 64))
 
 
+    def test_pinned_private_ca_dns_uses_configured_hostname(self):
+        import frp_zero_touch as zt
+        plan = client.private_ca_dns_bootstrap_plan(self.cfg, self.ca)
+        self.assertIsNotNone(plan)
+        self.assertEqual(plan["mode"], "private_ca_dns")
+        self.assertEqual(plan["authority"], "remote.isoc.ooo")
+        self.assertEqual(plan["allocator"], "https://remote.isoc.ooo/enroll")
+        self.assertEqual(
+            zt.private_ca_dns_endpoint(self.cfg["allocator_public_url"]),
+            ("remote.isoc.ooo", "remote.isoc.ooo", 443),
+        )
+        # Public-trust negative is distinct from a pinned Private CA positive.
+        with mock.patch.object(client, "short_url_host_for_cfg", return_value=""), \
+             mock.patch.object(client, "preflight_installer_url", return_value=None):
+            host, selected = client.validate_zero_touch_prerequisites(
+                self.cfg, "linux",
+                "https://remote.isoc.ooo/artifacts/agent/bootstrap-client.sh",
+                self.ca,
+            )
+        self.assertEqual(host, "")
+        self.assertEqual(selected, plan)
+
+    def test_pinned_private_ca_dns_linux_and_windows_preserve_hostname(self):
+        import frp_zero_touch as zt
+        plan = client.private_ca_dns_bootstrap_plan(self.cfg, self.ca)
+        self.assertIsNotNone(plan)
+        command = zt.private_ca_dns_linux_command(
+            plan["allocator"], self.ca, "A" * 22
+        )
+        self.assertIn("https://remote.isoc.ooo/i/", command)
+        self.assertIn("-servername remote.isoc.ooo", command)
+        self.assertIn(self.ca, command)
+        self.assertNotIn("--insecure", command)
+        self.assertLessEqual(len(command), 900)
+
+        win = zt.private_ca_dns_windows_command(
+            plan["allocator"], self.ca, "a" * 64, "A" * 22
+        )
+        self.assertIn("https://remote.isoc.ooo/i/", win)
+        self.assertIn(self.ca, win)
+        self.assertIn("a" * 64, win)
+        self.assertLessEqual(len(win), 1500)
+
+        with mock.patch.object(client, "short_url_host_for_cfg", return_value=""):
+            linux_output = io.StringIO()
+            with contextlib.redirect_stdout(linux_output):
+                client.print_one_line(
+                    "bt1.example.secret", 3600, "", "221.139.249.109", 443,
+                    self.cfg["allocator_public_url"], self.ca,
+                    "https://remote.isoc.ooo/artifacts/agent/bootstrap-client.sh",
+                    "", 22, client_name="test-agent", cfg=self.cfg,
+                    short_handle="A" * 22, private_ip_plan=plan, require_compact=True,
+                )
+            windows_output = io.StringIO()
+            with contextlib.redirect_stdout(windows_output):
+                client.print_one_line_windows(
+                    "bt1.example.secret", 3600, "", "221.139.249.109", 443,
+                    self.cfg["allocator_public_url"], self.ca,
+                    "https://remote.isoc.ooo/artifacts/agent/bootstrap-client.ps1",
+                    client_name="test-agent", cfg=self.cfg, short_handle="A" * 22,
+                    stage1_sha256="a" * 64, private_ip_plan=plan, require_compact=True,
+                )
+        self.assertIn("https://remote.isoc.ooo/i/", linux_output.getvalue())
+        self.assertIn("https://remote.isoc.ooo/i/", windows_output.getvalue())
+        self.assertNotIn("zt1.", linux_output.getvalue())
+        self.assertNotIn("zt1.", windows_output.getvalue())
+
+    def test_pinned_private_ca_dns_enforces_identity_ca_and_san(self):
+        import frp_zero_touch as zt
+        base = dict(self.cfg)
+        self.assertIsNotNone(client.private_ca_dns_bootstrap_plan(base, self.ca))
+        for changes in (
+            {"public_url_host": "other.isoc.ooo"},
+            {"public_url_host": "221.139.249.109"},
+            {"allocator_public_url": "https://other.isoc.ooo/enroll"},
+            {"allocator_public_url": "http://remote.isoc.ooo/enroll"},
+            {"allocator_public_url": "https://user:pass@remote.isoc.ooo/enroll"},
+            {"allocator_public_url": "https://remote.isoc.ooo/enroll#fragment"},
+            {"bootstrap_hostname": "remote.isoc.ooo"},
+        ):
+            with self.subTest(changes=changes):
+                self.assertIsNone(
+                    client.private_ca_dns_bootstrap_plan(dict(base, **changes), self.ca)
+                )
+        self.assertIsNone(client.private_ca_dns_bootstrap_plan(base, "f" * 64))
+        self.assertIsNone(zt.private_ca_dns_endpoint("https://127.0.0.1/enroll"))
+        self.assertIsNone(zt.private_ca_dns_endpoint("https://remote.isoc.ooo.local/enroll"))
+        self.assertIsNone(zt.private_ca_dns_endpoint("https://user:pass@remote.isoc.ooo/enroll"))
+        self.assertIsNone(zt.private_ca_dns_endpoint("https://remote.isoc.ooo/enroll?x=y"))
+        other_pki = frp_pki.ensure_pki(
+            Path(self.tmp.name) / "missing-dns-san", "221.139.249.109"
+        )
+        bad = dict(base, tls_ca_cert=other_pki["ca_crt"],
+                   tls_server_cert=other_pki["server_crt"])
+        self.assertIsNone(
+            client.private_ca_dns_bootstrap_plan(bad, other_pki["fingerprint"])
+        )
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
