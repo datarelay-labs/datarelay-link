@@ -153,11 +153,14 @@ set mcp-tls acme-directory <URL>
 ```
 
 **Zero-Touch beginner default (`ZT-P0-CONTRACT-20261026`):**
-`set enrollment zero-touch` produces a compact launcher with either a
-qualified public HTTPS hostname or a direct numeric IP allocator whose Private
-CA fingerprint and Server certificate IP SAN are verified. DNS is optional.
-If neither path qualifies, it reports a prerequisite error **before** the
-service wizard and ticket issuance, never silently emitting a long `zt1` line. A deliberate backend advanced option,
+`set enrollment zero-touch` produces a compact launcher through one verified
+HTTPS authority: publicly trusted DNS, issuer-pinned Private-CA DNS with a verified
+certificate DNS SAN, or issuer-pinned Private-CA numeric IP with a verified IP SAN.
+Both Private-CA routes require a real CA-verified public `/i/` endpoint proof before
+ticket issuance. The selected authority remains unchanged for bootstrap,
+installer artifacts and enrollment; DNS and IP are never silently mixed.
+If the configured authority does not qualify, the wizard fails **before**
+service configuration and ticket issuance without a long `zt1` fallback. A deliberate backend advanced option,
 `frp-create-client --one-line --long-bootstrap`, exists for private-CA
 installations but is not another public `drlink` grammar. Optional SSH
 username is only a connection hint; blank is valid. See
