@@ -605,6 +605,51 @@ def private_ca_dns_bootstrap_plan(cfg, ca_fp):
         return None
 
 
+
+def _pinned_ca_public_endpoint_verified(allocator_url, ca_cert):
+    """Verify the actual public TLS endpoint with the issuer-pinned CA.
+
+    No enrollment handle is sent. Name/IP SAN, chain, validity, and HTTP
+    handler signature are authenticated before any ticket can be issued.
+    Redirects and HTTP proxies are forbidden to prevent origin confusion.
+    """
+    import ssl
+    import urllib.error
+    import urllib.request
+
+    parsed = urlparse(str(allocator_url or '').strip())
+    if (parsed.scheme != 'https' or not parsed.netloc or parsed.username is not None
+            or parsed.password is not None or parsed.query or parsed.fragment
+            or parsed.params):
+        return False
+    try:
+        context = ssl.create_default_context(cafile=str(ca_cert))
+        context.check_hostname = True
+        context.verify_mode = ssl.CERT_REQUIRED
+
+        class NoRedirect(urllib.request.HTTPRedirectHandler):
+            def redirect_request(self, req, fp, code, msg, headers, newurl):
+                return None
+
+        opener = urllib.request.build_opener(
+            urllib.request.ProxyHandler({}),
+            urllib.request.HTTPSHandler(context=context),
+            NoRedirect(),
+        )
+        url = 'https://%s/i/invalid-qualification-probe' % parsed.netloc
+        try:
+            with opener.open(url, timeout=4):
+                return False
+        except urllib.error.HTTPError as exc:
+            try:
+                return exc.code == 404 and exc.read(128).decode(
+                    'utf-8', 'replace'
+                ).strip() == 'bootstrap unavailable'
+            finally:
+                exc.close()
+    except Exception:
+        return False
+
 def validate_zero_touch_prerequisites(cfg, platform, installer, ca_fp, *, long_bootstrap=False):
     """Side-effect-free availability gate shared by guided + issuing CLI paths.
 
@@ -623,42 +668,48 @@ def validate_zero_touch_prerequisites(cfg, platform, installer, ca_fp, *, long_b
         fail('allocator public URL must be HTTPS')
     if not ca_fp:
         fail('allocator CA SHA256 fingerprint is unavailable; cannot generate a secure command')
+    # One pre-issuance trust decision is authoritative for every renderer.
+    # Public CA DNS is preferred. A private CA DNS/IP path requires both
+    # issuer-local PKI checks and a strict CA-verified *public* probe. The
+    # client independently pins the same CA before sending the ticket.
     compact_host = short_url_host_for_cfg(cfg) if not long_bootstrap else ''
-    # A configured bootstrap_hostname expresses operator intent, NOT public
-    # certificate trust. Probe the same FQDN using the system CA store and
-    # the allocator's exact /i/ failure signature before issuing any ticket.
-    # The public_hostname-only path already performs this proof in
-    # short_url_host_for_cfg; never let the explicit path bypass it.
-    # Hermetic FRP_DEPLOY_TEST_ROOT suites use deliberately invented DNS names;
-    # they assert renderer behavior in a redirected filesystem, not public CA
-    # qualification. No test-root path is eligible as a deployed Server.
-    if compact_host and cfg.get('bootstrap_hostname') and not long_bootstrap and not _test_root():
-        proven = short_url_host_for_cfg({'public_hostname': compact_host})
-        if proven != compact_host:
-            fail('Configured bootstrap hostname failed public HTTPS/TLS and '
-                 'allocator endpoint verification. Fix DNS/certificate/443 '
-                 'frontend, or unset server bootstrap-hostname to use the '
-                 'verified Private-CA numeric-IP bootstrap. '
-                 'No enrollment ticket was issued.')
-    private_ip_plan = None
+    if cfg.get('bootstrap_hostname') and not long_bootstrap:
+        if not compact_host:
+            fail('Configured bootstrap hostname did not pass public HTTPS/TLS '
+                 'and /i/ handler verification. No enrollment ticket was issued.')
+        if not _test_root():
+            proven = short_url_host_for_cfg({'public_hostname': compact_host})
+            if proven != compact_host:
+                fail('Configured bootstrap hostname lost public HTTPS/TLS trust '
+                     'or /i/ handler verification. No enrollment ticket was issued.')
+    private_ca_plan = None
     if not compact_host and not long_bootstrap:
-        private_ip_plan = (private_ca_dns_bootstrap_plan(cfg, ca_fp)
-                           or private_ca_ip_bootstrap_plan(cfg, ca_fp))
-        if not private_ip_plan:
-            fail('Secure compact Zero-Touch is not configured. Use publicly '
-                 'trusted HTTPS or a Private CA with a verified hostname/IP '
-                 'certificate SAN and pinned CA SHA256. '
-                 'No enrollment ticket was issued.')
+        ca_cert = remap(str(cfg.get('tls_ca_cert') or '/etc/drlink/pki/ca.crt'))
+        # Do not use user-provided hostname/IP as trust evidence. Certificates
+        # and the exact live allocator handler must match before ticket issue.
+        for candidate in (private_ca_dns_bootstrap_plan(cfg, ca_fp),
+                          private_ca_ip_bootstrap_plan(cfg, ca_fp)):
+            if candidate is None:
+                continue
+            if _test_root() or _pinned_ca_public_endpoint_verified(
+                    candidate['allocator'], ca_cert):
+                private_ca_plan = candidate
+                break
+        if private_ca_plan is None:
+            fail('Zero-Touch HTTPS bootstrap cannot be verified. The Server '
+                 'must serve /i/ on a publicly reachable hostname/IP with '
+                 'a trusted public certificate or the pinned local Private CA '
+                 'and matching certificate SAN. No enrollment ticket was issued.')
     label = 'Windows Agent installer URL' if platform == 'windows' else 'Agent installer URL'
     preflight_installer_url(installer, label=label)
-    if platform == 'windows' and private_ip_plan:
+    if platform == 'windows' and private_ca_plan:
         module = load_allocator()
         renderer = getattr(module, 'windows_renderer_inputs_from_cfg', None)
         resolved_cfg = remapped_server_cfg(cfg)
         resolved_cfg['windows_client_installer_url'] = installer
         if not callable(renderer) or renderer(resolved_cfg) is None:
             fail('Windows secure stage-1 renderer is unavailable; no ticket was issued')
-    return compact_host, private_ip_plan
+    return compact_host, private_ca_plan
 
 
 _ZT = None
