@@ -666,7 +666,7 @@ df9ba9ba11086e074d4bfc8479504d4e05a3670c4f0a35b93728bbfe56b8401d  tests/test-zer
 11ea86db2350d07d44f2fa60b964d27e3cd3f111912be0f4a5ab9574676847fd  tests/test-zero-touch-doc-contract.py
 c95cab9c595935b7c6145db29d98df254fb02c40acd11352a4dbc5fa2e876b9e  tests/test-zero-touch-guided-preflight.py
 40cd184a24ccadba39e04392638171f07bff51ca1498cc392a6d2cf267696f0f  tests/test-zero-touch-operator-command-bound.py
-af751b9376595c4a2ff6d23848650babecc8dc314f739ddb124f089f5361a151  tests/test-zero-touch-privateca-domain-ip.py
+f32f9627d499e5c4bbbdad4d846621a6907d62a959f09da27930f19dd83a0e61  tests/test-zero-touch-privateca-domain-ip.py
 4f3bceb75615fb5f474fb2d14b59653761551ce5114e4b3917ca8458420c55d2  tests/test-zero-touch-short-command.sh
 a8735bbc946d2b5074156a67ddfbc98fe32047c7601add9e4f22116508055d78  tests/test-zero-touch-short-url.sh
 8a1320f6e7296164e35a3df9023002d0f3f18642eb6b677e46603fc8cd7e6cde  tests/test-zero-touch-windows-pin.py
