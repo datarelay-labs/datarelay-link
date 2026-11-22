@@ -74,6 +74,7 @@ python3 tests/test-agent-orphan-restore-no-churn.py
 python3 tests/test-remote-service-upsert-no-churn.py
 python3 tests/test-zero-touch-doc-contract.py
 python3 tests/test-zero-touch-guided-preflight.py
+python3 tests/test-zero-touch-privateca-domain-ip.py
 python3 tests/test-operator-input-validation.py
 python3 tests/test-zero-touch-operator-command-bound.py
 python3 tests/test-real-e2e-windows-command-parse.py
