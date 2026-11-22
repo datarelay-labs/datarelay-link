@@ -157,38 +157,82 @@ def private_ca_ip_endpoint(allocator_url):
     return authority, host, port
 
 
-def private_ca_ip_linux_command(allocator_url, ca_sha256, handle):
+
+def private_ca_dns_endpoint(allocator_url):
+    """Strict DNS-only HTTPS origin for a CA-fingerprint-pinned bootstrap.
+
+    The system-trust path remains separate: DNS alone does not qualify it.
+    The generated command must pin the server CA before sending a ticket.
+    """
+    parsed = urlparse(str(allocator_url or '').strip())
+    if (parsed.scheme != 'https' or not parsed.netloc or parsed.username is not None
+            or parsed.password is not None or parsed.query or parsed.fragment
+            or parsed.params):
+        return None
+    host = (parsed.hostname or '').lower()
+    try:
+        port = parsed.port or 443
+        ipaddress.ip_address(host)
+        return None
+    except ValueError:
+        # ValueError from ipaddress means this may be a DNS name. Port errors
+        # are caught by the second explicit port extraction below.
+        pass
+    try:
+        port = parsed.port or 443
+    except ValueError:
+        return None
+    if (not DNS_HOSTNAME_RE.fullmatch(host) or '.' not in host or
+            host.endswith('.local') or not 1 <= port <= 65535):
+        return None
+    authority = host if port == 443 else '%s:%s' % (host, port)
+    return authority, host, port
+
+
+def _private_ca_pinned_linux_command(allocator_url, ca_sha256, handle, *, dns=False):
     """Authenticate a private CA before sending a Zero-Touch credential.
 
     Only the public CA cert is retrieved without prior trust. Its DER SHA256
     is compared against the operator's pin. All credential traffic afterwards
     uses strict HTTPS + that verified CA, including IP SAN validation.
     """
-    endpoint = private_ca_ip_endpoint(allocator_url)
+    endpoint = (private_ca_dns_endpoint(allocator_url) if dns
+                else private_ca_ip_endpoint(allocator_url))
     ca = str(ca_sha256 or '').lower().strip()
     if endpoint is None or not re.fullmatch(r'[0-9a-f]{64}', ca):
-        raise ValueError('IP HTTPS allocator and CA fingerprint are required')
+        raise ValueError('Pinned-CA HTTPS allocator and CA fingerprint are required')
     if not COMPACT_CREDENTIAL_RE.fullmatch(str(handle or '')):
         raise ValueError('short bootstrap handle is required')
     authority, host, port = endpoint
     url = short_url_for_ticket(authority, handle)
+    sni = ' -servername %s' % host if dns else ''
     inner = (
         "set -euo pipefail;umask 077;d=$(mktemp -d);trap 'rm -rf \"$d\"' EXIT;"
         # Keep OpenSSL's unauthenticated public-CA retrieval path: Linux
         # enrollment never uses --insecure, even for the CA-only request.
         # HTTP/1.0 closes by default; X509 parsing normalizes the sole pinned CA.
         "printf 'GET /ca.crt HTTP/1.0\\r\\nHost: %s\\r\\n\\r\\n'|"
-        "openssl s_client -quiet -connect %s:%s 2>/dev/null|"
+        "openssl s_client -quiet -connect %s:%s%s 2>/dev/null|"
         "sed -n '/BEGIN CERTIFICATE/,/END CERTIFICATE/p' >\"$d/ca\" || :;"
         "test \"$(openssl x509 -in \"$d/ca\" -outform DER|openssl dgst -sha256|awk '{print $NF}')\" = %s;"
         "openssl x509 -in \"$d/ca\" -out \"$d/trust\";"
         "curl -fsSL --max-redirs 0 --proto '=https' --tlsv1.2 --cacert \"$d/trust\" %s -o \"$d/stage1\";"
         "sudo env FRP_ALLOCATOR_CA_FILE=\"$d/trust\" bash \"$d/stage1\""
-    ) % (host, host, port, ca, shell_quote(url))
+    ) % (host, host, port, sni, ca, shell_quote(url))
     return 'bash -c ' + shlex.quote(inner)
 
 
-def private_ca_ip_windows_command(allocator_url, ca_sha256, stage1_sha256, handle):
+def private_ca_ip_linux_command(allocator_url, ca_sha256, handle):
+    """Numeric-IP compact bootstrap with CA pin and strict IP SAN."""
+    return _private_ca_pinned_linux_command(allocator_url, ca_sha256, handle)
+
+
+def private_ca_dns_linux_command(allocator_url, ca_sha256, handle):
+    """DNS compact bootstrap with CA pin, strict DNS SAN and explicit SNI."""
+    return _private_ca_pinned_linux_command(allocator_url, ca_sha256, handle, dns=True)
+
+
+def _private_ca_pinned_windows_command(allocator_url, ca_sha256, stage1_sha256, handle, *, dns=False):
     """Windows short bootstrap: pin public CA before any credential-bearing GET.
 
     Initial TLS verification is unavailable only while fetching the public CA.
@@ -196,13 +240,14 @@ def private_ca_ip_windows_command(allocator_url, ca_sha256, stage1_sha256, handl
     match the operator's SHA256 before strict --cacert token downloads begin.
     Stage-1 has its own immutable SHA256 checked before PowerShell execution.
     """
-    endpoint = private_ca_ip_endpoint(allocator_url)
+    endpoint = (private_ca_dns_endpoint(allocator_url) if dns
+                else private_ca_ip_endpoint(allocator_url))
     ca = str(ca_sha256 or '').strip().lower()
     digest = str(stage1_sha256 or '').strip().lower()
     if (endpoint is None or not re.fullmatch('[0-9a-f]{64}', ca)
             or not re.fullmatch('[0-9a-f]{64}', digest)
             or not COMPACT_CREDENTIAL_RE.fullmatch(str(handle or ''))):
-        raise ValueError('IP HTTPS, pinned CA and frozen Windows stage-1 are required')
+        raise ValueError('Pinned HTTPS, CA and frozen Windows stage-1 are required')
     url = short_url_for_ticket(endpoint[0], handle) + '?platform=windows'
     if re.search(r'[^A-Za-z0-9:/._?=\[\]-]', url):
         raise ValueError('unsafe bootstrap URL')
@@ -227,6 +272,20 @@ def private_ca_ip_windows_command(allocator_url, ca_sha256, stage1_sha256, handl
         "}finally{Remove-Item -LiteralPath $ca,$st -Force -ErrorAction SilentlyContinue}"
     ) % (endpoint[0], ca, url, digest)
 
+
+
+def private_ca_ip_windows_command(allocator_url, ca_sha256, stage1_sha256, handle):
+    """Numeric-IP Windows bootstrap with CA and stage-1 SHA256 pinning."""
+    return _private_ca_pinned_windows_command(
+        allocator_url, ca_sha256, stage1_sha256, handle
+    )
+
+
+def private_ca_dns_windows_command(allocator_url, ca_sha256, stage1_sha256, handle):
+    """DNS Windows bootstrap with CA and stage-1 SHA256 pinning."""
+    return _private_ca_pinned_windows_command(
+        allocator_url, ca_sha256, stage1_sha256, handle, dns=True
+    )
 
 
 def https_origin(url):
