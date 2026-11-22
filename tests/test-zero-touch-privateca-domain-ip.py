@@ -47,15 +47,17 @@ class PrivateCADomainIPFallback(unittest.TestCase):
         self.assertEqual(plan["allocator"], "https://221.139.249.109/enroll")
         self.assertEqual(self.cfg["allocator_public_url"], "https://remote.isoc.ooo/enroll")
 
-    def test_preflight_selects_pinned_ip_when_public_tls_fails(self):
+    def test_preflight_prefers_pinned_dns_after_public_tls_failure(self):
         installer = "https://remote.isoc.ooo/artifacts/agent/bootstrap-client.sh"
         with mock.patch.object(client, "short_url_host_for_cfg", return_value=""), \
-             mock.patch.object(client, "preflight_installer_url", return_value=None):
+             mock.patch.object(client, "preflight_installer_url", return_value=None), \
+             mock.patch.object(client, "_pinned_ca_public_endpoint_verified", return_value=True):
             host, plan = client.validate_zero_touch_prerequisites(
                 self.cfg, "linux", installer, self.ca
             )
         self.assertEqual(host, "")
-        self.assertEqual(plan["allocator"], "https://221.139.249.109/enroll")
+        self.assertEqual(plan["mode"], "private_ca_dns")
+        self.assertEqual(plan["allocator"], "https://remote.isoc.ooo/enroll")
 
     def test_publicly_qualified_hostname_remains_preferred(self):
         installer = "https://remote.isoc.ooo/artifacts/agent/bootstrap-client.sh"
@@ -147,7 +149,8 @@ class PrivateCADomainIPFallback(unittest.TestCase):
         )
         # Public-trust negative is distinct from a pinned Private CA positive.
         with mock.patch.object(client, "short_url_host_for_cfg", return_value=""), \
-             mock.patch.object(client, "preflight_installer_url", return_value=None):
+             mock.patch.object(client, "preflight_installer_url", return_value=None), \
+             mock.patch.object(client, "_pinned_ca_public_endpoint_verified", return_value=True):
             host, selected = client.validate_zero_touch_prerequisites(
                 self.cfg, "linux",
                 "https://remote.isoc.ooo/artifacts/agent/bootstrap-client.sh",
@@ -231,6 +234,38 @@ class PrivateCADomainIPFallback(unittest.TestCase):
         self.assertIsNone(
             client.private_ca_dns_bootstrap_plan(bad, other_pki["fingerprint"])
         )
+
+
+    def test_preflight_falls_back_to_verified_ip_if_dns_probe_fails(self):
+        installer = "https://remote.isoc.ooo/artifacts/agent/bootstrap-client.sh"
+        seen = []
+        def proof(url, ca):
+            seen.append(url)
+            return url == "https://221.139.249.109/enroll"
+        with mock.patch.object(client, "short_url_host_for_cfg", return_value=""), \
+             mock.patch.object(client, "preflight_installer_url", return_value=None), \
+             mock.patch.object(client, "_pinned_ca_public_endpoint_verified", side_effect=proof):
+            host, plan = client.validate_zero_touch_prerequisites(
+                self.cfg, "linux", installer, self.ca
+            )
+        self.assertEqual(host, "")
+        self.assertEqual(plan["mode"], "private_ca_ip")
+        self.assertEqual(plan["allocator"], "https://221.139.249.109/enroll")
+        self.assertEqual(seen, [
+            "https://remote.isoc.ooo/enroll",
+            "https://221.139.249.109/enroll",
+        ])
+
+    def test_rejects_every_unreachable_bootstrap_before_ticket(self):
+        installer = "https://remote.isoc.ooo/artifacts/agent/bootstrap-client.sh"
+        with mock.patch.object(client, "short_url_host_for_cfg", return_value=""), \
+             mock.patch.object(client, "preflight_installer_url", return_value=None), \
+             mock.patch.object(client, "_pinned_ca_public_endpoint_verified", return_value=False):
+            with self.assertRaises(SystemExit) as raised:
+                client.validate_zero_touch_prerequisites(
+                    self.cfg, "linux", installer, self.ca
+                )
+        self.assertIn("No enrollment ticket was issued", str(raised.exception))
 
 
 if __name__ == "__main__":
