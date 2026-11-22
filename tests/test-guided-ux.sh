@@ -11,7 +11,6 @@ fail() { echo "FAIL $1" >&2; exit 1; }
 
 export FRP_CLIENT_SOURCED=1
 export FRP_SKIP_CONNECTIVITY_CHECK=1
-export FRP_SSH_USER=aella
 # shellcheck source=../install-client.sh
 . "$ROOT/install-client.sh"
 
@@ -41,8 +40,7 @@ need "$WORKDIR/guide.out" 'Standard SSH uses port 22' 'ssh port help'
 need "$WORKDIR/guide.out" 'Standard HTTP uses port 80' 'http port help'
 need "$WORKDIR/guide.out" 'Standard HTTPS uses port 443' 'https port help'
 need "$WORKDIR/guide.out" 'Grafana' 'custom port examples'
-need "$WORKDIR/guide.out" 'SSH user' 'ssh user heading'
-need "$WORKDIR/guide.out" 'does NOT create an operating-system account' 'ssh user metadata'
+! grep -qE 'SSH user \[|SSH user \(optional|username \[' "$WORKDIR/guide.out" || fail "SSH user prompt/help remains"
 need "$WORKDIR/guide.out" 'without terminating TLS' 'https passthrough'
 need "$WORKDIR/guide.out" 'Custom TCP' 'custom tcp type'
 need "$WORKDIR/guide.out" 'SSH is optional' 'ssh optional'
@@ -70,7 +68,7 @@ assert p['id']=='ssh', p
 assert p['preset']=='ssh'
 assert p['local_ip']=='127.0.0.1'
 assert int(p['local_port'])==22
-assert p['ssh_user']=='aella'
+assert 'ssh_user' not in p
 PY
 pass "SSH defaults accepted by Enter"
 
@@ -187,14 +185,14 @@ pass "install confirmation Yes proceeds"
 
 # --- Completion screen -----------------------------------------------------
 cat >"$WORKDIR/done-services.json" <<'EOF'
-[{"id":"ssh","name":"SSH","preset":"ssh","local_ip":"127.0.0.1","local_port":22,"remote_port":6002,"ssh_user":"aella"}]
+[{"id":"ssh","name":"SSH","preset":"ssh","local_ip":"127.0.0.1","local_port":22,"remote_port":6002}]
 EOF
 print_complete "203.0.113.10" "$WORKDIR/done-services.json" >"$WORKDIR/complete.out"
 need "$WORKDIR/complete.out" 'Data Relay Link Installation Complete' 'complete header'
 need "$WORKDIR/complete.out" 'Your Data Relay Link Agent is running successfully' 'success line'
 need "$WORKDIR/complete.out" 'Local target : 127.0.0.1:22' 'complete target'
 need "$WORKDIR/complete.out" 'Public port  : 6002' 'complete public'
-need "$WORKDIR/complete.out" 'ssh -p 6002 aella@203.0.113.10' 'complete ssh'
+need "$WORKDIR/complete.out" 'ssh -p 6002 <username>@203.0.113.10' 'complete ssh'
 need "$WORKDIR/complete.out" 'sudo drlink' 'complete drlink'
 need "$WORKDIR/complete.out" 'sudo drlink' 'complete manage'
 need "$WORKDIR/complete.out" 'sudo drlink show status' 'complete status'
@@ -233,7 +231,7 @@ cur = {
   "schema_version": 1,
   "frp_server": "203.0.113.10",
   "services": {
-    "ssh": {"id":"ssh","name":"SSH","local_ip":"127.0.0.1","local_port":22,"remote_port":6002,"enabled":True,"preset":"ssh","ssh_user":"aella"}
+    "ssh": {"id":"ssh","name":"SSH","local_ip":"127.0.0.1","local_port":22,"remote_port":6002,"enabled":True,"preset":"ssh"}
   }
 }
 cand = json.loads(json.dumps(cur))

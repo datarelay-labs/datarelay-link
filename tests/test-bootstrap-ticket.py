@@ -78,7 +78,7 @@ class Env:
     def cleanup(self):
         self.tmp.cleanup()
 
-    def ssh_services(self, user='aella', port=22):
+    def ssh_services(self, port=22):
         return MOD.normalize_services([{
             'id': 'ssh',
             'name': 'SSH',
@@ -86,7 +86,6 @@ class Env:
             'local_ip': '127.0.0.1',
             'local_port': port,
             'preset': 'ssh',
-            'ssh_user': user,
         }])
 
     def issue(self, ttl=600, note='fixture', services=None):
@@ -730,7 +729,7 @@ def test_enroll_enforces_ticket_scope():
             ('rdp', rdp),
             ('ssh+rdp', env.ssh_services() + rdp),
             ('ssh-port', env.ssh_services(port=2222)),
-            ('ssh-user', env.ssh_services(user='root')),
+            ('ssh-host', [{**svc, 'local_ip':'127.0.0.2'} for svc in env.ssh_services()]),
             ('empty', []),
         ):
             code, result = _enroll_as(env, enroll, 'machine-ssh', attempt)

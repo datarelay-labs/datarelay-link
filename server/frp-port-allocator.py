@@ -1817,13 +1817,8 @@ def normalize_service(raw):
         'local_port': local_port,
         'preset': preset,
     }
-    if preset == 'ssh':
-        ssh_user = str(raw.get('ssh_user', '') or '').strip()
-        if ssh_user:
-            if not re.fullmatch(r'[A-Za-z0-9._@-]{1,32}', ssh_user):
-                raise ServiceValidationError('invalid ssh_user')
-            service['ssh_user'] = ssh_user
-        # ssh_user is optional connection-example metadata; enrollment does not require it.
+    if 'ssh_user' in raw:
+        raise ServiceValidationError('ssh_user is not supported; configure SSH login on the SSH client')
     if 'health_check' in raw:
         if HC is None:
             raise ServiceValidationError('health_check helpers unavailable')
@@ -1860,7 +1855,6 @@ SERVICE_SCOPE_FIELDS = (
     'local_ip',
     'local_port',
     'preset',
-    'ssh_user',
     'health_check',
 )
 
@@ -3246,8 +3240,6 @@ class Allocator:
                                 'preset': spec['preset'],
                                 'enabled': True,
                             }
-                            if spec.get('preset') == 'ssh' and spec.get('ssh_user'):
-                                stored['ssh_user'] = spec['ssh_user']
                             if 'health_check' in spec:
                                 stored['health_check'] = spec['health_check']
                             updated[sid] = stored
@@ -3381,8 +3373,6 @@ class Allocator:
                                 'preset': spec['preset'],
                                 'enabled': True,
                             }
-                            if spec.get('preset') == 'ssh' and spec.get('ssh_user'):
-                                stored['ssh_user'] = spec['ssh_user']
                             if 'health_check' in spec:
                                 stored['health_check'] = spec['health_check']
                             updated[sid] = stored

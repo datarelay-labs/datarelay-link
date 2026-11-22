@@ -171,11 +171,6 @@ def validate_hostname(value, required=False):
     return validate_text_field(value, 'hostname', HOSTNAME_MAX_LEN, required=required)
 
 
-def ssh_user_display(service):
-    user = sanitize_display((service or {}).get('ssh_user') or '', 32)
-    return user if user else 'legacy / unspecified'
-
-
 def passive_listening_ports():
     """Return (ports, known) from ss without connecting to any socket."""
     binary = shutil.which('ss')

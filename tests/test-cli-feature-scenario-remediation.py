@@ -105,7 +105,7 @@ frpctl_nav_prompt_id 'Name: '
         from drlink_v24_bundle import parse_v24_bundle
         rows = {tuple(r["path"]): r for r in catalog.COMMANDS}
         bulk = rows[("set", "enrollment", "bulk")]["detail"]
-        for phrase in ("label,ssh_user,note", "10", "24", "management-only"):
+        for phrase in ("label,note", "10", "24", "management-only"):
             self.assertIn(phrase, bulk)
         for resource in ("network-object", "network-group", "service-object", "service-group"):
             detail = rows[("unset", resource)]["detail"]

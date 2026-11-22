@@ -79,13 +79,8 @@ item = {
     'preset': preset,
     'enabled': True,
 }
-if preset == 'ssh':
-    ssh_user = str(raw.get('ssh_user', '') or '').strip()
-    if not ssh_user:
-        raise SystemExit('ERROR: ssh_user is required for ssh services')
-    if not re.fullmatch(r'[A-Za-z0-9._@-]{1,32}', ssh_user):
-        raise SystemExit('ERROR: invalid ssh_user')
-    item['ssh_user'] = ssh_user
+if 'ssh_user' in raw:
+    raise SystemExit('ERROR: ssh_user is no longer supported')
 try:
     HC.copy_health_check(raw, item)
 except HC.HealthCheckError as exc:
@@ -343,7 +338,7 @@ menu_add_service() {
 }
 
 menu_edit_service() {
-  local choice sid name host port user
+  local choice sid name host port
   echo
   echo "Current Remote Services:"
   echo
@@ -356,7 +351,7 @@ menu_edit_service() {
   echo "The Service ID plus this machine's identity keeps the public port stable."
   echo "To use a different ID, add a new service and disable this one."
   echo
-  local meta old_name old_host old_port old_user preset
+  local meta old_name old_host old_port preset
   meta="$(python3 - "$CANDIDATE_FILE" "$sid" <<'PY'
 import json,sys
 from pathlib import Path
@@ -364,15 +359,13 @@ item=json.loads(Path(sys.argv[1]).read_text())['services'][sys.argv[2]]
 print(item.get('name',''))
 print(item.get('local_ip',''))
 print(item.get('local_port',''))
-print(item.get('ssh_user',''))
 print(item.get('preset','custom'))
 PY
 )"
   old_name="$(printf '%s\n' "$meta" | sed -n '1p')"
   old_host="$(printf '%s\n' "$meta" | sed -n '2p')"
   old_port="$(printf '%s\n' "$meta" | sed -n '3p')"
-  old_user="$(printf '%s\n' "$meta" | sed -n '4p')"
-  preset="$(printf '%s\n' "$meta" | sed -n '5p')"
+  preset="$(printf '%s\n' "$meta" | sed -n '4p')"
   echo "Display name"
   echo "  Label shown in status and connection information."
   echo
@@ -381,16 +374,12 @@ PY
   host="$(read_tty "Target host [${old_host}]: " "$old_host")"
   frp_ux_target_port_help "$preset"
   port="$(read_tty "Target port [${old_port}]: " "$old_port")"
-  user="$old_user"
-  if [[ "$preset" == ssh ]]; then
-    frp_prompt_ssh_user user "$old_user"
-  fi
   maybe_warn_connectivity "$host" "$port" "TCP"
-  if ! python3 - "$CANDIDATE_FILE" "$sid" "$name" "$host" "$port" "$user" <<'PY'
+  if ! python3 - "$CANDIDATE_FILE" "$sid" "$name" "$host" "$port" <<'PY'
 import json, re, sys
 from pathlib import Path
 path = Path(sys.argv[1])
-sid, name, host, port, user = sys.argv[2:7]
+sid, name, host, port = sys.argv[2:6]
 state = json.loads(path.read_text(encoding='utf-8'))
 item = state['services'][sid]
 if len(name) > 64 or any(ord(c) < 32 or 127 <= ord(c) <= 159 for c in name):
@@ -408,12 +397,6 @@ if local_port < 1 or local_port > 65535:
 item['name'] = name.strip() or sid
 item['local_ip'] = host
 item['local_port'] = local_port
-if item.get('preset') == 'ssh':
-    if not str(user or '').strip():
-        raise SystemExit('ERROR: ssh_user is required for ssh services')
-    if not re.fullmatch(r'[A-Za-z0-9._@-]{1,32}', user):
-        raise SystemExit('ERROR: invalid ssh_user')
-    item['ssh_user'] = user
 path.write_text(json.dumps(state, indent=2, sort_keys=True) + '\n', encoding='utf-8')
 PY
   then
@@ -1059,12 +1042,6 @@ elif prop == 'target-port':
     if port < 1 or port > 65535:
         raise SystemExit('ERROR: invalid local_port; must be an integer 1-65535')
     item['local_port'] = port
-elif prop == 'ssh-user':
-    if item.get('preset') != 'ssh':
-        raise SystemExit('ERROR: ssh-user is only valid for ssh services')
-    if not re.fullmatch(r'[A-Za-z0-9._@-]{1,32}', value or ''):
-        raise SystemExit('ERROR: invalid ssh_user')
-    item['ssh_user'] = value
 elif prop in HC.SERVICE_HEALTH_PROPS:
     try:
         HC.apply_health_property(item, prop, value)
@@ -1299,7 +1276,7 @@ PY
 }
 
 frp_client_add_service_cli() {
-  local preset="custom" sid="" name="" host="127.0.0.1" port="" user="" profile=""
+  local preset="custom" sid="" name="" host="127.0.0.1" port="" profile=""
   if [[ $# -eq 0 ]]; then
     if [[ -n "${FRP_CTL_TEST_INPUT:-}" || -n "${FRP_CLIENT_TEST_INPUT+x}" || -t 0 ]]; then
       # Allow drlink FRP_CTL_TEST_INPUT to drive client prompts.
@@ -1324,7 +1301,6 @@ frp_client_add_service_cli() {
       --name) name="$2"; shift 2 ;;
       --target-host) host="$2"; shift 2 ;;
       --target-port) port="$2"; shift 2 ;;
-      --ssh-user) user="$2"; shift 2 ;;
       *)
         echo "ERROR: unknown add service option: $1" >&2
         return 2
@@ -1332,8 +1308,8 @@ frp_client_add_service_cli() {
     esac
   done
   if [[ -n "$profile" ]]; then
-    if [[ "$preset" != "custom" || -n "$port" || -n "$user" ]]; then
-      echo "ERROR: when using --profile, do not also set --preset/--target-port/--ssh-user" >&2
+    if [[ "$preset" != "custom" || -n "$port" ]]; then
+      echo "ERROR: when using --profile, do not also set --preset/--target-port" >&2
       return 2
     fi
     # host default is 127.0.0.1; allow it without treating as conflict unless explicitly needed
@@ -1341,8 +1317,7 @@ frp_client_add_service_cli() {
     return $?
   fi
   case "$preset" in
-    ssh) sid="${sid:-ssh}"; name="${name:-SSH}"; port="${port:-22}"; [[ -n "$user" ]] || {
-      echo "ERROR: --ssh-user is required for ssh services" >&2; return 2; } ;;
+    ssh) sid="${sid:-ssh}"; name="${name:-SSH}"; port="${port:-22}" ;;
     http) sid="${sid:-http}"; name="${name:-HTTP}"; port="${port:-80}" ;;
     https) sid="${sid:-https}"; name="${name:-HTTPS}"; port="${port:-443}" ;;
     custom)
@@ -1357,8 +1332,7 @@ frp_client_add_service_cli() {
   payload="$(python3 -c 'import json,sys; print(json.dumps({
     "id": sys.argv[1], "name": sys.argv[2], "preset": sys.argv[3],
     "protocol": "tcp", "local_ip": sys.argv[4], "local_port": int(sys.argv[5]),
-    "ssh_user": sys.argv[6],
-  }))' "$sid" "$name" "$preset" "$host" "$port" "$user")"
+  }))' "$sid" "$name" "$preset" "$host" "$port")"
   frp_state_add_payload "$payload"
   echo "Pending service ${sid} added. Run apply to make it live."
 }

@@ -145,7 +145,7 @@ fi
 pass "MANAGEMENT_ONLY_SHORT_URL"
 
 OUT_SSH="$WORKDIR/ssh.out"
-python3 "$ROOT/tools/frp-create-client" --one-line --ssh --ssh-user aella \
+python3 "$ROOT/tools/frp-create-client" --one-line --ssh \
   --client-name short-ssh --note 'ssh' >"$OUT_SSH" || fail "ssh short url"
 grep -E -q "curl -fsSL https://bootstrap\\.example\\.com/i/[A-Za-z0-9_-]{22}" "$OUT_SSH" \
   || { cat "$OUT_SSH"; fail "ssh short URL shape"; }
@@ -153,7 +153,7 @@ pass "SSH_ONLY_SHORT_URL"
 
 SERVICES="$WORKDIR/services.json"
 cat >"$SERVICES" <<'JSON'
-[{"id":"ssh","preset":"ssh","local_ip":"127.0.0.1","local_port":22,"ssh_user":"aella"},
+[{"id":"ssh","preset":"ssh","local_ip":"127.0.0.1","local_port":22},
  {"id":"http","preset":"http","local_ip":"127.0.0.1","local_port":8080}]
 JSON
 OUT_MULTI="$WORKDIR/multi.out"
@@ -524,7 +524,7 @@ time.sleep(0.05)
 print('ok')
 PY
 # Need a fresh unused ticket for GET (previous ticket was completed).
-TICKET2="$(python3 "$ROOT/tools/frp-create-client" --one-line --ssh --ssh-user testuser \
+TICKET2="$(python3 "$ROOT/tools/frp-create-client" --one-line --ssh \
   --client-name short-url-reload --note reload-cfg 2>"$WORKDIR/create-reload.err" \
   | python3 -c "import re,sys; t=sys.stdin.read(); m=re.search(r\"/i/([A-Za-z0-9_-]{22}|bt1\\.[0-9a-f]+\\.[0-9a-f]+)\", t); print(m.group(1) if m else '')")"
 [[ -n "$TICKET2" ]] || { cat "$WORKDIR/create-reload.err"; fail "create reload ticket"; }

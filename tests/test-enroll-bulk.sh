@@ -23,9 +23,9 @@ export FRP_DEPLOY_TEST_ROOT="$TREE"
 python3 "$ROOT/tools/frp-enroll-bulk" --count 3 --label-prefix node >"$WORK/count.csv" 2>"$WORK/count.err"
 grep -q 'redirected output contains sensitive' "$WORK/count.err"
 cat >"$WORK/input.csv" <<'CSV'
-label,ssh_user,note
-ssh-node,aella,remote shell
-inventory-only,,no service
+label,note
+ssh-node,remote shell
+inventory-only,no service
 CSV
 python3 "$ROOT/tools/frp-enroll-bulk" --csv "$WORK/input.csv" >"$WORK/input.out" 2>"$WORK/input.err"
 python3 - "$WORK/count.csv" "$WORK/input.out" "$TREE/var/lib/drlink/bootstrap" <<'PY'
@@ -63,7 +63,7 @@ assert {rec['enrollment_id'] for rec in records}.isdisjoint(public_ids)
 for ticket,record in zip(sorted(tickets), sorted(records,key=lambda r:r['id'])):
     assert ticket not in json.dumps(record)
 assert any(r.get('services')==[] for r in records)
-assert any((r.get('services') or [{}])[0].get('preset')=='ssh' for r in records if r.get('services'))
+assert all(r.get('services') == [] for r in records)
 PY
 
 # A stale former official public installer URL must never leak into newly issued
@@ -112,9 +112,9 @@ echo "PASS BULK_PUBLIC_ERROR_GUIDANCE"
 # Pre-validate all rows: a bad later row issues zero tickets.
 BAD="$WORK/bad.csv"
 cat >"$BAD" <<'CSV'
-label,ssh_user,note
-good-one,aella,ok
-BAD LABEL!!,aella,no
+label,note
+good-one,ok
+BAD LABEL!!,no
 CSV
 BEFORE_TICKETS="$(find "$TREE/var/lib/drlink/bootstrap" -name '*.json' | wc -l)"
 if python3 "$ROOT/tools/frp-enroll-bulk" --csv "$BAD" >"$WORK/bad.out" 2>"$WORK/bad.err"; then

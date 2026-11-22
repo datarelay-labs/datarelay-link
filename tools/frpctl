@@ -1486,17 +1486,15 @@ PY
           echo
           echo "1) target-host"
           echo "2) target-port"
-          echo "3) ssh-user"
-          echo "4) name"
-          echo "5) health-type"
-          echo "6) Back"
+          echo "3) name"
+          echo "4) health-type"
+          echo "5) Back"
           path="$(frpctl_read "Select property: " "")" || return 1
           case "$path" in
             1) path="target-host" ;;
             2) path="target-port" ;;
-            3) path="ssh-user" ;;
-            4) path="name" ;;
-            5) path="health-type" ;;
+            3) path="name" ;;
+            4) path="health-type" ;;
             *) return 0 ;;
           esac
           value="$(frpctl_nav_prompt_id "New value: ")" || return 1
@@ -1764,12 +1762,6 @@ elif kind == "target_port":
     if port < 1 or port > 65535:
         fail("invalid target port; must be an integer 1-65535")
     print(str(port))
-elif kind == "ssh_user":
-    if not text:
-        fail("SSH user is required.")
-    if not re.fullmatch(r"[A-Za-z0-9._@-]{1,32}", text):
-        fail("invalid ssh_user")
-    print(text)
 else:
     fail("unknown validation kind")
 PY
@@ -1796,40 +1788,24 @@ frpctl_zt_prompt_client_identification() {
 }
 
 frpctl_zt_prompt_ssh() {
-  local user="" port=""
+  local port=""
   echo
   echo "SSH"
   echo "==="
   echo
-  echo "SSH username is optional connection-example metadata."
-  echo "It is not required for Agent installation or enrollment."
-  echo "Leave blank to show <username> in connection examples."
-  echo
-  while true; do
-    user="$(frpctl_read "SSH username [optional]: " "")" || return 1
-    user="${user#"${user%%[![:space:]]*}"}"
-    user="${user%"${user##*[![:space:]]}"}"
-    if [[ -z "$user" ]]; then
-      break
-    fi
-    if user="$(frpctl_zt_validate_field ssh_user "$user")"; then
-      break
-    fi
-  done
   while true; do
     port="$(frpctl_read "SSH port [22]: " "22")" || return 1
     if port="$(frpctl_zt_validate_field target_port "$port")"; then
       break
     fi
   done
-  _FRP_ZT_SSH_USER="$user"
   _FRP_ZT_SSH_PORT="$port"
   return 0
 }
 
 frpctl_zt_preflight() {
   # Check the real Server's public-DNS or pinned-private-CA IP capability
-  # *before* asking the user for a Managed Host name, services or SSH user.
+  # *before* asking the user for a Managed Host name or service targets.
   # Dry-run unit tests only validate menu grammar/dispatch (no real PKI).
   local platform="${1:-linux}"
   if [[ "${FRP_CTL_DRY_RUN:-}" == "1" ]]; then
@@ -1857,7 +1833,6 @@ frpctl_zt_invoke_create_client() {
 }
 
 frpctl_zt_run_ssh() {
-  _FRP_ZT_SSH_USER=""
   _FRP_ZT_SSH_PORT=""
   _FRP_ZT_PLATFORM="${_FRP_ZT_PLATFORM:-linux}"
   if [[ -z "${_FRP_ZT_CLIENT_NAME:-}" ]]; then
@@ -1866,11 +1841,9 @@ frpctl_zt_run_ssh() {
     frpctl_zt_prompt_client_identification || return 1
   fi
   frpctl_zt_prompt_ssh || return 1
-  # Always pass --ssh-user, including blank, so the backend does not ask again.
   frpctl_zt_invoke_create_client \
     --one-line \
     --ssh \
-    --ssh-user "$_FRP_ZT_SSH_USER" \
     --ssh-port "$_FRP_ZT_SSH_PORT"
 }
 
@@ -1906,7 +1879,7 @@ frpctl_zt_run_management() {
 }
 
 frpctl_zt_service_payload() {
-  # args: preset id name host port [ssh_user]
+  # args: preset id name host port
   python3 - "$@" <<'PY'
 import json, sys
 preset = sys.argv[1]
@@ -1923,9 +1896,6 @@ payload = {
     "preset": preset,
     "enabled": True,
 }
-if preset == "ssh":
-    if len(sys.argv) > 6 and str(sys.argv[6]).strip():
-        payload["ssh_user"] = str(sys.argv[6]).strip()
 print(json.dumps(payload))
 PY
 }
@@ -1933,7 +1903,7 @@ PY
 frpctl_zt_prompt_service_fields() {
   # Sets _FRP_ZT_SVC_JSON for one service. Args: preset default_id default_name default_host default_port
   local preset="$1" default_id="$2" default_name="$3" default_host="$4" default_port="$5"
-  local sid host port user name
+  local sid host port name
   while true; do
     if [[ -n "$default_id" ]]; then
       sid="$(frpctl_read "Service ID [${default_id}]: " "$default_id")" || return 1
@@ -1967,17 +1937,7 @@ frpctl_zt_prompt_service_fields() {
     name="${name%"${name##*[![:space:]]}"}"
     [[ -n "$name" ]] || name="$sid"
   fi
-  if [[ "$preset" == "ssh" ]]; then
-    while true; do
-      user="$(frpctl_read "SSH user: " "")" || return 1
-      if user="$(frpctl_zt_validate_field ssh_user "$user")"; then
-        break
-      fi
-    done
-    _FRP_ZT_SVC_JSON="$(frpctl_zt_service_payload "$preset" "$sid" "$name" "$host" "$port" "$user")" || return 1
-  else
-    _FRP_ZT_SVC_JSON="$(frpctl_zt_service_payload "$preset" "$sid" "$name" "$host" "$port")" || return 1
-  fi
+  _FRP_ZT_SVC_JSON="$(frpctl_zt_service_payload "$preset" "$sid" "$name" "$host" "$port")" || return 1
   return 0
 }
 
@@ -2256,7 +2216,7 @@ frpctl_guided_bulk_enrollment() {
   echo "Bulk enrollment"
   echo "==============="
   echo "1) Issue by count (1-10)"
-  echo "2) Import CSV (label,ssh_user,note; at most 10 rows)"
+  echo "2) Import CSV (label,note; at most 10 rows)"
   echo "3) Cancel"
   choice="$(frpctl_read "Select: " "3")" || return 1
   case "$choice" in
@@ -2267,9 +2227,8 @@ frpctl_guided_bulk_enrollment() {
         *) echo "ERROR: count must be between 1 and 10. No enrollments were issued." >&2; return 2 ;;
       esac
       prefix="$(frpctl_read "Managed Host label prefix [agent]: " "agent")" || return 1
-      user="$(frpctl_read "SSH username [optional; empty is management only]: " "")" || return 1
       note="$(frpctl_read "Note [optional]: " "")" || return 1
-      args=(--count "$count" --label-prefix "$prefix" --ssh-user "$user" --note "$note")
+      args=(--count "$count" --label-prefix "$prefix" --note "$note")
       ;;
     2)
       csv_path="$(frpctl_read "CSV path: " "")" || return 1
@@ -2307,7 +2266,7 @@ frpctl_guided_bulk_enrollment() {
   args+=(--ttl "$lifetime")
   echo
   echo "Review"
-  [[ "$choice" == 1 ]] && printf '  Count: %s; label prefix: %s; SSH username: %s\n' "$count" "$prefix" "${user:-none}"
+  [[ "$choice" == 1 ]] && printf '  Count: %s; label prefix: %s\n' "$count" "$prefix"
   [[ "$choice" == 2 ]] && printf '  CSV: %s\n' "$csv_path"
   printf '  Lifetime: %s\n' "$lifetime"
   echo "Each row issues a separate one-time enrollment command. Protect the output."
@@ -2791,8 +2750,7 @@ frpctl_manage_one_service_profile() {
         echo "3) preset"
         echo "4) target-host"
         echo "5) target-port"
-        echo "6) ssh-user"
-        echo "7) Back"
+        echo "6) Back"
         prop="$(frpctl_read "Select property: " "")" || continue
         case "$prop" in
           1) prop="name" ;;
@@ -2800,7 +2758,6 @@ frpctl_manage_one_service_profile() {
           3) prop="preset" ;;
           4) prop="target-host" ;;
           5) prop="target-port" ;;
-          6) prop="ssh-user" ;;
           *) continue ;;
         esac
         value="$(frpctl_nav_prompt_id "New value: ")" || continue
@@ -5064,7 +5021,7 @@ frpctl_system_uninstall() {
 }
 
 frpctl_guided_service_profile_create() {
-  local name="$1" preset target_host target_port ssh_user confirm
+  local name="$1" preset target_host target_port confirm
   echo
   echo "Create Service Profile"
   echo "======================"
@@ -5088,10 +5045,6 @@ frpctl_guided_service_profile_create() {
   [[ -n "$target_host" ]] || target_host=127.0.0.1
   target_port="$(frpctl_read "Target port: " "")" || return 1
   [[ -n "$target_port" ]] || { echo "ERROR: target port is required" >&2; return 1; }
-  ssh_user=""
-  if [[ "$preset" == "ssh" ]]; then
-    ssh_user="$(frpctl_read "SSH user (optional): " "")" || return 1
-  fi
   echo
   echo "Review"
   echo "------"
@@ -5099,24 +5052,15 @@ frpctl_guided_service_profile_create() {
   echo "  preset:      $preset"
   echo "  target-host: $target_host"
   echo "  target-port: $target_port"
-  [[ -n "$ssh_user" ]] && echo "  ssh-user:    $ssh_user"
   echo
   confirm="$(frpctl_read "Create profile? [Y/n]: " "Y")" || return 1
   case "$(printf '%s' "$confirm" | tr '[:upper:]' '[:lower:]')" in
     n|no) echo "Cancelled."; return 0 ;;
   esac
-  if [[ -n "$ssh_user" ]]; then
-    frpctl_invoke frp-profile create "$name" \
-      --preset "$preset" \
-      --target-host "$target_host" \
-      --target-port "$target_port" \
-      --ssh-user "$ssh_user"
-  else
-    frpctl_invoke frp-profile create "$name" \
-      --preset "$preset" \
-      --target-host "$target_host" \
-      --target-port "$target_port"
-  fi
+  frpctl_invoke frp-profile create "$name" \
+    --preset "$preset" \
+    --target-host "$target_host" \
+    --target-port "$target_port"
 }
 
 frpctl_guided_fixed_tcp_create() {

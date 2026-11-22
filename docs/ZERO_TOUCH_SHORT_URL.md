@@ -21,7 +21,7 @@ Windows downloads `/i/<handle>?platform=windows` and checks its expected stage-1
 
 The `/i/AAAAAAAAAAAAAAAAAAAAAA` handle resolves the internal `bt1.<id>.<secret>` credential. The 256-bit bootstrap secret is hashed at rest; the server retains only the encrypted wrap necessary to emit the stage-1 script (server token, or mode-0600 `bootstrap/bt1-wrap.key` when no token is configured). GET does not bind/consume; successful enrollment consumes atomically. The handle and `bt1` are short-lived credentials: never copy them into unredacted logs.
 
-**SSH usernames are optional connection-hint metadata, not tunnel/enrollment prerequisites.** A guided prompt may be skipped; the backend must not demand or invent a username. For a routed LAN service, the Server and Agent must preserve the signed destination (for example `192.168.219.125:22`) and stable public port, instead of representing that LAN target as Agent `this-host`/127.0.0.1.
+**Zero-Touch never asks for, accepts or stores an SSH login username.** The tunnel needs only its target host and port; SSH authentication belongs to the SSH client. For a routed LAN service, the Server and Agent must preserve the signed destination (for example `192.168.219.125:22`) and stable public port, instead of representing that LAN target as Agent `this-host`/127.0.0.1.
 
 See [Zero-Touch regression control](ZERO_TOUCH_REGRESSION_CONTROL.md) for the root-cause table, explicit advanced/private-CA behavior, test matrix, existing-install migration and exact-HEAD live acceptance rules. Legacy long-form command syntax is unsupported and is not part of the current CLI.
 

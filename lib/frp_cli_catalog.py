@@ -52,7 +52,6 @@ GROUP_PROPS = ("name", "description")
 SERVICE_PROPS = (
     "target-host",
     "target-port",
-    "ssh-user",
     "name",
     "health-type",
     "health-timeout",
@@ -66,7 +65,6 @@ PROFILE_PROPS = (
     "preset",
     "target-host",
     "target-port",
-    "ssh-user",
     "health-type",
     "health-timeout",
     "health-interval",
@@ -157,14 +155,6 @@ ENROLL_FLAGS = (
         platform="linux",
     ),
     _flag(
-        "--ssh-user",
-        arity=1,
-        metavar="USER",
-        description="SSH login user for the ssh preset",
-        effect="Required for non-interactive --ssh creation",
-        risk="metadata",
-    ),
-    _flag(
         "--ssh-port",
         arity=1,
         metavar="PORT",
@@ -252,7 +242,6 @@ BULK_FLAGS = (
     "--count",
     "--csv",
     "--label-prefix",
-    "--ssh-user",
     "--note",
     _flag(
         "--ttl",
@@ -275,7 +264,6 @@ PROFILE_CREATE_FLAGS = (
     "--target-host",
     "--target-port",
     "--description",
-    "--ssh-user",
     "--health-type",
     "--health-timeout",
     "--health-interval",
@@ -289,7 +277,6 @@ SERVICE_ADD_FLAGS = (
     "--name",
     "--target-host",
     "--target-port",
-    "--ssh-user",
 )
 
 # --- root actions ---------------------------------------------------------
@@ -476,12 +463,6 @@ _FLAG_DEFAULT_META = {
         "description": "Human-readable name for the entry or object",
         "metavar": "NAME",
         "effect": "Sets display name only; selectors stay immutable IDs",
-        "risk": "metadata",
-    },
-    "--ssh-user": {
-        "description": "SSH login user for ssh preset targets",
-        "metavar": "USER",
-        "effect": "Required for ssh presets; shown in connect hints",
         "risk": "metadata",
     },
     "--output": {
@@ -1199,7 +1180,7 @@ def to_internal(tokens):
             return ["create", "service-profile", rest[0]]
         # Positional property edit: set service-profile <P> name|preset|… <value>
         props = (
-            "name", "description", "preset", "target-host", "target-port", "ssh-user",
+            "name", "description", "preset", "target-host", "target-port",
             "health-type", "health-timeout", "health-interval", "health-max-failed", "health-path",
         )
         if len(rest) >= 3 and rest[1] in props:
@@ -2179,12 +2160,6 @@ def workflow_help(role):
     return "\n".join(lines).rstrip() + "\n"
 
 
-def legacy_help(role):
-    return (
-        "'help legacy' has been removed.\n"
-        "Use: help commands\n"
-        "Canonical roots: show, set, unset, test, system, menu, help, exit\n"
-    )
 
 
 def parity_paths(role):

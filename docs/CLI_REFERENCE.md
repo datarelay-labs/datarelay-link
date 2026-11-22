@@ -105,8 +105,8 @@ show ai-access-log permission <PERMISSION>
 
 `set enrollment bulk` opens a reviewed count/CSV wizard, with at most 10 codes
 per batch and 10 active unused codes. UTF-8 CSV uses the header
-`label,ssh_user,note`; for example `agent-a,operator,lab`. Label and note may be
-blank; blank `ssh_user` selects management-only enrollment. The default lifetime
+`label,note`; for example `agent-a,lab`. Label and note may be
+blank; bulk creates management-only enrollments. The default lifetime
 is 1 hour and the maximum is 24 hours. Keep issued one-time codes private.
 
 ```text
