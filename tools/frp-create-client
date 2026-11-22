@@ -269,8 +269,15 @@ def resolve_configured_installer_url(cfg, *, windows=False):
     return server_local_installer_url(cfg, windows=windows)
 
 
-def preflight_installer_url(url, *, label='Agent installer'):
-    """Bounded read-only preflight. Confirmed 404 blocks; uncertain does not."""
+def preflight_installer_url(url, *, label='Agent installer',
+                            strict=False, trusted_ca_cert=None):
+    """Verify installer availability before issuing a compact credential.
+
+    Legacy manual flows preserve the old HEAD best-effort behavior. Compact
+    Zero-Touch always uses authenticated GET, no redirect or proxy, reads only
+    the first byte and refuses a missing/untrusted installer before ticket
+    issuance. Same-origin Private-CA paths use the issuer's pinned CA.
+    """
     import ssl
     import urllib.error
     import urllib.request
@@ -278,6 +285,33 @@ def preflight_installer_url(url, *, label='Agent installer'):
     url = str(url or '').strip()
     if not url:
         return
+    if strict:
+        class NoRedirect(urllib.request.HTTPRedirectHandler):
+            def redirect_request(self, req, fp, code, msg, headers, newurl):
+                return None
+        try:
+            ctx = ssl.create_default_context(
+                cafile=str(trusted_ca_cert) if trusted_ca_cert is not None else None
+            )
+            opener = urllib.request.build_opener(
+                urllib.request.ProxyHandler({}),
+                urllib.request.HTTPSHandler(context=ctx),
+                NoRedirect(),
+            )
+            if urlparse(url).scheme != 'https':
+                raise ValueError('HTTPS required')
+            # The Server's artifact handler returns 501 to HEAD. A bounded
+            # one-byte GET verifies real download without a multi-MB fetch.
+            request = urllib.request.Request(url, method='GET')
+            request.add_header('Range', 'bytes=0-0')
+            with opener.open(request, timeout=6) as response:
+                status = getattr(response, 'status', None) or response.getcode()
+                if status not in (200, 206) or not response.read(1):
+                    raise ValueError('no usable installer payload')
+            return
+        except Exception as exc:
+            fail('%s failed authenticated HTTPS download preflight: %s. '
+                 'No enrollment ticket was issued.' % (label, type(exc).__name__))
     req = urllib.request.Request(url, method='HEAD')
     req.add_header('User-Agent', 'DataRelayLink-InstallerPreflight/2.4')
     ctx = ssl.create_default_context()
@@ -686,7 +720,14 @@ def validate_zero_touch_prerequisites(cfg, platform, installer, ca_fp, *, long_b
                  'a trusted public certificate or the pinned local Private CA '
                  'and matching certificate SAN. No enrollment ticket was issued.')
     label = 'Windows Agent installer URL' if platform == 'windows' else 'Agent installer URL'
-    preflight_installer_url(installer, label=label)
+    pinned_installer_ca = None
+    if private_ca_plan is not None and not _test_root():
+        zt = load_zero_touch()
+        if zt and zt.same_https_origin(installer, private_ca_plan['allocator']):
+            pinned_installer_ca = ca_cert
+    preflight_installer_url(installer, label=label,
+                            strict=bool(not _test_root() and not long_bootstrap),
+                            trusted_ca_cert=pinned_installer_ca)
     if platform == 'windows' and private_ca_plan:
         module = load_allocator()
         renderer = getattr(module, 'windows_renderer_inputs_from_cfg', None)
