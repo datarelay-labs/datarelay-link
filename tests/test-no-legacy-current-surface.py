@@ -377,6 +377,29 @@ class LegacyReintroductionGate(unittest.TestCase):
         self.assertNotIn('def _rw_', (ROOT / 'lib/frp_cli_catalog.py').read_text())
         self.assertNotIn('def expand_compat_alias(', (ROOT / 'lib/frp_cli_catalog.py').read_text())
 
+    def test_retired_aliases_never_reach_internal_dispatcher(self):
+        retired = (
+            ['release-client', 'demo'], ['release', 'client', 'demo'],
+            ['revoke', 'client', 'demo'], ['client', 'revoke', 'demo'],
+            ['access', 'create', 'Office'], ['access', 'add-source', 'Office'],
+            ['create', 'service-profile', 'obsolete'], ['add', 'service', 'ssh'],
+            ['delete', 'enrollment', 'expired'], ['enrollment', 'revoke', 'expired'],
+        )
+        for command in retired:
+            with self.subTest(command=command):
+                self.assertIsNone(catalog.to_internal(command))
+                self.assertIsNone(catalog.find(command, include_aliases=True))
+                self.assertEqual(catalog.resolve_tokens(command), command)
+        # Valid v2.4 final paths still resolve to the required dispatcher.
+        self.assertEqual(
+            catalog.to_internal(['unset', 'managed-host', 'host', 'group', 'ops']),
+            ['remove', 'client', 'host', 'group', 'ops'],
+        )
+        self.assertEqual(catalog.to_internal(['set', 'enrollment', 'zero-touch']),
+                         ['create', 'zero-touch'])
+        self.assertFalse(hasattr(catalog, 'alias_rows'))
+        self.assertFalse(hasattr(catalog, 'ALIASES'))
+
 
 if __name__ == "__main__":
     unittest.main()
