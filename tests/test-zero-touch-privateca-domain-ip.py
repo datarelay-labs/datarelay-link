@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Regression: a DNS-selected Private CA Server can issue pinned-IP compact Zero-Touch."""
+"""Regression: DNS and numeric IP must use a single verified bootstrap authority."""
 import contextlib
 import importlib.machinery
 import io
@@ -38,11 +38,17 @@ class PrivateCADomainIPFallback(unittest.TestCase):
             "tls_server_cert": pki["server_crt"],
         }
 
+    def ip_cfg(self):
+        return dict(self.cfg, public_url_host="221.139.249.109",
+                    allocator_public_url="https://221.139.249.109/enroll")
+
     def plan(self):
         return client.private_ca_ip_bootstrap_plan(self.cfg, self.ca)
 
-    def test_domain_private_ca_uses_ip_only_for_bootstrap(self):
-        plan = self.plan()
+    def test_authority_cannot_change_mid_enrollment(self):
+        self.assertIsNone(self.plan())  # DNS selected: IP-only stage 0 is unsafe.
+        ip_cfg = self.ip_cfg()
+        plan = client.private_ca_ip_bootstrap_plan(ip_cfg, self.ca)
         self.assertIsNotNone(plan)
         self.assertEqual(plan["authority"], "221.139.249.109")
         self.assertEqual(plan["allocator"], "https://221.139.249.109/enroll")
@@ -71,6 +77,7 @@ class PrivateCADomainIPFallback(unittest.TestCase):
         self.assertIsNone(plan)
 
     def test_linux_renderer_uses_numeric_ip_with_pin_and_no_insecure(self):
+        self.cfg = self.ip_cfg()
         plan = self.plan()
         self.assertIsNotNone(plan)
         command = client.load_zero_touch().private_ca_ip_linux_command(
@@ -94,6 +101,7 @@ class PrivateCADomainIPFallback(unittest.TestCase):
         self.assertNotIn("zt1.", output.getvalue())
 
     def test_windows_renderer_uses_numeric_ip_with_pin_and_digest(self):
+        self.cfg = self.ip_cfg()
         plan = self.plan()
         self.assertIsNotNone(plan)
         command = client.load_zero_touch().private_ca_ip_windows_command(
@@ -117,7 +125,7 @@ class PrivateCADomainIPFallback(unittest.TestCase):
         self.assertNotIn("zt1.", output.getvalue())
 
     def test_untrusted_identity_or_missing_ip_san_fails_closed(self):
-        base = dict(self.cfg)
+        base = self.ip_cfg()
         invalid_cases = (
             {"public_ip": "221.139.249.110"},
             {"public_ip": "0.0.0.0"},
@@ -237,25 +245,24 @@ class PrivateCADomainIPFallback(unittest.TestCase):
         )
 
 
-    def test_preflight_falls_back_to_verified_ip_if_dns_probe_fails(self):
+    def test_preflight_never_issues_mixed_dns_ip_authority(self):
         installer = "https://remote.isoc.ooo/artifacts/agent/bootstrap-client.sh"
         seen = []
         def proof(url, ca):
             seen.append(url)
             return url == "https://221.139.249.109/enroll"
+        err = io.StringIO()
         with mock.patch.object(client, "short_url_host_for_cfg", return_value=""), \
              mock.patch.object(client, "preflight_installer_url", return_value=None), \
-             mock.patch.object(client, "_pinned_ca_public_endpoint_verified", side_effect=proof):
-            host, plan = client.validate_zero_touch_prerequisites(
-                self.cfg, "linux", installer, self.ca
-            )
-        self.assertEqual(host, "")
-        self.assertEqual(plan["mode"], "private_ca_ip")
-        self.assertEqual(plan["allocator"], "https://221.139.249.109/enroll")
-        self.assertEqual(seen, [
-            "https://remote.isoc.ooo/enroll",
-            "https://221.139.249.109/enroll",
-        ])
+             mock.patch.object(client, "_pinned_ca_public_endpoint_verified", side_effect=proof), \
+             contextlib.redirect_stderr(err):
+            with self.assertRaises(SystemExit):
+                client.validate_zero_touch_prerequisites(
+                    self.cfg, "linux", installer, self.ca
+                )
+        self.assertEqual(seen, ["https://remote.isoc.ooo/enroll"])
+        self.assertIn("No enrollment ticket was issued", err.getvalue())
+
 
     def test_rejects_every_unreachable_bootstrap_before_ticket(self):
         installer = "https://remote.isoc.ooo/artifacts/agent/bootstrap-client.sh"
