@@ -616,7 +616,7 @@ frpctl_nav_prompt_id 'Name: '
         os.close(slave)
         output = bytearray()
         try:
-            os.write(master, b"1\n2\nreview-node\n\n\n1h\nn\n")
+            os.write(master, b"1\n2\nreview-node\n\n1h\nn\n")
             deadline = time.monotonic() + 30
             while time.monotonic() < deadline:
                 if select.select([master], [], [], 0.2)[0]:
@@ -660,7 +660,7 @@ frpctl_nav_prompt_id 'Name: '
                 os.close(slave)
                 output = bytearray()
                 try:
-                    command = "1\\n2\\nreview-node\\n\\n\\n" + ttl + "\\n"
+                    command = "1\\n2\\nreview-node\\n\\n" + ttl + "\\n"
                     if valid:
                         command += "n\\n"
                     os.write(master, command.encode().replace(b"\\n", b"\n"))
