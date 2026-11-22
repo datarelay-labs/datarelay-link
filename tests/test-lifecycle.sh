@@ -124,7 +124,7 @@ export FRP_TEST_MACHINE_ID='aabbccddeeff00112233445566778899'
 export FRP_ALLOCATOR_URL="https://127.0.0.1:${ALLOC_PORT}/enroll"
 export FRP_ALLOCATOR_CA_SHA256="$CA_FP"
 export FRP_ENROLLMENT_CODE="${EID}.${SECRET}"
-export FRP_SERVICES_JSON='[{"id":"ssh","name":"SSH","protocol":"tcp","local_ip":"127.0.0.1","local_port":22,"preset":"ssh","ssh_user":"aella"}]'
+export FRP_SERVICES_JSON='[{"id":"ssh","name":"SSH","protocol":"tcp","local_ip":"127.0.0.1","local_port":22,"preset":"ssh"}]'
 export FRP_CLIENT_SOURCED=1
 # shellcheck source=../install-client.sh
 . "$ROOT/install-client.sh"

@@ -19,7 +19,6 @@ param(
     [switch]$ZeroTouch,
     [string]$Platform = 'windows',
     [string]$ServicesJson = $env:FRP_SERVICES_JSON,
-    [string]$SshUser = $env:FRP_SSH_USER,
     [string]$Hostname = $env:FRP_HOSTNAME,
     [switch]$SkipStart,
     [switch]$SkipDownload,
@@ -174,7 +173,7 @@ try {
 
     $rc = Invoke-FrpZeroTouch -AllocatorUrl $AllocatorUrl -CaSha256 $CaSha256 `
         -BootstrapTicket $BootstrapTicket -Platform $Platform -ServicesJson $ServicesJson `
-        -SshUser $SshUser -Hostname $Hostname -SkipStart:$SkipStart -SkipDownload:$SkipDownload
+        -Hostname $Hostname -SkipStart:$SkipStart -SkipDownload:$SkipDownload
     exit [int]$rc
 } finally {
     Exit-FrpClientLock

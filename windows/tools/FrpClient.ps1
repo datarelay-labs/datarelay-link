@@ -29,7 +29,6 @@ param(
     [string]$Name,
     [string]$TargetHost = '127.0.0.1',
     [int]$TargetPort,
-    [string]$SshUser,
 
     [switch]$Enable,
     [switch]$Disable,
@@ -49,7 +48,7 @@ $script:V24File = $null
 $cmdLower = ([string]$Command).ToLowerInvariant()
 $subLower = if ($SubCommand) { $SubCommand.ToLowerInvariant() } else { '' }
 
-foreach ($legacyNamed in @('Force','DownloadUrl','ExpectedSha256','Preset','Name','TargetHost','TargetPort','SshUser','Enable','Disable','Output')) {
+foreach ($legacyNamed in @('Force','DownloadUrl','ExpectedSha256','Preset','Name','TargetHost','TargetPort','Enable','Disable','Output')) {
     if ($PSBoundParameters.ContainsKey($legacyNamed)) {
         Write-Host ("ERROR: noncanonical Windows CLI option: -{0}" -f $legacyNamed)
         Write-Host 'Use the positional v2.4 command grammar shown by: drlink help'
@@ -481,19 +480,14 @@ function Show-FrpClientInfo {
                 Write-Host ("    mstsc /v:{0}:{1}" -f $server, $remote)
             }
         } elseif ($preset -eq 'ssh') {
-            $user = [string]$item.ssh_user
-            if ($user) {
-                Write-Host '  Connect:'
-                if ($preferred) {
-                    Write-Host '    Preferred:'
-                    Write-Host ("      ssh -p {0} {1}@{2}" -f $remote, $user, $preferred)
-                    Write-Host '    Fallback:'
-                    Write-Host ("      ssh -p {0} {1}@{2}" -f $remote, $user, $server)
-                } else {
-                    Write-Host ("    ssh -p {0} {1}@{2}" -f $remote, $user, $server)
-                }
+            Write-Host '  Connect:'
+            if ($preferred) {
+                Write-Host '    Preferred:'
+                Write-Host ("      ssh -p {0} <username>@{1}" -f $remote, $preferred)
+                Write-Host '    Fallback:'
+                Write-Host ("      ssh -p {0} <username>@{1}" -f $remote, $server)
             } else {
-                Write-Host '  SSH user: legacy / unspecified'
+                Write-Host ("    ssh -p {0} <username>@{1}" -f $remote, $server)
             }
         } elseif ($preset -eq 'http') {
             Write-Host '  URL:'

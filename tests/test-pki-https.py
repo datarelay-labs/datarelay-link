@@ -399,7 +399,7 @@ def test_enroll_uses_public_control_port():
             'services': [{
                 'id': 'ssh', 'name': 'SSH', 'protocol': 'tcp',
                 'local_ip': '127.0.0.1', 'local_port': 22, 'preset': 'ssh',
-                'ssh_user': 'aella',
+
             }],
         }, separators=(',', ':')).encode()
         import hmac
@@ -457,7 +457,7 @@ def test_enroll_single443_transport():
             'services': [{
                 'id': 'ssh', 'name': 'SSH', 'protocol': 'tcp',
                 'local_ip': '127.0.0.1', 'local_port': 22, 'preset': 'ssh',
-                'ssh_user': 'aella',
+
             }],
         }, separators=(',', ':')).encode()
         import hmac

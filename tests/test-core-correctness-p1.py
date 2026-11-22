@@ -249,7 +249,7 @@ class EnrollEnv:
                 'local_ip': '127.0.0.1',
                 'local_port': 22,
                 'preset': 'ssh',
-                'ssh_user': 'aella',
+
             }],
             'mgmt_pubkey': pubkey if pubkey is not None else self.pub_pem,
             'mgmt_alg': MGMT.MGMT_ALG,

@@ -377,6 +377,22 @@ class LegacyReintroductionGate(unittest.TestCase):
         self.assertNotIn('def _rw_', (ROOT / 'lib/frp_cli_catalog.py').read_text())
         self.assertNotIn('def expand_compat_alias(', (ROOT / 'lib/frp_cli_catalog.py').read_text())
 
+    def test_windows_agent_never_creates_or_forwards_ssh_login_metadata(self):
+        current_windows = (
+            'windows/lib/FrpDraft.ps1', 'windows/lib/FrpState.ps1',
+            'windows/lib/FrpBootstrap.ps1', 'windows/install-client.ps1',
+            'windows/tools/FrpClient.ps1',
+        )
+        for relative in current_windows:
+            text = (ROOT / relative).read_text(encoding='utf-8')
+            with self.subTest(relative=relative):
+                self.assertNotIn('ssh_user', text)
+                self.assertNotIn('SshUser', text)
+                self.assertNotIn('ssh-user', text)
+        # A final CLI can display an explicit placeholder for the operator's
+        # local SSH account without storing or guessing an account.
+        self.assertIn('<username>@', (ROOT / 'windows/tools/FrpClient.ps1').read_text())
+
     def test_retired_aliases_never_reach_internal_dispatcher(self):
         retired = (
             ['release-client', 'demo'], ['release', 'client', 'demo'],

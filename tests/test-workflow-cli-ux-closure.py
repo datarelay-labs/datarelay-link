@@ -171,7 +171,6 @@ class CreateClientWorkflowTests(unittest.TestCase):
                         "name": "SSH",
                         "local_ip": "127.0.0.1",
                         "local_port": 22,
-                        "ssh_user": "stellar",
                     },
                     {
                         "preset": "https",
@@ -188,7 +187,8 @@ class CreateClientWorkflowTests(unittest.TestCase):
         self.assertIn("HTTPS", text)
         self.assertIn("127.0.0.1:22", text)
         self.assertIn("192.168.122.2:443", text)
-        self.assertIn("stellar", text)
+        self.assertNotIn("ssh_user", text)
+        self.assertNotIn("SSH user", text)
 
     def test_enrollment_guidance_canonical(self):
         lines = "\n".join(CREATE._enrollment_track_hints("abc123"))

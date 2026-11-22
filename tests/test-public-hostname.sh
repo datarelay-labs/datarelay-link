@@ -75,7 +75,7 @@ assert S.public_url_host(cfg) == 'legacy.example.com'
 assert S.short_url_hostname(cfg) == ''
 
 assert S.format_http_url('https', '2001:db8::1', 6005) == 'https://[2001:db8::1]:6005'
-lines = S.render_access_lines('203.0.113.10', 'frp.example.com', 6000, preset='ssh', ssh_user='ubuntu')
+lines = S.render_access_lines('203.0.113.10', 'frp.example.com', 6000, preset='ssh')
 assert any('Preferred' in x for x in lines)
 assert any('frp.example.com' in x for x in lines)
 assert any('203.0.113.10' in x for x in lines)
@@ -155,8 +155,7 @@ cat >"$TREE/var/lib/drlink/registry.json" <<'EOF'
           "local_ip": "127.0.0.1",
           "local_port": 22,
           "remote_port": 6000,
-          "ssh_user": "ubuntu",
-          "enabled": true
+                    "enabled": true
         }
       }
     }
@@ -282,7 +281,7 @@ with tempfile.TemporaryDirectory() as td:
             'ssh': {
                 'id': 'ssh', 'name': 'ssh', 'preset': 'ssh', 'protocol': 'tcp',
                 'local_ip': '127.0.0.1', 'local_port': 22, 'remote_port': 6000,
-                'ssh_user': 'ubuntu', 'enabled': True,
+                'enabled': True,
             },
             'web': {
                 'id': 'web', 'name': 'web', 'preset': 'https', 'protocol': 'tcp',
@@ -294,8 +293,8 @@ with tempfile.TemporaryDirectory() as td:
     bash = script.replace('__STATE__', str(state)).replace('__OUT__', str(out))
     text = subprocess.check_output(['bash', '-c', bash], text=True)
     assert 'Preferred:' in text
-    assert 'ssh -p 6000 ubuntu@frp.example.com' in text
-    assert 'ssh -p 6000 ubuntu@203.0.113.10' in text
+    assert 'ssh -p 6000 <username>@frp.example.com' in text
+    assert 'ssh -p 6000 <username>@203.0.113.10' in text
     assert 'https://frp.example.com:6005' in text
     assert 'https://203.0.113.10:6005' in text
     assert 'TLS is passed through' in text
@@ -307,13 +306,13 @@ with tempfile.TemporaryDirectory() as td:
             'ssh': {
                 'id': 'ssh', 'name': 'ssh', 'preset': 'ssh', 'protocol': 'tcp',
                 'local_ip': '127.0.0.1', 'local_port': 22, 'remote_port': 6000,
-                'ssh_user': 'ubuntu', 'enabled': True,
+                'enabled': True,
             },
         },
     }, indent=2) + '\n')
     text = subprocess.check_output(['bash', '-c', bash], text=True)
     assert 'Preferred:' not in text
-    assert 'ssh -p 6000 ubuntu@203.0.113.10' in text
+    assert 'ssh -p 6000 <username>@203.0.113.10' in text
 print('access-info ok')
 PY
 pass 'access-info preferred/fallback + https guidance'
@@ -366,7 +365,7 @@ with tempfile.TemporaryDirectory() as td:
     toml = Path(td) / 'frpc.toml'
     svc.write_text(json.dumps([{
         'id': 'ssh', 'preset': 'ssh', 'local_ip': '127.0.0.1', 'local_port': 22,
-        'remote_port': 6000, 'ssh_user': 'ubuntu', 'enabled': True,
+        'remote_port': 6000, 'enabled': True,
     }]) + '\n')
     bash = f'''
 set -euo pipefail

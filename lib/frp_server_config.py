@@ -398,7 +398,7 @@ def https_passthrough_guidance(hostname):
     )
 
 
-def render_access_lines(control, alias, remote_port, *, preset='custom', ssh_user=''):
+def render_access_lines(control, alias, remote_port, *, preset='custom'):
     """Preferred hostname + IP fallback connection lines for one service."""
     control = _strip(control)
     alias = _strip(alias)
@@ -408,10 +408,7 @@ def render_access_lines(control, alias, remote_port, *, preset='custom', ssh_use
 
     def endpoint(host, kind):
         if kind == 'ssh':
-            user = _strip(ssh_user)
-            if user:
-                return 'ssh -p %s %s@%s' % (port, user, host)
-            return 'ssh -p %s <user>@%s' % (port, host)
+            return 'ssh -p %s <username>@%s' % (port, host)
         if kind == 'http':
             return format_http_url('http', host, port)
         if kind == 'https':

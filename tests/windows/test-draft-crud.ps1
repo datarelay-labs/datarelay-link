@@ -38,14 +38,14 @@ try {
     try { Add-FrpDraftService -Preset 'custom' -Id 'Bad Id!' -TargetPort 81 | Out-Null } catch { $threw = $true }
     Assert-FrpTrue $threw 'invalid service id rejected'
 
-    # ssh preset requires -SshUser.
-    $threw = $false
-    try { Add-FrpDraftService -Preset 'ssh' | Out-Null } catch { $threw = $true }
-    Assert-FrpTrue $threw 'ssh without ssh_user rejected'
-    Add-FrpDraftService -Preset 'ssh' -SshUser 'alice' | Out-Null
+    # SSH presets use a target TCP port only; the login belongs to the SSH client.
+    Add-FrpDraftService -Preset 'ssh' | Out-Null
     $map = Get-FrpDraftServiceMap
-    Assert-FrpEqual 'alice' $map['ssh'].ssh_user 'ssh_user stored'
+    Assert-FrpTrue (-not ($map['ssh'].PSObject.Properties.Name -contains 'ssh_user')) 'SSH username metadata is absent'
     Assert-FrpEqual 22 ([int]$map['ssh'].local_port) 'ssh default port'
+    $threw = $false
+    try { Add-FrpDraftService -Preset 'ssh' -SshUser 'alice' -Id 'ssh2' | Out-Null } catch { $threw = $true }
+    Assert-FrpTrue $threw 'retired SshUser parameter is rejected'
 
     # set-service edits target without touching remote_port (public port preserved).
     Set-FrpDraftServiceField -Id 'rdp' -Property 'target-host' -Value '10.0.0.9' | Out-Null
@@ -60,10 +60,12 @@ try {
     try { Set-FrpDraftServiceField -Id 'nope' -Property 'name' -Value 'x' | Out-Null } catch { $threw = $true }
     Assert-FrpTrue $threw 'unknown service id rejected'
 
-    # ssh-user only valid for ssh preset.
-    $threw = $false
-    try { Set-FrpDraftServiceField -Id 'web' -Property 'ssh-user' -Value 'bob' | Out-Null } catch { $threw = $true }
-    Assert-FrpTrue $threw 'ssh-user rejected for non-ssh service'
+    # The retired ssh-user property is invalid for every preset.
+    foreach ($sid in @('web', 'ssh')) {
+        $threw = $false
+        try { Set-FrpDraftServiceField -Id $sid -Property 'ssh-user' -Value 'bob' | Out-Null } catch { $threw = $true }
+        Assert-FrpTrue $threw 'retired ssh-user field rejected'
+    }
 
     # disable preserves remote_port (public reservation).
     $nowEnabled = Set-FrpDraftServiceEnabled -Id 'web' -Enable $false

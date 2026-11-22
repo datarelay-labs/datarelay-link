@@ -309,8 +309,7 @@ function Invoke-FrpEnroll {
 function Get-FrpDefaultServices {
     param(
         [string]$Platform = 'windows',
-        [string]$ServicesJson,
-        [string]$SshUser
+        [string]$ServicesJson
     )
     if ($ServicesJson) {
         $parsed = $ServicesJson | ConvertFrom-Json
@@ -329,9 +328,6 @@ function Get-FrpDefaultServices {
             }
         )
     }
-    if ([string]::IsNullOrWhiteSpace($SshUser)) {
-        throw 'ERROR: non-windows default SSH service requires explicit -SshUser / ssh_user (no default root)'
-    }
     $ssh = [pscustomobject]@{
         id         = 'ssh'
         name       = 'SSH'
@@ -340,7 +336,6 @@ function Get-FrpDefaultServices {
         local_ip   = '127.0.0.1'
         local_port = 22
         enabled    = $true
-        ssh_user   = $SshUser
     }
     return @($ssh)
 }
@@ -607,7 +602,7 @@ function Invoke-FrpCompensatePreviousServices {
 function Invoke-FrpApplyLocalMetadata {
     <#
     .SYNOPSIS
-      Apply display-name / ssh_user-only draft changes without contacting the allocator.
+      Apply display-name-only draft changes without contacting the allocator.
     #>
     param($Current, $DraftMap)
     $curMap = ConvertTo-FrpServiceMap -Services $Current.services
@@ -1276,7 +1271,7 @@ function Invoke-FrpZeroTouch {
       re-used). Presence is validated explicitly in the body instead, with a
       resume-aware exception for CaSha256/BootstrapTicket.
 
-      Platform / ServicesJson / SshUser are accepted for installer CLI
+      Platform / ServicesJson are accepted for installer CLI
       compatibility but do not select services: the Bootstrap Ticket defines
       the authorized service scope and the allocator enforces it at /enroll.
 
@@ -1292,7 +1287,6 @@ function Invoke-FrpZeroTouch {
         [string]$BootstrapTicket,
         [string]$Platform = 'windows',
         [string]$ServicesJson,
-        [string]$SshUser,
         [string]$Hostname,
         [switch]$SkipStart,
         [switch]$SkipDownload

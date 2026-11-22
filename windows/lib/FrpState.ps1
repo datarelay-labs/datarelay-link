@@ -447,9 +447,6 @@ function ConvertTo-FrpServiceRecord {
     }
     if ($null -ne $ht['pending_allocation']) { $rec['pending_allocation'] = [bool]$ht['pending_allocation'] }
     if ($null -ne $ht['runtime_verified']) { $rec['runtime_verified'] = [bool]$ht['runtime_verified'] }
-    if ($preset -eq 'ssh' -and $ht['ssh_user']) {
-        $rec['ssh_user'] = [string]$ht['ssh_user']
-    }
     if ($null -ne $ht['health_check'] -and $ht['health_check']) {
         $hc = $ht['health_check']
         $hcMap = @{}
@@ -498,9 +495,6 @@ function Get-FrpEnrollServiceList {
             local_ip   = [string]$item.local_ip
             local_port = [int]$item.local_port
             preset     = $wirePreset
-        }
-        if ($wirePreset -eq 'ssh' -and $item.ssh_user) {
-            $out['ssh_user'] = [string]$item.ssh_user
         }
         $hc = $null
         if ($item -is [hashtable] -or $item -is [System.Collections.IDictionary]) {
@@ -615,7 +609,7 @@ function Test-FrpObjectHasProperty {
 function Get-FrpStateChangeClass {
     <#
     .SYNOPSIS
-      Classify draft vs current: local (name/ssh_user), runtime (ports/enable/add/remove), or none.
+      Classify draft vs current: local (display name), runtime (ports/enable/add/remove), or none.
     #>
     param($Current, $Draft)
     $curMap = ConvertTo-FrpServiceMap -Services $Current.services
@@ -645,7 +639,6 @@ function Get-FrpStateChangeClass {
             $hasRuntime = $true
         }
         if ([string]$a.name -ne [string]$b.name) { $hasLocal = $true }
-        if ([string]$a.ssh_user -ne [string]$b.ssh_user) { $hasLocal = $true }
     }
     if ($hasRuntime) { return 'runtime' }
     if ($hasLocal) { return 'local' }
