@@ -564,6 +564,47 @@ def private_ca_ip_bootstrap_plan(cfg, ca_fp):
     return {'mode': 'private_ca_ip', 'authority': endpoint[0],
             'allocator': bootstrap_allocator, 'leaf_sha256': pki.fingerprint_from_cert_file(leaf)}
 
+def private_ca_dns_bootstrap_plan(cfg, ca_fp):
+    """Permit a DNS short launcher using pinned issuer CA and exact DNS SAN.
+
+    This is distinct from the publicly trusted HTTPS mode. The certificate
+    must be signed by the configured local CA, the CA's DER SHA256 must equal
+    the pin, and the leaf must cover the selected public DNS identity. Only
+    the first public /ca.crt download can precede CA verification; the remote
+    launcher sends no ticket until strict hostname TLS verification succeeds.
+    """
+    zt = load_zero_touch()
+    pki = load_frp_pki()
+    if zt is None or pki is None or not isinstance(cfg, dict):
+        return None
+    if cfg.get('bootstrap_hostname'):
+        # An explicit bootstrap FQDN requires the original public-trust probe.
+        return None
+    allocator = str(cfg.get('allocator_public_url') or '').strip()
+    endpoint = zt.private_ca_dns_endpoint(allocator)
+    if endpoint is None:
+        return None
+    expected = str(cfg.get('public_url_host') or
+                   cfg.get('public_hostname') or '').strip().lower()
+    if expected != endpoint[1]:
+        return None
+    ca = remap(str(cfg.get('tls_ca_cert') or '/etc/drlink/pki/ca.crt'))
+    leaf = remap(str(cfg.get('tls_server_cert') or '/etc/drlink/pki/server.crt'))
+    try:
+        if not ca.is_file() or not leaf.is_file():
+            return None
+        if pki.fingerprint_from_cert_file(ca) != str(ca_fp or '').lower():
+            return None
+        pki.verify_cert_signed_by_ca(ca, leaf)
+        if not pki.cert_covers_identities(leaf, [endpoint[1]], []):
+            return None
+        return {'mode': 'private_ca_dns', 'authority': endpoint[0],
+                'allocator': allocator,
+                'leaf_sha256': pki.fingerprint_from_cert_file(leaf)}
+    except Exception:
+        return None
+
+
 def validate_zero_touch_prerequisites(cfg, platform, installer, ca_fp, *, long_bootstrap=False):
     """Side-effect-free availability gate shared by guided + issuing CLI paths.
 
@@ -601,11 +642,12 @@ def validate_zero_touch_prerequisites(cfg, platform, installer, ca_fp, *, long_b
                  'No enrollment ticket was issued.')
     private_ip_plan = None
     if not compact_host and not long_bootstrap:
-        private_ip_plan = private_ca_ip_bootstrap_plan(cfg, ca_fp)
+        private_ip_plan = (private_ca_dns_bootstrap_plan(cfg, ca_fp)
+                           or private_ca_ip_bootstrap_plan(cfg, ca_fp))
         if not private_ip_plan:
-            fail('Secure compact Zero-Touch is not configured. Use a qualified '
-                 'public HTTPS hostname or a numeric-IP allocator with a valid '
-                 'Private CA and matching Server certificate IP SAN. '
+            fail('Secure compact Zero-Touch is not configured. Use publicly '
+                 'trusted HTTPS or a Private CA with a verified hostname/IP '
+                 'certificate SAN and pinned CA SHA256. '
                  'No enrollment ticket was issued.')
     label = 'Windows Agent installer URL' if platform == 'windows' else 'Agent installer URL'
     preflight_installer_url(installer, label=label)
@@ -1235,8 +1277,12 @@ def print_one_line_windows(
         if not zt:
             fail('pinned Private CA bootstrap helper unavailable')
         try:
-            command = zt.private_ca_ip_windows_command(
-                private_ip_plan['allocator'], ca_fp, stage1_sha256, short_handle
+            bootstrap_allocator = private_ip_plan.get('allocator') or allocator
+            renderer = (zt.private_ca_dns_windows_command
+                        if private_ip_plan.get('mode') == 'private_ca_dns'
+                        else zt.private_ca_ip_windows_command)
+            command = renderer(
+                bootstrap_allocator, ca_fp, stage1_sha256, short_handle
             )
         except (KeyError, ValueError) as exc:
             fail('unable to construct authenticated IP Windows bootstrap: %s' % exc)
@@ -1375,9 +1421,11 @@ def print_one_line(ticket, ttl, note, public_host, control_public, allocator, ca
         if zt is None:
             fail('pinned private CA bootstrap helper unavailable')
         try:
-            command = zt.private_ca_ip_linux_command(
-                private_ip_plan['allocator'], ca_fp, short_handle
-            )
+            bootstrap_allocator = private_ip_plan.get('allocator') or allocator
+            renderer = (zt.private_ca_dns_linux_command
+                        if private_ip_plan.get('mode') == 'private_ca_dns'
+                        else zt.private_ca_ip_linux_command)
+            command = renderer(bootstrap_allocator, ca_fp, short_handle)
         except ValueError as exc:
             fail('unable to construct secure IP bootstrap: %s' % exc)
     if bootstrap_host and not legacy_env and not private_ip_plan and (short_handle or not require_compact):
