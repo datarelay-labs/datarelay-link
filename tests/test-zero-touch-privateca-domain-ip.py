@@ -290,6 +290,12 @@ class PrivateCADomainIPFallback(unittest.TestCase):
             response_body = b"bootstrap unavailable"
             response_code = 404
             def do_GET(self):
+                if self.path == "/artifacts/agent/bootstrap-client.sh":
+                    self.send_response(200)
+                    self.send_header("Content-Type", "text/x-shellscript")
+                    self.end_headers()
+                    self.wfile.write(b"#!/bin/bash\\necho safe\\n")
+                    return
                 if self.path != "/i/invalid-qualification-probe":
                     self.send_error(404)
                     return
@@ -310,6 +316,16 @@ class PrivateCADomainIPFallback(unittest.TestCase):
             self.assertTrue(
                 client._pinned_ca_public_endpoint_verified(url, tls["ca_crt"])
             )
+            installer = "https://127.0.0.1:%s/artifacts/agent/bootstrap-client.sh" % server.server_port
+            client.preflight_installer_url(
+                installer, strict=True, trusted_ca_cert=tls["ca_crt"]
+            )
+            errors = io.StringIO()
+            with contextlib.redirect_stderr(errors), self.assertRaises(SystemExit):
+                client.preflight_installer_url(
+                    installer, strict=True, trusted_ca_cert=self.pki_dir / "ca.crt"
+                )
+            self.assertIn("No enrollment ticket was issued", errors.getvalue())
             # A valid self-signed CA for a different leaf is not trust.
             self.assertFalse(
                 client._pinned_ca_public_endpoint_verified(
