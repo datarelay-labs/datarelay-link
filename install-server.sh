@@ -3030,6 +3030,20 @@ PY
   frp_server_end_tmp
   FRP_INSTALL_SNAPSHOT=""
 
+  # Zero-Touch readiness is a separate observable product outcome from
+  # successful package installation. Never claim it is ready solely because
+  # DNS or a Private CA exists; confirm public /i/ reachability and strict TLS
+  # before exposing the Zero-Touch instruction to a new operator.
+  local zero_touch_readiness="NOT_RUN"
+  local zero_touch_detail=""
+  if ! frp_server_skip_systemd; then
+    if zero_touch_detail="$(python3 "${lib_dir}/frp-create-client" --preflight-zero-touch --platform linux 2>&1)"; then
+      zero_touch_readiness="VERIFIED"
+    else
+      zero_touch_readiness="UNAVAILABLE"
+    fi
+  fi
+
   cat <<EOF2
 
 ============================================================
@@ -3051,6 +3065,15 @@ Allocator listen  : TCP/${FRP_ALLOCATOR_LISTEN_PORT} (${FRP_LISTEN_HOST})
 Service range     : TCP/${FRP_PORT_START}-${FRP_PORT_END}
 TLS CA SHA256     : ${CA_FINGERPRINT}
 EOF2
+  if [[ "$zero_touch_readiness" == "VERIFIED" ]]; then
+    echo "Zero-Touch HTTPS  : VERIFIED (TLS + /i/ endpoint; no ticket issued)"
+  elif [[ "$zero_touch_readiness" == "UNAVAILABLE" ]]; then
+    echo "Zero-Touch HTTPS  : NOT READY (Server installed; enrollment not yet qualified)"
+    echo "$zero_touch_detail" >&2
+    echo "Fix DNS, public 443, certificate SAN, or issuer CA before enrollment."
+  else
+    echo "Zero-Touch HTTPS  : NOT RUN (non-systemd or test installation)"
+  fi
   if [[ -n "$ACTIVE_PORTS" ]]; then
     echo "Preserved existing ports as reserved: $ACTIVE_PORTS"
   fi
