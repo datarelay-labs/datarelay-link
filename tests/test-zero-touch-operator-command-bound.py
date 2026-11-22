@@ -5,6 +5,7 @@ These fixtures contain fake credentials and do not create enrollment tickets.
 """
 from __future__ import annotations
 import importlib.machinery
+import importlib.util
 import hashlib
 import io
 import os
@@ -25,9 +26,13 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "lib"))
 import frp_zero_touch as zt
 
-cli = importlib.machinery.SourceFileLoader(
+_loader = importlib.machinery.SourceFileLoader(
     "frp_create_client_compact_contract", str(ROOT / "tools/frp-create-client")
-).load_module()
+)
+_spec = importlib.util.spec_from_loader(_loader.name, _loader)
+cli = importlib.util.module_from_spec(_spec)
+sys.modules[_loader.name] = cli
+_loader.exec_module(cli)
 HOST = "remote.xdr.ooo"
 TICKET = "bt1." + ("a" * 16) + "." + ("b" * 64)
 HANDLE = "x" * 22

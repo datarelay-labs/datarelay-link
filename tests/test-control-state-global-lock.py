@@ -433,7 +433,11 @@ def test_access_interactive_toctou(tmp: Path) -> None:
         return True
 
     ACL.mutate_access_state(bind_ssh, cfg=cfg)
-    access_mod = SourceFileLoader("frp_access_cli", str(ROOT / "tools" / "frp-access")).load_module()
+    access_loader = SourceFileLoader("frp_access_cli", str(ROOT / "tools" / "frp-access"))
+    access_spec = importlib.util.spec_from_loader(access_loader.name, access_loader)
+    access_mod = importlib.util.module_from_spec(access_spec)
+    sys.modules[access_loader.name] = access_mod
+    access_loader.exec_module(access_mod)
     used_before = ACL.list_services_using(ACL.load_access_state(cfg=cfg), lid)
 
     def bind_web(state):

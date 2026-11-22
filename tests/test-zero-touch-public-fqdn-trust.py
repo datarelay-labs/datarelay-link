@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Public FQDN short bootstrap cannot bypass OS TLS or allocator identity proof."""
 import importlib.machinery
+import importlib.util
 import io
 import sys
 import unittest
@@ -10,7 +11,11 @@ from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'lib'))
-CLI = importlib.machinery.SourceFileLoader('zt_public_fqdn_trust', str(ROOT / 'tools/frp-create-client')).load_module()
+_loader = importlib.machinery.SourceFileLoader('zt_public_fqdn_trust', str(ROOT / 'tools/frp-create-client'))
+_spec = importlib.util.spec_from_loader(_loader.name, _loader)
+CLI = importlib.util.module_from_spec(_spec)
+sys.modules[_loader.name] = CLI
+_loader.exec_module(CLI)
 
 class PublicFQDNTrustTests(unittest.TestCase):
     def verify(self, cfg, code=404, body=b'bootstrap unavailable', *, request_ok=False):
