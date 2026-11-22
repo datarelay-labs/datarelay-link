@@ -246,6 +246,7 @@ class CompactZeroTouchContract(unittest.TestCase):
                  mock.patch.object(cli, 'load_allocator', return_value=FakeAllocator), \
                  mock.patch.object(cli, 'run_enrollment_retention_cleanup'), \
                  mock.patch.object(cli, 'short_url_host_for_cfg', return_value=''), \
+                 mock.patch.object(cli, '_pinned_ca_public_endpoint_verified', return_value=True), \
                  mock.patch.object(cli, 'is_interactive_stdin', return_value=False), \
                  redirect_stdout(output):
                 result = cli.main(['--one-line', '--client-name', 'escare'])
