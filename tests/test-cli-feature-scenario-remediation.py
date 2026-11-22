@@ -1300,10 +1300,23 @@ frpctl_nav_workflow manage_host
             state.chmod(0)
             try:
                 env = dict(os.environ, FRP_CTL_TEST_ROOT=temp, FRP_DEPLOY_TEST_ROOT=temp)
+                run_as = {}
+                if hasattr(os, "geteuid") and os.geteuid() == 0:
+                    # Root bypasses mode-000; test the intended unprivileged
+                    # actor instead of reporting a false failure under root.
+                    import pwd
+                    # Match the checkout's normal owner so the child can
+                    # traverse the repository, but not the mode-000 fixture.
+                    parent_uid = ROOT.parent.stat().st_uid
+                    unprivileged = (pwd.getpwuid(parent_uid) if parent_uid != 0
+                                    else pwd.getpwnam("nobody"))
+                    root.chmod(0o755)
+                    run_as = {"user": unprivileged.pw_uid,
+                              "group": unprivileged.pw_gid, "extra_groups": []}
                 # A user launches the canonical public CLI, not its private dispatcher.
                 proc = subprocess.run(
                     ["bash", str(ROOT / "tools/drlink"), "system", "version"],
-                    env=env, text=True, capture_output=True, timeout=30,
+                    env=env, text=True, capture_output=True, timeout=30, **run_as,
                 )
             finally:
                 state.chmod(0o755)
