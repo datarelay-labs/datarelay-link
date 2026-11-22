@@ -22,8 +22,9 @@ class PrivateCADomainIPFallback(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory(prefix="zt-domain-ip-")
         self.addCleanup(self.tmp.cleanup)
+        self.pki_dir = Path(self.tmp.name) / "pki"
         pki = frp_pki.ensure_pki(
-            Path(self.tmp.name) / "pki", "221.139.249.109",
+            self.pki_dir, "221.139.249.109",
             extra_hosts=["remote.isoc.ooo"],
         )
         self.ca = pki["fingerprint"]
