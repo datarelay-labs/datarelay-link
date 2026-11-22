@@ -16,6 +16,7 @@ r=Path(sys.argv[1])
  'tls_ca_cert':'/etc/drlink/pki/ca.crt',
  'allocator_public_url':'https://example.test/enroll',
  'client_installer_url':'https://example.test/bootstrap-client.sh',
+ 'bootstrap_hostname':'bootstrap.example.test',
 })+'\n')
 PY
 export FRP_DEPLOY_TEST_ROOT="$TREE"
@@ -47,25 +48,7 @@ for row in rows:
     if m:
         tickets.append(m.group(1))
         continue
-    m=re.search(r"zt1\.[A-Za-z0-9_-]+", row['bootstrap_command'])
-    if m:
-        parts=m.group(0).split('.',1)
-        padded=parts[1]+('='*((-len(parts[1]))%4))
-        import base64
-        payload=json.loads(base64.urlsafe_b64decode(padded.encode('ascii')).decode('utf-8'))
-        tickets.append(payload['t'])
-        continue
-    m=re.search(r"sudo bash -s -- '(zt1\.[^']+)'", row['bootstrap_command'])
-    if m:
-        parts=m.group(1).split('.',1)
-        padded=parts[1]+('='*((-len(parts[1]))%4))
-        import base64
-        payload=json.loads(base64.urlsafe_b64decode(padded.encode('ascii')).decode('utf-8'))
-        tickets.append(payload['t'])
-        continue
-    m=re.search(r"FRP_BOOTSTRAP_TICKET='([^']+)'",row['bootstrap_command'])
-    assert m, row
-    tickets.append(m.group(1))
+    raise AssertionError('non-short Zero-Touch command generated')
 assert len(set(tickets))==5
 records=[json.loads(p.read_text()) for p in Path(sys.argv[3]).glob('*.json')]
 assert len(records)==5
@@ -95,7 +78,7 @@ cfg['client_installer_url']='https://raw.githubusercontent.com/datarelay-labs/da
 path.write_text(json.dumps(cfg)+'\n')
 PY
 python3 "$ROOT/tools/frp-enroll-bulk" --count 1 --label-prefix stale-source >"$WORK/stale-source.csv" 2>"$WORK/stale-source.err"
-grep -Fq 'https://example.test/artifacts/agent/bootstrap-client.sh' "$WORK/stale-source.csv"
+grep -Fq 'https://bootstrap.example.test/i/' "$WORK/stale-source.csv"
 ! grep -Fq 'raw.githubusercontent.com' "$WORK/stale-source.csv"
 ! grep -Fq '1111111111111111111111111111111111111111' "$WORK/stale-source.csv"
 echo "PASS BULK_QUALIFIED_INSTALLER_SOURCE"

@@ -13,18 +13,21 @@ fail() { echo "FAIL $1" >&2; exit 1; }
 
 HEAD="$(git rev-parse HEAD)"
 SHORT="$(printf '%s' "$HEAD" | cut -c1-7)"
+# Isolate output from concurrent worktrees and avoid shared sticky /tmp files.
+VG_RESULT_DIR="$(mktemp -d -t drlink-vg.XXXXXX)"
+trap 'rm -rf "$VG_RESULT_DIR"' EXIT
 
 # --- SSOT + governance -------------------------------------------------------
 [[ "$RELEASE_CHANNEL" == "development" ]] || fail "VERSION RELEASE_CHANNEL"
 [[ -f docs/VERSION_POLICY.md ]] || fail "VERSION_POLICY missing"
 [[ -f RELEASE_MANIFEST.schema.json ]] || fail "schema missing"
-./scripts/check-version-consistency.sh >/tmp/vg-version.out 2>&1 || {
-  cat /tmp/vg-version.out >&2
+./scripts/check-version-consistency.sh >"$VG_RESULT_DIR/version.out" 2>&1 || {
+  cat "$VG_RESULT_DIR/version.out" >&2
   fail "version consistency"
 }
 pass "VERSION_SSOT"
-./scripts/check-release-governance.sh >/tmp/vg-gov.out 2>&1 || {
-  cat /tmp/vg-gov.out >&2
+./scripts/check-release-governance.sh >"$VG_RESULT_DIR/gov.out" 2>&1 || {
+  cat "$VG_RESULT_DIR/gov.out" >&2
   fail "release governance"
 }
 pass "RELEASE_GOVERNANCE"
@@ -189,8 +192,8 @@ print("OK")
 PYCI
 pass "CI_DEDUP_EXPENSIVE_GATE_POLICY"
 
-python3 tests/test-release-manifest-schema.py >/tmp/vg-schema.out 2>&1 || {
-  cat /tmp/vg-schema.out >&2
+python3 tests/test-release-manifest-schema.py >"$VG_RESULT_DIR/schema.out" 2>&1 || {
+  cat "$VG_RESULT_DIR/schema.out" >&2
   fail "manifest schema tests"
 }
 pass "RELEASE_MANIFEST_SCHEMA"

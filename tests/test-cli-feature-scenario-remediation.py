@@ -725,15 +725,18 @@ frpctl_nav_prompt_id 'Name: '
                 "https://203.0.113.10/artifacts/agent/bootstrap-client.sh",
             )
             enrollment.print_one_line(
-                "example-ticket", 600, "", "203.0.113.10", 443,
+                "bt1." + "a" * 16 + "." + "b" * 64, 600, "", "203.0.113.10", 443,
                 "https://203.0.113.10/enroll", "0" * 64,
                 "https://203.0.113.10/artifacts/agent/bootstrap-client.sh",
-                "", 22, legacy_env=True, cfg={},
+                "", 22, cfg={"bootstrap_hostname":"bootstrap.example.test"},
+                short_handle="A"*22,
             )
             enrollment.print_one_line_windows(
-                "example-ticket", 600, "", "203.0.113.10", 443,
+                "bt1." + "a" * 16 + "." + "b" * 64, 600, "", "203.0.113.10", 443,
                 "https://203.0.113.10/enroll", "0" * 64,
-                "https://203.0.113.10/artifacts/agent/bootstrap-client.ps1", cfg={},
+                "https://203.0.113.10/artifacts/agent/bootstrap-client.ps1",
+                cfg={"bootstrap_hostname":"bootstrap.example.test"},
+                short_handle="A"*22,stage1_sha256="c"*64,
             )
         rendered = output.getvalue()
         self.assertIn("Agent install:", rendered)

@@ -359,8 +359,10 @@ def remapped_server_cfg(cfg):
     # A hermetic test Server also owns its private CA under the test root.
     # Without this mapping the Windows stage-1 renderer reads host /etc paths,
     # leading to a false prerequisite rejection after valid IP PKI checks.
-    if _test_root() and cfg.get('tls_ca_cert'):
-        out['tls_ca_cert'] = str(remap(cfg['tls_ca_cert']))
+    if _test_root():
+        for key in ('tls_ca_cert', 'token_file'):
+            if cfg.get(key):
+                out[key] = str(remap(cfg[key]))
     return out
 
 
@@ -543,7 +545,7 @@ def private_ca_ip_bootstrap_plan(cfg, ca_fp):
             'allocator': allocator, 'leaf_sha256': pki.fingerprint_from_cert_file(leaf)}
 
 
-def validate_zero_touch_prerequisites(cfg, platform, installer, ca_fp, *, long_bootstrap=False):
+def validate_zero_touch_prerequisites(cfg, platform, installer, ca_fp):
     """Side-effect-free availability gate shared by guided + issuing CLI paths.
 
     No enrollment IDs/ports are allocated. External HEAD preflight is bounded;
@@ -561,9 +563,9 @@ def validate_zero_touch_prerequisites(cfg, platform, installer, ca_fp, *, long_b
         fail('allocator public URL must be HTTPS')
     if not ca_fp:
         fail('allocator CA SHA256 fingerprint is unavailable; cannot generate a secure command')
-    compact_host = short_url_host_for_cfg(cfg) if not long_bootstrap else ''
+    compact_host = short_url_host_for_cfg(cfg)
     private_ip_plan = None
-    if not compact_host and not long_bootstrap:
+    if not compact_host:
         private_ip_plan = private_ca_ip_bootstrap_plan(cfg, ca_fp)
         if not private_ip_plan:
             fail('Secure compact Zero-Touch is not configured. Use a qualified '
@@ -590,25 +592,6 @@ def _zt():
     if _ZT is None:
         _ZT = load_zero_touch()
     return _ZT
-
-
-ZERO_TOUCH_PACKAGE_PREFIX = 'zt1'
-
-
-def encode_zero_touch_package(allocator_url, ca_sha256, ticket):
-    """Encode opaque short-command package for trusted public installer bootstrap."""
-    zt = _zt()
-    if zt is None:
-        raise ValueError('zero-touch helper is unavailable')
-    return zt.encode_zero_touch_package(allocator_url, ca_sha256, ticket)
-
-
-def decode_zero_touch_package(package):
-    """Decode zt1.* package into allocator URL, CA SHA256, and bootstrap ticket."""
-    zt = _zt()
-    if zt is None:
-        raise ValueError('zero-touch helper is unavailable')
-    return zt.decode_zero_touch_package(package)
 
 
 def reject_control_chars(label, value):
@@ -764,11 +747,6 @@ def parse_args(argv=None):
         '--one-line',
         action='store_true',
         help='Print a one-line zero-touch Agent install command',
-    )
-    p.add_argument(
-        '--long-bootstrap',
-        action='store_true',
-        help='Advanced: explicitly print a long pinned-private-CA command instead of the compact public HTTPS form',
     )
     p.add_argument(
         '--ssh',
@@ -1187,7 +1165,7 @@ def print_one_line_windows(
     ticket, ttl, note, public_host, control_public, allocator, ca_fp,
     installer, rdp_port=None, client_name='', management_only=False,
     ticket_id='', bootstrap_hostname='', public_hostname='', cfg=None,
-    short_handle='', stage1_sha256='', private_ip_plan=None, require_compact=False
+    short_handle='', stage1_sha256='', private_ip_plan=None
 ):
     zt = _zt()
     command = ''
@@ -1212,68 +1190,13 @@ def print_one_line_windows(
             command = ''
 
     compact_limit = 1500 if private_ip_plan else 500
-    if require_compact and (not command or len(command) > compact_limit):
+    if not command or len(command) > compact_limit:
         fail(
             'Compact Windows Zero-Touch command could not be generated within '
             f'{compact_limit} characters. No installation command was printed; an issued '
             'ticket may remain pending. Review/revoke it before retrying. '
             'Check the public HTTPS bootstrap endpoint and stage-1 SHA256.'
         )
-
-    if not command:
-        sums_url = derive_sha256sums_url(installer)
-        if not sums_url:
-            fail(
-                'cannot derive SHA256SUMS URL from Windows installer URL.\n'
-                'No changes were applied.'
-            )
-        zt_mod = _zt()
-        if zt_mod is not None:
-            command = zt_mod.pinned_ca_windows_command(
-                installer, allocator, ca_fp, ticket, sums_url
-            )
-        else:
-            inner = (
-                "$ErrorActionPreference='Stop';"
-                "$ProgressPreference='SilentlyContinue';"
-                "[Net.ServicePointManager]::SecurityProtocol=[Net.SecurityProtocolType]::Tls12;"
-                "$d=Join-Path $env:TEMP ('frp-bs-'+[guid]::NewGuid().ToString('N'));"
-                "New-Item -ItemType Directory -Force -Path $d|Out-Null;"
-                "try{"
-                "$m=Join-Path $d 'SHA256SUMS';$p=Join-Path $d 'bootstrap-client.ps1';"
-                "(New-Object Net.WebClient).DownloadFile(__SUMS__,$m);"
-                "(New-Object Net.WebClient).DownloadFile(__INSTALLER__,$p);"
-                "$w=$null;Get-Content -LiteralPath $m|ForEach-Object{"
-                "if($_ -match '^([0-9a-fA-F]{64})\\s+(?:dist/bootstrap-client\\.ps1|agent/bootstrap-client\\.ps1|bootstrap-client\\.ps1)\\s*$'){"
-                "if($w){throw 'duplicate bootstrap-client.ps1 hash'};"
-                "$w=$Matches[1].ToLowerInvariant()}};"
-                "if(-not $w){throw 'bootstrap-client.ps1 hash missing from SHA256SUMS'};"
-                "$g=(Get-FileHash -Algorithm SHA256 -LiteralPath $p).Hash.ToLowerInvariant();"
-                "if($g -ne $w){throw 'bootstrap-client.ps1 SHA256 mismatch'};"
-                "$env:FRP_ALLOCATOR_URL=__ALLOCATOR__;"
-                "$env:FRP_ALLOCATOR_CA_SHA256=__CA__;"
-                "$env:FRP_BOOTSTRAP_TICKET=__TICKET__;"
-                "$env:FRP_ZERO_TOUCH='1';$env:FRP_PLATFORM='windows';"
-                "& powershell.exe -NoProfile -ExecutionPolicy Bypass -File $p -ZeroTouch;"
-                "$rc=$LASTEXITCODE;Remove-Item Env:FRP_BOOTSTRAP_TICKET -ErrorAction SilentlyContinue;"
-                "if($rc -ne 0){exit $rc}"
-                "}finally{Remove-Item -LiteralPath $d -Recurse -Force -ErrorAction SilentlyContinue}"
-            )
-            inner = (
-                inner.replace('__SUMS__', ps_single_quote(sums_url))
-                .replace('__INSTALLER__', ps_single_quote(installer))
-                .replace('__ALLOCATOR__', ps_single_quote(allocator))
-                .replace('__CA__', ps_single_quote(ca_fp))
-                .replace('__TICKET__', ps_single_quote(ticket))
-            )
-            # Use the same native Windows argv encoding as the shared helper.
-            # POSIX-style outer single quotes around -Command are not a
-            # reliable Windows PowerShell escaping boundary.
-            import base64
-            command = (
-                'powershell.exe -NoProfile -ExecutionPolicy Bypass -EncodedCommand '
-                + base64.b64encode(inner.encode('utf-16le')).decode('ascii')
-            )
 
     tracking_id = str(ticket_id or '').strip()
     print()
@@ -1320,20 +1243,19 @@ def print_one_line_windows(
     print()
 
 
-def print_one_line(ticket, ttl, note, public_host, control_public, allocator, ca_fp, installer, ssh_user, ssh_port, client_name='', management_only=False, ticket_id='', legacy_env=False, bootstrap_hostname='', public_hostname='', cfg=None, short_handle='', private_ip_plan=None, require_compact=False):
+def print_one_line(ticket, ttl, note, public_host, control_public, allocator, ca_fp, installer, ssh_user, ssh_port, client_name='', management_only=False, ticket_id='', bootstrap_hostname='', public_hostname='', cfg=None, short_handle='', private_ip_plan=None):
     tracking_id = str(ticket_id or '').strip()
     if not tracking_id and ticket:
         zt_id = _zt()
         if zt_id is not None:
             tracking_id = zt_id.bootstrap_record_id(ticket)
 
-    # Default compact modes are qualified public HTTPS or numeric IP with
-    # pinned Private CA. The legacy long package is explicit opt-in only.
+    # Only qualified public HTTPS or verified numeric-IP/Private-CA commands are issued.
     command = ''
     bootstrap_host = short_url_host_for_cfg(
         cfg, bootstrap_hostname=bootstrap_hostname, public_hostname=public_hostname
     )
-    if private_ip_plan and not legacy_env:
+    if private_ip_plan:
         zt = _zt()
         if zt is None:
             fail('pinned private CA bootstrap helper unavailable')
@@ -1341,7 +1263,7 @@ def print_one_line(ticket, ttl, note, public_host, control_public, allocator, ca
             command = zt.private_ca_ip_linux_command(allocator, ca_fp, short_handle)
         except ValueError as exc:
             fail('unable to construct secure IP bootstrap: %s' % exc)
-    if bootstrap_host and not legacy_env and not private_ip_plan and (short_handle or not require_compact):
+    if bootstrap_host and not private_ip_plan and short_handle:
         try:
             zt = _zt()
             if zt is None:
@@ -1351,56 +1273,13 @@ def print_one_line(ticket, ttl, note, public_host, control_public, allocator, ca
             command = ''
 
     compact_limit = 900 if private_ip_plan else 200
-    if require_compact and (not command or len(command) > compact_limit):
+    if not command or len(command) > compact_limit:
         fail(
             'Compact Linux/macOS Zero-Touch command could not be generated '
             f'within {compact_limit} characters. No installation command was printed; '
             'an issued ticket may remain pending. Review/revoke it before '
             'retrying. Check the public HTTPS bootstrap endpoint.'
         )
-
-    if not command:
-        try:
-            package = encode_zero_touch_package(allocator, ca_fp, ticket)
-            zt_mod = _zt()
-            if zt_mod is not None:
-                command = zt_mod.pinned_ca_linux_command(
-                    installer, allocator, ca_fp, package
-                )
-            else:
-                command = 'curl -fsSL %s | sudo bash -s -- %s' % (
-                    shell_quote(installer),
-                    shell_quote(package),
-                )
-        except ValueError:
-            legacy_env = True
-
-    if legacy_env or not command:
-        env_parts = [
-            'FRP_ALLOCATOR_URL=%s' % shell_quote(allocator),
-            'FRP_ALLOCATOR_CA_SHA256=%s' % shell_quote(ca_fp),
-            'FRP_BOOTSTRAP_TICKET=%s' % shell_quote(ticket),
-            'FRP_ZERO_TOUCH=1',
-        ]
-        if ssh_user:
-            env_parts.append('FRP_SSH_USER=%s' % shell_quote(ssh_user))
-        if ssh_port and int(ssh_port) != 22:
-            env_parts.append('FRP_SSH_PORT=%s' % shell_quote(str(int(ssh_port))))
-        if management_only:
-            env_parts.append('FRP_MANAGEMENT_ONLY=1')
-        zt_legacy = _zt()
-        if zt_legacy is not None:
-            try:
-                command = zt_legacy.pinned_ca_manual_linux_command(
-                    installer, allocator, ca_fp, env_parts
-                )
-            except ValueError:
-                command = ''
-        if not command:
-            command = 'curl -fsSL %s | sudo env %s bash' % (
-                shell_quote(installer),
-                ' '.join(env_parts),
-            )
 
     print()
     print('Zero-touch Agent command')
@@ -1492,7 +1371,7 @@ def main(argv=None):
             ca_fp = ''
         installer = resolve_configured_installer_url(cfg, windows=(platform == 'windows'))
         validate_zero_touch_prerequisites(
-            cfg, platform, installer, ca_fp, long_bootstrap=a.long_bootstrap
+            cfg, platform, installer, ca_fp
         )
         print('Zero-Touch prerequisites verified; no ticket was issued.')
         return 0
@@ -1563,7 +1442,7 @@ def main(argv=None):
     # Re-check the same gate at issuance: a Server setting or certificate may
     # have changed while the user was filling out the guided service draft.
     compact_host, private_ip_plan = validate_zero_touch_prerequisites(
-        cfg, platform, installer, ca_fp, long_bootstrap=a.long_bootstrap
+        cfg, platform, installer, ca_fp
     )
 
     alloc_mod = load_allocator()
@@ -1618,7 +1497,7 @@ def main(argv=None):
     # bootstrap setting or the real public TLS probe. Never silently render
     # thousands of characters on the default beginner path.
     render_cfg = dict(cfg)
-    if compact_host and not a.long_bootstrap:
+    if compact_host:
         render_cfg['bootstrap_hostname'] = compact_host
     else:
         render_cfg.pop('bootstrap_hostname', None)
@@ -1674,7 +1553,6 @@ def main(argv=None):
             short_handle=short_handle,
             stage1_sha256=stage1_sha256,
             private_ip_plan=private_ip_plan,
-            require_compact=not a.long_bootstrap,
         )
     else:
         print_one_line(
@@ -1696,7 +1574,6 @@ def main(argv=None):
             cfg=render_cfg,
             short_handle=short_handle,
             private_ip_plan=private_ip_plan,
-            require_compact=not a.long_bootstrap,
         )
     try:
         here = Path(__file__).resolve()

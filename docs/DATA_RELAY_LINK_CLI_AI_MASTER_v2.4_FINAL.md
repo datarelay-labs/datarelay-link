@@ -3900,10 +3900,8 @@ The public CA is fetched without any bearer token; all subsequent handle-
 bearing requests require strict CA-verified HTTPS. If neither safe mode is
 available, fail before service prompts and ticket issuance, without silently
 printing a multi-kilobyte `zt1` line.
-The pinned private-CA `zt1` flow is available only via the explicitly
-selected advanced backend `frp-create-client --one-line --long-bootstrap`;
-it keeps strict fingerprint/installer verification and is not a public
-`drlink` grammar. At the `remote.xdr.ooo` reference hostname, automated
+Legacy long Zero-Touch command issuance and package decoding are removed.
+New issuances use only verified compact HTTPS/DNS or CA-pinned numeric-IP launchers. At the `remote.xdr.ooo` reference hostname, automated
 copy-paste bounds are Linux/macOS <= 200 characters and Windows <= 500
 characters (Windows checks stage-1 SHA-256 before execution).
 

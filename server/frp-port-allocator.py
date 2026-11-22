@@ -2308,11 +2308,13 @@ class Allocator:
         return 403, api_error('bootstrap ticket is invalid', 'BOOTSTRAP_TICKET_INVALID')
 
     def short_url_bootstrap_available(self, raw_ticket):
-        """Return True when GET /i/<ticket> may emit a bootstrap script.
+        """Return True only for a short handle when GET /i/<handle> is valid.
 
         Read-only: never binds machine ID, never sets completed_at, never
         mutates enrollment/bootstrap records.
         """
+        if ZT is None or not ZT.COMPACT_CREDENTIAL_RE.fullmatch(str(raw_ticket or '')):
+            return False
         _ticket_id, record, _path, matched = load_presented_bootstrap(
             self.bootstrap_dir,
             raw_ticket if isinstance(raw_ticket, str) else '',
@@ -2334,9 +2336,11 @@ class Allocator:
     def _credential_for_stage1(self, presented):
         """Internal bt1 embedded in a served stage-1 script.
 
-        New records recover it from bt1_wrapped. Legacy records use the
-        presented bt1. A short handle is never the stage-1 credential.
+        The short handle resolves only a valid wrapped internal bt1.
+        Legacy plaintext/raw-ticket short-URL compatibility is not supported.
         """
+        if ZT is None or not ZT.COMPACT_CREDENTIAL_RE.fullmatch(str(presented or '')):
+            return None
         _ticket_id, record, _path, matched = load_presented_bootstrap(
             self.bootstrap_dir,
             presented if isinstance(presented, str) else '',
@@ -2344,22 +2348,17 @@ class Allocator:
         )
         if not matched or not isinstance(record, dict):
             return None
-        if isinstance(record.get('bt1_wrapped'), dict):
-            raw = unwrap_bootstrap_ticket(
-                record.get('bt1_wrapped'),
-                bootstrap_wrap_secret(
-                    {'token_file': getattr(self, 'token_file', '')},
-                    self.bootstrap_dir,
-                    create=False,
-                ),
-            )
-            if not bootstrap_wrap_matches_record(raw, record):
-                return None
-            return raw
-        parsed = parse_bootstrap_ticket(presented if isinstance(presented, str) else '')
-        if parsed and parsed[0] == str(record.get('id') or '').strip().lower():
-            return presented.strip()
-        return None
+        if not isinstance(record.get('bt1_wrapped'), dict):
+            return None
+        raw = unwrap_bootstrap_ticket(
+            record['bt1_wrapped'],
+            bootstrap_wrap_secret(
+                {'token_file': getattr(self, 'token_file', '')},
+                self.bootstrap_dir,
+                create=False,
+            ),
+        )
+        return raw if bootstrap_wrap_matches_record(raw, record) else None
 
     def build_short_url_script(self, raw_ticket, platform='linux'):
         """Build the generic short-URL bootstrap script, or None on failure."""
@@ -2518,6 +2517,10 @@ class Allocator:
                     if not parsed or not hmac.compare_digest(provided_hash, stored_hash):
                         return self._invalid_ticket_response()
                     if not isinstance(record, dict):
+                        return self._invalid_ticket_response()
+                    # Only records issued with the current protected short-handle
+                    # flow are redeemable. Old unwrapped records are unsupported.
+                    if not isinstance(record.get('bt1_wrapped'), dict):
                         return self._invalid_ticket_response()
 
                     now = int(time.time())

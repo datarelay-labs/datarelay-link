@@ -113,6 +113,9 @@ def main(argv=None):
     ca_fp = create.fingerprint_from_cert(ca_path)
     if not allocator_url.lower().startswith('https://') or not installer or not ca_fp:
         raise SystemExit('ERROR: secure allocator URL, installer URL, and CA fingerprint are required')
+    compact_host, private_ip_plan = create.validate_zero_touch_prerequisites(
+        cfg, 'linux', installer, ca_fp
+    )
     server_cfg = create.remapped_server_cfg(cfg)
     enrollments = Path(server_cfg['enrollments_dir'])
     bootstrap = Path(server_cfg['bootstrap_dir'])
@@ -189,32 +192,21 @@ def main(argv=None):
         for index, (ticket, enroll_record, ticket_record) in enumerate(issued_pairs):
             label, ssh_user, note, services = validated[index]
             ticket_id = str(ticket_record.get('id') or '')
-            if isinstance(ticket_record, dict):
-                ticket_record.pop('_short_handle', None)
-            try:
-                package = create.encode_zero_touch_package(allocator_url, ca_fp, ticket)
-                zt_mod = create._zt()
-                if zt_mod is None:
-                    raise ValueError('zero-touch helper is unavailable')
-                command = zt_mod.pinned_ca_linux_command(
-                    installer, allocator_url, ca_fp, package
+            short_handle = str(ticket_record.pop('_short_handle', '') or '')
+            zt_mod = create._zt()
+            if zt_mod is None or not short_handle:
+                raise RuntimeError('compact Zero-Touch generator or handle unavailable')
+            if private_ip_plan:
+                command = zt_mod.private_ca_ip_linux_command(
+                    allocator_url, ca_fp, short_handle
                 )
-            except ValueError:
-                env = [
-                    'FRP_ALLOCATOR_URL=' + create.shell_quote(allocator_url),
-                    'FRP_ALLOCATOR_CA_SHA256=' + create.shell_quote(ca_fp),
-                    'FRP_BOOTSTRAP_TICKET=' + create.shell_quote(ticket),
-                    'FRP_ZERO_TOUCH=1',
-                ]
-                if ssh_user:
-                    env.append('FRP_SSH_USER=' + create.shell_quote(ssh_user))
-                else:
-                    env.append('FRP_MANAGEMENT_ONLY=1')
-                zt_mod = create._zt()
-                if zt_mod is None:
-                    raise RuntimeError('zero-touch helper is unavailable')
-                command = zt_mod.pinned_ca_manual_linux_command(
-                    installer, allocator_url, ca_fp, env
+                limit = 900
+            else:
+                command = zt_mod.short_url_command(compact_host, short_handle)
+                limit = 200
+            if len(command) > limit:
+                raise RuntimeError(
+                    'compact Zero-Touch command exceeds %s characters' % limit
                 )
             # Public inventory deduplicates the paired enrollment by the
             # *bootstrap ticket ID*. Emit that selector (not the internal

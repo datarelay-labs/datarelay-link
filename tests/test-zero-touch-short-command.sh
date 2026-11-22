@@ -1,50 +1,24 @@
 #!/usr/bin/env bash
-# Short Zero-Touch opaque package encode/decode and command shape.
+# Zero-Touch short-handle launcher and direct environment.
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 pass() { echo "PASS $1"; }
 fail() { echo "FAIL $1" >&2; exit 1; }
 
-python3 - "$ROOT/tools/frp-create-client" <<'PY' || fail "package round-trip"
-import importlib.machinery
-import importlib.util
-import sys
-from pathlib import Path
-
-path = Path(sys.argv[1])
-spec = importlib.util.spec_from_file_location(
-    "frp_create_client",
-    path,
-    loader=importlib.machinery.SourceFileLoader("frp_create_client", str(path)),
-)
-mod = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(mod)
-
-url = "https://203.0.113.10/enroll"
-ca = "a" * 64
-ticket = "bt1." + ("b" * 16) + "." + ("c" * 64)
-package = mod.encode_zero_touch_package(url, ca, ticket)
-assert package.startswith("zt1."), package
-got_url, got_ca, got_ticket = mod.decode_zero_touch_package(package)
-assert got_url == url
-assert got_ca == ca
-assert got_ticket == ticket
-
+python3 - "$ROOT/lib/frp_zero_touch.py" <<'PYCODE'
+import importlib.util,sys
+spec=importlib.util.spec_from_file_location('zt',sys.argv[1])
+zt=importlib.util.module_from_spec(spec);spec.loader.exec_module(zt)
+handle='A'*22
+assert len(zt.short_url_command('bootstrap.example.test',handle))<=200
 try:
-    mod.encode_zero_touch_package("http://example", ca, ticket)
-    raise SystemExit("accepted http allocator")
+    zt.short_url_command('bootstrap.example.test','bt1.'+'a'*16+'.'+'b'*64)
+    raise AssertionError('accepted raw ticket in public /i/ URL')
 except ValueError:
     pass
-try:
-    mod.decode_zero_touch_package("zt1.!!!!")
-    raise SystemExit("accepted garbage")
-except ValueError:
-    pass
-print("OK")
-PY
-pass "ZERO_TOUCH_PACKAGE_ROUNDTRIP"
-
+PYCODE
+pass 'ZERO_TOUCH_SHORT_HANDLE_ONLY'
 WORKDIR="$(mktemp -d)"
 trap 'rm -rf "$WORKDIR"' EXIT
 TREE="$WORKDIR/tree"
@@ -75,6 +49,7 @@ cfg = {
   "enrollments_dir": str(tree / "var/lib/drlink/enrollments"),
   "bootstrap_dir": str(tree / "var/lib/drlink/bootstrap"),
   "registry_file": str(tree / "var/lib/drlink/registry.json"),
+  "bootstrap_hostname": "bootstrap.example.test",
 }
 Path(sys.argv[1]).write_text(json.dumps(cfg, indent=2) + "\n")
 (tree / "var/lib/drlink/registry.json").write_text(
@@ -87,9 +62,8 @@ OUT="$WORKDIR/one-line.out"
 python3 "$ROOT/tools/frp-create-client" --one-line --client-name short-zt --note 'pkg' \
   >"$OUT" || { cat "$OUT"; fail "create one-line"; }
 grep -q 'Zero-touch Agent command' "$OUT" || fail "header"
-grep -q "curl -fsSL --proto =https --cacert" "$OUT" || { cat "$OUT"; fail "pinned installer curl missing"; }
-grep -q '/ca.crt' "$OUT" || { cat "$OUT"; fail "ca.crt bootstrap missing"; }
-grep -q 'zt1\.' "$OUT" || { cat "$OUT"; fail "zt1 package missing"; }
+grep -q 'https://bootstrap.example.test/i/' "$OUT" || fail "short URL missing"
+if grep -q 'zt1\.' "$OUT"; then fail "legacy package emitted"; fi
 if grep -qiE 'curl -fsSL --insecure .*/bootstrap-client|curl -k .*/bootstrap-client' "$OUT"; then
   fail "insecure TLS on installer fetch"
 fi
@@ -102,20 +76,11 @@ pass "ZERO_TOUCH_SHORT_COMMAND_SHAPE"
 source "$ROOT/lib/frp-common.sh"
 # shellcheck source=/dev/null
 source "$ROOT/lib/frp-client-common.sh"
-PACKAGE="$(python3 - "$OUT" <<'PY'
-import re, sys
-from pathlib import Path
-text = Path(sys.argv[1]).read_text()
-m = re.search(r"zt1\.[A-Za-z0-9_-]+", text)
-assert m, text
-print(m.group(0))
-PY
-)"
-frp_zero_touch_apply_package "$PACKAGE" || fail "apply package"
-[[ "${FRP_ZERO_TOUCH}" == "1" ]] || fail "ZERO_TOUCH not set"
-[[ -n "${FRP_BOOTSTRAP_TICKET}" ]] || fail "ticket missing"
-[[ "${FRP_ALLOCATOR_URL}" == https://* ]] || fail "allocator url"
-[[ "${#FRP_ALLOCATOR_CA_SHA256}" -eq 64 ]] || fail "ca pin length"
-pass "ZERO_TOUCH_PACKAGE_APPLY"
-
+FRP_ALLOCATOR_URL='https://203.0.113.10/enroll'
+FRP_ALLOCATOR_CA_SHA256="$(printf 'a%.0s' {1..64})"
+FRP_BOOTSTRAP_TICKET="bt1.$(printf 'b%.0s' {1..16}).$(printf 'c%.0s' {1..64})"
+FRP_ZERO_TOUCH=1
+export FRP_ALLOCATOR_URL FRP_ALLOCATOR_CA_SHA256 FRP_BOOTSTRAP_TICKET FRP_ZERO_TOUCH
+frp_zero_touch_require_inputs || fail 'direct bootstrap environment rejected'
+pass 'ZERO_TOUCH_DIRECT_ENV'
 echo "ZERO_TOUCH_SHORT_COMMAND_TEST=PASS"

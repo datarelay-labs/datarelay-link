@@ -32,7 +32,7 @@ class ZeroTouchDocContract(unittest.TestCase):
         self.assertNotIn('Short URL mode is **opt-in** through `bootstrap_hostname`', short)
         self.assertNotIn('Without it, Linux/macOS and Windows Zero-Touch commands use the pinned-CA', master)
         self.assertIn('before', short.lower())
-        self.assertIn('--long-bootstrap', short)
+        self.assertNotIn('--long-bootstrap', short)
 
     def test_help_and_real_e2e_cannot_reassert_automatic_long_fallback(self):
         # These public surfaces previously contradicted the compact-default
@@ -75,7 +75,7 @@ class ZeroTouchDocContract(unittest.TestCase):
         # Older 116-ID E2E and its generated 100-ID profile intentionally
         # retain scenario IDs and checksum parity; this focused policy lives
         # in the new normative regression contract until next full gate revision.
-        self.assertIn('long-bootstrap', short)
+        self.assertNotIn('long-bootstrap', short)
         self.assertIn(ID, cli)
         self.assertIn('no ticket', cli.lower())
 
@@ -128,7 +128,7 @@ class ZeroTouchDocContract(unittest.TestCase):
                      'test-zero-touch-short-url.sh'):
             self.assertIn(name, fast)
         self.assertIn('DEFAULT_NO_SILENT_LONG_COMMAND', public_tests)
-        self.assertIn('ZT1_EXPLICIT_ADVANCED_LONG_MODE', public_tests)
+        self.assertIn('LEGACY_LONG_FORM_REMOVED', public_tests)
         self.assertNotIn('pass "ZT1_FALLBACK_ABSENT_HOSTNAME"', public_tests)
 
 

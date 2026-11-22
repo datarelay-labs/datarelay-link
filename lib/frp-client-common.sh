@@ -2499,58 +2499,6 @@ frp_zero_touch_active() {
   [[ "${FRP_ZERO_TOUCH:-}" == "1" ]] || [[ -n "${FRP_BOOTSTRAP_TICKET:-}" ]]
 }
 
-frp_zero_touch_apply_package() {
-  # Decode opaque zt1.<payload> from short Zero-Touch command into env vars.
-  # Never uses insecure TLS; CA pin and allocator URL come from the package.
-  local package="${1:-}"
-  local decoded
-  if [[ -z "$package" ]]; then
-    echo "ERROR: zero-touch package is empty." >&2
-    frp_emit_failure_class ZERO_TOUCH_INPUT_INVALID
-    return 1
-  fi
-  if ! decoded="$(python3 - "$package" <<'PY'
-import base64
-import json
-import sys
-
-text = sys.argv[1].strip()
-parts = text.split('.', 1)
-if len(parts) != 2 or parts[0] != 'zt1' or not parts[1]:
-    raise SystemExit('invalid zero-touch package')
-padded = parts[1] + ('=' * (-len(parts[1]) % 4))
-try:
-    raw = base64.urlsafe_b64decode(padded.encode('ascii'))
-    payload = json.loads(raw.decode('utf-8'))
-except Exception:
-    raise SystemExit('invalid zero-touch package')
-if not isinstance(payload, dict) or int(payload.get('v') or 0) != 1:
-    raise SystemExit('unsupported zero-touch package version')
-url = str(payload.get('u') or '').strip()
-ca = str(payload.get('c') or '').strip().lower()
-ticket = str(payload.get('t') or '').strip()
-if not url.lower().startswith('https://') or len(ca) != 64 or not ticket:
-    raise SystemExit('incomplete zero-touch package')
-if any(ch not in '0123456789abcdef' for ch in ca):
-    raise SystemExit('invalid CA fingerprint in zero-touch package')
-# Emit shell-safe assignments (no secrets in argv of subsequent tools beyond env).
-def sh_quote(value):
-    return "'" + str(value).replace("'", "'\"'\"'") + "'"
-print('FRP_ALLOCATOR_URL=%s' % sh_quote(url))
-print('FRP_ALLOCATOR_CA_SHA256=%s' % sh_quote(ca))
-print('FRP_BOOTSTRAP_TICKET=%s' % sh_quote(ticket))
-print('FRP_ZERO_TOUCH=1')
-PY
-)"; then
-    echo "ERROR: invalid zero-touch package." >&2
-    frp_emit_failure_class ZERO_TOUCH_INPUT_INVALID
-    return 1
-  fi
-  eval "$decoded"
-  export FRP_ALLOCATOR_URL FRP_ALLOCATOR_CA_SHA256 FRP_BOOTSTRAP_TICKET FRP_ZERO_TOUCH
-  return 0
-}
-
 frp_zero_touch_require_inputs() {
   if [[ -z "${FRP_BOOTSTRAP_TICKET:-}" ]]; then
     echo "ERROR: zero-touch setup requires FRP_BOOTSTRAP_TICKET." >&2

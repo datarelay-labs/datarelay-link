@@ -123,98 +123,14 @@ fi
 grep -q 'No enrollment ticket was issued' "$WORKDIR/missing-compact.err" \
   || fail "Compact HTTPS prerequisite was not actionable"
 pass "DEFAULT_NO_SILENT_LONG_COMMAND"
-OUT_ZT1="$WORKDIR/zt1.out"
-python3 "$ROOT/tools/frp-create-client" --one-line --long-bootstrap --client-name mgmt-only --note 'n1' \
-  >"$OUT_ZT1" || fail "one-line without bootstrap hostname"
-grep -q "curl -fsSL --proto =https --cacert" "$OUT_ZT1" \
-  || { cat "$OUT_ZT1"; fail "zt1 fallback missing"; }
-grep -q 'zt1\.' "$OUT_ZT1" || { cat "$OUT_ZT1"; fail "zt1 package missing"; }
-if grep -q '/i/' "$OUT_ZT1"; then
-  fail "short URL unexpectedly printed without bootstrap_hostname"
+# The retired long-form option is never an alternative when bootstrap trust is absent.
+if python3 "$ROOT/tools/frp-create-client" --one-line --long-bootstrap --client-name rejected-old-mode \
+  >"$WORKDIR/legacy.out" 2>"$WORKDIR/legacy.err"; then
+  fail "removed long-form issuance option was accepted"
 fi
-pass "ZT1_EXPLICIT_ADVANCED_LONG_MODE"
-
-# Explicit advanced --long-bootstrap must retain pinned-CA integrity; plain DNS alone does not bypass trust qualification.
-python3 - "$TREE/etc/drlink/config.json" <<'PY' || fail "set public_url_host domain"
-import json, sys
-from pathlib import Path
-path = Path(sys.argv[1])
-cfg = json.loads(path.read_text())
-cfg.pop('bootstrap_hostname', None)
-cfg['public_hostname'] = 'remote.xdr.ooo'
-cfg['public_url_host'] = 'remote.xdr.ooo'
-cfg['allocator_public_url'] = 'https://remote.xdr.ooo:%s/enroll' % (
-    cfg.get('allocator_listen_port') or cfg.get('listen_port')
-)
-path.write_text(json.dumps(cfg, indent=2) + "\n")
-PY
-OUT_DOMAIN="$WORKDIR/domain-fallback.out"
-python3 "$ROOT/tools/frp-create-client" --one-line --long-bootstrap --client-name domain-fallback --note 'dns' \
-  >"$OUT_DOMAIN" || fail "one-line with public_url_host domain"
-grep -q "curl -fsSL --proto =https --cacert" "$OUT_DOMAIN" \
-  || { cat "$OUT_DOMAIN"; fail "domain public_url_host missing pinned-CA fallback"; }
-grep -q 'zt1\.' "$OUT_DOMAIN" \
-  || { cat "$OUT_DOMAIN"; fail "domain public_url_host missing zt1 package"; }
-if grep -q '/i/' "$OUT_DOMAIN"; then
-  cat "$OUT_DOMAIN"
-  fail "public_url_host incorrectly enabled short URL without bootstrap_hostname"
-fi
-pass "PUBLIC_URL_HOST_DOMAIN_EXPLICIT_LONG_MODE"
-
-OUT_DOMAIN_WINDOWS="$WORKDIR/domain-windows-fallback.out"
-python3 "$ROOT/tools/frp-create-client" --one-line --long-bootstrap --platform windows --rdp \
-  --client-name domain-win-fallback --note 'dns-win' >"$OUT_DOMAIN_WINDOWS" \
-  || fail "Windows one-line with public_url_host domain"
-# Windows now transports the hash-before-execute script as UTF-16LE
-# -EncodedCommand. Validate the decoded source without echoing the embedded
-# one-time credential in failed-test logs (F001 regression).
-python3 - "$OUT_DOMAIN_WINDOWS" <<'PY' || fail "Windows private-CA fallback missing pinned command or security gates"
-import base64
-import re
-import sys
-from pathlib import Path
-output = Path(sys.argv[1]).read_text(encoding='utf-8')
-match = re.search(
-    r'powershell\.exe -NoProfile -ExecutionPolicy Bypass -EncodedCommand ([A-Za-z0-9+/=]+)',
-    output,
-)
-assert match, 'Windows launcher must be an encoded PowerShell command'
-inner = base64.b64decode(match.group(1), validate=True).decode('utf-16le')
-assert 'CA fingerprint mismatch' in inner, 'pinned CA fingerprint validation missing'
-assert 'FRP_ALLOCATOR_CA_SHA256' in inner, 'CA pin environment missing'
-assert 'SHA256 mismatch' in inner, 'installer hash validation missing'
-assert 'powershell.exe -NoProfile -ExecutionPolicy Bypass -File' in inner
-assert 'bootstrap-client.ps1' in inner, 'installer target missing'
-PY
-if grep -q '/i/' "$OUT_DOMAIN_WINDOWS"; then
-  cat "$OUT_DOMAIN_WINDOWS"
-  fail "Windows public_url_host incorrectly enabled short URL without bootstrap_hostname"
-fi
-pass "WINDOWS_EXPLICIT_LONG_MODE_PINNED_CA"
-
-# IP-selected public_url_host must not invent short URL from public_hostname.
-python3 - "$TREE/etc/drlink/config.json" <<'PY' || fail "set public_url_host IP"
-import json, sys
-from pathlib import Path
-path = Path(sys.argv[1])
-cfg = json.loads(path.read_text())
-cfg.pop('bootstrap_hostname', None)
-cfg['public_hostname'] = 'remote.xdr.ooo'
-cfg['public_url_host'] = '203.0.113.10'
-cfg['allocator_public_url'] = 'https://203.0.113.10:%s/enroll' % (
-    cfg.get('allocator_listen_port') or cfg.get('listen_port')
-)
-path.write_text(json.dumps(cfg, indent=2) + "\n")
-PY
-OUT_IP_ID="$WORKDIR/ip-identity.out"
-python3 "$ROOT/tools/frp-create-client" --one-line --long-bootstrap --client-name ip-identity --note 'ip' \
-  >"$OUT_IP_ID" || fail "one-line with public_url_host IP"
-grep -q "curl -fsSL --proto =https --cacert" "$OUT_IP_ID" \
-  || { cat "$OUT_IP_ID"; fail "IP identity should use pinned long command"; }
-if grep -q '/i/' "$OUT_IP_ID"; then
-  fail "IP public_url_host unexpectedly printed short URL"
-fi
-pass "PUBLIC_URL_HOST_IP_ADVANCED_ONLY"
+grep -q 'unrecognized arguments' "$WORKDIR/legacy.err" \
+  || fail "retired option must be rejected"
+pass "LEGACY_LONG_FORM_REMOVED"
 
 python3 "$ROOT/tools/frp-server-set" bootstrap-hostname bootstrap.example.com >/dev/null
 
@@ -330,7 +246,8 @@ assert d.get('completed_at') in (None, ''), d
 assert d.get('bound_machine_id') in (None, ''), d
 print('ok')
 PY
-grep -q 'zt1\.' "$SCRIPT1" || fail "script missing zt1 package"
+grep -q 'FRP_BOOTSTRAP_TICKET=' "$SCRIPT1" || fail "stage1 missing ticket environment"
+! grep -q 'PACKAGE=' "$SCRIPT1" || fail "obsolete package in stage1"
 grep -q 'Data Relay Link' "$SCRIPT1" || fail "script header"
 if grep -qiE 'curl -k|curl --insecure|wget --no-check-certificate' "$SCRIPT1"; then
   fail "short URL script contains insecure TLS"
@@ -391,19 +308,12 @@ grep -E 'GET /i/<redacted>|/i/<redacted>' "$ALLOC_LOG" \
 pass "URL_LOG_REDACTION"
 
 BT1="$(python3 - "$SCRIPT1" <<'PY'
-import base64, json, re, sys
+import re,sys
 from pathlib import Path
-text = Path(sys.argv[1]).read_text()
-m = re.search(r"zt1\.[A-Za-z0-9_-]+", text)
-if not m:
-    raise SystemExit('linux stage1 missing zt1')
-enc = m.group(0).split('.', 1)[1]
-enc += '=' * ((4 - len(enc) % 4) % 4)
-payload = json.loads(base64.urlsafe_b64decode(enc.encode('ascii')).decode('utf-8'))
-ticket = payload.get('t') or ''
-if not ticket.startswith('bt1.'):
-    raise SystemExit('stage1 credential is not internal bt1')
-print(ticket)
+script=Path(sys.argv[1]).read_text()
+match=re.search(r"^FRP_BOOTSTRAP_TICKET='(bt1\.[0-9a-f]{16}\.[0-9a-f]{64})'$",script,re.M)
+assert match, 'stage1 must provide internal ticket directly'
+print(match.group(1))
 PY
 )" || fail "served stage1 missing internal bt1"
 [[ "$BT1" != "$TICKET" ]] || fail "served stage1 reused the short handle"
@@ -513,21 +423,14 @@ TICKET3_FILE="$TREE/var/lib/drlink/bootstrap/${TICKET3_ID}.json"
 curl -fsSk "https://127.0.0.1:${FRP_TEST_ALLOC_PORT}/i/${TICKET3}" -o "$WORKDIR/script3.sh" \
   || fail "GET done ticket"
 BT1_DONE="$(python3 - "$WORKDIR/script3.sh" <<'PY'
-import base64, json, re, sys
+import re,sys
 from pathlib import Path
-text = Path(sys.argv[1]).read_text()
-m = re.search(r"zt1\.[A-Za-z0-9_-]+", text)
-if not m:
-    raise SystemExit('done stage1 missing zt1')
-enc = m.group(0).split('.', 1)[1]
-enc += '=' * ((4 - len(enc) % 4) % 4)
-payload = json.loads(base64.urlsafe_b64decode(enc.encode('ascii')).decode('utf-8'))
-ticket = payload.get('t') or ''
-if not ticket.startswith('bt1.'):
-    raise SystemExit('done stage1 credential is not internal bt1')
-print(ticket)
+script=Path(sys.argv[1]).read_text()
+match=re.search(r"^FRP_BOOTSTRAP_TICKET='(bt1\.[0-9a-f]{16}\.[0-9a-f]{64})'$",script,re.M)
+assert match, 'stage1 must provide internal ticket directly'
+print(match.group(1))
 PY
-)" || fail "done stage1 missing internal bt1"
+)" || fail "served stage1 missing internal bt1"
 python3 - "$BT1_DONE" "$FRP_TEST_ALLOC_PORT" <<'PY' || fail "complete redeem"
 import json
 import ssl
@@ -652,7 +555,7 @@ win = mod.render_short_url_windows_bootstrap_script(
     "bt1." + ("b" * 16) + "." + ("c" * 64),
     "https://bootstrap.example.com/artifacts/agent/bootstrap-client.ps1",
 )
-cmd = mod.short_url_command("bootstrap.example.com", "bt1." + ("b" * 16) + "." + ("c" * 64))
+cmd = mod.short_url_command("bootstrap.example.com", "A" * 22)
 blob = "\n".join([script, win, cmd])
 if "insecure" in blob or "curl -k" in blob or "no-check-certificate" in blob:
     raise SystemExit("insecure TLS in short URL helper")

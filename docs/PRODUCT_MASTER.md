@@ -237,8 +237,7 @@ verifies the fetched public CA certificate fingerprint **before** sending any
 one-time credential and uses strict TLS for subsequent requests. Neither DNS
 nor a third-party public certificate is mandatory. If neither safe path is
 configured, fail before the service wizard and ticket issuance. Never silently
-emit a multi-kilobyte `zt1` package. The advanced long bootstrap remains
-explicit opt-in and optional SSH login metadata stays optional.
+emit a multi-kilobyte `zt1` package. Long-form Zero-Touch issuance and decoding are removed. Optional SSH login metadata stays optional.
 
 Linux/macOS and Windows must share this behavior, while Windows checks the
 downloaded stage-1 hash before running it. Signed Zero-Touch LAN destinations

@@ -522,7 +522,7 @@ spec.loader.exec_module(mod)
 
 domain_cfg = json.loads(Path(sys.argv[2]).read_text())
 ip_cfg = json.loads(Path(sys.argv[3]).read_text())
-ticket = 'bt1.' + ('a' * 16) + '.' + ('b' * 64)
+ticket = 'A' * 22
 
 # public_url_host/public_hostname alone do not prove publicly trusted 443.
 assert S.short_url_hostname(domain_cfg) == ''

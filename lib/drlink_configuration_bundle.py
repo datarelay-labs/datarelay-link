@@ -262,7 +262,7 @@ def _walk_forbid_secrets(node: Any, path: str = "") -> None:
                         "No changes were applied."
                         % child
                     )
-                if v.startswith("bt1.") or v.startswith("zt1."):
+                if v.startswith("bt1."):
                     raise BundleError(
                         "Bundle contains prohibited ticket material: %s\n"
                         "No changes were applied."

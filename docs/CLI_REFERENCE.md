@@ -157,9 +157,8 @@ set mcp-tls acme-directory <URL>
 qualified public HTTPS hostname or a direct numeric IP allocator whose Private
 CA fingerprint and Server certificate IP SAN are verified. DNS is optional.
 If neither path qualifies, it reports a prerequisite error **before** the
-service wizard and ticket issuance, never silently emitting a long `zt1` line. A deliberate backend advanced option,
-`frp-create-client --one-line --long-bootstrap`, exists for private-CA
-installations but is not another public `drlink` grammar. Optional SSH
+service wizard and ticket issuance, never silently emitting a long `zt1` line. The legacy long-form Zero-Touch generator has been removed. A private-CA
+installation uses a CA-pinned numeric-IP launcher or fails before issuing a ticket. Optional SSH
 username is only a connection hint; blank is valid. See
 `docs/ZERO_TOUCH_REGRESSION_CONTROL.md` for security/length/E2E gates.
 
