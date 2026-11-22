@@ -527,8 +527,10 @@ def private_ca_ip_bootstrap_plan(cfg, ca_fp):
     try:
         actual = ipaddress.ip_address(endpoint[1].strip('[]'))
         for field in ('public_ip', 'public_url_host'):
-            if cfg.get(field) and ipaddress.ip_address(str(cfg[field]).strip()) != actual:
-                return None
+            if field in cfg:
+                value = str(cfg[field] or '').strip()
+                if not value or ipaddress.ip_address(value) != actual:
+                    return None
     except ValueError:
         return None
     ca = remap(str(cfg.get('tls_ca_cert') or '/etc/drlink/pki/ca.crt'))
