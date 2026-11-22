@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import argparse
+import ipaddress
 import importlib.util
 import json
 import os
@@ -520,6 +521,15 @@ def private_ca_ip_bootstrap_plan(cfg, ca_fp):
     allocator = str(cfg.get('allocator_public_url') or '').strip()
     endpoint = zt.private_ca_ip_endpoint(allocator)
     if endpoint is None:
+        return None
+    # A numeric URL must agree with the Server's selected public identity.
+    # Do not silently swap authorities between /i/, /artifacts and /enroll.
+    try:
+        actual = ipaddress.ip_address(endpoint[1].strip('[]'))
+        for field in ('public_ip', 'public_url_host'):
+            if cfg.get(field) and ipaddress.ip_address(str(cfg[field]).strip()) != actual:
+                return None
+    except ValueError:
         return None
     ca = remap(str(cfg.get('tls_ca_cert') or '/etc/drlink/pki/ca.crt'))
     leaf = remap(str(cfg.get('tls_server_cert') or '/etc/drlink/pki/server.crt'))
