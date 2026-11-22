@@ -1317,13 +1317,19 @@ def print_one_line_windows(
     ticket, ttl, note, public_host, control_public, allocator, ca_fp,
     installer, rdp_port=None, client_name='', management_only=False,
     ticket_id='', bootstrap_hostname='', public_hostname='', cfg=None,
-    short_handle='', stage1_sha256='', private_ip_plan=None, require_compact=False
+    short_handle='', stage1_sha256='', private_ip_plan=None, require_compact=False,
+    qualified_host=None
 ):
     zt = _zt()
     command = ''
-    bootstrap_host = short_url_host_for_cfg(
-        cfg, bootstrap_hostname=bootstrap_hostname, public_hostname=public_hostname
-    )
+    # The issuing preflight already selected and verified a single HTTPS
+    # identity. Never re-probe or silently change trust mode after ticket
+    # issuance. Standalone internal renderers retain legacy call semantics.
+    bootstrap_host = (qualified_host if qualified_host is not None else
+                      short_url_host_for_cfg(
+                          cfg, bootstrap_hostname=bootstrap_hostname,
+                          public_hostname=public_hostname
+                      ))
     if private_ip_plan:
         if not zt:
             fail('pinned Private CA bootstrap helper unavailable')
@@ -1454,7 +1460,7 @@ def print_one_line_windows(
     print()
 
 
-def print_one_line(ticket, ttl, note, public_host, control_public, allocator, ca_fp, installer, ssh_user, ssh_port, client_name='', management_only=False, ticket_id='', legacy_env=False, bootstrap_hostname='', public_hostname='', cfg=None, short_handle='', private_ip_plan=None, require_compact=False):
+def print_one_line(ticket, ttl, note, public_host, control_public, allocator, ca_fp, installer, ssh_user, ssh_port, client_name='', management_only=False, ticket_id='', legacy_env=False, bootstrap_hostname='', public_hostname='', cfg=None, short_handle='', private_ip_plan=None, require_compact=False, qualified_host=None):
     tracking_id = str(ticket_id or '').strip()
     if not tracking_id and ticket:
         zt_id = _zt()
@@ -1464,9 +1470,14 @@ def print_one_line(ticket, ttl, note, public_host, control_public, allocator, ca
     # Default compact modes are qualified public HTTPS or numeric IP with
     # pinned Private CA. The legacy long package is explicit opt-in only.
     command = ''
-    bootstrap_host = short_url_host_for_cfg(
-        cfg, bootstrap_hostname=bootstrap_hostname, public_hostname=public_hostname
-    )
+    # The issuing preflight already selected and verified a single HTTPS
+    # identity. Never re-probe or silently change trust mode after ticket
+    # issuance. Standalone internal renderers retain legacy call semantics.
+    bootstrap_host = (qualified_host if qualified_host is not None else
+                      short_url_host_for_cfg(
+                          cfg, bootstrap_hostname=bootstrap_hostname,
+                          public_hostname=public_hostname
+                      ))
     if private_ip_plan and not legacy_env:
         zt = _zt()
         if zt is None:
@@ -1813,6 +1824,7 @@ def main(argv=None):
             stage1_sha256=stage1_sha256,
             private_ip_plan=private_ip_plan,
             require_compact=not a.long_bootstrap,
+            qualified_host=compact_host,
         )
     else:
         print_one_line(
@@ -1835,6 +1847,7 @@ def main(argv=None):
             short_handle=short_handle,
             private_ip_plan=private_ip_plan,
             require_compact=not a.long_bootstrap,
+            qualified_host=compact_host,
         )
     try:
         here = Path(__file__).resolve()
