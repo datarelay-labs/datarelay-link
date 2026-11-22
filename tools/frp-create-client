@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import argparse
+import ipaddress
 import importlib.util
 import json
 import os
@@ -507,20 +508,44 @@ def short_url_host_for_cfg(cfg, bootstrap_hostname='', public_hostname=''):
 
 
 def private_ca_ip_bootstrap_plan(cfg, ca_fp):
-    """Allow a DNS-free short command only when local Server PKI is valid.
+    """Select a pinned-CA IP launcher without changing persisted URL identity.
 
-    This pre-ticket read checks the actual private CA, Server leaf chain and
-    numeric-IP SAN. The remote client independently pins the same CA before
-    sending its one-time credential. No DNS or CA-trust shortcut is implied.
+    If an FQDN public URL uses the Server's Private CA, stock OS trust cannot
+    verify it. Only the configured public IP with a matching Server leaf IP
+    SAN may qualify the compact IP bootstrap fallback. The canonical
+    allocator URL is never mutated, and the remote client pins the CA.
     """
     zt = load_zero_touch()
     pki = load_frp_pki()
     if zt is None or pki is None:
         return None
     allocator = str(cfg.get('allocator_public_url') or '')
-    endpoint = zt.private_ca_ip_endpoint(allocator)
+    bootstrap_allocator = allocator
+    endpoint = zt.private_ca_ip_endpoint(bootstrap_allocator)
     if endpoint is None:
-        return None
+        # Public URL identity may use a DNS hostname while the same Server
+        # also publishes HTTPS on its explicitly configured numeric IP.
+        # Construct an IP-only bootstrap URL for pin-verified enrollment.
+        try:
+            parsed = urlparse(allocator)
+            selected_host = str(cfg.get('public_url_host') or
+                                cfg.get('public_hostname') or '').strip().lower()
+            address = ipaddress.ip_address(str(cfg.get('public_ip') or '').strip())
+            port = parsed.port or 443
+            if (parsed.scheme != 'https' or not selected_host or
+                    parsed.hostname != selected_host or
+                    parsed.username is not None or parsed.password is not None or
+                    parsed.query or parsed.fragment or parsed.params or
+                    address.is_unspecified or address.is_multicast):
+                return None
+            ip_host = '[%s]' % address if address.version == 6 else str(address)
+            authority = ip_host if port == 443 else '%s:%s' % (ip_host, port)
+            bootstrap_allocator = 'https://%s%s' % (authority, parsed.path)
+            endpoint = zt.private_ca_ip_endpoint(bootstrap_allocator)
+        except (TypeError, ValueError):
+            return None
+        if endpoint is None:
+            return None
     ca = remap(str(cfg.get('tls_ca_cert') or '/etc/drlink/pki/ca.crt'))
     leaf = remap(str(cfg.get('tls_server_cert') or '/etc/drlink/pki/server.crt'))
     try:
@@ -537,8 +562,7 @@ def private_ca_ip_bootstrap_plan(cfg, ca_fp):
     except Exception:
         return None
     return {'mode': 'private_ca_ip', 'authority': endpoint[0],
-            'allocator': allocator, 'leaf_sha256': pki.fingerprint_from_cert_file(leaf)}
-
+            'allocator': bootstrap_allocator, 'leaf_sha256': pki.fingerprint_from_cert_file(leaf)}
 
 def validate_zero_touch_prerequisites(cfg, platform, installer, ca_fp, *, long_bootstrap=False):
     """Side-effect-free availability gate shared by guided + issuing CLI paths.
@@ -1212,7 +1236,7 @@ def print_one_line_windows(
             fail('pinned Private CA bootstrap helper unavailable')
         try:
             command = zt.private_ca_ip_windows_command(
-                allocator, ca_fp, stage1_sha256, short_handle
+                private_ip_plan['allocator'], ca_fp, stage1_sha256, short_handle
             )
         except (KeyError, ValueError) as exc:
             fail('unable to construct authenticated IP Windows bootstrap: %s' % exc)
@@ -1351,7 +1375,9 @@ def print_one_line(ticket, ttl, note, public_host, control_public, allocator, ca
         if zt is None:
             fail('pinned private CA bootstrap helper unavailable')
         try:
-            command = zt.private_ca_ip_linux_command(allocator, ca_fp, short_handle)
+            command = zt.private_ca_ip_linux_command(
+                private_ip_plan['allocator'], ca_fp, short_handle
+            )
         except ValueError as exc:
             fail('unable to construct secure IP bootstrap: %s' % exc)
     if bootstrap_host and not legacy_env and not private_ip_plan and (short_handle or not require_compact):
