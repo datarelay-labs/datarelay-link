@@ -120,14 +120,13 @@ def run_session(answers_after_confirm, label):
         os.kill(pid, 9)
         raise SystemExit("%s: no initial prompt: %r" % (label, buf[-400:]))
 
-    # Guided Zero-Touch: Linux -> name -> blank note -> SSH only -> optional user -> default port
+    # Guided Zero-Touch: Linux -> name -> blank note -> SSH only -> default port
     send(b"set enrollment zero-touch\n")
     steps = [
         (b"Platform", b"1\n"),
         (b"Managed Host name:", b"pty-confirm\n"),
         (b"Description", b"\n"),
         (b"SSH only", b"1\n"),
-        (b"SSH username [optional]:", b"aella\n"),
         (b"SSH port", b"\n"),
     ]
     for needle, reply in steps:

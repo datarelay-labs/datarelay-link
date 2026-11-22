@@ -17,7 +17,7 @@ class AliasProvenance(unittest.TestCase):
                           sha256='b' * 64, channel='development')
         provenance.update(overrides)
         return render_short_url_bootstrap_script(
-            'https://192.0.2.10:6099/enroll', 'c' * 64, 'A' * 22,
+            'https://192.0.2.10:6099/enroll', 'c' * 64, 'bt1.' + 'a' * 16 + '.' + 'b' * 64,
             'https://bootstrap.example.com/artifacts/agent/bootstrap-client.sh',
             qualified_provenance=provenance)
 

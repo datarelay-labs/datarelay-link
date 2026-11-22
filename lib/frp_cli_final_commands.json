@@ -265,18 +265,6 @@
         "platform": "linux"
       },
       {
-        "name": "--ssh-user",
-        "arity": 1,
-        "choices": [],
-        "hidden": true,
-        "required": false,
-        "description": "SSH login user for the ssh preset",
-        "metavar": "USER",
-        "examples": [],
-        "effect": "Required for non-interactive --ssh creation",
-        "risk": "metadata"
-      },
-      {
         "name": "--ssh-port",
         "arity": 1,
         "choices": [],
@@ -417,7 +405,7 @@
     "roles": "server",
     "category": "Onboarding",
     "summary": "Create enrollment codes in bulk",
-    "detail": "Open the reviewed count/CSV issuance wizard (at most 10 codes; at most 10 active unused codes). CSV is UTF-8 with header label,ssh_user,note, for example agent-a,operator,lab. A blank ssh_user is management-only; label and note may be blank. Default lifetime is 1 hour, maximum 24 hours. Review before issuance and keep the one-time codes private.",
+    "detail": "Open the reviewed count/CSV issuance wizard (at most 10 codes; at most 10 active unused codes). CSV is UTF-8 with header label,note, for example agent-a,lab. Bulk enrollment creates management-only hosts; SSH services are added separately without collecting a login username. Default lifetime is 1 hour, maximum 24 hours. Review before issuance and keep one-time codes private.",
     "examples": [
       "set enrollment bulk"
     ],
@@ -469,18 +457,6 @@
         "examples": [],
         "effect": "",
         "risk": ""
-      },
-      {
-        "name": "--ssh-user",
-        "arity": 1,
-        "choices": [],
-        "hidden": true,
-        "required": false,
-        "description": "SSH login user for ssh preset targets",
-        "metavar": "USER",
-        "examples": [],
-        "effect": "Required for ssh presets; shown in connect hints",
-        "risk": "metadata"
       },
       {
         "name": "--note",

@@ -24,7 +24,8 @@ Assert-FrpTrue ($boot -match 'Clear-FrpSecretEnv') 'secret env cleanup'
 
 $repo = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
 $create = Get-Content -LiteralPath (Join-Path $repo 'tools\frp-create-client') -Raw
-Assert-FrpTrue ($create -match '-File \$p -ZeroTouch') 'fallback Windows one-liner passes -ZeroTouch to -File'
+Assert-FrpTrue ($create -match 'windows_strict_launcher') 'Windows uses the hash-bound compact launcher'
+Assert-FrpTrue ($create -notmatch '--long-bootstrap|pinned_ca_windows_command|legacy_env') 'retired Windows long-form command must not return'
 $zt = Get-Content -LiteralPath (Join-Path $repo 'lib\frp_zero_touch.py') -Raw
 Assert-FrpTrue ($zt -match '-File \$installer -ZeroTouch') 'Short URL Windows bootstrap passes -ZeroTouch to -File'
 Assert-FrpTrue ($zt -match '\[System\.Security\.Cryptography\.X509Certificates\.X509VerificationFlags\]') 'generated pin uses WinPS-compatible X509VerificationFlags type'

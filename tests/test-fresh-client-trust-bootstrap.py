@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Fresh client with no private CA must still run the advertised Zero-Touch line.
 
-Stock ``curl -fsSL https://host/i/<ticket>`` fails when the enrollment host
+Stock ``curl -fsSL https://ip/i/<handle>`` fails when the enrollment host
 presents the project private CA. The advertised command has to succeed on that
 same client without --insecure and without a preinstalled CA.
 """
@@ -170,8 +170,10 @@ def main():
         if health.returncode == 0:
             raise SystemExit("stock healthz curl trusted a private CA")
 
-        command = zt.private_ca_fresh_client_command(
-            "127.0.0.1:%s" % port, TICKET, ca_pem
+        command = zt.private_ca_ip_linux_command(
+            origin + '/enroll',
+            hashlib.sha256(ssl.PEM_cert_to_DER_cert(ca_pem)).hexdigest(),
+            TICKET,
         )
         if "\n" in command.strip():
             raise SystemExit("advertised command is not one line")
@@ -179,7 +181,7 @@ def main():
             raise SystemExit("advertised command disables TLS verification")
         if "--cacert" not in command or bare_url not in command:
             raise SystemExit("advertised command does not pin the short URL: %s" % command)
-        if not command.startswith("sudo bash -c "):
+        if not command.startswith("bash -c "):
             raise SystemExit("advertised command is not the sudo one-liner")
 
         # Execute the displayed command unchanged.
@@ -197,29 +199,21 @@ def main():
             )
         if "unable to get local issuer certificate" in output.lower():
             raise SystemExit("advertised command still failed private-CA trust")
-        # The served legacy installer has no provenance verifier of its own.
-        # Qualified metadata must reach it; tampered bytes must never execute.
-        for direct in (False, True):
-            probe = zt.pinned_ca_linux_command(installer_url, origin + "/enroll", hashlib.sha256(ssl.PEM_cert_to_DER_cert(ca_pem)).hexdigest(), zt.encode_zero_touch_package(origin + "/enroll", "ab"*32, TICKET)) if direct else command
-            bodies["/artifacts/agent/bootstrap-client.sh"] = installer.encode()
-            accepted = subprocess.run(["bash", "-lc", probe], capture_output=True, text=True)
-            if accepted.returncode != 0 or "FRESH_CLIENT_TRUST_OK" not in accepted.stdout:
-                raise SystemExit("qualified old-style installer rejected: " + accepted.stderr)
-            for key, value in (("FRP_EXPECTED_SOURCE_HEAD", "c"*40), ("FRP_EXPECTED_RELEASE_CHANNEL", "stable")):
-                rejected = subprocess.run(["sudo", "env", key + "=" + value, *shlex.split(probe)[1:]],
-                                          capture_output=True, text=True)
-                if rejected.returncode == 0 or "SENTINEL_ENTRY" in rejected.stdout:
-                    raise SystemExit("mismatched requested identity executed installer: " + key)
-            manual = zt.pinned_ca_manual_linux_command(installer_url, origin + '/enroll',
-                hashlib.sha256(ssl.PEM_cert_to_DER_cert(ca_pem)).hexdigest(),
-                ["FRP_EXPECTED_RELEASE_CHANNEL=stable"])
-            rejected = subprocess.run(["bash", "-lc", manual], capture_output=True, text=True)
+        # The direct stage-1 still enforces immutable candidate provenance.
+        (tmp / "ca.crt").write_text(ca_pem)
+        for key, value in (("FRP_EXPECTED_SOURCE_HEAD", "c"*40),
+                           ("FRP_EXPECTED_RELEASE_CHANNEL", "stable")):
+            rejected = subprocess.run(
+                ["bash", "-c", script], capture_output=True, text=True,
+                env={**os.environ, key:value,
+                     "FRP_ALLOCATOR_CA_FILE":str(tmp / "ca.crt")},
+            )
             if rejected.returncode == 0 or "SENTINEL_ENTRY" in rejected.stdout:
-                raise SystemExit("manual requested channel bypassed preexecution check")
-            bodies["/artifacts/agent/bootstrap-client.sh"] = b"#!/bin/bash\necho SENTINEL_EXECUTED\n"
-            denied = subprocess.run(["bash", "-lc", probe], capture_output=True, text=True)
-            if denied.returncode == 0 or "SENTINEL_EXECUTED" in denied.stdout:
-                raise SystemExit("unqualified installer executed before verification")
+                raise SystemExit("mismatched candidate identity executed installer: " + key)
+        bodies["/artifacts/agent/bootstrap-client.sh"] = b"#!/bin/bash\necho SENTINEL_EXECUTED\n"
+        denied = subprocess.run(["bash", "-lc", command], capture_output=True, text=True)
+        if denied.returncode == 0 or "SENTINEL_EXECUTED" in denied.stdout:
+            raise SystemExit("unqualified installer executed before verification")
         print("FRESH_CLIENT_TRUST_BOOTSTRAP=PASS")
         return 0
     finally:

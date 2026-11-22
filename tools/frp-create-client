@@ -359,8 +359,10 @@ def remapped_server_cfg(cfg):
     # A hermetic test Server also owns its private CA under the test root.
     # Without this mapping the Windows stage-1 renderer reads host /etc paths,
     # leading to a false prerequisite rejection after valid IP PKI checks.
-    if _test_root() and cfg.get('tls_ca_cert'):
-        out['tls_ca_cert'] = str(remap(cfg['tls_ca_cert']))
+    if _test_root():
+        for key in ('tls_ca_cert', 'token_file'):
+            if cfg.get(key):
+                out[key] = str(remap(cfg[key]))
     return out
 
 
@@ -437,32 +439,29 @@ def load_server_config():
 
 
 def short_url_host_for_cfg(cfg, bootstrap_hostname='', public_hostname=''):
-    """Require qualified HTTPS trust before using a public compact bootstrap.
+    """Qualify exactly one public FQDN with stock HTTPS trust and /i/ proof.
 
-    An administrator-set bootstrap_hostname is explicit trust intent.
-    Otherwise, the configured public DNS endpoint is only eligible after a
-    real stock-OS TLS validation probe. Never infer TLS from the presence of
-    a hostname or disable certificate validation to shorten a command.
+    Neither `set server bootstrap-hostname` nor `set server public-hostname`
+    installs a public certificate. An explicit hostname MUST undergo the
+    same real TLS trust/404 proof as an inferred public hostname. Never
+    substitute a private-CA DNS shortcut or disable verification to make a
+    deceptively short command.
     """
     scfg = load_server_config()
     cfg = cfg if isinstance(cfg, dict) else {}
-    host = ''
+    explicit = str(cfg.get('bootstrap_hostname') or bootstrap_hostname or '').strip().lower()
+    configured = ''
     if scfg is not None:
         try:
-            host = scfg.short_url_hostname(cfg)
+            configured = scfg.short_url_hostname(cfg)
         except Exception:
-            host = ''
-    host = str(host or bootstrap_hostname or '').strip().lower()
-    if host:
-        return host
-
+            configured = ''
+    candidate = str(
+        configured or explicit
+        or cfg.get('public_hostname') or cfg.get('public_url_host')
+        or public_hostname or ''
+    ).strip().lower()
     try:
-        candidate = str(
-            cfg.get('public_hostname')
-            or cfg.get('public_url_host')
-            or public_hostname
-            or ''
-        ).strip().lower()
         if not candidate or not re.fullmatch(r'[a-z0-9][a-z0-9.-]{2,252}', candidate):
             return ''
         if '.' not in candidate or candidate.endswith('.local'):
@@ -472,39 +471,36 @@ def short_url_host_for_cfg(cfg, bootstrap_hostname='', public_hostname=''):
     except Exception:
         return ''
 
-    # Hermetic test roots do not make network calls to a real public service.
-    # Source regression tests mock this function for positive TLS discovery.
+    # Hermetic tests cannot probe the public internet. Existing source-level
+    # tests use this override for explicit DNS; live readiness never does.
     if _test_root():
-        return ''
+        return candidate if explicit else ''
     try:
         import ssl
         import urllib.error
         import urllib.request
 
-        class SameOriginOnly(urllib.request.HTTPRedirectHandler):
+        class NoRedirect(urllib.request.HTTPRedirectHandler):
             def redirect_request(self, req, fp, code, msg, headers, newurl):
                 return None
 
         url = 'https://%s/i/invalid-qualification-probe' % candidate
         opener = urllib.request.build_opener(
+            urllib.request.ProxyHandler({}),
             urllib.request.HTTPSHandler(context=ssl.create_default_context()),
-            SameOriginOnly(),
+            NoRedirect(),
         )
         try:
-            with opener.open(url, timeout=4) as response:
-                # A random nonexistent ticket cannot legitimately return
-                # installer bytes. A 200/default HTML page is not proof.
+            with opener.open(url, timeout=4):
+                # Any success or HTML page is not allocator proof.
                 return ''
         except urllib.error.HTTPError as exc:
-            # Only the DataRelay allocator's exact fail-closed signature
-            # proves the /i/ handler exists, after public TLS verification.
-            if exc.code != 404:
-                return ''
             try:
-                body = exc.read(128).decode('utf-8', 'replace').strip()
-            except Exception:
-                return ''
-            return candidate if body == 'bootstrap unavailable' else ''
+                return candidate if (exc.code == 404 and
+                    exc.read(128).decode('utf-8','replace').strip() ==
+                    'bootstrap unavailable') else ''
+            finally:
+                exc.close()
     except Exception:
         return ''
 
@@ -543,7 +539,7 @@ def private_ca_ip_bootstrap_plan(cfg, ca_fp):
             'allocator': allocator, 'leaf_sha256': pki.fingerprint_from_cert_file(leaf)}
 
 
-def validate_zero_touch_prerequisites(cfg, platform, installer, ca_fp, *, long_bootstrap=False):
+def validate_zero_touch_prerequisites(cfg, platform, installer, ca_fp):
     """Side-effect-free availability gate shared by guided + issuing CLI paths.
 
     No enrollment IDs/ports are allocated. External HEAD preflight is bounded;
@@ -561,14 +557,16 @@ def validate_zero_touch_prerequisites(cfg, platform, installer, ca_fp, *, long_b
         fail('allocator public URL must be HTTPS')
     if not ca_fp:
         fail('allocator CA SHA256 fingerprint is unavailable; cannot generate a secure command')
-    compact_host = short_url_host_for_cfg(cfg) if not long_bootstrap else ''
+    compact_host = short_url_host_for_cfg(cfg)
     private_ip_plan = None
-    if not compact_host and not long_bootstrap:
+    if not compact_host:
         private_ip_plan = private_ca_ip_bootstrap_plan(cfg, ca_fp)
         if not private_ip_plan:
-            fail('Secure compact Zero-Touch is not configured. Use a qualified '
-                 'public HTTPS hostname or a numeric-IP allocator with a valid '
-                 'Private CA and matching Server certificate IP SAN. '
+            fail('Zero-Touch FQDN is not ready: configure publicly trusted HTTPS '
+                 'TLS (certificate chain and DNS SAN) on the Server/reverse proxy '
+                 'for its configured public or bootstrap hostname. Alternatively '
+                 'use a numeric-IP allocator with a valid pinned Private CA and '
+                 'matching IP SAN. DNS alone does not establish trust. '
                  'No enrollment ticket was issued.')
     label = 'Windows Agent installer URL' if platform == 'windows' else 'Agent installer URL'
     preflight_installer_url(installer, label=label)
@@ -590,25 +588,6 @@ def _zt():
     if _ZT is None:
         _ZT = load_zero_touch()
     return _ZT
-
-
-ZERO_TOUCH_PACKAGE_PREFIX = 'zt1'
-
-
-def encode_zero_touch_package(allocator_url, ca_sha256, ticket):
-    """Encode opaque short-command package for trusted public installer bootstrap."""
-    zt = _zt()
-    if zt is None:
-        raise ValueError('zero-touch helper is unavailable')
-    return zt.encode_zero_touch_package(allocator_url, ca_sha256, ticket)
-
-
-def decode_zero_touch_package(package):
-    """Decode zt1.* package into allocator URL, CA SHA256, and bootstrap ticket."""
-    zt = _zt()
-    if zt is None:
-        raise ValueError('zero-touch helper is unavailable')
-    return zt.decode_zero_touch_package(package)
 
 
 def reject_control_chars(label, value):
@@ -713,10 +692,6 @@ def write_enrollment(enroll_dir, enrollment_id, secret, ttl, note, label=''):
     return record, path
 
 
-SSH_USER_RE = re.compile(r'[A-Za-z0-9._@-]{1,32}')
-NONINTERACTIVE_SSH_USER_ERROR = (
-    '--ssh-user may be supplied for connection examples; it is optional for enrollment.'
-)
 _TEST_INPUT_LINES = None
 
 
@@ -734,7 +709,6 @@ def parse_args(argv=None):
             '\n'
             '  # This backend tool still accepts internal flags for scripts:\n'
             '  frp-create-client --one-line --ssh --note client-01\n'
-            '  frp-create-client --one-line --ssh --ssh-user aella --note customer-01\n'
             '  frp-create-client --one-line --ssh --client-name seoul-groupware '
             '--note "Seoul office"\n'
             '  frp-create-client --one-line --client-name inventory-only\n'
@@ -766,24 +740,9 @@ def parse_args(argv=None):
         help='Print a one-line zero-touch Agent install command',
     )
     p.add_argument(
-        '--long-bootstrap',
-        action='store_true',
-        help='Advanced: explicitly print a long pinned-private-CA command instead of the compact public HTTPS form',
-    )
-    p.add_argument(
         '--ssh',
         action='store_true',
         help='SSH convenience service template (127.0.0.1:22)',
-    )
-    p.add_argument(
-        '--ssh-user',
-        default=None,
-        metavar='USER',
-        help=(
-            'SSH login account that already exists on the client. '
-            'Optional connection-example metadata. Pass an empty value when '
-            'the guided wizard already collected a blank username.'
-        ),
     )
     p.add_argument(
         '--ssh-port',
@@ -817,7 +776,7 @@ def parse_args(argv=None):
     return p.parse_args(argv)
 
 
-def ssh_service(ssh_user, ssh_port):
+def ssh_service(ssh_port):
     payload = {
         'id': 'ssh',
         'name': 'SSH',
@@ -827,9 +786,6 @@ def ssh_service(ssh_user, ssh_port):
         'preset': 'ssh',
         'enabled': True,
     }
-    user = str(ssh_user or '').strip()
-    if user:
-        payload['ssh_user'] = user
     return payload
 
 
@@ -885,10 +841,9 @@ def first_ssh_preflight(services):
             continue
         if str(item.get('preset') or '').strip().lower() != 'ssh':
             continue
-        user = str(item.get('ssh_user') or '').strip()
         port = coerce_port(item.get('local_port')) or 22
-        return user, port
-    return '', 22
+        return port
+    return 22
 
 
 def is_interactive_stdin():
@@ -943,23 +898,6 @@ def read_prompt(prompt):
         return input(prompt)
     except EOFError:
         fail('required interactive input was not completed')
-
-
-def normalize_ssh_user(raw):
-    if raw is None:
-        return ''
-    return str(raw).strip()
-
-
-def validate_prompt_ssh_user(raw):
-    user = normalize_ssh_user(raw)
-    if not user:
-        return '', 'SSH username cannot be blank.'
-    if any(ord(c) < 32 or 127 <= ord(c) <= 159 for c in user):
-        return '', 'SSH username must not contain control characters or newlines'
-    if not SSH_USER_RE.fullmatch(user):
-        return '', 'invalid ssh_user'
-    return user, ''
 
 
 def validate_prompt_label(raw):
@@ -1024,43 +962,7 @@ def _enrollment_track_hints(tracking_id=''):
     return lines
 
 
-def prompt_zero_touch_ssh(existing_user, existing_port, port_explicit):
-    print()
-    print('SSH service setup')
-    print('=================')
-    print()
-    print('SSH username is optional connection-example metadata.')
-    print('It is not required for Agent installation or enrollment.')
-    print('Leave blank to show <username> in connection examples.')
-    print()
-
-    user = normalize_ssh_user(existing_user)
-    if not user:
-        while True:
-            entered = read_prompt('SSH username [optional]: ')
-            if not str(entered or '').strip():
-                user = ''
-                break
-            user, err = validate_prompt_ssh_user(entered)
-            if user:
-                break
-            sys.stderr.write('ERROR: %s\n' % err)
-
-    port = existing_port
-    if not port_explicit:
-        while True:
-            entered = normalize_ssh_user(read_prompt('SSH port [22]: '))
-            if not entered:
-                port = 22
-                break
-            port = coerce_port(entered)
-            if port is not None:
-                break
-            sys.stderr.write('ERROR: invalid SSH port; must be an integer 1-65535\n')
-    return user, port
-
-
-def print_client_configuration(name, note, services=None, ssh_user='', ssh_port=None):
+def print_client_configuration(name, note, services=None, ssh_port=None):
     print()
     print('Managed Host configuration')
     print('==========================')
@@ -1072,13 +974,12 @@ def print_client_configuration(name, note, services=None, ssh_user='', ssh_port=
     print('--------')
     print()
     rows = list(services or [])
-    if not rows and (ssh_user or ssh_port):
+    if not rows and ssh_port:
         rows = [{
             'preset': 'ssh',
             'name': 'SSH',
             'local_ip': '127.0.0.1',
             'local_port': ssh_port or 22,
-            'ssh_user': ssh_user,
         }]
     if not rows:
         print('(none — management registration only)')
@@ -1099,19 +1000,7 @@ def print_client_configuration(name, note, services=None, ssh_user='', ssh_port=
         port = svc.get('local_port') or svc.get('target_port') or '-'
         print(title)
         print('  Target   : %s:%s' % (host, port))
-        user = str(svc.get('ssh_user') or '').strip()
-        # SSH authentication belongs to the eventual SSH client, not to
-        # DataRelay Link tunnel setup. Only show an explicitly supplied hint.
-        if user and (preset == 'ssh' or str(svc.get('id') or '').lower() == 'ssh'):
-            print('  Optional SSH login hint : %s (not validated)' % user)
         print()
-
-
-def resolve_zero_touch_ssh(ssh_user, ssh_port, port_explicit, user_explicit=False):
-    # The tunnel only needs IP:port. SSH login is a downstream example and
-    # must never interrupt Zero-Touch with a mandatory username prompt.
-    # Preserve an explicitly supplied example for operators who want it.
-    return normalize_ssh_user(ssh_user), ssh_port
 
 
 def print_manual(cfg, record, ttl, public_host, control_public, allocator, ca_fp, installer):
@@ -1187,7 +1076,7 @@ def print_one_line_windows(
     ticket, ttl, note, public_host, control_public, allocator, ca_fp,
     installer, rdp_port=None, client_name='', management_only=False,
     ticket_id='', bootstrap_hostname='', public_hostname='', cfg=None,
-    short_handle='', stage1_sha256='', private_ip_plan=None, require_compact=False
+    short_handle='', stage1_sha256='', private_ip_plan=None
 ):
     zt = _zt()
     command = ''
@@ -1212,68 +1101,13 @@ def print_one_line_windows(
             command = ''
 
     compact_limit = 1500 if private_ip_plan else 500
-    if require_compact and (not command or len(command) > compact_limit):
+    if not command or len(command) > compact_limit:
         fail(
             'Compact Windows Zero-Touch command could not be generated within '
             f'{compact_limit} characters. No installation command was printed; an issued '
             'ticket may remain pending. Review/revoke it before retrying. '
             'Check the public HTTPS bootstrap endpoint and stage-1 SHA256.'
         )
-
-    if not command:
-        sums_url = derive_sha256sums_url(installer)
-        if not sums_url:
-            fail(
-                'cannot derive SHA256SUMS URL from Windows installer URL.\n'
-                'No changes were applied.'
-            )
-        zt_mod = _zt()
-        if zt_mod is not None:
-            command = zt_mod.pinned_ca_windows_command(
-                installer, allocator, ca_fp, ticket, sums_url
-            )
-        else:
-            inner = (
-                "$ErrorActionPreference='Stop';"
-                "$ProgressPreference='SilentlyContinue';"
-                "[Net.ServicePointManager]::SecurityProtocol=[Net.SecurityProtocolType]::Tls12;"
-                "$d=Join-Path $env:TEMP ('frp-bs-'+[guid]::NewGuid().ToString('N'));"
-                "New-Item -ItemType Directory -Force -Path $d|Out-Null;"
-                "try{"
-                "$m=Join-Path $d 'SHA256SUMS';$p=Join-Path $d 'bootstrap-client.ps1';"
-                "(New-Object Net.WebClient).DownloadFile(__SUMS__,$m);"
-                "(New-Object Net.WebClient).DownloadFile(__INSTALLER__,$p);"
-                "$w=$null;Get-Content -LiteralPath $m|ForEach-Object{"
-                "if($_ -match '^([0-9a-fA-F]{64})\\s+(?:dist/bootstrap-client\\.ps1|agent/bootstrap-client\\.ps1|bootstrap-client\\.ps1)\\s*$'){"
-                "if($w){throw 'duplicate bootstrap-client.ps1 hash'};"
-                "$w=$Matches[1].ToLowerInvariant()}};"
-                "if(-not $w){throw 'bootstrap-client.ps1 hash missing from SHA256SUMS'};"
-                "$g=(Get-FileHash -Algorithm SHA256 -LiteralPath $p).Hash.ToLowerInvariant();"
-                "if($g -ne $w){throw 'bootstrap-client.ps1 SHA256 mismatch'};"
-                "$env:FRP_ALLOCATOR_URL=__ALLOCATOR__;"
-                "$env:FRP_ALLOCATOR_CA_SHA256=__CA__;"
-                "$env:FRP_BOOTSTRAP_TICKET=__TICKET__;"
-                "$env:FRP_ZERO_TOUCH='1';$env:FRP_PLATFORM='windows';"
-                "& powershell.exe -NoProfile -ExecutionPolicy Bypass -File $p -ZeroTouch;"
-                "$rc=$LASTEXITCODE;Remove-Item Env:FRP_BOOTSTRAP_TICKET -ErrorAction SilentlyContinue;"
-                "if($rc -ne 0){exit $rc}"
-                "}finally{Remove-Item -LiteralPath $d -Recurse -Force -ErrorAction SilentlyContinue}"
-            )
-            inner = (
-                inner.replace('__SUMS__', ps_single_quote(sums_url))
-                .replace('__INSTALLER__', ps_single_quote(installer))
-                .replace('__ALLOCATOR__', ps_single_quote(allocator))
-                .replace('__CA__', ps_single_quote(ca_fp))
-                .replace('__TICKET__', ps_single_quote(ticket))
-            )
-            # Use the same native Windows argv encoding as the shared helper.
-            # POSIX-style outer single quotes around -Command are not a
-            # reliable Windows PowerShell escaping boundary.
-            import base64
-            command = (
-                'powershell.exe -NoProfile -ExecutionPolicy Bypass -EncodedCommand '
-                + base64.b64encode(inner.encode('utf-16le')).decode('ascii')
-            )
 
     tracking_id = str(ticket_id or '').strip()
     print()
@@ -1320,20 +1154,19 @@ def print_one_line_windows(
     print()
 
 
-def print_one_line(ticket, ttl, note, public_host, control_public, allocator, ca_fp, installer, ssh_user, ssh_port, client_name='', management_only=False, ticket_id='', legacy_env=False, bootstrap_hostname='', public_hostname='', cfg=None, short_handle='', private_ip_plan=None, require_compact=False):
+def print_one_line(ticket, ttl, note, public_host, control_public, allocator, ca_fp, installer, ssh_port, client_name='', management_only=False, ticket_id='', bootstrap_hostname='', public_hostname='', cfg=None, short_handle='', private_ip_plan=None):
     tracking_id = str(ticket_id or '').strip()
     if not tracking_id and ticket:
         zt_id = _zt()
         if zt_id is not None:
             tracking_id = zt_id.bootstrap_record_id(ticket)
 
-    # Default compact modes are qualified public HTTPS or numeric IP with
-    # pinned Private CA. The legacy long package is explicit opt-in only.
+    # Only qualified public HTTPS or verified numeric-IP/Private-CA commands are issued.
     command = ''
     bootstrap_host = short_url_host_for_cfg(
         cfg, bootstrap_hostname=bootstrap_hostname, public_hostname=public_hostname
     )
-    if private_ip_plan and not legacy_env:
+    if private_ip_plan:
         zt = _zt()
         if zt is None:
             fail('pinned private CA bootstrap helper unavailable')
@@ -1341,7 +1174,7 @@ def print_one_line(ticket, ttl, note, public_host, control_public, allocator, ca
             command = zt.private_ca_ip_linux_command(allocator, ca_fp, short_handle)
         except ValueError as exc:
             fail('unable to construct secure IP bootstrap: %s' % exc)
-    if bootstrap_host and not legacy_env and not private_ip_plan and (short_handle or not require_compact):
+    if bootstrap_host and not private_ip_plan and short_handle:
         try:
             zt = _zt()
             if zt is None:
@@ -1351,56 +1184,13 @@ def print_one_line(ticket, ttl, note, public_host, control_public, allocator, ca
             command = ''
 
     compact_limit = 900 if private_ip_plan else 200
-    if require_compact and (not command or len(command) > compact_limit):
+    if not command or len(command) > compact_limit:
         fail(
             'Compact Linux/macOS Zero-Touch command could not be generated '
             f'within {compact_limit} characters. No installation command was printed; '
             'an issued ticket may remain pending. Review/revoke it before '
             'retrying. Check the public HTTPS bootstrap endpoint.'
         )
-
-    if not command:
-        try:
-            package = encode_zero_touch_package(allocator, ca_fp, ticket)
-            zt_mod = _zt()
-            if zt_mod is not None:
-                command = zt_mod.pinned_ca_linux_command(
-                    installer, allocator, ca_fp, package
-                )
-            else:
-                command = 'curl -fsSL %s | sudo bash -s -- %s' % (
-                    shell_quote(installer),
-                    shell_quote(package),
-                )
-        except ValueError:
-            legacy_env = True
-
-    if legacy_env or not command:
-        env_parts = [
-            'FRP_ALLOCATOR_URL=%s' % shell_quote(allocator),
-            'FRP_ALLOCATOR_CA_SHA256=%s' % shell_quote(ca_fp),
-            'FRP_BOOTSTRAP_TICKET=%s' % shell_quote(ticket),
-            'FRP_ZERO_TOUCH=1',
-        ]
-        if ssh_user:
-            env_parts.append('FRP_SSH_USER=%s' % shell_quote(ssh_user))
-        if ssh_port and int(ssh_port) != 22:
-            env_parts.append('FRP_SSH_PORT=%s' % shell_quote(str(int(ssh_port))))
-        if management_only:
-            env_parts.append('FRP_MANAGEMENT_ONLY=1')
-        zt_legacy = _zt()
-        if zt_legacy is not None:
-            try:
-                command = zt_legacy.pinned_ca_manual_linux_command(
-                    installer, allocator, ca_fp, env_parts
-                )
-            except ValueError:
-                command = ''
-        if not command:
-            command = 'curl -fsSL %s | sudo env %s bash' % (
-                shell_quote(installer),
-                ' '.join(env_parts),
-            )
 
     print()
     print('Zero-touch Agent command')
@@ -1450,8 +1240,6 @@ def main(argv=None):
     except ValueError as exc:
         fail(str(exc))
 
-    if a.ssh_user and not a.ssh:
-        fail('--ssh-user requires --ssh')
     if a.ssh_port is not None and not a.ssh:
         fail('--ssh-port requires --ssh')
     if a.rdp_port is not None and not a.rdp:
@@ -1472,8 +1260,6 @@ def main(argv=None):
         ssh_port = coerce_port(a.ssh_port)
         if ssh_port is None:
             fail('invalid --ssh-port; must be an integer 1-65535')
-    ssh_user_explicit = a.ssh_user is not None
-    ssh_user = normalize_ssh_user(a.ssh_user)
     rdp_port = 3389
     if a.rdp_port is not None:
         rdp_port = coerce_port(a.rdp_port)
@@ -1483,7 +1269,7 @@ def main(argv=None):
     cfg = json.loads(Path(CONFIG).read_text())
     require_onboarding_config(cfg)
     if a.preflight_zero_touch:
-        # Run before the public Wizard asks for name, targets or SSH metadata.
+        # Run before the public Wizard asks for name, targets or service options.
         # This cannot create an enrollment, write Server config or issue ports.
         ca_path = remap(str(cfg.get('tls_ca_cert') or '/etc/drlink/pki/ca.crt'))
         try:
@@ -1492,7 +1278,7 @@ def main(argv=None):
             ca_fp = ''
         installer = resolve_configured_installer_url(cfg, windows=(platform == 'windows'))
         validate_zero_touch_prerequisites(
-            cfg, platform, installer, ca_fp, long_bootstrap=a.long_bootstrap
+            cfg, platform, installer, ca_fp
         )
         print('Zero-Touch prerequisites verified; no ticket was issued.')
         return 0
@@ -1519,7 +1305,6 @@ def main(argv=None):
     reject_control_chars('--client-name', a.client_name)
     reject_control_chars('allocator public URL', allocator)
     reject_control_chars(installer_label, installer)
-    reject_control_chars('--ssh-user', ssh_user)
     client_name = str(a.client_name or '').strip()
     note = str(a.note or '')
     if client_name:
@@ -1556,14 +1341,10 @@ def main(argv=None):
             pass
         return 0
 
-    if a.ssh and not ssh_user and not is_interactive_stdin():
-        # Optional connection-example metadata; enrollment proceeds without it.
-        ssh_user = ''
-
     # Re-check the same gate at issuance: a Server setting or certificate may
     # have changed while the user was filling out the guided service draft.
     compact_host, private_ip_plan = validate_zero_touch_prerequisites(
-        cfg, platform, installer, ca_fp, long_bootstrap=a.long_bootstrap
+        cfg, platform, installer, ca_fp
     )
 
     alloc_mod = load_allocator()
@@ -1591,12 +1372,7 @@ def main(argv=None):
 
     rdp_local = None
     if a.ssh:
-        ssh_user, ssh_port = resolve_zero_touch_ssh(
-            ssh_user, ssh_port, port_explicit, user_explicit=ssh_user_explicit
-        )
-        if ssh_user:
-            reject_control_chars('--ssh-user', ssh_user)
-        raw_services = [ssh_service(ssh_user, ssh_port)]
+        raw_services = [ssh_service(ssh_port)]
     elif a.rdp:
         raw_services = [rdp_service(rdp_port)]
         rdp_local = rdp_port
@@ -1608,8 +1384,8 @@ def main(argv=None):
     except alloc_mod.ServiceValidationError as exc:
         fail(str(exc))
 
-    ssh_user, ssh_pre_port = first_ssh_preflight(services)
-    print_client_configuration(client_name, note, services=services, ssh_user=ssh_user, ssh_port=ssh_pre_port)
+    ssh_pre_port = first_ssh_preflight(services)
+    print_client_configuration(client_name, note, services=services, ssh_port=ssh_pre_port)
     if not confirm_client_setup():
         return 0
 
@@ -1618,7 +1394,7 @@ def main(argv=None):
     # bootstrap setting or the real public TLS probe. Never silently render
     # thousands of characters on the default beginner path.
     render_cfg = dict(cfg)
-    if compact_host and not a.long_bootstrap:
+    if compact_host:
         render_cfg['bootstrap_hostname'] = compact_host
     else:
         render_cfg.pop('bootstrap_hostname', None)
@@ -1674,7 +1450,6 @@ def main(argv=None):
             short_handle=short_handle,
             stage1_sha256=stage1_sha256,
             private_ip_plan=private_ip_plan,
-            require_compact=not a.long_bootstrap,
         )
     else:
         print_one_line(
@@ -1686,7 +1461,6 @@ def main(argv=None):
             allocator,
             ca_fp,
             installer,
-            ssh_user,
             ssh_pre_port,
             client_name=client_name,
             management_only=not services,
@@ -1696,7 +1470,6 @@ def main(argv=None):
             cfg=render_cfg,
             short_handle=short_handle,
             private_ip_plan=private_ip_plan,
-            require_compact=not a.long_bootstrap,
         )
     try:
         here = Path(__file__).resolve()

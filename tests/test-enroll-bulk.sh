@@ -16,15 +16,16 @@ r=Path(sys.argv[1])
  'tls_ca_cert':'/etc/drlink/pki/ca.crt',
  'allocator_public_url':'https://example.test/enroll',
  'client_installer_url':'https://example.test/bootstrap-client.sh',
+ 'bootstrap_hostname':'bootstrap.example.test',
 })+'\n')
 PY
 export FRP_DEPLOY_TEST_ROOT="$TREE"
 python3 "$ROOT/tools/frp-enroll-bulk" --count 3 --label-prefix node >"$WORK/count.csv" 2>"$WORK/count.err"
 grep -q 'redirected output contains sensitive' "$WORK/count.err"
 cat >"$WORK/input.csv" <<'CSV'
-label,ssh_user,note
-ssh-node,aella,remote shell
-inventory-only,,no service
+label,note
+ssh-node,remote shell
+inventory-only,no service
 CSV
 python3 "$ROOT/tools/frp-enroll-bulk" --csv "$WORK/input.csv" >"$WORK/input.out" 2>"$WORK/input.err"
 python3 - "$WORK/count.csv" "$WORK/input.out" "$TREE/var/lib/drlink/bootstrap" <<'PY'
@@ -47,25 +48,7 @@ for row in rows:
     if m:
         tickets.append(m.group(1))
         continue
-    m=re.search(r"zt1\.[A-Za-z0-9_-]+", row['bootstrap_command'])
-    if m:
-        parts=m.group(0).split('.',1)
-        padded=parts[1]+('='*((-len(parts[1]))%4))
-        import base64
-        payload=json.loads(base64.urlsafe_b64decode(padded.encode('ascii')).decode('utf-8'))
-        tickets.append(payload['t'])
-        continue
-    m=re.search(r"sudo bash -s -- '(zt1\.[^']+)'", row['bootstrap_command'])
-    if m:
-        parts=m.group(1).split('.',1)
-        padded=parts[1]+('='*((-len(parts[1]))%4))
-        import base64
-        payload=json.loads(base64.urlsafe_b64decode(padded.encode('ascii')).decode('utf-8'))
-        tickets.append(payload['t'])
-        continue
-    m=re.search(r"FRP_BOOTSTRAP_TICKET='([^']+)'",row['bootstrap_command'])
-    assert m, row
-    tickets.append(m.group(1))
+    raise AssertionError('non-short Zero-Touch command generated')
 assert len(set(tickets))==5
 records=[json.loads(p.read_text()) for p in Path(sys.argv[3]).glob('*.json')]
 assert len(records)==5
@@ -80,7 +63,7 @@ assert {rec['enrollment_id'] for rec in records}.isdisjoint(public_ids)
 for ticket,record in zip(sorted(tickets), sorted(records,key=lambda r:r['id'])):
     assert ticket not in json.dumps(record)
 assert any(r.get('services')==[] for r in records)
-assert any((r.get('services') or [{}])[0].get('preset')=='ssh' for r in records if r.get('services'))
+assert all(r.get('services') == [] for r in records)
 PY
 
 # A stale former official public installer URL must never leak into newly issued
@@ -95,7 +78,7 @@ cfg['client_installer_url']='https://raw.githubusercontent.com/datarelay-labs/da
 path.write_text(json.dumps(cfg)+'\n')
 PY
 python3 "$ROOT/tools/frp-enroll-bulk" --count 1 --label-prefix stale-source >"$WORK/stale-source.csv" 2>"$WORK/stale-source.err"
-grep -Fq 'https://example.test/artifacts/agent/bootstrap-client.sh' "$WORK/stale-source.csv"
+grep -Fq 'https://bootstrap.example.test/i/' "$WORK/stale-source.csv"
 ! grep -Fq 'raw.githubusercontent.com' "$WORK/stale-source.csv"
 ! grep -Fq '1111111111111111111111111111111111111111' "$WORK/stale-source.csv"
 echo "PASS BULK_QUALIFIED_INSTALLER_SOURCE"
@@ -129,9 +112,9 @@ echo "PASS BULK_PUBLIC_ERROR_GUIDANCE"
 # Pre-validate all rows: a bad later row issues zero tickets.
 BAD="$WORK/bad.csv"
 cat >"$BAD" <<'CSV'
-label,ssh_user,note
-good-one,aella,ok
-BAD LABEL!!,aella,no
+label,note
+good-one,ok
+BAD LABEL!!,no
 CSV
 BEFORE_TICKETS="$(find "$TREE/var/lib/drlink/bootstrap" -name '*.json' | wc -l)"
 if python3 "$ROOT/tools/frp-enroll-bulk" --csv "$BAD" >"$WORK/bad.out" 2>"$WORK/bad.err"; then

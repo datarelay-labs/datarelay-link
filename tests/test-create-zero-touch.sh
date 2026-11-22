@@ -156,7 +156,7 @@ for platform in linux windows macos; do
   esac
   run_repl "$SERVER" "$WORKDIR/zt-invalid-$platform.out" \
     "set enrollment zero-touch" "$platform_id" "draft-$platform" "keep-$platform" \
-    "ec2-user" "$option" "aella" 22 exit \
+    "ec2-user" "$option" 22 exit \
     || fail "F005 invalid configuration selector $platform"
   grep -q "ERROR: select 1-${platform_hi}" "$WORKDIR/zt-invalid-$platform.out" \
     || fail "F005 invalid selector feedback missing for $platform"
@@ -172,21 +172,21 @@ pass "F005_ZERO_TOUCH_INVALID_SELECTION_PRESERVES_DRAFT"
 # --- Guided: SSH only ---
 # set enrollment zero-touch → platform(Linux) → identity → SSH only
 run_repl "$SERVER" "$WORKDIR/zt-ssh.out" \
-  "set enrollment zero-touch" 1 office-ssh "Seoul office" 1 aella 22 exit \
+  "set enrollment zero-touch" 1 office-ssh "Seoul office" 1 22 exit \
   || fail "zero-touch ssh guided"
 grep -qiE 'Connect a Managed Host|Managed Host details|zero-touch|Zero-Touch' "$WORKDIR/zt-ssh.out" || fail "zero-touch heading"
 grep -q '1) SSH only' "$WORKDIR/zt-ssh.out" || fail "ssh only option"
-grep -q 'DISPATCH frp-create-client --platform linux --one-line --ssh --ssh-user aella --ssh-port 22 --client-name office-ssh --note Seoul office' \
+grep -q 'DISPATCH frp-create-client --platform linux --one-line --ssh --ssh-port 22 --client-name office-ssh --note Seoul office' \
   "$WORKDIR/zt-ssh.out" || fail "ssh only dispatch"
 pass "ZERO_TOUCH_SSH_GUIDED"
 
 # --- Guided: macOS uses the real bash Zero-Touch path (same installer as Linux) ---
 run_repl "$SERVER" "$WORKDIR/zt-macos.out" \
-  "set enrollment zero-touch" 3 office-mac "Mac lab" 1 aella 22 exit \
+  "set enrollment zero-touch" 3 office-mac "Mac lab" 1 22 exit \
   || fail "zero-touch macOS guided"
 grep -q '3) macOS' "$WORKDIR/zt-macos.out" || fail "macOS platform option missing"
 grep -q '4) Back' "$WORKDIR/zt-macos.out" || fail "platform Back must be option 4"
-grep -q 'DISPATCH frp-create-client --platform linux --one-line --ssh --ssh-user aella --ssh-port 22 --client-name office-mac --note Mac lab' \
+grep -q 'DISPATCH frp-create-client --platform linux --one-line --ssh --ssh-port 22 --client-name office-mac --note Mac lab' \
   "$WORKDIR/zt-macos.out" || fail "macOS must use bash/linux Zero-Touch dispatch"
 pass "MACOS_PUBLIC_ONBOARDING_DISCOVERABLE"
 pass "MACOS_MENU_DEAD_END_NO"
@@ -217,7 +217,7 @@ if grep -q 'DISPATCH frp-create-client --one-line' "$WORKDIR/zt-mgmt-menu.out"; 
 fi
 # Blank description accepted without a second Managed Host details prompt.
 run_repl "$SERVER" "$WORKDIR/zt-blank-note.out" \
-  "set enrollment zero-touch" 1 blank-desc "" 1 aella 22 exit \
+  "set enrollment zero-touch" 1 blank-desc "" 1 22 exit \
   || fail "blank description guided"
 ident_count="$(grep -c 'Managed Host details' "$WORKDIR/zt-blank-note.out" || true)"
 [[ "$ident_count" == "1" ]] || fail "CLIENT_IDENTIFICATION_PROMPT_COUNT expected 1 got $ident_count"
@@ -230,33 +230,29 @@ grep -qF -- '--note' "$WORKDIR/zt-blank-note.out" \
 pass "MANAGEMENT_ONLY_INITIAL_ONBOARDING_REMOVED"
 pass "ZERO_TOUCH_SINGLE_IDENTIFICATION_PROMPT"
 
-# Blank optional SSH username is collected once, then passed explicitly.
-run_repl "$SERVER" "$WORKDIR/zt-blank-user.out" \
-  "set enrollment zero-touch" 1 blank-ssh "" 1 "" 22 exit \
-  || fail "blank ssh username guided"
-user_prompts="$(grep -c 'SSH username is optional connection-example metadata.' "$WORKDIR/zt-blank-user.out" || true)"
-[[ "$user_prompts" == "1" ]] || fail "SSH username prompt count expected 1 got $user_prompts"
-python3 - "$WORKDIR/zt-blank-user.out" <<'PY' || fail "blank ssh user not passed explicitly"
+# SSH is host/port only; there must be no username step or backend option.
+run_repl "$SERVER" "$WORKDIR/zt-no-ssh-user.out" \
+  "set enrollment zero-touch" 1 no-ssh-user "" 1 22 exit \
+  || fail "SSH Zero-Touch without username"
+! grep -qE 'SSH username|SSH user \[|--ssh-user' "$WORKDIR/zt-no-ssh-user.out" \
+  || fail "obsolete SSH username input resurfaced"
+python3 - "$WORKDIR/zt-no-ssh-user.out" <<'PYTEST' || fail "SSH username removed in dispatch"
 import json, sys
 text = open(sys.argv[1], encoding="utf-8").read()
-lines = [ln for ln in text.splitlines() if ln.startswith("DISPATCH_ARGV\t")]
-if not lines:
-    raise SystemExit("missing DISPATCH_ARGV")
+lines = [x for x in text.splitlines() if x.startswith("DISPATCH_ARGV\t")]
+assert lines, "missing dispatch"
 argv = json.loads(lines[-1].split("\t", 1)[1])
-if "--ssh-user" not in argv:
-    raise SystemExit(argv)
-if argv[argv.index("--ssh-user") + 1] != "":
-    raise SystemExit(argv)
-if "--ssh-port" not in argv:
-    raise SystemExit(argv)
-PY
-pass "SSH_USERNAME_PROMPTED_ONCE"
+assert "--ssh-user" not in argv
+assert "--ssh-port" in argv
+assert argv[argv.index("--ssh-port")+1] == "22"
+PYTEST
+pass "SSH_USERNAME_INPUT_REMOVED"
 
 # --- Guided: multi-service SSH+HTTP ---
 run_repl "$SERVER" "$WORKDIR/zt-multi-http.out" \
   "set enrollment zero-touch" 1 multi-http "" \
   2 \
-  1 "" "" "" aella \
+  1 "" "" "" \
   2 "" "" "" \
   5 \
   exit \
@@ -279,19 +275,51 @@ ssh = items[0]
 http = items[1]
 if ssh.get("local_ip") != "127.0.0.1" or int(ssh.get("local_port")) != 22:
     raise SystemExit("ssh target")
-if ssh.get("ssh_user") != "aella":
-    raise SystemExit("ssh user")
+if "ssh_user" in ssh:
+    raise SystemExit("SSH username was unexpectedly persisted")
 if http.get("local_ip") != "127.0.0.1" or int(http.get("local_port")) != 80:
     raise SystemExit("http target")
 PY
 pass "ZERO_TOUCH_MULTI_SERVICE_GUIDED"
 pass "ZERO_TOUCH_MULTI_SERVICE_SSH_HTTP"
 
+# --- Guided: Choose Remote Services does not request SSH username ---
+run_repl "$SERVER" "$WORKDIR/zt-multi-ssh-blank-user.out" \
+  "set enrollment zero-touch" 1 multi-ssh-blank "" \
+  2 \
+  1 "" "" "" \
+  2 "" "" "" \
+  5 \
+  exit \
+  || fail "zero-touch multi-service blank ssh username"
+if grep -qE 'SSH username|SSH user \[|--ssh-user' "$WORKDIR/zt-multi-ssh-blank-user.out"; then
+  fail "removed SSH username prompt resurfaced in multi-service path"
+fi
+python3 - "$WORKDIR/zt-multi-ssh-blank-user.out" <<'PY' || fail "blank ssh username multi-service payload"
+import json, re, sys
+text = open(sys.argv[1], encoding="utf-8").read()
+match = re.search(r"^SERVICES_JSON (.+)$", text, re.M)
+if not match:
+    raise SystemExit("missing SERVICES_JSON")
+items = json.loads(match.group(1))
+if [item.get("preset") for item in items] != ["ssh", "http"]:
+    raise SystemExit(items)
+if items[0].get("id") != "ssh" or "ssh_user" in items[0]:
+    raise SystemExit(items[0])
+if items[0].get("local_ip") != "127.0.0.1" or int(items[0].get("local_port")) != 22:
+    raise SystemExit(items[0])
+if items[1].get("id") != "http" or items[1].get("local_ip") != "127.0.0.1" or int(items[1].get("local_port")) != 80:
+    raise SystemExit(items[1])
+PY
+grep -q 'DISPATCH frp-create-client --platform linux --one-line --services-file ' \
+  "$WORKDIR/zt-multi-ssh-blank-user.out" || fail "blank ssh multi-service enrollment dispatch missing"
+pass "ZERO_TOUCH_MULTI_SERVICE_NO_SSH_USERNAME"
+
 # --- Guided: multi-service SSH+HTTPS ---
 run_repl "$SERVER" "$WORKDIR/zt-multi-https.out" \
   "set enrollment zero-touch" 1 multi-https "" \
   2 \
-  1 "" "" "" aella \
+  1 "" "" "" \
   3 "" "" "" \
   5 \
   exit \
@@ -313,7 +341,7 @@ pass "ZERO_TOUCH_MULTI_SERVICE_SSH_HTTPS"
 run_repl "$SERVER" "$WORKDIR/zt-lan.out" \
   "set enrollment zero-touch" 1 lan-client "lan note" \
   2 \
-  1 ssh 10.10.10.20 22 ops \
+  1 ssh 10.10.10.20 22 \
   2 web 10.10.10.30 80 \
   5 \
   exit \
@@ -326,7 +354,7 @@ items = json.loads(m.group(1))
 assert items[0]["preset"] == "ssh"
 assert items[0]["local_ip"] == "10.10.10.20"
 assert int(items[0]["local_port"]) == 22
-assert items[0]["ssh_user"] == "ops"
+assert "ssh_user" not in items[0]
 assert items[1]["preset"] == "http"
 assert items[1]["local_ip"] == "10.10.10.30"
 assert int(items[1]["local_port"]) == 80
@@ -345,7 +373,7 @@ fi
 
 # --- Manual enrollment: --options rejected; bare create enrollment is guided ---
 # Both create zero-touch and create enrollment reject GNU --options in the public CLI.
-if "$CTL" create zero-touch --ssh --ssh-user aella \
+if "$CTL" create zero-touch --ssh \
   >"$WORKDIR/zt-flags.out" 2>"$WORKDIR/zt-flags.err"; then
   fail "create zero-touch --ssh should be rejected"
 fi
@@ -353,7 +381,7 @@ grep -qi 'do not use --options' "$WORKDIR/zt-flags.err" \
   || fail "zero-touch flag rejection message"
 ! grep -qi 'frp-create-client' "$WORKDIR/zt-flags.err" \
   || fail "zero-touch leaked backend"
-if "$CTL" create enrollment --ssh --ssh-user aella --label dp01 \
+if "$CTL" create enrollment --ssh --label dp01 \
   >"$WORKDIR/manual-compat.out" 2>"$WORKDIR/manual-compat.err"; then
   fail "create enrollment --ssh should be rejected"
 fi
@@ -370,13 +398,13 @@ fi
 pass "MANUAL_ENROLLMENT_COMPAT"
 
 # --- Flag-based create enrollment / enroll are not public machine paths ---
-if "$CTL" create enrollment --one-line --ssh --ssh-user aella --client-name legacy01 \
+if "$CTL" create enrollment --one-line --ssh --client-name legacy01 \
   >"$WORKDIR/legacy-oneline.out" 2>"$WORKDIR/legacy-oneline.err"; then
   fail "create enrollment --one-line should be rejected"
 fi
 grep -qi 'do not use --options' "$WORKDIR/legacy-oneline.err" \
   || fail "create enrollment --one-line rejection message"
-run_repl "$SERVER" "$WORKDIR/legacy-enroll.out" "enroll --one-line --ssh --ssh-user aella" exit || true
+run_repl "$SERVER" "$WORKDIR/legacy-enroll.out" "enroll --one-line --ssh" exit || true
 if grep -q 'DISPATCH frp-create-client' "$WORKDIR/legacy-enroll.out"; then
   fail "enroll --one-line must not dispatch via public REPL"
 fi

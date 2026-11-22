@@ -357,6 +357,26 @@ class LegacyReintroductionGate(unittest.TestCase):
             self.assertNotEqual(row.get("surface"), "hidden_compat")
             self.assertNotIn(row["path"][0], ("access", "egress"))
 
+    def test_retired_ssh_username_metadata_cannot_reappear_in_active_cli(self):
+        active = (
+            'tools/frpctl', 'tools/frp-create-client', 'tools/frp-enroll-bulk',
+            'tools/frp-client', 'lib/frp_cli_catalog.py', 'lib/frp_ctl_grammar.py',
+            'install-client.sh', 'lib/frp-client-common.sh',
+        )
+        for relative in active:
+            text = (ROOT / relative).read_text(encoding='utf-8')
+            with self.subTest(relative=relative):
+                self.assertNotIn('--ssh-user', text)
+                self.assertNotIn('frp_prompt_ssh_user', text)
+                self.assertNotIn('SSH username [optional]', text)
+        # There may be an explicit rejection of old service data, but never
+        # generated credentials or an inferred local login account.
+        self.assertNotIn('FRP_SSH_USER=', (ROOT / 'tools/frp-create-client').read_text())
+        self.assertNotIn('LEGACY_COMMANDS', (ROOT / 'lib/frp_ctl_grammar.py').read_text())
+        self.assertNotIn('_legacy_completion(', (ROOT / 'lib/frp_ctl_grammar.py').read_text())
+        self.assertNotIn('def _rw_', (ROOT / 'lib/frp_cli_catalog.py').read_text())
+        self.assertNotIn('def expand_compat_alias(', (ROOT / 'lib/frp_cli_catalog.py').read_text())
+
 
 if __name__ == "__main__":
     unittest.main()

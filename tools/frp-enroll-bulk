@@ -47,20 +47,17 @@ def remap(path):
     return path
 
 
-def validate_row(create, label, ssh_user, note):
+def validate_row(create, label, note):
     label = str(label or '').strip()
-    ssh_user = str(ssh_user or '').strip()
     note = str(note or '').strip()
     if label:
         label, error = create.validate_prompt_label(label)
         if error:
             raise ValueError(error)
-    if ssh_user and not create.SSH_USER_RE.fullmatch(ssh_user):
-        raise ValueError('invalid ssh_user')
     create.reject_control_chars('note', note)
     if len(note) > 1024:
         raise ValueError('note must be at most 1024 characters')
-    return label, ssh_user, note
+    return label, note
 
 
 def _audit_emit(event, **kwargs):
@@ -82,11 +79,10 @@ def _audit_emit(event, **kwargs):
 
 def main(argv=None):
     parser = PublicBulkArgumentParser(description='Create independent one-time enrollment commands')
-    parser.add_argument('csv_path', nargs='?', metavar='CSV', help='CSV file with label,ssh_user,note columns')
+    parser.add_argument('csv_path', nargs='?', metavar='CSV', help='CSV file with label,note columns')
     parser.add_argument('--count', type=int, help='number of management-only enrollments')
-    parser.add_argument('--csv', dest='csv_option', metavar='PATH', help='CSV file with label,ssh_user,note columns')
+    parser.add_argument('--csv', dest='csv_option', metavar='PATH', help='CSV file with label,note columns')
     parser.add_argument('--label-prefix', default='client', help='label prefix for --count')
-    parser.add_argument('--ssh-user', default='', help='SSH user for every --count row')
     parser.add_argument('--note', default='', help='note for every --count row')
     parser.add_argument(
         '--ttl',
@@ -113,6 +109,9 @@ def main(argv=None):
     ca_fp = create.fingerprint_from_cert(ca_path)
     if not allocator_url.lower().startswith('https://') or not installer or not ca_fp:
         raise SystemExit('ERROR: secure allocator URL, installer URL, and CA fingerprint are required')
+    compact_host, private_ip_plan = create.validate_zero_touch_prerequisites(
+        cfg, 'linux', installer, ca_fp
+    )
     server_cfg = create.remapped_server_cfg(cfg)
     enrollments = Path(server_cfg['enrollments_dir'])
     bootstrap = Path(server_cfg['bootstrap_dir'])
@@ -124,15 +123,15 @@ def main(argv=None):
     if args.count is not None:
         width = max(2, len(str(args.count)))
         for index in range(1, args.count + 1):
-            rows.append((f'{args.label_prefix}-{index:0{width}d}', args.ssh_user, args.note))
+            rows.append((f'{args.label_prefix}-{index:0{width}d}', args.note))
     else:
         try:
             with open(csv_path, newline='', encoding='utf-8-sig') as handle:
                 reader = csv.DictReader(handle)
-                required = {'label', 'ssh_user', 'note'}
+                required = {'label', 'note'}
                 if not reader.fieldnames or not required.issubset(set(reader.fieldnames)):
-                    parser.error('CSV header must contain label,ssh_user,note')
-                rows = [(row.get('label'), row.get('ssh_user'), row.get('note')) for row in reader]
+                    parser.error('CSV header must contain label,note')
+                rows = [(row.get('label'), row.get('note')) for row in reader]
         except (OSError, UnicodeError, csv.Error):
             raise SystemExit('ERROR: cannot read CSV. Check the file path, permissions and UTF-8 CSV format, then retry set enrollment bulk.')
         if not rows:
@@ -143,16 +142,14 @@ def main(argv=None):
     validated = []
     for index, raw in enumerate(rows):
         try:
-            label, ssh_user, note = validate_row(create, *raw)
+            label, note = validate_row(create, *raw)
         except ValueError as exc:
             raise SystemExit(f'ERROR: row {index + 1}: {exc}')
         try:
-            services = allocator.normalize_services(
-                [create.ssh_service(ssh_user, 22)] if ssh_user else []
-            )
+            services = []
         except Exception as exc:
             raise SystemExit(f'ERROR: row {index + 1}: {exc}')
-        validated.append((label, ssh_user, note, services))
+        validated.append((label, note, services))
 
     labels = [item[0] for item in validated if item[0]]
     lowered = [str(x).strip().lower() for x in labels]
@@ -168,7 +165,7 @@ def main(argv=None):
 
     batch_rows = [
         {'services': services, 'note': note, 'label': label}
-        for label, ssh_user, note, services in validated
+        for label, note, services in validated
     ]
     try:
         batch_id, issued_pairs = allocator.issue_bootstrap_ticket_batch(
@@ -187,34 +184,23 @@ def main(argv=None):
     issued = []
     try:
         for index, (ticket, enroll_record, ticket_record) in enumerate(issued_pairs):
-            label, ssh_user, note, services = validated[index]
+            label, note, services = validated[index]
             ticket_id = str(ticket_record.get('id') or '')
-            if isinstance(ticket_record, dict):
-                ticket_record.pop('_short_handle', None)
-            try:
-                package = create.encode_zero_touch_package(allocator_url, ca_fp, ticket)
-                zt_mod = create._zt()
-                if zt_mod is None:
-                    raise ValueError('zero-touch helper is unavailable')
-                command = zt_mod.pinned_ca_linux_command(
-                    installer, allocator_url, ca_fp, package
+            short_handle = str(ticket_record.pop('_short_handle', '') or '')
+            zt_mod = create._zt()
+            if zt_mod is None or not short_handle:
+                raise RuntimeError('compact Zero-Touch generator or handle unavailable')
+            if private_ip_plan:
+                command = zt_mod.private_ca_ip_linux_command(
+                    allocator_url, ca_fp, short_handle
                 )
-            except ValueError:
-                env = [
-                    'FRP_ALLOCATOR_URL=' + create.shell_quote(allocator_url),
-                    'FRP_ALLOCATOR_CA_SHA256=' + create.shell_quote(ca_fp),
-                    'FRP_BOOTSTRAP_TICKET=' + create.shell_quote(ticket),
-                    'FRP_ZERO_TOUCH=1',
-                ]
-                if ssh_user:
-                    env.append('FRP_SSH_USER=' + create.shell_quote(ssh_user))
-                else:
-                    env.append('FRP_MANAGEMENT_ONLY=1')
-                zt_mod = create._zt()
-                if zt_mod is None:
-                    raise RuntimeError('zero-touch helper is unavailable')
-                command = zt_mod.pinned_ca_manual_linux_command(
-                    installer, allocator_url, ca_fp, env
+                limit = 900
+            else:
+                command = zt_mod.short_url_command(compact_host, short_handle)
+                limit = 200
+            if len(command) > limit:
+                raise RuntimeError(
+                    'compact Zero-Touch command exceeds %s characters' % limit
                 )
             # Public inventory deduplicates the paired enrollment by the
             # *bootstrap ticket ID*. Emit that selector (not the internal

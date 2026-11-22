@@ -110,7 +110,7 @@ class Env:
         return json.loads(self.registry.read_text())
 
 
-def svc(sid, local_ip='127.0.0.1', local_port=22, preset='custom', name=None, ssh_user=None):
+def svc(sid, local_ip='127.0.0.1', local_port=22, preset='custom', name=None):
     item = {
         'id': sid,
         'name': name or sid,
@@ -119,8 +119,6 @@ def svc(sid, local_ip='127.0.0.1', local_port=22, preset='custom', name=None, ss
         'local_port': local_port,
         'preset': preset,
     }
-    if preset == 'ssh':
-        item['ssh_user'] = ssh_user or 'aella'
     return item
 
 

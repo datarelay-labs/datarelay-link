@@ -103,7 +103,7 @@ class CompactZeroTouchContract(unittest.TestCase):
                 cli.short_url_host_for_cfg({"public_url_host": HOST}), ""
             )
         self.assertEqual(cli.short_url_host_for_cfg({"bootstrap_hostname": HOST}), HOST)
-        self.assertEqual(zt.short_url_for_ticket(HOST, TICKET).count("/i/"), 1)
+        self.assertEqual(zt.short_url_for_ticket(HOST, HANDLE).count("/i/"), 1)
 
     def test_public_https_probe_requires_real_allocator_fail_closed_signature(self):
         import io
@@ -382,7 +382,7 @@ class CompactZeroTouchContract(unittest.TestCase):
                         TICKET, 600, "", HOST, 7000, "https://server.example",
                         "c" * 64, "https://example.test/artifacts/agent/bootstrap-client.sh",
                         "", 22, cfg={"bootstrap_hostname": HOST},
-                        short_handle=HANDLE, require_compact=True,
+                        short_handle=HANDLE,
                     )
         self.assertNotIn("FRP_BOOTSTRAP_TICKET=", output.getvalue())
         self.assertNotIn("zt1.", output.getvalue())
@@ -399,7 +399,7 @@ class CompactZeroTouchContract(unittest.TestCase):
                     TICKET, 600, "", HOST, 7000, "https://server.example",
                     "c" * 64, "https://example.test/artifacts/agent/bootstrap-client.ps1",
                     cfg={"bootstrap_hostname": HOST}, short_handle=HANDLE,
-                    stage1_sha256="", require_compact=True,
+                    stage1_sha256="",
                 )
         self.assertNotIn("FRP_BOOTSTRAP_TICKET=", output.getvalue())
         self.assertNotIn("Zero-touch Agent command", output.getvalue())
@@ -417,14 +417,13 @@ class CompactZeroTouchContract(unittest.TestCase):
                         TICKET, 600, "", "192.0.2.20", 443, url,
                         "a" * 64, "https://example.test/installer.ps1",
                         cfg={}, short_handle=HANDLE, stage1_sha256="b" * 64,
-                        private_ip_plan=plan, require_compact=True,
+                        private_ip_plan=plan,
                     )
                 else:
                     cli.print_one_line(
                         TICKET, 600, "", "192.0.2.20", 443, url,
                         "a" * 64, "https://example.test/installer.sh", "", 22,
                         cfg={}, short_handle=HANDLE, private_ip_plan=plan,
-                        require_compact=True,
                     )
             lines = output.getvalue().splitlines()
             prefix = "$ErrorActionPreference=" if windows else "bash -c "
@@ -433,11 +432,40 @@ class CompactZeroTouchContract(unittest.TestCase):
             self.assertIn("/i/", command)
             self.assertNotIn("zt1.", command)
 
-    def test_long_private_ca_is_explicit_advanced_opt_in(self):
-        self.assertFalse(cli.parse_args(["--one-line"]).long_bootstrap)
-        self.assertTrue(
-            cli.parse_args(["--one-line", "--long-bootstrap"]).long_bootstrap
-        )
+    def test_legacy_zero_touch_code_cannot_be_reintroduced(self):
+        """No alternate long creator, decoder or bootstrap argv compatibility."""
+        forbidden_by_source = {
+            "tools/frp-create-client": (
+                "--long-bootstrap", "legacy_env", "encode_zero_touch_package",
+                "decode_zero_touch_package", "pinned_ca_linux_command",
+                "pinned_ca_windows_command",
+            ),
+            "tools/frp-enroll-bulk": (
+                "encode_zero_touch_package", "pinned_ca_linux_command",
+                "pinned_ca_manual_linux_command",
+            ),
+            "lib/frp_zero_touch.py": (
+                "def encode_zero_touch_package(", "def decode_zero_touch_package(",
+                "def pinned_ca_linux_command(", "def pinned_ca_windows_command(",
+                "def pinned_ca_windows_inner(", "def short_url_windows_command(",
+            ),
+            "install-client.sh": ("zt1.*)", "frp_zero_touch_apply_package"),
+            "lib/frp-client-common.sh": ("frp_zero_touch_apply_package() {",),
+        }
+        for path, markers in forbidden_by_source.items():
+            contents = (ROOT / path).read_text(encoding="utf-8")
+            for marker in markers:
+                with self.subTest(file=path, obsolete=marker):
+                    self.assertNotIn(marker, contents)
+        for path in ("docs/CLI_REFERENCE.md", "docs/ZERO_TOUCH_SHORT_URL.md",
+                     "docs/ZERO_TOUCH_REGRESSION_CONTROL.md", "docs/PRODUCT_MASTER.md"):
+            with self.subTest(doc=path):
+                self.assertNotIn("--long-bootstrap", (ROOT / path).read_text())
+
+    def test_removed_legacy_long_bootstrap_option_is_rejected(self):
+        self.assertFalse(hasattr(cli.parse_args(["--one-line"]), "long_bootstrap"))
+        with self.assertRaises(SystemExit):
+            cli.parse_args(["--one-line", "--long-bootstrap"])
 
 
 if __name__ == "__main__":

@@ -86,7 +86,7 @@ class WizardWrongInputTests(unittest.TestCase):
 
 class ZeroTouchCommandSecurityTests(unittest.TestCase):
     def test_short_url_preserves_ticket_and_https(self):
-        ticket = "bt1." + ("a" * 16) + "." + ("b" * 64)
+        ticket = "A" * 22
         cmd = zt.short_url_command("remote.xdr.ooo", ticket)
         self.assertEqual(
             cmd,
@@ -96,22 +96,14 @@ class ZeroTouchCommandSecurityTests(unittest.TestCase):
         self.assertNotIn("mktemp", cmd)
         self.assertNotIn("--insecure", cmd)
 
-    def test_pinned_ca_command_still_verifies_fingerprint(self):
-        pkg = zt.encode_zero_touch_package(
-            "https://203.0.113.10:6099/enroll",
-            "a" * 64,
-            "bt1." + ("c" * 16) + "." + ("d" * 64),
+    def test_ip_short_command_verifies_fingerprint(self):
+        cmd = zt.private_ca_ip_linux_command(
+            "https://203.0.113.10:6099/enroll", "a" * 64, "B" * 22
         )
-        cmd = zt.pinned_ca_linux_command(
-            "https://203.0.113.10:6099/agent/bootstrap-client.sh",
-            "https://203.0.113.10:6099/enroll",
-            "a" * 64,
-            pkg,
-        )
-        self.assertIn("--insecure", cmd)
         self.assertIn("--cacert", cmd)
         self.assertIn("a" * 64, cmd)
-        self.assertIn(pkg, cmd)
+        self.assertIn("/i/" + "B" * 22, cmd)
+        self.assertNotIn("zt1.", cmd)
 
     def test_manual_install_pins_ca_before_installer_fetch(self):
         installer = "https://203.0.113.10:6099/artifacts/agent/bootstrap-client.sh"
@@ -139,7 +131,8 @@ class ZeroTouchCommandSecurityTests(unittest.TestCase):
         )
         self.assertIn("SHA256", script)
         self.assertIn("mismatch", script)
-        self.assertIn("zt1.", script)
+        self.assertIn("FRP_BOOTSTRAP_TICKET=", script)
+        self.assertNotIn("zt1.", script)
 
 
 class ShowAgentTests(unittest.TestCase):

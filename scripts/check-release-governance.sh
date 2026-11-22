@@ -37,11 +37,15 @@ else
 fi
 grep -q "PROJECT_VERSION:-${PROJECT_VERSION}" lib/frp-common.sh &&
   pass "VERSION_SSOT_COMMON_DEFAULT" || fail "VERSION_SSOT_COMMON_DEFAULT"
-./scripts/check-version-consistency.sh >/tmp/version-consistency.out 2>&1 &&
-  pass "VERSION_SSOT_CONSISTENT" || {
-    cat /tmp/version-consistency.out >&2
-    fail "VERSION_SSOT_CONSISTENT"
-  }
+# Avoid a shared /tmp filename (cross-run races and sticky-dir ownership).
+version_consistency_output="$(mktemp -t drlink-version-consistency.XXXXXX)"
+if ./scripts/check-version-consistency.sh >"$version_consistency_output" 2>&1; then
+  pass "VERSION_SSOT_CONSISTENT"
+else
+  cat "$version_consistency_output" >&2
+  fail "VERSION_SSOT_CONSISTENT"
+fi
+rm -f "$version_consistency_output"
 
 # --- Manifest validity + provenance ----------------------------------------
 python3 ./scripts/validate-release-manifest.py &&

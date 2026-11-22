@@ -5,14 +5,11 @@ export FRP_TEST_UNAME_S=Darwin FRP_TEST_UNAME_M=arm64
 export FRP_CLIENT_SOURCED=1
 . "$ROOT/install-client.sh"
 
-pkg="$(python3 - <<'PY'
-import base64,json
-p={"v":1,"u":"https://example.test/enroll","c":"a"*64,"t":"ticket.value"}
-print("zt1."+base64.urlsafe_b64encode(json.dumps(p).encode()).decode().rstrip("="))
-PY
-)"
-frp_zero_touch_apply_package "$pkg"
-[[ "$FRP_ZERO_TOUCH" == 1 ]]
+export FRP_ALLOCATOR_URL='https://example.test/enroll'
+export FRP_ALLOCATOR_CA_SHA256="$(printf 'a%.0s' {1..64})"
+export FRP_BOOTSTRAP_TICKET="bt1.$(printf 'b%.0s' {1..16}).$(printf 'c%.0s' {1..64})"
+export FRP_ZERO_TOUCH=1
+frp_zero_touch_require_inputs
 [[ "$FRP_ALLOCATOR_URL" == https://example.test/enroll ]]
 frp_detect_arch
 [[ "$FRP_ARCH" == arm64 ]]

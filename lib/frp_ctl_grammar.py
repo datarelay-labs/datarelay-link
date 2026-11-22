@@ -617,33 +617,6 @@ _CLIENT_ACTION_LIKE = frozenset(
 )
 
 UNQUOTED_META = set("$`;|&><*?(){}[]")
-LEGACY_COMMANDS = {
-    "clients",
-    "client",
-    "client-info",
-    "client-set",
-    "edit-client",
-    "enroll",
-    "create-client",
-    "enroll-bulk",
-    "enrollments",
-    "enrollment-revoke",
-    "revoke-client",
-    "release-service",
-    "release-client",
-    "project-update",
-    "frp-update",
-    "server-update",
-    "client-update",
-    "backup",
-    "upstream",
-    "audit",
-    "services",
-    "manage",
-    "info",
-    "client-status",
-    "server-status",
-}
 SHELL_REJECT = {"shell", "exec", "bash", "sh"}
 
 
@@ -968,124 +941,6 @@ def _root_help(role):
     return CATALOG.root_help(role)
 
 
-def _root_help_legacy(role):
-    client, server = _role_parts(role)
-    lines = [
-        "Data Relay Link CLI",
-        "===================",
-        "",
-        "Grammar: <verb> <resource> [target] [property] [value]",
-        "",
-        "Discover commands with Tab. Type 'help <verb>' for details.",
-        "",
-        "Show",
-        "  show status",
-        "  show version",
-    ]
-    if server:
-        lines.extend(
-            [
-                "  show clients",
-                "  show client <ID>",
-                "  show client <ID> services",
-                "  show client <ID> tags",
-                "  show enrollments",
-                "  show audit",
-                "  show upstream",
-            ]
-        )
-    if client:
-        lines.extend(["  show services", "  show info"])
-    lines.extend(["", "Configure"])
-    if server:
-        lines.extend(
-            [
-                "  show managed-host-groups",
-                "  show managed-host-group <GROUP>",
-                "  show profiles",
-                "  show profile <PROFILE>",
-                "  show clients",
-                "  show client <ID> groups",
-                "  set client <ID> label <value>",
-                "  set client <ID> note <value>",
-                "  set client <ID> tag <key> <value>",
-                "  unset client <ID> label",
-                "  unset client <ID> note",
-                "  unset client <ID> tag <key>",
-                "  set managed-host-group <GROUP>",
-                "  create profile <name> --preset ... --target-host ... --target-port ...",
-                "  set managed-host-group <GROUP> name <name>",
-                "  set managed-host-group <GROUP> name|description <value>",
-                "  set profile <PROFILE> <prop> <value>",
-                "  unset managed-host-group <GROUP>",
-                "  delete profile <PROFILE>",
-                "  add client <ID> group <GROUP>",
-                "  remove client <ID> group <GROUP>",
-            ]
-        )
-    if client:
-        lines.extend(
-            [
-                "  add service",
-                "  add service",
-                "  set service <id> target-host <host>",
-                "  set service <id> target-port <port>",
-                "  set service <id> ssh-user <user>",
-                "  set service <id> name <value>",
-                "  set service <id> health-type <tcp|http|disabled>",
-                "  set service <id> health-timeout <seconds>",
-                "  set service <id> health-interval <seconds>",
-                "  set service <id> health-max-failed <count>",
-                "  set service <id> health-path </path>",
-                "  enable service <id>",
-                "  disable service <id>",
-                "  apply",
-                "  discard",
-            ]
-        )
-    lines.extend(["", "Lifecycle"])
-    if server:
-        lines.extend(
-            [
-                "  create zero-touch",
-                "  create enrollment",
-                "  create enrollments",
-                "  create backup",
-                "  revoke enrollment <id>",
-                "  delete enrollment <id>",
-                "  revoke client <ID>",
-                "  release service <ID> <service-id>",
-                "  release client <ID>",
-                "  restore backup <path>",
-            ]
-        )
-    lines.extend(
-        [
-            "  update product",
-            "  update engine",
-        ]
-    )
-    other = [
-        "",
-        "Other",
-    ]
-    if server:
-        other.append("  access               Access Control Pack (server)")
-    other.extend(
-        [
-            "  doctor",
-            "  support-bundle [--output PATH]",
-            "  menu                 Guided numbered menu",
-            "  history              This session only (not saved to disk)",
-            "  help, ?",
-            "  clear",
-            "  exit",
-            "",
-            "status and version remain shortcuts for show status / show version.",
-        ]
-    )
-    lines.extend(other)
-    return "\n".join(lines) + "\n"
 
 
 def _show_help(rest, role):
@@ -1158,7 +1013,6 @@ def _set_help(rest, role):
             "Usage:\n"
             "  set service <service-id> target-host <host>\n"
             "  set service <service-id> target-port <port>\n"
-            "  set service <service-id> ssh-user <user>\n"
             "  set service <service-id> name <value>\n"
             "  set service <service-id> health-type <tcp|http|disabled>\n"
             "  set service <service-id> health-timeout <seconds>\n"
@@ -1178,7 +1032,6 @@ def _set_help(rest, role):
             "  set profile <PROFILE> preset <ssh|http|https|custom>\n"
             "  set profile <PROFILE> target-host <host>\n"
             "  set profile <PROFILE> target-port <port>\n"
-            "  set profile <PROFILE> ssh-user <user>\n\n"
             "Editing a profile does not mutate existing services.\n"
         )
     avail = _set_resources(role)
@@ -1202,7 +1055,7 @@ def _unset_help(role):
         "  unset server bootstrap-hostname\n\n"
         "unset removes metadata only. It does not release ports or revoke identity.\n"
         "unset server public-hostname falls back to Public IP access.\n"
-        "Unsetting bootstrap-hostname selects a qualified public-HTTPS hostname or verified Private-CA numeric-IP bootstrap. DNS is optional; unsafe prerequisites fail before ticket issuance. Advanced --long-bootstrap remains explicit.\n"
+        "Unsetting bootstrap-hostname selects a qualified public-HTTPS hostname or verified Private-CA numeric-IP bootstrap. DNS is optional; unsafe prerequisites fail before ticket issuance. Unqualified bootstrap endpoints fail closed.\n"
     )
 
 
@@ -1333,8 +1186,6 @@ def _verb_help(verb, role):
     return mapping.get(verb, "Usage:\n  %s\n" % verb)
 
 
-def _legacy_help(role):
-    return CATALOG.legacy_help(role)
 
 
 def _fmt_available(rows):
@@ -1757,7 +1608,6 @@ def context_help(tokens, role, names=None, clients=None):
                 [
                     ("target-host", "Local target host"),
                     ("target-port", "Local target port"),
-                    ("ssh-user", "SSH username"),
                     ("name", "Display name"),
                     ("health-type", "tcp | http | disabled"),
                     ("health-timeout", "Probe timeout seconds"),
@@ -1872,7 +1722,6 @@ def context_help(tokens, role, names=None, clients=None):
                 "======================\n\n"
                 "Usage:\n"
                 "  enrollment create\n"
-                "  enrollment create [--one-line] [--ssh --ssh-user USER --label NAME]\n\n"
                 "Generate a Manual Enrollment Code for interactive client install.\n"
                 "For everyday onboarding prefer: create zero-touch\n"
             )
@@ -1951,48 +1800,6 @@ def _concise_root(role):
     return CATALOG.concise_root(role)
 
 
-def _concise_root_legacy(role):
-    client, server = _role_parts(role)
-    rows = [
-        ("show", "View status and configuration"),
-        ("set", "Change configuration"),
-        ("unset", "Remove configuration values"),
-        ("create", "Create enrollment or backup"),
-        ("revoke", "Revoke management access"),
-        ("purge", "Remove terminal enrollment metadata"),
-        ("release", "Return reserved public ports"),
-        ("update", "Update project or FRP"),
-        ("restore", "Restore backup"),
-        ("doctor", "Run health checks"),
-        ("support-bundle", "Create sanitized diagnostic archive"),
-        ("access", "Access Control Pack"),
-        ("help", "Detailed help"),
-        ("menu", "Guided menu"),
-        ("history", "Session command history"),
-        ("exit", "Leave drlink"),
-    ]
-    if not server:
-        hide = {"create", "revoke", "purge", "release", "restore", "access"}
-        if not client:
-            hide.update({"set", "unset"})
-        rows = [(n, d) for n, d in rows if n not in hide]
-        if client:
-            rows = [(n, d) for n, d in rows if n not in {"revoke", "purge", "release", "restore", "create", "access"}]
-            extra = [
-                ("add", "Add a local service"),
-                ("enable", "Enable a local service"),
-                ("disable", "Disable a local service"),
-                ("apply", "Apply pending service changes"),
-                ("discard", "Discard pending service changes"),
-            ]
-            # Keep a stable everyday list for client-only hosts.
-            keep = {
-                "show", "set", "add", "enable", "disable", "apply", "discard",
-                "update", "doctor", "support-bundle", "help", "menu", "history", "exit",
-            }
-            rows = extra + rows
-            rows = [(n, d) for n, d in rows if n in keep]
-    return _fmt_available([(n, d) for n, d in rows])
 
 
 def canonical_root(token):
@@ -2015,35 +1822,6 @@ def _looks_like_client_action(token):
     return text.lower() in _CLIENT_ACTION_LIKE
 
 
-def _client_legacy_selector(tokens, names=None):
-    """True when ``client <ID> [view]`` should keep the legacy shortcut.
-
-    Only known-looking client selectors fall through. Unknown second tokens
-    stay with the canonical parser as terminal syntax errors.
-    """
-    if len(tokens) < 2:
-        return False
-    second = str(tokens[1] or "").strip()
-    actions = CATALOG.canonical_actions("client")
-    if second in actions or second.startswith("-"):
-        return False
-    if _looks_like_client_action(second):
-        return False
-    if len(tokens) > 4:
-        return False
-    known = {str(n).strip().lower() for n in (names or []) if str(n).strip()}
-    looks_id = bool(re.fullmatch(r"[0-9a-fA-F]{6,32}", second))
-    looks_named = second.lower() in known
-    # Allow common short labels/hostnames used in legacy scripts when they
-    # contain a hyphen or look like inventory names (alphanumeric + -._).
-    looks_label = bool(re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}", second)) and (
-        "-" in second or "." in second or looks_named or looks_id
-    )
-    if not (looks_id or looks_named or looks_label):
-        return False
-    if len(tokens) == 3:
-        return tokens[2] in ("services", "tags", "groups", "info", "overview")
-    return len(tokens) == 2
 
 
 def canonical_tokens(tokens):
@@ -2311,8 +2089,6 @@ def _canonical_result(tokens, role, names=None):
     cmd = CATALOG.find(work, include_aliases=True)
     if cmd is None:
         root = canonical_root(work[0])
-        if root == "client" and _client_legacy_selector(work, names=names):
-            return None, None
         if root in FALLTHROUGH_ROOTS:
             return None, None
         return None, None
@@ -3166,7 +2942,7 @@ def _match_set(tokens, role, names=None):
         }
     if resource in ("profile", "service-profile"):
         props = [
-            "name", "description", "preset", "target-host", "target-port", "ssh-user",
+            "name", "description", "preset", "target-host", "target-port",
             "health-type", "health-timeout", "health-interval", "health-max-failed", "health-path",
         ]
         if not server:
@@ -3181,29 +2957,19 @@ def _match_set(tokens, role, names=None):
             )
         if len(tokens) < 5:
             return incomplete("Missing value.", ["set profile <PROFILE> %s <value>" % tokens[3]])
-        # Allow trailing --ssh-user for atomic non-SSH → SSH transitions.
-        idx = 5
-        while idx < len(tokens):
-            if not str(tokens[idx]).startswith("-"):
-                return {
-                    "status": "error",
-                    "message": "Too many arguments. Quote values that contain spaces.",
-                }
-            idx += 1
-            if idx < len(tokens) and not str(tokens[idx]).startswith("-"):
-                idx += 1
+        if len(tokens) > 5:
+            return {"status": "error", "message": "Too many arguments. Quote values that contain spaces."}
         return {
             "status": "ok",
             "action": "set_profile",
             "profile": tokens[2],
             "property": tokens[3],
             "value": tokens[4],
-            "passthrough": tokens[5:],
         }
     if resource == "service":
         if not client:
             return {"status": "role", "need": "client", "command": "set service"}
-        props = ["target-host", "target-port", "ssh-user", "name",
+        props = ["target-host", "target-port", "name",
                  "health-type", "health-timeout", "health-interval",
                  "health-max-failed", "health-path"]
         if len(tokens) < 3:
@@ -3566,8 +3332,7 @@ def _match_unset(tokens, role, names=None):
                 "action": "release_service",
                 "client": tokens[2],
                 "service": tokens[4],
-                "passthrough": tokens[5:],
-            }
+                }
         if prop == "group":
             if len(tokens) < 5:
                 return incomplete(
@@ -4047,8 +3812,7 @@ def _match_add(tokens, role, names=None):
                 "action": "add_egress_source",
                 "profile": tokens[2],
                 "cidr": tokens[4],
-                "passthrough": tokens[5:],
-            }
+                }
         return incomplete(
             "Unknown egress-profile add target.",
             [
@@ -4205,8 +3969,7 @@ def _match_remove(tokens, role, names=None):
                 "action": "remove_egress_destination",
                 "profile": tokens[2],
                 "destination": tokens[4],
-                "passthrough": tokens[5:],
-            }
+                }
         if kind == "source" and len(tokens) >= 5:
             idx = 5
             while idx < len(tokens):
@@ -4223,8 +3986,7 @@ def _match_remove(tokens, role, names=None):
                 "action": "remove_egress_source",
                 "profile": tokens[2],
                 "source": tokens[4],
-                "passthrough": tokens[5:],
-            }
+                }
         return incomplete(
             "Unknown egress-profile remove target.",
             [
@@ -4443,8 +4205,6 @@ def completion_candidates(
     )
     if hit is not None:
         return hit
-    if verb in LEGACY_COMMANDS:
-        return _legacy_completion(tokens, trailing, role, names, services)
     return _canonical_completion(
         tokens,
         trailing,
@@ -4778,8 +4538,6 @@ def _catalog_candidates(
         # old operand when no action matches.
         return None if root in FALLTHROUGH_ROOTS else []
     if filled[1] not in actions:
-        if root == "client" and _client_legacy_selector([root, filled[1]]):
-            return None  # fall through to legacy operand completion
         # Fall through to verb-specific completion (action-first handlers).
         return None
     probe = [root] + list(filled[1:])
@@ -5027,7 +4785,7 @@ def _canonical_completion(
                 return _filter(groups, prefix)
         if filled[1] == "service" and client:
             return _filter(
-                ["--preset", "--id", "--name", "--target-host", "--target-port", "--ssh-user"],
+                ["--preset", "--id", "--name", "--target-host", "--target-port"],
                 prefix,
             )
         return []
@@ -5063,30 +4821,6 @@ def _canonical_completion(
     return []
 
 
-def _legacy_completion(tokens, trailing, role, names, services):
-    prefix = _current_prefix(tokens, trailing)
-    filled = tokens if trailing else tokens[:-1]
-    cmd = filled[0] if filled else tokens[0]
-    if cmd in ("client", "client-info", "revoke", "revoke-client", "release-client") and len(filled) == 1:
-        return _filter(names, prefix)
-    if cmd in ("client-set", "edit-client"):
-        if len(filled) == 1:
-            return _filter(names, prefix)
-        return []
-    if cmd == "release-service":
-        if len(filled) == 1:
-            return _filter(names, prefix)
-        if len(filled) == 2:
-            return _filter(services.get(filled[1], []), prefix)
-        return []
-    if cmd in ("enroll", "create-client"):
-        # Hidden aliases remain runnable, but Tab never advertises --options.
-        return []
-    if cmd == "doctor":
-        return []
-    if cmd == "support-bundle":
-        return []
-    return []
 
 
 def complete_line(

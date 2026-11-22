@@ -24,27 +24,7 @@ pass() { echo "PASS $1"; }
 fail() { echo "FAIL $1" >&2; exit 1; }
 
 extract_bootstrap_ticket() {
-  python3 - "$1" <<'PY'
-import base64, json, re, sys
-from pathlib import Path
-text = Path(sys.argv[1]).read_text()
-m = re.search(r"/i/([A-Za-z0-9_-]{22}|bt1\.[0-9a-f]+\.[0-9a-f]+)", text)
-if m:
-    print(m.group(1))
-    raise SystemExit(0)
-m = re.search(r"zt1\.[A-Za-z0-9_-]+", text)
-if m:
-    package = m.group(0)
-elif re.search(r"sudo bash -s -- '(zt1\.[^']+)'", text):
-    m = re.search(r"sudo bash -s -- '(zt1\.[^']+)'", text)
-    package = m.group(1)
-else:
-    raise SystemExit('missing ticket')
-parts = package.split('.', 1)
-padded = parts[1] + ('=' * (-len(parts[1]) % 4))
-payload = json.loads(base64.urlsafe_b64decode(padded.encode('ascii')).decode('utf-8'))
-print(payload['t'])
-PY
+  python3 "$ROOT/tests/lib/resolve-short-bootstrap-ticket.py" "$1" "$LIVE_TREE"
 }
 
 make_frpc() {
@@ -149,7 +129,7 @@ ln -sfn "$ALLOC_ROOT/server_token" "$LIVE_TREE/etc/frp/server_token"
 issue_ticket() {
   local note="$1"
   FRP_DEPLOY_TEST_ROOT="$LIVE_TREE" python3 "$ROOT/tools/frp-create-client" \
-    --one-line --long-bootstrap --ssh --ssh-user "$SSH_USER" --note "$note"
+    --one-line --ssh --ssh-user "$SSH_USER" --note "$note"
 }
 
 run_client() {

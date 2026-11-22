@@ -129,23 +129,14 @@ def hux_reg_003(env: ScenarioEnv) -> None:
 def hux_zt_001(env: ScenarioEnv) -> None:
     import frp_zero_touch as zt
 
-    ticket = "bt1." + ("c" * 16) + "." + ("d" * 64)
+    ticket = "A" * 22
     cmd = zt.short_url_command("remote.xdr.ooo", ticket)
     expect_true(len(cmd) < 200, "Zero-Touch public command not reasonably short", evidence=cmd)
     expect_contains(cmd, "remote.xdr.ooo")
     expect_contains(cmd, ticket)
-    expect_true("|" in cmd and "sudo bash" in cmd, "expected pipe-to-sudo-bash form")
-    # Pinned CA path still verifies fingerprint
-    pkg = zt.encode_zero_touch_package(
-        "https://203.0.113.10:6099/enroll",
-        "a" * 64,
-        ticket,
-    )
-    pinned = zt.pinned_ca_linux_command(
-        "https://203.0.113.10:6099/agent/bootstrap-client.sh",
-        "https://203.0.113.10:6099/enroll",
-        "a" * 64,
-        pkg,
+    expect_true("|" in cmd and "sudo bash" in cmd, "expected fail-closed pipe-to-sudo-bash form")
+    pinned = zt.private_ca_ip_linux_command(
+        "https://203.0.113.10:6099/enroll", "a" * 64, ticket
     )
     expect_contains(pinned, "--cacert")
     expect_contains(pinned, "a" * 64)

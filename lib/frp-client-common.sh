@@ -1110,9 +1110,6 @@ payload = {
   'local_port': port,
   'preset': preset,
 }
-if preset == 'ssh':
-    if len(sys.argv) > 6 and sys.argv[6].strip():
-        payload['ssh_user'] = sys.argv[6].strip()
 print(json.dumps(payload))
 PY
 }
@@ -1257,18 +1254,6 @@ EOF
   esac
 }
 
-frp_ux_ssh_user_help() {
-  cat <<'EOF'
-SSH user (optional connection example)
-  Operating-system username shown in the generated SSH command only.
-
-  This does NOT create an operating-system account,
-  change a password, or configure SSH authentication.
-  Leave blank to show <username> in connection examples.
-
-EOF
-}
-
 frp_ux_add_service_menu() {
   cat <<'EOF'
 Add a service
@@ -1350,7 +1335,6 @@ frp_ux_print_all_guidance() {
   frp_ux_target_port_help http
   frp_ux_target_port_help https
   frp_ux_target_port_help custom
-  frp_ux_ssh_user_help
   frp_ux_add_service_menu
   frp_ux_empty_services_help
   frp_ux_configured_services_help
@@ -1392,22 +1376,9 @@ frp_prompt_target_port() {
   done
 }
 
-frp_prompt_ssh_user() {
-  local out_var="$1"
-  local default="${2:-${FRP_SSH_USER:-}}"
-  local _frp_user_tmp=""
-  frp_ux_ssh_user_help
-  if [[ -n "$default" ]]; then
-    _frp_user_tmp="$(read_tty "SSH user [optional, ${default}]: " "$default")"
-  else
-    _frp_user_tmp="$(read_tty "SSH user [optional]: " "")"
-  fi
-  printf -v "$out_var" '%s' "$_frp_user_tmp"
-}
-
 frp_ux_prompt_new_service() {
   local dest="${1:-}"
-  local choice sid host port user name _frp_new_payload
+  local choice sid host port name _frp_new_payload
   while true; do
     echo
     frp_ux_add_service_menu
@@ -1417,9 +1388,8 @@ frp_ux_prompt_new_service() {
         frp_prompt_service_id ssh sid
         frp_prompt_target_host 127.0.0.1 host
         frp_prompt_target_port ssh 22 port
-        frp_prompt_ssh_user user
         maybe_warn_connectivity "$host" "$port" "SSH"
-        _frp_new_payload="$(service_payload ssh "$sid" SSH "$host" "$port" "$user")"
+        _frp_new_payload="$(service_payload ssh "$sid" SSH "$host" "$port")"
         ;;
       2)
         frp_prompt_service_id http sid
@@ -1822,8 +1792,6 @@ for item in items:
     }
     if 'remote_port' in item and item['remote_port'] is not None:
         rec['remote_port'] = int(item['remote_port'])
-    if rec['preset'] == 'ssh' and item.get('ssh_user'):
-        rec['ssh_user'] = item['ssh_user']
     try:
         HC.copy_health_check(item, rec)
     except HC.HealthCheckError as exc:
@@ -1926,12 +1894,8 @@ item = {
     'local_port': local_port,
     'preset': preset,
 }
-if preset == 'ssh':
-    ssh_user = str(raw.get('ssh_user', '') or '').strip()
-    if ssh_user:
-        if not re.fullmatch(r'[A-Za-z0-9._@-]{1,32}', ssh_user):
-            raise SystemExit('ERROR: invalid ssh_user')
-        item['ssh_user'] = ssh_user
+if 'ssh_user' in raw:
+    raise SystemExit('ERROR: ssh_user is not supported')
 try:
     HC.copy_health_check(raw, item)
 except HC.HealthCheckError as exc:
@@ -1993,12 +1957,8 @@ def add(path, raw):
         'local_port': local_port,
         'preset': preset,
     }
-    if preset == 'ssh':
-        ssh_user = str(raw.get('ssh_user', '') or '').strip()
-        if ssh_user:
-            if not re.fullmatch(r'[A-Za-z0-9._@-]{1,32}', ssh_user):
-                raise SystemExit('ERROR: invalid ssh_user')
-            item['ssh_user'] = ssh_user
+    if 'ssh_user' in raw:
+        raise SystemExit('ERROR: ssh_user is not supported')
     try:
         HC.copy_health_check(raw, item)
     except HC.HealthCheckError as exc:
@@ -2245,9 +2205,8 @@ for item in services:
     else:
         lines.append(f'  Public : {host_port(server, remote_port)}')
     if preset == 'ssh':
-        user = clean(item.get('ssh_user'), 32) or '<username>'
+        user = '<username>'
         lines.append('  Connect:')
-        lines.append('    (SSH username is connection-example metadata; not validated at enrollment)')
         if preferred:
             lines.append('    Preferred:')
             lines.append(f'      ssh -p {remote_port} {user}@{preferred}')
@@ -2499,58 +2458,6 @@ frp_zero_touch_active() {
   [[ "${FRP_ZERO_TOUCH:-}" == "1" ]] || [[ -n "${FRP_BOOTSTRAP_TICKET:-}" ]]
 }
 
-frp_zero_touch_apply_package() {
-  # Decode opaque zt1.<payload> from short Zero-Touch command into env vars.
-  # Never uses insecure TLS; CA pin and allocator URL come from the package.
-  local package="${1:-}"
-  local decoded
-  if [[ -z "$package" ]]; then
-    echo "ERROR: zero-touch package is empty." >&2
-    frp_emit_failure_class ZERO_TOUCH_INPUT_INVALID
-    return 1
-  fi
-  if ! decoded="$(python3 - "$package" <<'PY'
-import base64
-import json
-import sys
-
-text = sys.argv[1].strip()
-parts = text.split('.', 1)
-if len(parts) != 2 or parts[0] != 'zt1' or not parts[1]:
-    raise SystemExit('invalid zero-touch package')
-padded = parts[1] + ('=' * (-len(parts[1]) % 4))
-try:
-    raw = base64.urlsafe_b64decode(padded.encode('ascii'))
-    payload = json.loads(raw.decode('utf-8'))
-except Exception:
-    raise SystemExit('invalid zero-touch package')
-if not isinstance(payload, dict) or int(payload.get('v') or 0) != 1:
-    raise SystemExit('unsupported zero-touch package version')
-url = str(payload.get('u') or '').strip()
-ca = str(payload.get('c') or '').strip().lower()
-ticket = str(payload.get('t') or '').strip()
-if not url.lower().startswith('https://') or len(ca) != 64 or not ticket:
-    raise SystemExit('incomplete zero-touch package')
-if any(ch not in '0123456789abcdef' for ch in ca):
-    raise SystemExit('invalid CA fingerprint in zero-touch package')
-# Emit shell-safe assignments (no secrets in argv of subsequent tools beyond env).
-def sh_quote(value):
-    return "'" + str(value).replace("'", "'\"'\"'") + "'"
-print('FRP_ALLOCATOR_URL=%s' % sh_quote(url))
-print('FRP_ALLOCATOR_CA_SHA256=%s' % sh_quote(ca))
-print('FRP_BOOTSTRAP_TICKET=%s' % sh_quote(ticket))
-print('FRP_ZERO_TOUCH=1')
-PY
-)"; then
-    echo "ERROR: invalid zero-touch package." >&2
-    frp_emit_failure_class ZERO_TOUCH_INPUT_INVALID
-    return 1
-  fi
-  eval "$decoded"
-  export FRP_ALLOCATOR_URL FRP_ALLOCATOR_CA_SHA256 FRP_BOOTSTRAP_TICKET FRP_ZERO_TOUCH
-  return 0
-}
-
 frp_zero_touch_require_inputs() {
   if [[ -z "${FRP_BOOTSTRAP_TICKET:-}" ]]; then
     echo "ERROR: zero-touch setup requires FRP_BOOTSTRAP_TICKET." >&2
@@ -2568,83 +2475,24 @@ frp_zero_touch_require_inputs() {
 }
 
 frp_zero_touch_ssh_preflight() {
-  local user="${1:-}" port="${2:-22}"
-  local class=""
-  if [[ -z "$user" ]]; then
-    return 0
-  fi
-  if class="$(python3 - "$user" "$port" <<'PY'
-import pwd
-import re
-import socket
-import sys
-
-user = sys.argv[1]
+  # Verify only the TCP listener. SSH account selection belongs exclusively
+  # to the SSH client, not to Zero-Touch enrollment or FRP tunneling.
+  local port="${1:-22}"
+  if ! python3 - "$port" <<'PYTEST'
+import socket, sys
 try:
-    port = int(sys.argv[2])
-except (TypeError, ValueError):
-    sys.stdout.write('SSH_TARGET_UNAVAILABLE')
-    raise SystemExit(4)
-if not re.fullmatch(r'[A-Za-z0-9._@-]{1,32}', user):
-    sys.stdout.write('SSH_USER_NOT_FOUND')
-    raise SystemExit(2)
-try:
-    pwd.getpwnam(user)
-except KeyError:
-    sys.stdout.write('SSH_USER_NOT_FOUND')
-    raise SystemExit(3)
-except Exception:
-    sys.stdout.write('SSH_USER_NOT_FOUND')
-    raise SystemExit(3)
-if port < 1 or port > 65535:
-    sys.stdout.write('SSH_TARGET_UNAVAILABLE')
-    raise SystemExit(4)
-sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-sock.settimeout(3)
-try:
-    sock.connect(('127.0.0.1', port))
-except Exception:
-    sys.stdout.write('SSH_TARGET_UNAVAILABLE')
-    raise SystemExit(4)
-finally:
-    try:
-        sock.close()
-    except Exception:
+    p=int(sys.argv[1])
+    if p<1 or p>65535: raise ValueError('bad port')
+    with socket.create_connection(('127.0.0.1',p),timeout=3):
         pass
-raise SystemExit(0)
-PY
-)"; then
-    return 0
+except Exception:
+    raise SystemExit(1)
+PYTEST
+  then
+    echo "Setup could not continue because SSH is not listening on 127.0.0.1:${port}." >&2
+    frp_emit_failure_class SSH_TARGET_UNAVAILABLE
+    return 1
   fi
-  case "$class" in
-    SSH_USER_NOT_FOUND)
-      echo "Setup could not continue because the SSH user '${user}' does not exist on this host." >&2
-      echo >&2
-      echo "No FRP port was allocated." >&2
-      echo "The one-time setup command may be run again before it expires after the user exists." >&2
-      echo >&2
-      frp_emit_failure_class SSH_USER_NOT_FOUND
-      return 1
-      ;;
-    SSH_TARGET_UNAVAILABLE)
-      echo "Setup could not continue because SSH is not listening on 127.0.0.1:${port}." >&2
-      echo >&2
-      echo "No FRP port was allocated." >&2
-      echo "The one-time setup command may be run again before it expires after SSH is available." >&2
-      echo >&2
-      frp_emit_failure_class SSH_TARGET_UNAVAILABLE
-      return 1
-      ;;
-    *)
-      echo "Setup could not continue because SSH is not ready on this host." >&2
-      echo >&2
-      echo "No FRP port was allocated." >&2
-      echo "The one-time setup command may be run again before it expires after SSH is available." >&2
-      echo >&2
-      frp_emit_failure_class SSH_TARGET_UNAVAILABLE
-      return 1
-      ;;
-  esac
 }
 
 # ---------------------------------------------------------------------------
@@ -3654,9 +3502,6 @@ for item in services:
         'local_port': item['local_port'],
         'preset': item.get('preset') or 'custom',
     }
-    if out['preset']=='ssh':
-        if item.get('ssh_user'):
-            out['ssh_user']=item['ssh_user']
     try:
         HC.copy_health_check(item, out)
     except HC.HealthCheckError as exc:
@@ -3891,11 +3736,6 @@ def pair_notes(a, b):
         ))
     if (a.get('name') or '') != (b.get('name') or ''):
         notes.append(('local', f"Display name: {a.get('name')} -> {b.get('name')}"))
-    if a.get('preset') == 'ssh' or b.get('preset') == 'ssh':
-        old_user = a.get('ssh_user') or 'legacy / unspecified'
-        new_user = b.get('ssh_user') or 'legacy / unspecified'
-        if old_user != new_user:
-            notes.append(('local', f'SSH user: {old_user} -> {new_user}'))
     if a.get('health_check') != b.get('health_check'):
         notes.append(('runtime', 'health check configuration changed'))
     return notes

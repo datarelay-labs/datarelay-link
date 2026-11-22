@@ -44,7 +44,6 @@ class ServiceProfilesTests(unittest.TestCase):
             local_ip="127.0.0.1",
             local_port=22,
             description="desk",
-            ssh_user="ubuntu",
         )
         self.assertTrue(pid.startswith("prof_"))
         self.assertEqual(len(pid), len("prof_") + 12)
@@ -54,7 +53,7 @@ class ServiceProfilesTests(unittest.TestCase):
         self.assertEqual(len(rows), 1)
         resolved_id, resolved = PROF.resolve_profile(self.state, "office-ssh")
         self.assertEqual(resolved_id, pid)
-        self.assertEqual(resolved["ssh_user"], "ubuntu")
+        self.assertNotIn("ssh_user", resolved)
 
         PROF.update_profile(self.state, pid, "target-port", "2222")
         self.assertEqual(self.state["profiles"][pid]["local_port"], 2222)
@@ -83,11 +82,24 @@ class ServiceProfilesTests(unittest.TestCase):
         with self.assertRaises(PROF.ProfileError):
             PROF.reject_forbidden_fields({"access_list_id": "acl_1"})
 
-    def test_ssh_requires_user(self):
+    def test_ssh_username_removed_from_service_profile(self):
+        pid, rec = PROF.create_profile(
+            self.state, "ssh1", preset="ssh", local_ip="127.0.0.1", local_port=22
+        )
+        self.assertNotIn("ssh_user", rec)
+        payload = PROF.profile_to_service_payload(rec)
+        self.assertEqual(payload["preset"], "ssh")
+        self.assertNotIn("ssh_user", payload)
         with self.assertRaises(PROF.ProfileError):
-            PROF.create_profile(
-                self.state, "ssh1", preset="ssh", local_ip="127.0.0.1", local_port=22
-            )
+            PROF.update_profile(self.state, pid, "ssh-user", "ubuntu")
+        with self.assertRaises(PROF.ProfileError):
+            PROF.reject_forbidden_fields({"ssh_user": "ubuntu"})
+        web_id, _ = PROF.create_profile(
+            self.state, "web", preset="http", local_ip="127.0.0.1", local_port=80
+        )
+        PROF.update_profile(self.state, web_id, "preset", "ssh")
+        self.assertNotIn("ssh_user", self.state["profiles"][web_id])
+        PROF.validate_profiles_state(self.state)
 
     def test_profile_to_service_payload(self):
         _pid, rec = PROF.create_profile(

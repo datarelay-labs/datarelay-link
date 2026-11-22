@@ -118,7 +118,7 @@ export FRP_TEST_MACHINE_ID='aabbccddeeff00112233445566778899'
 export FRP_ALLOCATOR_URL="https://127.0.0.1:${ALLOC_PORT}/enroll"
 export FRP_ALLOCATOR_CA_SHA256="$CA_FP"
 export FRP_ENROLLMENT_CODE="${EID}.${SECRET}"
-export FRP_SERVICES_JSON='[{"id":"ssh","name":"SSH","protocol":"tcp","local_ip":"127.0.0.1","local_port":22,"preset":"ssh","ssh_user":"aella"}]'
+export FRP_SERVICES_JSON='[{"id":"ssh","name":"SSH","protocol":"tcp","local_ip":"127.0.0.1","local_port":22,"preset":"ssh"}]'
 export FRP_CLIENT_SOURCED=1
 # shellcheck source=../install-client.sh
 . "$ROOT/install-client.sh"
@@ -252,7 +252,7 @@ grep -q 'Hostname        : dp-example' "$WORKDIR/status.out" || fail "status hos
 grep -q 'Management identity : enrolled' "$WORKDIR/status.out" || fail "status identity"
 grep -q 'ssh' "$WORKDIR/status.out" || fail "status ssh"
 grep -q 'Data Relay Link Server: 203.0.113.10' "$WORKDIR/info.out" || fail "info server"
-grep -q 'ssh -p 18200 aella@203.0.113.10' "$WORKDIR/info.out" || fail "info ssh connect"
+grep -q 'ssh -p 18200 <username>@203.0.113.10' "$WORKDIR/info.out" || fail "info ssh connect"
 : >"$HOOK"
 FRP_CLIENT_TEST_MENU=1 "$ROOT/tools/frp-client" >"$WORKDIR/menu.out"
 grep -q 'Data Relay Link Agent Management' "$WORKDIR/menu.out" || fail "menu header"
@@ -325,43 +325,15 @@ d=json.loads(Path(sys.argv[1]).read_text())
 assert d['services']['ssh']['name']=='ssh'
 assert d['services']['ssh']['remote_port']==18200
 PY
-grep -q 'ssh -p 18200 aella@203.0.113.10' "$TREE/etc/frp/access-info.txt" || fail "access-info after name"
+grep -q 'ssh -p 18200 <username>@203.0.113.10' "$TREE/etc/frp/access-info.txt" || fail "access-info after name"
 pass "name-only is local metadata apply"
 
-# ssh_user-only local metadata
-CAND="$WORKDIR/cand-user.json"
-python3 - "$STATE" "$CAND" <<'PY'
-import json,sys
-from pathlib import Path
-d=json.loads(Path(sys.argv[1]).read_text())
-d['services']['ssh']['ssh_user']='tester'
-Path(sys.argv[2]).write_text(json.dumps(d, indent=2, sort_keys=True)+'\n')
-PY
-toml_before="$(sha256sum "$TREE/etc/frp/frpc.toml" | awk '{print $1}')"
-: >"$HOOK"
-unset FRP_ENROLLMENT_CODE || true
-export FRP_CLIENT_CANDIDATE="$CAND"
-frp_state_diff "$STATE" "$CAND" >"$WORKDIR/user-pending.out"
-frp_ux_print_apply_summary "$STATE" "$CAND" >"$WORKDIR/user-summary.out"
-grep -q 'SSH user: aella -> tester' "$WORKDIR/user-pending.out" || fail "pending missing ssh_user"
-grep -q 'SSH user: aella -> tester' "$WORKDIR/user-summary.out" || fail "apply summary missing ssh_user"
-if ! "$ROOT/tools/frp-client" apply >"$WORKDIR/user.out" 2>"$WORKDIR/user.err"; then
-  fail "ssh_user-only apply should succeed"
+# SSH account metadata is deliberately not a supported service field.
+# Connection examples use <username> and service updates must not persist it.
+if grep -qE 'SSH user:|ssh_user' "$TREE/etc/frp/access-info.txt"; then
+  fail "unsupported SSH username metadata leaked into access info"
 fi
-grep -q 'Applied local changes.' "$WORKDIR/user.out" || fail "ssh_user local apply"
-if grep -qx enroll "$HOOK"; then fail "ssh_user enrolled"; fi
-if grep -qx restart "$HOOK"; then fail "ssh_user restarted"; fi
-toml_after="$(sha256sum "$TREE/etc/frp/frpc.toml" | awk '{print $1}')"
-[[ "$toml_before" == "$toml_after" ]] || fail "ssh_user-only rewrote frpc.toml"
-grep -q 'ssh -p 18200 tester@203.0.113.10' "$TREE/etc/frp/access-info.txt" || fail "access-info ssh_user"
-python3 - "$STATE" <<'PY' || fail "ssh_user state"
-import json,sys
-from pathlib import Path
-d=json.loads(Path(sys.argv[1]).read_text())
-assert d['services']['ssh']['ssh_user']=='tester'
-assert d['services']['ssh']['remote_port']==18200
-PY
-pass "ssh_user-only is local metadata apply"
+pass "SSH_USERNAME_METADATA_REMOVED"
 
 # Add grafana
 CAND="$WORKDIR/cand-add.json"
@@ -761,7 +733,7 @@ pass "lock release leaves no stale lock file"
 fp_before="$(python3 "$ROOT/lib/frp_mgmt_auth.py" fingerprint "$TREE/etc/frp/client-identity.pub")"
 cp "$TREE/etc/frp/client-identity.key" "$WORKDIR/key.before"
 export FRP_ENROLLMENT_CODE="${EID}.${SECRET}"
-export FRP_SERVICES_JSON='[{"id":"ssh","name":"SSH","protocol":"tcp","local_ip":"127.0.0.1","local_port":22,"preset":"ssh","ssh_user":"aella"}]'
+export FRP_SERVICES_JSON='[{"id":"ssh","name":"SSH","protocol":"tcp","local_ip":"127.0.0.1","local_port":22,"preset":"ssh"}]'
 if frp_client_main >"$WORKDIR/reinstall.out" 2>"$WORKDIR/reinstall.err"; then
   fail "installer should refuse an existing client"
 fi
@@ -916,7 +888,6 @@ grep -q 'existing Agent identity' "$WORKDIR/after-revoke.out" || fail "apply aft
 pass "revoked identity recovers with Enrollment Code"
 
 # Interactive recoverable errors
-export FRP_SSH_USER=aella
 frp_reset_test_input
 export FRP_CLIENT_TEST_INPUT=$'1\n1\nSSH\n\n\n\n9\n2\n99\n3\nabc\n2\n1\n\n\n0\n\n8\n'
 if ! "$ROOT/tools/frp-client" >"$WORKDIR/recover.out" 2>"$WORKDIR/recover.err"; then

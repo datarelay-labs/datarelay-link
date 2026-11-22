@@ -185,28 +185,19 @@ def print_services():
     if ssh:
         print()
         print('Connect:')
-        if ssh.get('ssh_user'):
-            if public_hostname and public_ip and public_hostname != public_ip:
-                print('  Preferred:')
-                print('    ssh -p %s %s@%s' % (
-                    ssh.get('remote_port') or '-',
-                    CREG.ssh_user_display(ssh),
-                    public_hostname,
-                ))
-                print('  Fallback:')
-                print('    ssh -p %s %s@%s' % (
-                    ssh.get('remote_port') or '-',
-                    CREG.ssh_user_display(ssh),
-                    public_ip,
-                ))
-            else:
-                print('  ssh -p %s %s@%s' % (
-                    ssh.get('remote_port') or '-',
-                    CREG.ssh_user_display(ssh),
-                    access_host or 'host',
-                ))
+        if public_hostname and public_ip and public_hostname != public_ip:
+            print('  Preferred:')
+            print('    ssh -p %s <username>@%s' % (
+                ssh.get('remote_port') or '-', public_hostname,
+            ))
+            print('  Fallback:')
+            print('    ssh -p %s <username>@%s' % (
+                ssh.get('remote_port') or '-', public_ip,
+            ))
         else:
-            print('  legacy / unspecified')
+            print('  ssh -p %s <username>@%s' % (
+                ssh.get('remote_port') or '-', access_host or 'host',
+            ))
 
 
 def print_tags():

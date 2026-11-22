@@ -199,12 +199,10 @@ for item in services:
     remote_port = item.get('remote_port')
     host = preferred or server
     if preset == 'ssh':
-        user = item.get('ssh_user') or '<username>'
+        user = '<username>'
         print('SSH tunnel ready')
         print()
         print('Connect:')
-        if not item.get('ssh_user'):
-            print('  (SSH username is connection-example metadata; not validated at enrollment)')
         if preferred:
             print('  Preferred:')
             print('    ssh -p %s %s@%s' % (remote_port, user, preferred))
@@ -291,19 +289,15 @@ for item in services:
     print(f"  Public port  : {remote_port}")
     print()
     if preset == 'ssh':
-        user = item.get('ssh_user')
-        if user:
-            print('Connect from another machine with:')
-            print()
-            if preferred:
-                print('  Preferred:')
-                print(f'    ssh -p {remote_port} {user}@{preferred}')
-                print('  Fallback:')
-                print(f'    ssh -p {remote_port} {user}@{server}')
-            else:
-                print(f'  ssh -p {remote_port} {user}@{server}')
+        print('Connect from another machine with:')
+        print()
+        if preferred:
+            print('  Preferred:')
+            print(f'    ssh -p {remote_port} <username>@{preferred}')
+            print('  Fallback:')
+            print(f'    ssh -p {remote_port} <username>@{server}')
         else:
-            print('SSH user: legacy / unspecified')
+            print(f'  ssh -p {remote_port} <username>@{server}')
     elif preset == 'http':
         print('Access:')
         print()
@@ -826,11 +820,9 @@ frp_client_main() {
   HOSTNAME_VALUE="$(frp_short_hostname)"
 
   if frp_zero_touch_active; then
-    local ssh_user ssh_port
-    ssh_user="${FRP_SSH_USER:-}"
-    ssh_port="${FRP_SSH_PORT:-22}"
-    if [[ -n "$ssh_user" ]]; then
-      frp_zero_touch_ssh_preflight "$ssh_user" "$ssh_port" || return 1
+    # Optional target listener probe; never ask for/check an SSH login account.
+    if [[ -n "${FRP_SSH_PORT:-}" ]]; then
+      frp_zero_touch_ssh_preflight "$FRP_SSH_PORT" || return 1
     fi
   fi
 
@@ -1125,14 +1117,6 @@ if [[ "${_FRP_INSTALL_CLIENT_EXECUTED}" == "1" ]]; then
       -h|--help)
         frp_client_installer_usage
         exit 0
-        ;;
-      zt1.*)
-        # Short Zero-Touch opaque package from:
-        #   curl -fsSL <public-installer> | sudo bash -s -- zt1.<payload>
-        if ! frp_zero_touch_apply_package "$1"; then
-          exit 1
-        fi
-        shift
         ;;
       *)
         echo "ERROR: unknown option: $1" >&2

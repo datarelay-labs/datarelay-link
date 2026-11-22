@@ -32,7 +32,7 @@ outside this integration's scope.
   data. Operator changes and concurrent edits remain protected.
 - A changed target clears old runtime proof and requires a fresh apply/ACK.
   Ordinary healthy heartbeats retain the PR 220 no-unnecessary-restart behavior.
-- Legacy package/redeem regression cases explicitly select `--long-bootstrap`;
+- Retired package/redeem fixtures are replaced by the short-handle bootstrap and direct internal redeem tests;
   the default remains a compact `/i/` command. Tests must not demand the retired
   extra SSH-login prompts from the backend.
 

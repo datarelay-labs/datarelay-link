@@ -29,7 +29,6 @@ PROFILE_ID_RE = re.compile(r"^prof_[0-9a-f]{12}$")
 NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
 NAME_MAX_LEN = 64
 DESCRIPTION_MAX_LEN = 1024
-SSH_USER_RE = re.compile(r"^[A-Za-z0-9._@-]{1,32}$")
 PRESETS = frozenset({"ssh", "http", "https", "custom"})
 DEFAULT_PORTS = {"ssh": 22, "http": 80, "https": 443}
 FORBIDDEN_PROFILE_KEYS = frozenset(
@@ -42,6 +41,7 @@ FORBIDDEN_PROFILE_KEYS = frozenset(
         "access_list_id",
         "access_list",
         "acl_id",
+        "ssh_user",
     }
 )
 
@@ -286,17 +286,6 @@ def validate_target_port(value: Any) -> int:
     return port
 
 
-def validate_ssh_user(value: str, *, required: bool = False) -> str:
-    text = str(value or "").strip()
-    if not text:
-        if required:
-            raise ProfileError("ssh_user is required for ssh profiles")
-        return ""
-    if not SSH_USER_RE.fullmatch(text):
-        raise ProfileError("invalid ssh_user")
-    return text
-
-
 def validate_profile_id(value: str) -> str:
     text = str(value or "").strip().lower()
     if not PROFILE_ID_RE.fullmatch(text):
@@ -411,11 +400,6 @@ def validate_profiles_state(state: dict) -> None:
         validate_preset(profile.get("preset") or "")
         validate_target_host(profile.get("local_ip") or "")
         validate_target_port(profile.get("local_port"))
-        preset = str(profile.get("preset") or "").lower()
-        if preset == "ssh":
-            validate_ssh_user(profile.get("ssh_user") or "", required=True)
-        elif profile.get("ssh_user"):
-            validate_ssh_user(profile.get("ssh_user") or "")
         if "description" in profile and profile.get("description") is not None:
             validate_description(str(profile.get("description") or ""))
         if "health_check" in profile:
@@ -479,8 +463,6 @@ def public_profile_view(profile: dict) -> dict:
     }
     if profile.get("description"):
         out["description"] = profile.get("description")
-    if profile.get("ssh_user"):
-        out["ssh_user"] = profile.get("ssh_user")
     health = normalize_health_check_optional(profile.get("health_check"))
     if health:
         out["health_check"] = health
@@ -495,7 +477,6 @@ def create_profile(
     local_ip: str,
     local_port: Any,
     description: str = "",
-    ssh_user: str = "",
     health_check: Any = None,
 ) -> tuple[str, dict]:
     reject_forbidden_fields(
@@ -505,7 +486,6 @@ def create_profile(
             "local_ip": local_ip,
             "local_port": local_port,
             "description": description,
-            "ssh_user": ssh_user,
             **(health_check if isinstance(health_check, dict) else {}),
         }
     )
@@ -516,7 +496,6 @@ def create_profile(
     local_ip = validate_target_host(local_ip)
     local_port = validate_target_port(local_port)
     description = validate_description(description)
-    ssh_user = validate_ssh_user(ssh_user, required=(preset == "ssh"))
     health = normalize_health_check_optional(health_check)
 
     profiles = state.setdefault("profiles", {})
@@ -535,8 +514,6 @@ def create_profile(
     }
     if description:
         record["description"] = description
-    if ssh_user:
-        record["ssh_user"] = ssh_user
     if health:
         record["health_check"] = health
     profiles[pid] = record
@@ -563,40 +540,16 @@ def update_profile(state: dict, selector: str, prop: str, value: str) -> tuple[s
             profile.pop("description", None)
     elif prop == "preset":
         old = str(profile.get("preset") or "")
-        # Atomic non-SSH → SSH transition: "ssh:<user>" or "ssh --ssh-user <user>"
-        # style values are accepted so preset and ssh_user change together.
-        text = str(value or "").strip()
-        ssh_user_inline = ""
-        preset_token = text
-        if text.lower().startswith("ssh:") or text.lower().startswith("ssh="):
-            preset_token = "ssh"
-            ssh_user_inline = text[4:].strip()
-        elif " " in text and text.split(None, 1)[0].lower() == "ssh":
-            preset_token = "ssh"
-            ssh_user_inline = text.split(None, 1)[1].strip()
-        preset = validate_preset(preset_token)
+        preset = validate_preset(str(value or "").strip())
         profile["preset"] = preset
-        if preset == "ssh":
-            if ssh_user_inline:
-                profile["ssh_user"] = validate_ssh_user(ssh_user_inline, required=True)
-            validate_ssh_user(profile.get("ssh_user") or "", required=True)
-        elif "local_port" not in profile and preset in DEFAULT_PORTS:
+        if "local_port" not in profile and preset in DEFAULT_PORTS:
             profile["local_port"] = DEFAULT_PORTS[preset]
-        if preset != "ssh":
-            # Keep ssh_user only for ssh presets.
-            profile.pop("ssh_user", None)
     elif prop in ("target-host", "local-ip", "local_ip"):
         old = str(profile.get("local_ip") or "")
         profile["local_ip"] = validate_target_host(value)
     elif prop in ("target-port", "local-port", "local_port"):
         old = str(profile.get("local_port") or "")
         profile["local_port"] = validate_target_port(value)
-    elif prop in ("ssh-user", "ssh_user"):
-        old = str(profile.get("ssh_user") or "")
-        if str(profile.get("preset") or "") != "ssh":
-            raise ProfileError("ssh-user is only valid for ssh profiles")
-        user = validate_ssh_user(value, required=True)
-        profile["ssh_user"] = user
     elif prop in ("health-type", "health_type"):
         old = str(((profile.get("health_check") or {}) if isinstance(profile.get("health_check"), dict) else {}).get("type") or "")
         text = str(value or "").strip().lower()
@@ -638,14 +591,11 @@ def update_profile(state: dict, selector: str, prop: str, value: str) -> tuple[s
     else:
         raise ProfileError(
             "unknown profile property; use name|description|preset|"
-            "target-host|target-port|ssh-user"
+            "target-host|target-port"
         )
     if prop.startswith("health") and profile.get("health_check") is None:
         profile.pop("health_check", None)
     profile["updated_at"] = utc_now_iso()
-    # Re-validate ssh requirement after preset/ssh mutations.
-    if str(profile.get("preset") or "") == "ssh":
-        validate_ssh_user(profile.get("ssh_user") or "", required=True)
     reject_forbidden_fields(profile)
     return pid, profile, old
 
@@ -690,8 +640,6 @@ def profile_to_service_payload(
         "local_ip": validate_target_host(profile.get("local_ip") or ""),
         "local_port": validate_target_port(profile.get("local_port")),
     }
-    if preset == "ssh":
-        payload["ssh_user"] = validate_ssh_user(profile.get("ssh_user") or "", required=True)
     health = normalize_health_check_optional(profile.get("health_check"))
     if health:
         payload["health_check"] = health

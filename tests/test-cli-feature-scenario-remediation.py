@@ -105,7 +105,7 @@ frpctl_nav_prompt_id 'Name: '
         from drlink_v24_bundle import parse_v24_bundle
         rows = {tuple(r["path"]): r for r in catalog.COMMANDS}
         bulk = rows[("set", "enrollment", "bulk")]["detail"]
-        for phrase in ("label,ssh_user,note", "10", "24", "management-only"):
+        for phrase in ("label,note", "10", "24", "management-only"):
             self.assertIn(phrase, bulk)
         for resource in ("network-object", "network-group", "service-object", "service-group"):
             detail = rows[("unset", resource)]["detail"]
@@ -616,7 +616,7 @@ frpctl_nav_prompt_id 'Name: '
         os.close(slave)
         output = bytearray()
         try:
-            os.write(master, b"1\n2\nreview-node\n\n\n1h\nn\n")
+            os.write(master, b"1\n2\nreview-node\n\n1h\nn\n")
             deadline = time.monotonic() + 30
             while time.monotonic() < deadline:
                 if select.select([master], [], [], 0.2)[0]:
@@ -660,7 +660,7 @@ frpctl_nav_prompt_id 'Name: '
                 os.close(slave)
                 output = bytearray()
                 try:
-                    command = "1\\n2\\nreview-node\\n\\n\\n" + ttl + "\\n"
+                    command = "1\\n2\\nreview-node\\n\\n" + ttl + "\\n"
                     if valid:
                         command += "n\\n"
                     os.write(master, command.encode().replace(b"\\n", b"\n"))
@@ -725,15 +725,18 @@ frpctl_nav_prompt_id 'Name: '
                 "https://203.0.113.10/artifacts/agent/bootstrap-client.sh",
             )
             enrollment.print_one_line(
-                "example-ticket", 600, "", "203.0.113.10", 443,
+                "bt1." + "a" * 16 + "." + "b" * 64, 600, "", "203.0.113.10", 443,
                 "https://203.0.113.10/enroll", "0" * 64,
                 "https://203.0.113.10/artifacts/agent/bootstrap-client.sh",
-                "", 22, legacy_env=True, cfg={},
+                "", 22, cfg={"bootstrap_hostname":"bootstrap.example.test"},
+                short_handle="A"*22,
             )
             enrollment.print_one_line_windows(
-                "example-ticket", 600, "", "203.0.113.10", 443,
+                "bt1." + "a" * 16 + "." + "b" * 64, 600, "", "203.0.113.10", 443,
                 "https://203.0.113.10/enroll", "0" * 64,
-                "https://203.0.113.10/artifacts/agent/bootstrap-client.ps1", cfg={},
+                "https://203.0.113.10/artifacts/agent/bootstrap-client.ps1",
+                cfg={"bootstrap_hostname":"bootstrap.example.test"},
+                short_handle="A"*22,stage1_sha256="c"*64,
             )
         rendered = output.getvalue()
         self.assertIn("Agent install:", rendered)
@@ -1297,10 +1300,23 @@ frpctl_nav_workflow manage_host
             state.chmod(0)
             try:
                 env = dict(os.environ, FRP_CTL_TEST_ROOT=temp, FRP_DEPLOY_TEST_ROOT=temp)
+                run_as = {}
+                if hasattr(os, "geteuid") and os.geteuid() == 0:
+                    # Root bypasses mode-000; test the intended unprivileged
+                    # actor instead of reporting a false failure under root.
+                    import pwd
+                    # Match the checkout's normal owner so the child can
+                    # traverse the repository, but not the mode-000 fixture.
+                    parent_uid = ROOT.parent.stat().st_uid
+                    unprivileged = (pwd.getpwuid(parent_uid) if parent_uid != 0
+                                    else pwd.getpwnam("nobody"))
+                    root.chmod(0o755)
+                    run_as = {"user": unprivileged.pw_uid,
+                              "group": unprivileged.pw_gid, "extra_groups": []}
                 # A user launches the canonical public CLI, not its private dispatcher.
                 proc = subprocess.run(
                     ["bash", str(ROOT / "tools/drlink"), "system", "version"],
-                    env=env, text=True, capture_output=True, timeout=30,
+                    env=env, text=True, capture_output=True, timeout=30, **run_as,
                 )
             finally:
                 state.chmod(0o755)

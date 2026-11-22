@@ -259,7 +259,7 @@ def hux_cons_007(env: ScenarioEnv) -> None:
 def hux_cons_008(env: ScenarioEnv) -> None:
     import frp_zero_touch as zt
 
-    ticket = "bt1." + ("a" * 16) + "." + ("b" * 64)
+    ticket = "A" * 22
     cmd = zt.short_url_command("remote.xdr.ooo", ticket)
     expect_contains(cmd, "https://remote.xdr.ooo/i/")
     expect_true("mktemp" not in cmd, "Zero-Touch regressed to giant opaque shell")

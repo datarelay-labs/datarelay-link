@@ -78,7 +78,7 @@ class Env:
     def cleanup(self):
         self.tmp.cleanup()
 
-    def ssh_services(self, user='aella', port=22):
+    def ssh_services(self, port=22):
         return MOD.normalize_services([{
             'id': 'ssh',
             'name': 'SSH',
@@ -86,7 +86,6 @@ class Env:
             'local_ip': '127.0.0.1',
             'local_port': port,
             'preset': 'ssh',
-            'ssh_user': user,
         }])
 
     def issue(self, ttl=600, note='fixture', services=None):
@@ -730,7 +729,7 @@ def test_enroll_enforces_ticket_scope():
             ('rdp', rdp),
             ('ssh+rdp', env.ssh_services() + rdp),
             ('ssh-port', env.ssh_services(port=2222)),
-            ('ssh-user', env.ssh_services(user='root')),
+            ('ssh-host', [{**svc, 'local_ip':'127.0.0.2'} for svc in env.ssh_services()]),
             ('empty', []),
         ):
             code, result = _enroll_as(env, enroll, 'machine-ssh', attempt)
@@ -818,7 +817,7 @@ def test_manual_enrollment_without_scope_unrestricted():
         env.cleanup()
 
 
-def test_legacy_bt1_still_redeems():
+def test_obsolete_unwrapped_ticket_is_rejected():
     env = Env()
     try:
         ticket_id = 'abcdef0123456789'
@@ -853,14 +852,14 @@ def test_legacy_bt1_still_redeems():
         }
         env.allocator.save_enrollment(env.allocator.enrollment_path(enrollment_id), enroll)
         env.allocator.save_bootstrap(env.allocator.bootstrap_path(ticket_id), record)
-        if not env.allocator.short_url_bootstrap_available(raw):
-            fail('legacy short url unavailable')
+        if env.allocator.short_url_bootstrap_available(raw):
+            fail('obsolete raw short URL accepted')
             return
         code, result = env.redeem(raw, 'machine-legacy')
-        if code != 200 or 'enrollment_code' not in result:
-            fail('legacy redeem', '%s %s' % (code, result))
+        if code != 403:
+            fail('obsolete unwrapped ticket accepted', '%s %s' % (code, result))
             return
-        pass_('LEGACY_BT1_STILL_REDEEMS')
+        pass_('OBSOLETE_UNWRAPPED_TICKET_REJECTED')
     finally:
         env.cleanup()
 
@@ -910,8 +909,8 @@ def test_get_does_not_consume_compact():
         handle = str(record.get('_short_handle') or '')
         path = env.allocator.bootstrap_path(record['id'])
         before = path.read_text()
-        if not env.allocator.short_url_bootstrap_available(ticket):
-            fail('bt1 get unavailable')
+        if env.allocator.short_url_bootstrap_available(ticket):
+            fail('internal bt1 accepted as public /i/ URL')
             return
         if not env.allocator.short_url_bootstrap_available(handle):
             fail('compact get unavailable')
@@ -1205,15 +1204,11 @@ def test_windows_renderer_frozen_and_launcher():
             linux = env.allocator.build_short_url_script(handle, 'linux')
         finally:
             MOD.PKI.fingerprint_from_cert_file = original_fp
-        package = re.search(r'zt1\.[A-Za-z0-9_-]+', linux or '')
-        if not package:
-            fail('linux stage1 missing zt1')
+        if not linux or "FRP_BOOTSTRAP_TICKET='%s'" % ticket not in linux:
+            fail('linux stage1 missing direct ticket environment')
             return
-        encoded = package.group(0).split('.', 1)[1]
-        encoded += '=' * ((4 - len(encoded) % 4) % 4)
-        payload = json.loads(base64.urlsafe_b64decode(encoded.encode('ascii')).decode('utf-8'))
-        if payload.get('t') != ticket:
-            fail('linux stage1 credential', payload.get('t'))
+        if 'zt1.' in linux or 'PACKAGE=' in linux:
+            fail('obsolete package in stage1')
             return
         code, result = env.redeem(handle, 'machine-win')
         if code != 403:
@@ -1357,7 +1352,7 @@ def test_wrap_without_optional_cryptography():
 def main():
     test_issue_hashed_and_entropy()
     test_wrap_without_optional_cryptography()
-    test_legacy_bt1_still_redeems()
+    test_obsolete_unwrapped_ticket_is_rejected()
     test_compact_collision_does_not_overwrite()
     test_get_does_not_consume_compact()
     test_compact_redaction_and_command_length()
