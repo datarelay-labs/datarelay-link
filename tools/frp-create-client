@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 import argparse
-import ipaddress
 import importlib.util
 import json
 import os
@@ -508,61 +507,35 @@ def short_url_host_for_cfg(cfg, bootstrap_hostname='', public_hostname=''):
 
 
 def private_ca_ip_bootstrap_plan(cfg, ca_fp):
-    """Select a pinned-CA IP launcher without changing persisted URL identity.
+    """Qualified Private-CA IP only when the *entire* allocator uses that IP.
 
-    If an FQDN public URL uses the Server's Private CA, stock OS trust cannot
-    verify it. Only the configured public IP with a matching Server leaf IP
-    SAN may qualify the compact IP bootstrap fallback. The canonical
-    allocator URL is never mutated, and the remote client pins the CA.
+    A DNS-configured Server may NOT swap only the stage-zero bootstrap to IP:
+    stage-one /i/ still returns the canonical Server installer and allocator
+    URLs. Silently changing only the first URL issues an unusable ticket.
     """
     zt = load_zero_touch()
     pki = load_frp_pki()
-    if zt is None or pki is None:
+    if zt is None or pki is None or not isinstance(cfg, dict):
         return None
-    allocator = str(cfg.get('allocator_public_url') or '')
-    bootstrap_allocator = allocator
-    endpoint = zt.private_ca_ip_endpoint(bootstrap_allocator)
+    allocator = str(cfg.get('allocator_public_url') or '').strip()
+    endpoint = zt.private_ca_ip_endpoint(allocator)
     if endpoint is None:
-        # Public URL identity may use a DNS hostname while the same Server
-        # also publishes HTTPS on its explicitly configured numeric IP.
-        # Construct an IP-only bootstrap URL for pin-verified enrollment.
-        try:
-            parsed = urlparse(allocator)
-            selected_host = str(cfg.get('public_url_host') or
-                                cfg.get('public_hostname') or '').strip().lower()
-            address = ipaddress.ip_address(str(cfg.get('public_ip') or '').strip())
-            port = parsed.port or 443
-            if (parsed.scheme != 'https' or not selected_host or
-                    parsed.hostname != selected_host or
-                    parsed.username is not None or parsed.password is not None or
-                    parsed.query or parsed.fragment or parsed.params or
-                    address.is_unspecified or address.is_multicast):
-                return None
-            ip_host = '[%s]' % address if address.version == 6 else str(address)
-            authority = ip_host if port == 443 else '%s:%s' % (ip_host, port)
-            bootstrap_allocator = 'https://%s%s' % (authority, parsed.path)
-            endpoint = zt.private_ca_ip_endpoint(bootstrap_allocator)
-        except (TypeError, ValueError):
-            return None
-        if endpoint is None:
-            return None
+        return None
     ca = remap(str(cfg.get('tls_ca_cert') or '/etc/drlink/pki/ca.crt'))
     leaf = remap(str(cfg.get('tls_server_cert') or '/etc/drlink/pki/server.crt'))
     try:
         if not ca.is_file() or not leaf.is_file():
             return None
-    except OSError:
-        return None
-    try:
         if pki.fingerprint_from_cert_file(ca) != str(ca_fp or '').lower():
             return None
         pki.verify_cert_signed_by_ca(ca, leaf)
         if not pki.cert_covers_identities(leaf, [], [endpoint[1].strip('[]')]):
             return None
+        return {'mode': 'private_ca_ip', 'authority': endpoint[0],
+                'allocator': allocator,
+                'leaf_sha256': pki.fingerprint_from_cert_file(leaf)}
     except Exception:
         return None
-    return {'mode': 'private_ca_ip', 'authority': endpoint[0],
-            'allocator': bootstrap_allocator, 'leaf_sha256': pki.fingerprint_from_cert_file(leaf)}
 
 def private_ca_dns_bootstrap_plan(cfg, ca_fp):
     """Permit a DNS short launcher using pinned issuer CA and exact DNS SAN.
