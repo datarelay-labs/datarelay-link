@@ -96,7 +96,7 @@ mstsc /v:PUBLIC_HOST:REMOTE_PORT
 
 ## Multi-service
 
-Pass `-ServicesJson` with a JSON array of services (`id`, `local_ip`, `local_port`, `preset`, optional `ssh_user` / `name`). Client-side `preset: "rdp"` is sent to the server as `custom` (server allow-list is `ssh|http|https|custom`) while local state keeps RDP-friendly display.
+Pass `-ServicesJson` with a JSON array of services (`id`, `local_ip`, `local_port`, `preset`, optional `name`). SSH login usernames are **not** accepted, stored, or sent by Data Relay Link; specify the account in your SSH client when connecting. Client-side `preset: "rdp"` is sent to the server as `custom` (server allow-list is `ssh|http|https|custom`) while local state keeps RDP-friendly display.
 
 ## single443 / WSS
 

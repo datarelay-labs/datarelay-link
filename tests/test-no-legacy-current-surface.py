@@ -393,6 +393,12 @@ class LegacyReintroductionGate(unittest.TestCase):
         # local SSH account without storing or guessing an account.
         self.assertIn('<username>@', (ROOT / 'windows/tools/FrpClient.ps1').read_text())
 
+    def test_windows_documented_enrollment_matches_ssh_contract(self):
+        document = (ROOT / 'docs' / 'WINDOWS_CLIENT.md').read_text(encoding='utf-8')
+        self.assertNotIn('ssh_user', document)
+        self.assertNotIn('-SshUser', document)
+        self.assertIn('SSH login usernames are **not** accepted', document)
+
     def test_retired_aliases_never_reach_internal_dispatcher(self):
         retired = (
             ['release-client', 'demo'], ['release', 'client', 'demo'],
