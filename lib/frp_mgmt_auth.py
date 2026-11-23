@@ -10,7 +10,10 @@ still supports Amazon Linux 2 (OpenSSL 1.0.2), where Ed25519 is unavailable.
 ECDSA P-256 is a standard, non-custom primitive and the same OpenSSL CLI works
 from OpenSSL 1.0.2 through 3.x, matching the existing OpenSSL dependency.
 
-This module does not implement original cryptography. It shells out to OpenSSL.
+This module does not implement original cryptography. OpenSSL CLI remains the
+portable implementation. Where the existing optional cryptography dependency
+is available, verification uses its in-process ECDSA backend with identical
+P-256/SHA-256/DER wire semantics.
 
 Canonical signed object (mgmt schema 1)
 ---------------------------------------
@@ -57,6 +60,17 @@ import tempfile
 import time
 from pathlib import Path
 from functools import lru_cache
+
+try:
+    from cryptography.exceptions import InvalidSignature as _NativeInvalidSignature
+    from cryptography.hazmat.backends import default_backend as _native_default_backend
+    from cryptography.hazmat.primitives import hashes as _NATIVE_HASHES
+    from cryptography.hazmat.primitives.asymmetric import ec as _NATIVE_EC
+    from cryptography.hazmat.primitives.serialization import load_pem_public_key as _native_load_public_key
+except ImportError:
+    # Older/minimal Linux, macOS and Agent installations keep the CLI path.
+    _NATIVE_EC = None
+
 
 MGMT_ALG = 'ecdsa-p256-sha256'
 MGMT_SIGN_SCHEMA = 1
@@ -442,9 +456,18 @@ def _validated_verification_public_key(pem):
 
     Never cache signature/authentication results, identity status, nonce state,
     or private key material. A replaced key uses a different cache key; invalid
-    keys are not cached. OpenSSL still verifies every message below.
+    keys are not cached. ECDSA still verifies every message below.
     """
     return canonicalize_pubkey_pem(pem)
+
+
+@lru_cache(maxsize=256)
+def _native_verification_key(canonical_pem):
+    key = _native_load_public_key(canonical_pem.encode("utf-8"), backend=_native_default_backend())
+    if (not isinstance(key, _NATIVE_EC.EllipticCurvePublicKey)
+            or not isinstance(key.curve, _NATIVE_EC.SECP256R1)):
+        raise ValueError("management public key must be ECDSA P-256")
+    return key
 
 
 def verify_signature(pub_pem, message, signature_b64):
@@ -463,6 +486,14 @@ def verify_signature(pub_pem, message, signature_b64):
     if len(text) > MAX_PUBKEY_PEM_LEN:
         raise ValueError('public key is too large')
     canon = _validated_verification_public_key(text)
+    if _NATIVE_EC is not None:
+        key = _native_verification_key(canon)
+        try:
+            key.verify(sig, message, _NATIVE_EC.ECDSA(_NATIVE_HASHES.SHA256()))
+            return True
+        except (_NativeInvalidSignature, ValueError):
+            # Do not retry a cryptographically rejected request via another backend.
+            return False
     fd_pub, tmp_pub = tempfile.mkstemp(prefix='frp-pub.', suffix='.pem')
     os.close(fd_pub)
     fd_sig, tmp_sig = tempfile.mkstemp(prefix='frp-sig.', suffix='.bin')
