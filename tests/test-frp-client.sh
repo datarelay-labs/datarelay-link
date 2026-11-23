@@ -253,7 +253,24 @@ grep -q 'Hostname        : dp-example' "$WORKDIR/status.out" || fail "status hos
 grep -q 'Management identity : enrolled' "$WORKDIR/status.out" || fail "status identity"
 grep -q 'ssh' "$WORKDIR/status.out" || fail "status ssh"
 grep -q 'Data Relay Link Server: 203.0.113.10' "$WORKDIR/info.out" || fail "info server"
-grep -q 'ssh -p 18200 <username>@203.0.113.10' "$WORKDIR/info.out" || fail "info ssh connect"
+# Assert the exact user-owned SSH login placeholder and the live, issued
+# public endpoint. On mismatch retain only fixture-local, non-secret render
+# evidence, so an intermittent installer/CLI disagreement is diagnosable.
+if ! grep -Fq -- 'ssh -p 18200 <username>@203.0.113.10' "$WORKDIR/info.out"; then
+  echo "EXPECTED_SSH_CONNECT=ssh -p 18200 <username>@203.0.113.10" >&2
+  echo "ACTUAL_INFO_SSH_COMMANDS:" >&2
+  grep -F 'ssh -p ' "$WORKDIR/info.out" >&2 || true
+  echo "ACTUAL_INFO_PUBLIC_ENDPOINTS:" >&2
+  grep -E '^(Data Relay Link Server:|  Public :|  Fallback public :)' "$WORKDIR/info.out" >&2 || true
+  python3 - "$STATE" <<'PYSTATE' >&2
+import json,sys
+d=json.load(open(sys.argv[1],encoding='utf-8'))
+for sid,svc in (d.get('services') or {}).items():
+    print('STATE_SERVICE=',sid,'port=',svc.get('remote_port'),
+          'preset=',svc.get('preset'),'enabled=',svc.get('enabled'))
+PYSTATE
+  fail "info ssh connect"
+fi
 : >"$HOOK"
 FRP_CLIENT_TEST_MENU=1 "$ROOT/tools/frp-client" >"$WORKDIR/menu.out"
 grep -q 'Data Relay Link Agent Management' "$WORKDIR/menu.out" || fail "menu header"
