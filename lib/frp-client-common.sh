@@ -1507,9 +1507,11 @@ frp_ux_prompt_new_service() {
     esac
     case "$choice" in
       1)
-        frp_prompt_service_id ssh sid
-        frp_prompt_target_host 127.0.0.1 host
-        frp_prompt_target_port ssh 22 port
+        # A cancelled SSH field returns to the service menu with no draft.
+        # Propagate each step's cancellation before rendering a payload.
+        frp_prompt_service_id ssh sid || continue
+        frp_prompt_target_host 127.0.0.1 host || continue
+        frp_prompt_target_port ssh 22 port || continue
         maybe_warn_connectivity "$host" "$port" "SSH"
         _frp_new_payload="$(service_payload ssh "$sid" SSH "$host" "$port")"
         ;;
