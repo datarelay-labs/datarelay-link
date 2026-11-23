@@ -20,18 +20,21 @@ class WorkerSelectionTests(unittest.TestCase):
         with mock.patch.dict(os.environ, {}, clear=True):
             self.assertEqual(mcp._worker_count(os.environ.get("DRLINK_MCP_WORKERS", "1")), 1)
 
-    def test_auto_selects_six_only_on_large_cpu_memory_host(self):
+    def test_auto_selects_eight_on_ten_core_lab_host(self):
         with mock.patch.object(mcp.os, "sched_getaffinity", return_value=set(range(10))):
             with mock.patch.object(mcp, "_worker_memory_limit_bytes", return_value=8 * 1024 ** 3):
-                self.assertEqual(mcp._worker_count("auto"), 6)
-                self.assertEqual(mcp._worker_count(" AUTO "), 6)
+                self.assertEqual(mcp._worker_count("auto"), 8)
+                self.assertEqual(mcp._worker_count(" AUTO "), 8)
 
     def test_auto_caps_small_cpu_and_memory(self):
         with mock.patch.object(mcp, "_worker_memory_limit_bytes", return_value=8 * 1024 ** 3):
-            for cores, expected in [(1, 1), (2, 1), (3, 1), (4, 2), (7, 2), (8, 6), (40, 6)]:
+            for cores, expected in [(1, 1), (2, 1), (3, 1), (4, 2), (7, 2), (8, 6), (9, 6), (10, 8), (40, 8)]:
                 with self.subTest(cores=cores):
                     with mock.patch.object(mcp.os, "sched_getaffinity", return_value=set(range(cores))):
                         self.assertEqual(mcp._worker_count("auto"), expected)
+        with mock.patch.object(mcp.os, "sched_getaffinity", return_value=set(range(10))):
+            with mock.patch.object(mcp, "_worker_memory_limit_bytes", return_value=3 * 1024 ** 3):
+                self.assertEqual(mcp._worker_count("auto"), 6)
         with mock.patch.object(mcp.os, "sched_getaffinity", return_value=set(range(20))):
             with mock.patch.object(mcp, "_worker_memory_limit_bytes", return_value=1024 ** 3):
                 self.assertEqual(mcp._worker_count("auto"), 1)

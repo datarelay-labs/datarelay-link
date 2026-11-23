@@ -2187,7 +2187,8 @@ def _worker_count(value) -> int:
     """Bounded opt-in tuning; legacy default remains exactly one worker.
 
     LPERF measured 100 synthetic Agents and 30 calls on a 10-logical-CPU lab:
-    6 workers reduced p95 without changing policy. Auto is *opt-in* and
+    6 workers reduced p95 but had a borderline 503ms run; repeated 8-worker
+    runs left margin without changing policy. Auto is *opt-in* and
     deliberately chooses one worker when CPU/memory resources are unknown.
     """
     if isinstance(value, str) and value.strip().lower() == "auto":
@@ -2198,6 +2199,11 @@ def _worker_count(value) -> int:
         memory_bytes = _worker_memory_limit_bytes()
         if memory_bytes < 2 * 1024 ** 3:
             return 1
+        # On the measured 10-core lab, 8 worker processes left more p95
+        # margin than 6 under concurrent ALLOW and DENY bursts; keep a
+        # higher memory floor and leave the operator's explicit setting alone.
+        if cpus >= 10 and memory_bytes >= 4 * 1024 ** 3:
+            return min(MAX_WORKERS, 8)
         return min(MAX_WORKERS, 6 if cpus >= 8 else (2 if cpus >= 4 else 1))
     return _clamp_workers(value)
 
