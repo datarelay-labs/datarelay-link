@@ -34,6 +34,16 @@ class ZeroTouchDocContract(unittest.TestCase):
         self.assertIn('before', short.lower())
         self.assertNotIn('--long-bootstrap', short)
 
+    def test_server_install_reports_read_only_public_tls_status(self):
+        install = self.read('install-server.sh')
+        doc = self.read('docs/ZERO_TOUCH_SHORT_URL.md')
+        self.assertIn('frp_report_zero_touch_readiness', install)
+        self.assertIn('Zero-Touch HTTPS readiness: NOT_READY', install)
+        self.assertIn('Zero-Touch HTTPS readiness: READY', install)
+        self.assertIn('--preflight-zero-touch --platform linux', install)
+        self.assertIn('HEAD', doc)
+        self.assertIn('no ticket issued', doc)
+
     def test_help_and_real_e2e_cannot_reassert_automatic_long_fallback(self):
         # These public surfaces previously contradicted the compact-default
         # contract while the focused short-URL test was already green.

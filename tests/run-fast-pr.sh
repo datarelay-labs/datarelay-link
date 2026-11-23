@@ -35,6 +35,7 @@ python3 tests/test-enrolled-routed-target-parity.py
 python3 tests/test-mcp-owner-default-access.py
 python3 tests/test-zero-touch-operator-command-bound.py
 python3 tests/test-zero-touch-public-fqdn-trust.py
+bash tests/test-zero-touch-installer-readiness.sh
 python3 tests/test-zero-touch-guided-preflight.py
 python3 tests/test-zero-touch-doc-contract.py
 bash tests/test-zero-touch-short-url.sh

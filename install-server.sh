@@ -1943,6 +1943,31 @@ PY
   fi
 }
 
+# A successful Server install does not imply a publicly trusted bootstrap
+# certificate. This side-effect-free preflight runs after services are healthy
+# and before the operator is instructed to create the first Zero-Touch ticket.
+# It never creates enrollment credentials or changes TLS/NGINX config.
+frp_report_zero_touch_readiness() {
+  local result="" command_path="$BASE_DIR/tools/frp-create-client"
+  if frp_server_test_mode; then
+    printf 'Zero-Touch HTTPS readiness: NOT_CHECKED (isolated installation test)\n'
+    return 0
+  fi
+  if [[ ! -f "$command_path" ]]; then
+    echo 'Zero-Touch HTTPS readiness: NOT_READY (preflight tool missing)'
+    return 0
+  fi
+  if result="$(timeout 16 python3 "$command_path" --preflight-zero-touch --platform linux 2>&1)"; then
+    echo 'Zero-Touch HTTPS readiness: READY (read-only, no ticket issued)'
+  else
+    echo 'Zero-Touch HTTPS readiness: NOT_READY (no ticket issued)'
+    printf '  %s\n' "$result"
+    echo '  Configure publicly trusted HTTPS for the bootstrap FQDN,'
+    echo '  or choose a valid numeric-IP Private-CA bootstrap with matching IP SAN.'
+    echo '  Recheck before issuing a ticket: sudo drlink set enrollment zero-touch'
+  fi
+}
+
 frp_print_nat_summary() {
   local control_target alloc_target frontend_note=""
   if [[ -n "${FRP_INTERNAL_IP:-}" ]]; then
@@ -3073,6 +3098,7 @@ EOF2
     echo "Runtime services were not restarted (project files only)."
   fi
   frp_print_nat_summary
+  frp_report_zero_touch_readiness
   cat <<EOF2
 Everyday management (start here):
   sudo drlink

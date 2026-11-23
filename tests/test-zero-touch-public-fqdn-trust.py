@@ -63,6 +63,34 @@ class PublicFQDNTrustTests(unittest.TestCase):
             f.return_value.open.side_effect = OSError('connection refused')
             self.assertEqual(CLI.short_url_host_for_cfg({'public_hostname':'remote.isoc.ooo'}), '')
 
+    def test_fqdn_installer_preflight_requires_trusted_https_200_before_ticket(self):
+        url = 'https://remote.isoc.ooo/artifacts/agent/bootstrap-client.sh'
+        with self.assertRaises(SystemExit):
+            CLI.preflight_installer_url('http://remote.isoc.ooo/a', strict_https=True)
+        with self.assertRaises(SystemExit):
+            CLI.preflight_installer_url('https://user:pass@remote.isoc.ooo/a', strict_https=True)
+        for failure in (OSError('untrusted certificate'),
+                        urllib.error.HTTPError(url, 404, 'not found', {}, io.BytesIO(b'')),
+                        urllib.error.HTTPError(url, 302, 'redirect', {}, io.BytesIO(b'')),
+                        urllib.error.HTTPError(url, 503, 'failure', {}, io.BytesIO(b''))):
+            with self.subTest(failure=str(failure)):
+                opener = mock.Mock()
+                opener.open.side_effect = failure
+                with mock.patch('urllib.request.build_opener', return_value=opener) as factory:
+                    with self.assertRaises(SystemExit):
+                        CLI.preflight_installer_url(url, strict_https=True)
+                self.assertTrue(any(type(v).__name__ == 'NoRedirect' for v in factory.call_args.args))
+                self.assertTrue(any(type(v).__name__ == 'ProxyHandler' for v in factory.call_args.args))
+        opener = mock.Mock()
+        opener.open.return_value = mock.MagicMock()
+        opener.open.return_value.__enter__.return_value.status = 200
+        with mock.patch('urllib.request.build_opener', return_value=opener):
+            self.assertIsNone(CLI.preflight_installer_url(url, strict_https=True))
+        opener.open.assert_called_once()
+        request = opener.open.call_args.args[0]
+        self.assertEqual(request.get_method(), 'HEAD')
+        self.assertEqual(request.full_url, url)
+
     def test_simplest_stock_ca_short_command_not_replaced_by_private_ca_shell(self):
         import frp_zero_touch as zt
         cmd = zt.short_url_command('remote.isoc.ooo', 'A'*22)
