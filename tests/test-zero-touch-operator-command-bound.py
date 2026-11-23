@@ -113,7 +113,9 @@ class CompactZeroTouchContract(unittest.TestCase):
             self.assertEqual(
                 cli.short_url_host_for_cfg({"public_url_host": HOST}), ""
             )
-        self.assertEqual(cli.short_url_host_for_cfg({"bootstrap_hostname": HOST}), HOST)
+            self.assertEqual(cli.short_url_host_for_cfg({"bootstrap_hostname": HOST}), HOST)
+        # Live-mode qualification is covered separately with explicit HTTPS
+        # proof and rejection fixtures; never depend on external DNS/TLS here.
         self.assertEqual(zt.short_url_for_ticket(HOST, HANDLE).count("/i/"), 1)
 
     def test_public_https_probe_requires_real_allocator_fail_closed_signature(self):
