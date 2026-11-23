@@ -135,6 +135,7 @@ def main() -> int:
     churn = int(os.environ.get("DRLINK_EGRESS_BENCH_CHURN", "0"))
     transfer_kib = int(os.environ.get("DRLINK_EGRESS_BENCH_TRANSFER_KIB", "0"))
     protocol = os.environ.get("DRLINK_EGRESS_BENCH_PROTOCOL", "connect")
+    negative_during_load = os.environ.get("DRLINK_EGRESS_BENCH_NEGATIVE") == "1"
     if protocol not in ("connect", "http"):
         raise SystemExit("INVALID_EGRESS_BENCH_PROTOCOL")
 
@@ -207,7 +208,11 @@ def main() -> int:
             return ["1.2.3.4"]
         raise OSError("nxdomain")
 
+    forbidden_origin_attempts = []
     def connect(ip: str, port: int, hostname: str, timeout: float):
+        if hostname != "allowed.test":
+            forbidden_origin_attempts.append(hostname)
+            raise OSError("Unauthorized upstream connect attempted")
         return socket.create_connection(("127.0.0.1", origin.port), timeout=timeout)
 
     cache = GW.PolicyCache(cfg_path)
@@ -226,15 +231,47 @@ def main() -> int:
 
     hello = build_client_hello("allowed.test")
     latencies_ms: list[float] = []
+    setup_latencies_ms: list[float] = []
     failures = 0
+    denied_correctly = False
     lock = threading.Lock()
-
-    def one_connect(_i: int) -> None:
-        nonlocal failures
-        t0 = time.perf_counter()
+    def fd_count() -> int:
         try:
+            return len(os.listdir("/proc/self/fd"))
+        except OSError:
+            return 0
+
+    fd_before = fd_count()
+    fd_peak = fd_before
+    surge = threading.Barrier(concurrency + 1) if negative_during_load else None
+
+    def one_denied():
+        nonlocal denied_correctly
+        try:
+            if surge:
+                surge.wait(timeout=10)
             with socket.create_connection(("127.0.0.1", proxy_port), timeout=10) as sock:
                 sock.settimeout(10)
+                if protocol == "http":
+                    sock.sendall(b"GET http://denied.test/x HTTP/1.1\r\nHost: denied.test\r\n\r\n")
+                else:
+                    sock.sendall(b"CONNECT denied.test:443 HTTP/1.1\r\nHost: denied.test:443\r\n\r\n")
+                response = sock.recv(4096)
+                denied_correctly = response.startswith(b"HTTP/1.1 403")
+        except (OSError, threading.BrokenBarrierError):
+            denied_correctly = False
+
+    def one_connect(_i: int) -> None:
+        nonlocal failures, fd_peak
+        t0 = time.perf_counter()
+        try:
+            if surge:
+                surge.wait(timeout=10)
+            with socket.create_connection(("127.0.0.1", proxy_port), timeout=10) as sock:
+                sock.settimeout(10)
+                observed_fds = fd_count()
+                with lock:
+                    fd_peak = max(fd_peak, observed_fds)
                 if protocol == "http":
                     body_length = transfer_kib * 1024
                     method = b"POST" if body_length else b"GET"
@@ -258,6 +295,9 @@ def main() -> int:
                     first = sock.recv(4096)
                     accepted = first.startswith(b"HTTP/1.1 200")
                     if accepted:
+                        setup_ms = (time.perf_counter() - t0) * 1000.0
+                        with lock:
+                            setup_latencies_ms.append(setup_ms)
                         sock.sendall(hello)  # SNI is checked after CONNECT 200.
                         remaining = transfer_kib * 1024
                         data = b"x" * 16384
@@ -279,11 +319,14 @@ def main() -> int:
 
     cpu_start = resource.getrusage(resource.RUSAGE_SELF)
     t_wall0 = time.perf_counter()
-    with ThreadPoolExecutor(max_workers=concurrency) as pool:
+    with ThreadPoolExecutor(max_workers=concurrency + int(negative_during_load)) as pool:
         futs = [pool.submit(one_connect, i) for i in range(concurrency)]
+        if negative_during_load:
+            futs.append(pool.submit(one_denied))
         for fut in as_completed(futs):
             fut.result()
     wall = time.perf_counter() - t_wall0
+    fd_after = fd_count()
     cpu_end = resource.getrusage(resource.RUSAGE_SELF)
     user_cpu = cpu_end.ru_utime - cpu_start.ru_utime
     sys_cpu = cpu_end.ru_stime - cpu_start.ru_stime
@@ -355,6 +398,18 @@ def main() -> int:
     print("CONNECT_P50_MS=%.2f" % percentile(latencies_ms, 50))
     print("CONNECT_P95_MS=%.2f" % percentile(latencies_ms, 95))
     print("CONNECT_P99_MS=%.2f" % percentile(latencies_ms, 99))
+    print("MEASUREMENT_SCOPE=%s" % ("connect_establish_plus_payload" if protocol == "connect" else "http_full_response"))
+    if protocol == "connect":
+        print("CONNECT_SETUP_P50_MS=%.2f" % percentile(setup_latencies_ms, 50))
+        print("CONNECT_SETUP_P95_MS=%.2f" % percentile(setup_latencies_ms, 95))
+        print("CONNECT_SETUP_P99_MS=%.2f" % percentile(setup_latencies_ms, 99))
+    else:
+        print("CONNECT_SETUP_P50_MS=n/a")
+        print("CONNECT_SETUP_P95_MS=n/a")
+        print("CONNECT_SETUP_P99_MS=n/a")
+    print("FD_BEFORE=%d" % fd_before)
+    print("FD_PEAK=%d" % fd_peak)
+    print("FD_AFTER=%d" % fd_after)
     print("DNS_P95_MS=n/a")
     print("TCP_CONNECT_P95_MS=n/a")
     print("FAILURE_RATE=%.4f" % failure_rate)
@@ -363,6 +418,7 @@ def main() -> int:
     # about external / production audit transports.
     audit_file = root / "var/log/drlink/egress/connections.jsonl"
     audit_ids = set()
+    audit_denied_receipts = 0
     audit_parse_errors = 0
     if audit_file.exists():
         for line in audit_file.read_text(encoding="utf-8").splitlines():
@@ -370,14 +426,20 @@ def main() -> int:
                 event = json.loads(line)
                 if event.get("connection_id"):
                     audit_ids.add(event["connection_id"])
+                if event.get("hostname") == "denied.test" and event.get("decision") == EG.DECISION_DENY:
+                    audit_denied_receipts += 1
             except (ValueError, KeyError, TypeError):
                 audit_parse_errors += 1
-    expected_audit = concurrency + churn_ok + churn_fail
+    expected_audit = concurrency + churn_ok + churn_fail + int(negative_during_load)
     audit_drop_count = max(0, expected_audit - len(audit_ids))
     print("AUDIT_EXPECTED_CONNECTIONS=%d" % expected_audit)
     print("AUDIT_UNIQUE_CONNECTIONS=%d" % len(audit_ids))
     print("AUDIT_PARSE_ERRORS=%d" % audit_parse_errors)
     print("AUDIT_DROP_COUNT=%d" % audit_drop_count)
+    if negative_during_load:
+        print("NEGATIVE_DURING_LOAD_DENIED=%d" % int(denied_correctly))
+        print("NEGATIVE_UPSTREAM_ATTEMPTS=%d" % len(forbidden_origin_attempts))
+        print("NEGATIVE_AUDIT_RECEIPTS=%d" % audit_denied_receipts)
     if churn > 0:
         print("CHURN_TARGET_PER_SEC=%d" % churn)
         print("CHURN_OK=%d" % churn_ok)
@@ -393,7 +455,9 @@ def main() -> int:
     origin.stop()
     tmp.cleanup()
     os.environ.pop("FRP_DEPLOY_TEST_ROOT", None)
-    return 0 if failure_rate < 0.05 and latencies_ms and audit_drop_count == 0 and audit_parse_errors == 0 else 1
+    negative_ok = (not negative_during_load or
+                   (denied_correctly and not forbidden_origin_attempts and audit_denied_receipts == 1))
+    return 0 if failure_rate < 0.05 and latencies_ms and audit_drop_count == 0 and audit_parse_errors == 0 and negative_ok else 1
 
 
 if __name__ == "__main__":

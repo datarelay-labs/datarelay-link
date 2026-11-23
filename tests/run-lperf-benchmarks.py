@@ -55,7 +55,7 @@ def _kv(text: str, marker: str) -> dict[str, str]:
     lines = [line for line in text.splitlines() if marker in line]
     if not lines:
         return {}
-    line = lines[-1].split(marker, 1)[-1] if marker == "SCALE_METRICS" else lines[-1]
+    line = lines[-1].split(marker, 1)[-1] if marker in ("SCALE_METRICS", "SCALE_JOB_METRICS") else lines[-1]
     return dict(re.findall(r"([A-Za-z][A-Za-z_0-9]*)=([^\s]+)", line))
 
 
@@ -77,6 +77,8 @@ def _execute(name: str, command: list[str], env: dict[str, str], dest: Path, tim
     output = stdout + "\n" + stderr
     if name.startswith("mcp_"):
         outcome["metrics"] = _kv(output, "SCALE_METRICS")
+        outcome["job_metrics"] = _kv(output, "SCALE_JOB_METRICS")
+        outcome["negative_metrics"] = _kv(output, "SCALE_NEGATIVE_METRICS")
         p95 = outcome["metrics"].get("p95_ms")
         if outcome["returncode"] == 0:
             outcome["status"] = "PASS_LOCAL"
@@ -104,6 +106,7 @@ def main() -> int:
     parser.add_argument("--rounds", type=int, default=3)
     parser.add_argument("--transfer-kib", type=int, default=128)
     parser.add_argument("--mcp-target", choices=("one", "spread"), default="spread")
+    parser.add_argument("--negative-during-load", action="store_true", help="concurrent denied MCP/egress request, with audit proof")
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--timeout", type=int, default=300)
     args = parser.parse_args()
@@ -134,13 +137,17 @@ def main() -> int:
         env_case = dict(env, SCALE_AGENT_PROCS=str(args.agent_procs),
                         SCALE_SERVER_PROCS=str(args.agent_server_procs),
                         SCALE_BRIDGE_PROCS=str(args.workers), SCALE_CALLS=str(calls),
-                        SCALE_ROUNDS=str(args.rounds))
+                        SCALE_ROUNDS=str(args.rounds),
+                        SCALE_NEGATIVE_DURING_LOAD="1" if args.negative_during_load else "0")
         case = "test_thirty_calls_spread_over_thirty_hosts_all_succeed_quickly" if args.mcp_target == "spread" else "test_thirty_simultaneous_calls_all_succeed_quickly"
         return [sys.executable, str(MCP), "MCPBridgeScaleTargetTests." + case], env_case
     def make_egress(conns: int, protocol: str) -> tuple[list[str], dict[str, str]]:
-        return [sys.executable, str(EGRESS), "--concurrency", str(conns),
-                "--transfer-kib", str(args.transfer_kib), "--hold-ms", "200",
-                "--protocol", protocol], env
+        cmd = [sys.executable, str(EGRESS), "--concurrency", str(conns),
+               "--transfer-kib", str(args.transfer_kib), "--hold-ms", "200",
+               "--protocol", protocol]
+        if args.negative_during_load:
+            cmd.append("--negative-during-load")
+        return cmd, env
     # Mixed is intentionally a same-host smoke screen only, not an independent
     # completion claim about shared Server/allocator/Bridge dispatch.
     if args.mode == "mixed":

@@ -44,6 +44,7 @@ import threading
 import time
 import unittest
 import urllib.request
+import urllib.error
 from pathlib import Path
 from unittest import mock
 
@@ -200,6 +201,7 @@ BRIDGE_CPUS = os.environ.get("SCALE_BRIDGE_CPUS", "")
 LOAD_CPUS = os.environ.get("SCALE_LOAD_CPUS", "")
 TARGET_CONCURRENT_CALLS = int(os.environ.get("SCALE_CALLS", "30") or 30)  # SCALE_CALLS=N: measure fewer simultaneous calls
 ROUNDS = int(os.environ.get("SCALE_ROUNDS", "3") or 3)  # SCALE_ROUNDS=N: more rounds give a profiler a longer burst
+NEGATIVE_DURING_LOAD = os.environ.get("SCALE_NEGATIVE_DURING_LOAD") == "1"
 MAX_IDLE_CLAIMS_PER_SECOND = 10.0
 MAX_P95_SECONDS = 0.5
 AGENT_PROCS = int(os.environ.get("SCALE_AGENT_PROCS", "0") or 0)
@@ -428,11 +430,65 @@ class MCPBridgeScaleTargetTests(unittest.TestCase):
             )
         self._simultaneous_calls(lambda index: "scale%03d" % index)
 
+    def _call_with_worker_header(self, endpoint, command, req_id, token=None):
+        """Use the same MCP envelope/authorization as the E2E fixture, while
+        observing the actual worker that handled the application call."""
+        params = {
+            "name": "exec",
+            "arguments": {"endpoint": endpoint, "command": command},
+            "_meta": {
+                "io.modelcontextprotocol/protocolVersion": _E2E.MCP_PROTOCOL_VERSION,
+                "io.modelcontextprotocol/clientCapabilities": {},
+            },
+        }
+        request = urllib.request.Request(
+            self.url,
+            data=json.dumps({"jsonrpc": "2.0", "id": req_id, "method": "tools/call", "params": params}).encode(),
+            headers={
+                "Content-Type": "application/json",
+                "Accept": "application/json, text/event-stream",
+                "Authorization": "Bearer " + (self.cursor if token is None else token),
+                "MCP-Protocol-Version": _E2E.MCP_PROTOCOL_VERSION,
+                "Mcp-Method": "tools/call",
+                "Mcp-Name": "exec",
+            },
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=20) as resp:
+                return resp.status, json.loads(resp.read()), resp.headers.get("X-DRLink-Worker")
+        except urllib.error.HTTPError as exc:
+            raw = exc.read()
+            try:
+                payload = json.loads(raw)
+            except ValueError:
+                payload = {"error": {"code": "invalid-json"}}
+            return exc.code, payload, exc.headers.get("X-DRLink-Worker")
+
     def _simultaneous_calls(self, endpoint_of):
         results = []
         by_round = {}
         guard = threading.Lock()
-        barrier = threading.Barrier(TARGET_CONCURRENT_CALLS)
+        barrier = threading.Barrier(TARGET_CONCURRENT_CALLS + int(NEGATIVE_DURING_LOAD))
+        prior_ids = {row[0] for row in self.plane.conn.execute("SELECT id FROM ai_jobs")}
+        denials = []
+
+        def negative_worker():
+            # ChatGPT support has read-only access to Expernet-DP1, never lab1.
+            # Fire one unauthorized exec per wave while permitted calls are active.
+            for rnd in range(ROUNDS):
+                try:
+                    barrier.wait(timeout=60)
+                    status, payload, _ = self._call_with_worker_header(
+                        "lab1", "echo forbidden-side-effect", 99000 + rnd,
+                        token=self.chatgpt,
+                    )
+                    denied = status != 200 or "DENY" in self.text_of(payload) or "error" in payload
+                    with guard:
+                        denials.append(bool(denied))
+                except Exception:
+                    with guard:
+                        denials.append(False)
 
         def worker(index):
             for rnd in range(ROUNDS):
@@ -440,17 +496,15 @@ class MCPBridgeScaleTargetTests(unittest.TestCase):
                 try:
                     barrier.wait(timeout=60)
                     started = time.perf_counter()
-                    status, payload = self.call(
-                        self.cursor,
-                        "exec",
-                        {"endpoint": endpoint_of(index), "command": "echo %s" % marker},
+                    status, payload, routed_worker = self._call_with_worker_header(
+                        endpoint_of(index), "echo %s" % marker,
                         req_id=index * 100 + rnd,
                     )
                     elapsed = time.perf_counter() - started
                     failed = status != 200 or "error" in payload or marker not in self.text_of(payload)
-                    outcome = (elapsed, None if not failed else (payload.get("error") or {}).get("code", "bad-result"))
+                    outcome = (elapsed, None if not failed else (payload.get("error") or {}).get("code", "bad-result"), routed_worker)
                 except Exception as exc:  # connection reset, timeout, ...
-                    outcome = (None, "transport:%s" % type(exc).__name__)
+                    outcome = (None, "transport:%s" % type(exc).__name__, None)
                 with guard:
                     results.append(outcome)
                     if outcome[0] is not None:
@@ -465,6 +519,8 @@ class MCPBridgeScaleTargetTests(unittest.TestCase):
             threading.Thread(target=worker, args=(i,), daemon=True)
             for i in range(TARGET_CONCURRENT_CALLS)
         ]
+        if NEGATIVE_DURING_LOAD:
+            threads.append(threading.Thread(target=negative_worker, daemon=True))
         mark = os.environ.get("SCALE_BURST_MARK")
         if mark:  # lets a profiler attach exactly for the burst
             Path(mark).write_text("start\n")
@@ -485,18 +541,76 @@ class MCPBridgeScaleTargetTests(unittest.TestCase):
         ru_ended = resource.getrusage(resource.RUSAGE_SELF)
         wall_used = time.perf_counter() - wall_started
         total = TARGET_CONCURRENT_CALLS * ROUNDS
-        failures = [code for _, code in results if code is not None]
+        failures = [code for _, code, _ in results if code is not None]
         self.assertEqual(
             (len(results), len(failures)),
             (total, 0),
             "%d of %d simultaneous calls failed: %s"
             % (len(failures) + (total - len(results)), total, sorted(set(map(str, failures)))),
         )
-        durations = sorted(d for d, _ in results if d is not None)
+        if NEGATIVE_DURING_LOAD:
+            self.assertEqual(denials, [True] * ROUNDS,
+                             "Unauthorized MCP command must be denied in every load wave")
+        durations = sorted(d for d, _, _ in results if d is not None)
         p95 = durations[min(len(durations) - 1, int(round(0.95 * (len(durations) - 1))))]
         def _pct(values, q):
             values = sorted(values)
             return values[min(len(values) - 1, int(round(q * (len(values) - 1))))] * 1000
+
+        # Snapshot the actual product DB's completed jobs rather than deriving
+        # queue/run time from client-side round-trip latency.
+        job_rows = [
+            row for row in self.plane.conn.execute(
+                "SELECT id, client_id, queue_ms, run_ms, total_ms, correlation_id "
+                "FROM ai_jobs WHERE capability = 'exec'"
+            ).fetchall() if row[0] not in prior_ids
+        ]
+        self.assertEqual(len(job_rows), total, "One completed product job per successful call")
+        self.assertTrue(all(
+            row[2] is not None and row[3] is not None and row[4] is not None
+            and row[2] >= 0 and row[3] >= 0 and row[4] == row[2] + row[3] and row[5]
+            for row in job_rows
+        ), "Every call must have bounded queue/run/total metrics and audit correlation ID")
+        correlation_ids = {row[5] for row in job_rows}
+        self.assertEqual(len(correlation_ids), total, "No duplicate correlation IDs")
+        activity_correlations = {
+            row[0] for row in self.plane.conn.execute(
+                "SELECT DISTINCT correlation_id FROM ai_activity WHERE correlation_id IS NOT NULL"
+            )
+        }
+        self.assertTrue(correlation_ids.issubset(activity_correlations), "Every completed job must have a matching audit")
+        job_host_distribution = {}
+        for row in job_rows:
+            job_host_distribution[row[1]] = job_host_distribution.get(row[1], 0) + 1
+        worker_distribution = {}
+        for _, _, worker_id in results:
+            worker_distribution[str(worker_id or "single")] = worker_distribution.get(str(worker_id or "single"), 0) + 1
+        worker_sample_count = sum(worker_distribution.values())
+        self.assertEqual(worker_sample_count, total, "All MCP application responses have a worker attribution")
+        job_metrics_text = (
+            "queue_p50_ms=%.0f queue_p95_ms=%.0f queue_p99_ms=%.0f "
+            "run_p50_ms=%.0f run_p95_ms=%.0f run_p99_ms=%.0f "
+            "total_p50_ms=%.0f total_p95_ms=%.0f total_p99_ms=%.0f "
+            "audit_correlated=%d jobs=%d job_hosts=%d max_host_jobs=%d min_host_jobs=%d "
+            "worker_histogram=%s"
+        ) % (
+            _pct([r[2] / 1000 for r in job_rows], 0.5),
+            _pct([r[2] / 1000 for r in job_rows], 0.95),
+            _pct([r[2] / 1000 for r in job_rows], 0.99),
+            _pct([r[3] / 1000 for r in job_rows], 0.5),
+            _pct([r[3] / 1000 for r in job_rows], 0.95),
+            _pct([r[3] / 1000 for r in job_rows], 0.99),
+            _pct([r[4] / 1000 for r in job_rows], 0.5),
+            _pct([r[4] / 1000 for r in job_rows], 0.95),
+            _pct([r[4] / 1000 for r in job_rows], 0.99),
+            len(correlation_ids), len(job_rows), len(job_host_distribution),
+            max(job_host_distribution.values()), min(job_host_distribution.values()),
+            ",".join("%s:%d" % (k, worker_distribution[k]) for k in sorted(worker_distribution)),
+        )
+        print("SCALE_JOB_METRICS " + job_metrics_text, file=sys.stderr, flush=True)
+        if NEGATIVE_DURING_LOAD:
+            print("SCALE_NEGATIVE_METRICS concurrent_denied=%d unexpected_allows=0 "
+                  "unauthorized_jobs=0" % len(denials), file=sys.stderr, flush=True)
 
         pss_mb, peak_mb = descendant_memory_mb(supervisor_proc.pid) if supervisor_proc else (0.0, 0.0)
         split_ended = descendant_cpu_split(supervisor_proc.pid) if supervisor_proc else (0.0, 0.0, 0, 0)

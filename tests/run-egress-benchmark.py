@@ -85,6 +85,7 @@ def main() -> int:
     parser.add_argument("--hold-ms", type=int, default=200)
     parser.add_argument("--transfer-kib", type=int, default=0, help="payload KiB per connection (CONNECT upload or HTTP POST)")
     parser.add_argument("--protocol", choices=("connect", "http"), default="connect")
+    parser.add_argument("--negative-during-load", action="store_true", help="concurrent policy-denied request must never reach origin")
     args = parser.parse_args()
     if not (1 <= args.concurrency <= 256) or not (0 <= args.transfer_kib <= 8192) or not (0 <= args.churn <= 200):
         parser.error("concurrency must be 1..256, transfer-kib 0..8192, churn 0..200/s")
@@ -109,6 +110,7 @@ def main() -> int:
     env["DRLINK_EGRESS_BENCH_CHURN"] = str(args.churn)
     env["DRLINK_EGRESS_BENCH_TRANSFER_KIB"] = str(args.transfer_kib)
     env["DRLINK_EGRESS_BENCH_PROTOCOL"] = args.protocol
+    env["DRLINK_EGRESS_BENCH_NEGATIVE"] = "1" if args.negative_during_load else "0"
     proc = subprocess.run(
         [sys.executable, str(ROOT / "tests" / "run-egress-benchmark-worker.py")],
         cwd=str(ROOT),

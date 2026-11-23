@@ -33,6 +33,10 @@ class EgressBenchmarkRegressionTests(unittest.TestCase):
         self.assertGreater(float(metrics["CPU_PERCENT"]), 0)
         self.assertEqual(metrics["CPU_SCOPE"], "combined_local_gateway_origin_and_clients")
         self.assertGreater(float(metrics["CONNECT_P50_MS"]), 0)
+        self.assertGreater(float(metrics["CONNECT_SETUP_P95_MS"]), 0)
+        self.assertLessEqual(float(metrics["CONNECT_SETUP_P95_MS"]), float(metrics["CONNECT_P95_MS"]))
+        self.assertGreaterEqual(int(metrics["FD_PEAK"]), int(metrics["FD_BEFORE"]))
+        self.assertEqual(metrics["MEASUREMENT_SCOPE"], "connect_establish_plus_payload")
         self.assertLessEqual(float(metrics["CONNECT_P50_MS"]), float(metrics["CONNECT_P95_MS"]))
         self.assertLessEqual(float(metrics["CONNECT_P95_MS"]), float(metrics["CONNECT_P99_MS"]))
         self.assertEqual(metrics["AUDIT_DROP_COUNT"], "0")
@@ -50,8 +54,31 @@ class EgressBenchmarkRegressionTests(unittest.TestCase):
         self.assertIn("PERFORMANCE_BENCHMARK=PASS", output)
         metrics = dict(re.findall(r"^([A-Z0-9_]+)=(.+)$", output, re.MULTILINE))
         self.assertEqual(metrics["BENCH_PROTOCOL"], "http")
+        self.assertEqual(metrics["CONNECT_SETUP_P95_MS"], "n/a")
+        self.assertEqual(metrics["MEASUREMENT_SCOPE"], "http_full_response")
         self.assertEqual(metrics["AUDIT_DROP_COUNT"], "0")
         self.assertGreater(int(metrics["ORIGIN_RECEIVED_BYTES"]), 3 * 32 * 1024)
+
+    def test_concurrent_denial_is_audited_and_never_dials_origin(self):
+        for protocol in ("http", "connect"):
+            with self.subTest(protocol=protocol):
+                proc = subprocess.run(
+                    [sys.executable, str(BENCH), "--protocol", protocol,
+                     "--concurrency", "5", "--transfer-kib", "16",
+                     "--hold-ms", "30", "--negative-during-load"],
+                    cwd=ROOT, capture_output=True, text=True, timeout=80,
+                )
+                output = proc.stdout + "\n" + proc.stderr
+                self.assertEqual(proc.returncode, 0, output[-4000:])
+                metrics = dict(re.findall(r"^([A-Z0-9_]+)=(.+)$", output, re.MULTILINE))
+                self.assertEqual(metrics["PERFORMANCE_BENCHMARK"], "PASS")
+                self.assertEqual(metrics["FAILURE_RATE"], "0.0000")
+                self.assertEqual(metrics["NEGATIVE_DURING_LOAD_DENIED"], "1")
+                self.assertEqual(metrics["NEGATIVE_UPSTREAM_ATTEMPTS"], "0")
+                self.assertEqual(metrics["NEGATIVE_AUDIT_RECEIPTS"], "1")
+                self.assertEqual(metrics["AUDIT_DROP_COUNT"], "0")
+                self.assertEqual(int(metrics["AUDIT_EXPECTED_CONNECTIONS"]), 6)
+                self.assertEqual(int(metrics["AUDIT_UNIQUE_CONNECTIONS"]), 6)
 
     def test_input_limits_prevent_unbounded_benchmarks(self):
         for arguments in [
