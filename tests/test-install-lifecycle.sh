@@ -195,10 +195,11 @@ grep -q 'FAILURE_CLASS=PATH_DELETION_REFUSED' "$WORKDIR/root.err" || fail "/ cla
 if frp_safe_rm_rf "." 2>"$WORKDIR/dot.err"; then
   fail ". should be refused"
 fi
-if FRP_UNINSTALL_TEST_ROOT= "$ROOT/uninstall-server.sh" --purge --yes 2>"$WORKDIR/empty-root.err"; then
-  # empty test root still uses real paths; skip by using invalid explicit helper
-  true
-fi
+# Never invoke a real uninstaller with an empty test root from this suite.
+# The early root guard is independently exercised on the actual nonmutating
+# script prefix in test-client-uninstall-arguments.py (including under root).
+python3 "$ROOT/tests/test-client-uninstall-arguments.py" \
+  ClientUninstallArguments.test_explicit_empty_test_root_fails_before_uninstall
 pass "PATH_DELETION_SAFETY"
 
 SYMLINK_TREE="$WORKDIR/symlink-target"
