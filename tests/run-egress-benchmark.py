@@ -83,10 +83,11 @@ def main() -> int:
     parser.add_argument("--concurrency", type=int, default=100)
     parser.add_argument("--churn", type=int, default=0, help="new CONNECTs per second (0=skip)")
     parser.add_argument("--hold-ms", type=int, default=200)
-    parser.add_argument("--transfer-kib", type=int, default=0, help="application payload sent through each successful CONNECT tunnel")
+    parser.add_argument("--transfer-kib", type=int, default=0, help="payload KiB per connection (CONNECT upload or HTTP POST)")
+    parser.add_argument("--protocol", choices=("connect", "http"), default="connect")
     args = parser.parse_args()
-    if not (1 <= args.concurrency <= 256) or not (0 <= args.transfer_kib <= 8192) or args.churn < 0:
-        parser.error("concurrency must be 1..256, transfer-kib 0..8192, churn nonnegative")
+    if not (1 <= args.concurrency <= 256) or not (0 <= args.transfer_kib <= 8192) or not (0 <= args.churn <= 200):
+        parser.error("concurrency must be 1..256, transfer-kib 0..8192, churn 0..200/s")
 
     # Reuse the existing unit harness by invoking pytest-style module briefly is heavy;
     # instead shell out to a minimal inline gateway via test helpers when available.
@@ -107,6 +108,7 @@ def main() -> int:
     env["DRLINK_EGRESS_BENCH_HOLD_MS"] = str(args.hold_ms)
     env["DRLINK_EGRESS_BENCH_CHURN"] = str(args.churn)
     env["DRLINK_EGRESS_BENCH_TRANSFER_KIB"] = str(args.transfer_kib)
+    env["DRLINK_EGRESS_BENCH_PROTOCOL"] = args.protocol
     proc = subprocess.run(
         [sys.executable, str(ROOT / "tests" / "run-egress-benchmark-worker.py")],
         cwd=str(ROOT),

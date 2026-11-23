@@ -45,6 +45,7 @@ class Origin:
         self._sock.listen(256)
         self.port = self._sock.getsockname()[1]
         self._stop = threading.Event()
+        self._bytes_lock = threading.Lock()
         self.bytes = 0
         threading.Thread(target=self._serve, daemon=True).start()
 
@@ -60,19 +61,45 @@ class Origin:
             threading.Thread(target=self._handle, args=(conn,), daemon=True).start()
 
     def _handle(self, conn: socket.socket):
+        """A bounded local origin: echo TLS ack or answer a complete HTTP upload."""
         try:
             conn.settimeout(5)
+            preface = bytearray()
+            http_body_remaining = None
             while True:
                 data = conn.recv(65536)
                 if not data:
                     break
-                self.bytes += len(data)
-                # Echo a tiny TLS-looking ack so clients don't hang forever.
-                try:
-                    conn.sendall(b"\x16\x03\x03\x00\x01\x00")
-                except OSError:
+                with self._bytes_lock:
+                    self.bytes += len(data)
+                if http_body_remaining is not None:
+                    http_body_remaining -= len(data)
+                elif not preface or preface.startswith((b"GET ", b"POST ")):
+                    if len(preface) + len(data) > 65536:
+                        break
+                    preface.extend(data)
+                    if preface.startswith((b"GET ", b"POST ")) and b"\r\n\r\n" in preface:
+                        header, initial = bytes(preface).split(b"\r\n\r\n", 1)
+                        length = 0
+                        for field in header.split(b"\r\n")[1:]:
+                            if field.lower().startswith(b"content-length:"):
+                                length = int(field.split(b":", 1)[1].strip())
+                        http_body_remaining = length - len(initial)
+                        preface.clear()
+                else:
+                    # CONNECT TLS client hello/payload: no HTTP response framing.
+                    try:
+                        conn.sendall(b"\x16\x03\x03\x00\x01\x00")
+                    except OSError:
+                        break
+                    continue
+                if http_body_remaining is not None and http_body_remaining <= 0:
+                    body = b"hello-egress"
+                    conn.sendall(
+                        b"HTTP/1.1 200 OK\r\nContent-Length: %d\r\nConnection: close\r\n\r\n" % len(body) + body
+                    )
                     break
-        except Exception:
+        except (OSError, ValueError):
             pass
         finally:
             try:
@@ -107,6 +134,9 @@ def main() -> int:
     hold_ms = int(os.environ.get("DRLINK_EGRESS_BENCH_HOLD_MS", "100"))
     churn = int(os.environ.get("DRLINK_EGRESS_BENCH_CHURN", "0"))
     transfer_kib = int(os.environ.get("DRLINK_EGRESS_BENCH_TRANSFER_KIB", "0"))
+    protocol = os.environ.get("DRLINK_EGRESS_BENCH_PROTOCOL", "connect")
+    if protocol not in ("connect", "http"):
+        raise SystemExit("INVALID_EGRESS_BENCH_PROTOCOL")
 
     tmp = tempfile.TemporaryDirectory()
     root = Path(tmp.name)
@@ -128,6 +158,7 @@ def main() -> int:
         pid, _ = EG.create_profile(state, "bench", enabled=False)
         EG.add_source(state, pid, "127.0.0.1/32")
         EG.add_destination(state, pid, "allowed.test", 443, protocol="https")
+        EG.add_destination(state, pid, "allowed.test", 80, protocol="http")
         EG.set_profile_enabled(state, pid, True)
         return pid
 
@@ -152,9 +183,14 @@ def main() -> int:
         v24.set_network_object(plane, "proxy-src", type="ip", value="127.0.0.1", oneshot=True)
         v24.set_network_object(plane, "allowed-host", type="fqdn", value="allowed.test", oneshot=True)
         v24.set_service_object(plane, "https", type="tcp", port=443, oneshot=True)
+        v24.set_service_object(plane, "http", type="tcp", port=80, oneshot=True)
         v24.set_access_rule(
             plane, "internet", "allow-https", mode="whitelist", source="proxy-src",
             destination="allowed-host", service="https", enabled=True, oneshot=True,
+        )
+        v24.set_access_rule(
+            plane, "internet", "allow-http", mode="whitelist", source="proxy-src",
+            destination="allowed-host", service="http", enabled=True, oneshot=True,
         )
         plane.compile_runtime()
     finally:
@@ -197,30 +233,46 @@ def main() -> int:
         nonlocal failures
         t0 = time.perf_counter()
         try:
-            sock = socket.create_connection(("127.0.0.1", proxy_port), timeout=10)
-            sock.settimeout(10)
-            sock.sendall(
-                b"CONNECT allowed.test:443 HTTP/1.1\r\nHost: allowed.test:443\r\n\r\n"
-            )
-            first = sock.recv(4096)
-            if not first.startswith(b"HTTP/1.1 200"):
+            with socket.create_connection(("127.0.0.1", proxy_port), timeout=10) as sock:
+                sock.settimeout(10)
+                if protocol == "http":
+                    body_length = transfer_kib * 1024
+                    method = b"POST" if body_length else b"GET"
+                    sock.sendall(
+                        method + b" http://allowed.test/path HTTP/1.1\r\nHost: allowed.test\r\n"
+                        + (b"Content-Length: %d\r\n" % body_length if body_length else b"")
+                        + b"Connection: close\r\n\r\n"
+                    )
+                    if body_length:
+                        data = b"x" * 16384
+                        while body_length:
+                            count = min(body_length, len(data))
+                            sock.sendall(data[:count])
+                            body_length -= count
+                    first = sock.recv(4096)
+                    accepted = first.startswith(b"HTTP/1.1 200") and b"hello-egress" in first
+                else:
+                    sock.sendall(
+                        b"CONNECT allowed.test:443 HTTP/1.1\r\nHost: allowed.test:443\r\n\r\n"
+                    )
+                    first = sock.recv(4096)
+                    accepted = first.startswith(b"HTTP/1.1 200")
+                    if accepted:
+                        sock.sendall(hello)  # SNI is checked after CONNECT 200.
+                        remaining = transfer_kib * 1024
+                        data = b"x" * 16384
+                        while remaining:
+                            count = min(remaining, len(data))
+                            sock.sendall(data[:count])
+                            remaining -= count
+                        time.sleep(hold_ms / 1000.0)
+                if not accepted:
+                    with lock:
+                        failures += 1
+                    return
+                elapsed = (time.perf_counter() - t0) * 1000.0
                 with lock:
-                    failures += 1
-                sock.close()
-                return
-            elapsed = (time.perf_counter() - t0) * 1000.0
-            sock.sendall(hello)  # SNI checked after CONNECT 200.
-            with lock:
-                latencies_ms.append(elapsed)
-            if transfer_kib:
-                payload = b"x" * 16384
-                remaining = transfer_kib * 1024
-                while remaining:
-                    chunk = min(remaining, len(payload))
-                    sock.sendall(payload[:chunk])
-                    remaining -= chunk
-            time.sleep(hold_ms / 1000.0)
-            sock.close()
+                    latencies_ms.append(elapsed)
         except Exception:
             with lock:
                 failures += 1
@@ -236,39 +288,54 @@ def main() -> int:
     user_cpu = cpu_end.ru_utime - cpu_start.ru_utime
     sys_cpu = cpu_end.ru_stime - cpu_start.ru_stime
 
-    # Optional churn sample
+    # Optional bounded connection churn. Finish every spawned request before
+    # collecting the audit ledger; never report partial thread counters.
     churn_ok = 0
     churn_fail = 0
     if churn > 0:
-        duration = 2.0
-        deadline = time.time() + duration
+        deadline = time.monotonic() + 2.0
         interval = 1.0 / float(churn)
+        next_t = time.monotonic()
+        spawned = []
 
         def churn_one():
             nonlocal churn_ok, churn_fail
+            ok = False
             try:
-                sock = socket.create_connection(("127.0.0.1", proxy_port), timeout=5)
-                sock.settimeout(5)
-                sock.sendall(
-                    b"CONNECT allowed.test:443 HTTP/1.1\r\nHost: allowed.test:443\r\n\r\n" + hello
-                )
-                first = sock.recv(4096)
-                sock.close()
-                if first.startswith(b"HTTP/1.1 200"):
+                with socket.create_connection(("127.0.0.1", proxy_port), timeout=5) as sock:
+                    sock.settimeout(5)
+                    if protocol == "http":
+                        sock.sendall(
+                            b"GET http://allowed.test/churn HTTP/1.1\r\nHost: allowed.test\r\nConnection: close\r\n\r\n"
+                        )
+                    else:
+                        sock.sendall(
+                            b"CONNECT allowed.test:443 HTTP/1.1\r\nHost: allowed.test:443\r\n\r\n"
+                        )
+                    response = sock.recv(4096)
+                    ok = response.startswith(b"HTTP/1.1 200")
+                    if ok and protocol == "connect":
+                        sock.sendall(hello)
+                        time.sleep(0.02)
+            except OSError:
+                pass
+            with lock:
+                if ok:
                     churn_ok += 1
                 else:
                     churn_fail += 1
-            except Exception:
-                churn_fail += 1
 
-        next_t = time.time()
-        while time.time() < deadline:
-            threading.Thread(target=churn_one, daemon=True).start()
+        while time.monotonic() < deadline:
+            thread = threading.Thread(target=churn_one, daemon=True)
+            thread.start()
+            spawned.append(thread)
             next_t += interval
-            sleep_for = next_t - time.time()
-            if sleep_for > 0:
-                time.sleep(sleep_for)
-        time.sleep(0.5)
+            delay = next_t - time.monotonic()
+            if delay > 0:
+                time.sleep(delay)
+        for thread in spawned:
+            thread.join(timeout=6)
+
 
     rss = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024.0
     total = len(latencies_ms) + failures
@@ -282,6 +349,7 @@ def main() -> int:
     print("CPU_SYS_S=%.5f" % sys_cpu)
     print("CPU_SCOPE=combined_local_gateway_origin_and_clients")
     print("TRANSFER_KIB_PER_CONNECTION=%d" % transfer_kib)
+    print("BENCH_PROTOCOL=%s" % protocol)
     print("ORIGIN_RECEIVED_BYTES=%d" % origin.bytes)
     print("RSS_MB=%.1f" % rss)
     print("CONNECT_P50_MS=%.2f" % percentile(latencies_ms, 50))
@@ -290,7 +358,26 @@ def main() -> int:
     print("DNS_P95_MS=n/a")
     print("TCP_CONNECT_P95_MS=n/a")
     print("FAILURE_RATE=%.4f" % failure_rate)
-    print("AUDIT_DROP_COUNT=n/a")  # No measured audit loss accounting in this lab harness.
+    # Distinct connection IDs allow actual audit-loss assessment. Read this
+    # temporary file after all concurrent requests have finished, not a claim
+    # about external / production audit transports.
+    audit_file = root / "var/log/drlink/egress/connections.jsonl"
+    audit_ids = set()
+    audit_parse_errors = 0
+    if audit_file.exists():
+        for line in audit_file.read_text(encoding="utf-8").splitlines():
+            try:
+                event = json.loads(line)
+                if event.get("connection_id"):
+                    audit_ids.add(event["connection_id"])
+            except (ValueError, KeyError, TypeError):
+                audit_parse_errors += 1
+    expected_audit = concurrency + churn_ok + churn_fail
+    audit_drop_count = max(0, expected_audit - len(audit_ids))
+    print("AUDIT_EXPECTED_CONNECTIONS=%d" % expected_audit)
+    print("AUDIT_UNIQUE_CONNECTIONS=%d" % len(audit_ids))
+    print("AUDIT_PARSE_ERRORS=%d" % audit_parse_errors)
+    print("AUDIT_DROP_COUNT=%d" % audit_drop_count)
     if churn > 0:
         print("CHURN_TARGET_PER_SEC=%d" % churn)
         print("CHURN_OK=%d" % churn_ok)
@@ -306,7 +393,7 @@ def main() -> int:
     origin.stop()
     tmp.cleanup()
     os.environ.pop("FRP_DEPLOY_TEST_ROOT", None)
-    return 0 if failure_rate < 0.05 and latencies_ms else 1
+    return 0 if failure_rate < 0.05 and latencies_ms and audit_drop_count == 0 and audit_parse_errors == 0 else 1
 
 
 if __name__ == "__main__":

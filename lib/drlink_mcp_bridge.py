@@ -28,6 +28,7 @@ import tempfile
 import threading
 import time
 import traceback
+from pathlib import Path
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from socketserver import ThreadingMixIn
 from typing import Any, Optional
@@ -2162,6 +2163,45 @@ def _clamp_workers(value) -> int:
     return max(1, min(count, MAX_WORKERS))
 
 
+def _worker_memory_limit_bytes() -> int:
+    """Effective memory ceiling, including a container cgroup when present."""
+    limits = []
+    try:
+        for line in Path("/proc/meminfo").read_text().splitlines():
+            if line.startswith("MemTotal:"):
+                limits.append(int(line.split()[1]) * 1024)
+                break
+    except (OSError, ValueError, IndexError):
+        pass
+    for location in ("/sys/fs/cgroup/memory.max", "/sys/fs/cgroup/memory/memory.limit_in_bytes"):
+        try:
+            raw = Path(location).read_text().strip()
+            if raw.isdecimal():
+                limits.append(int(raw))
+        except (OSError, ValueError):
+            pass
+    return min(limits) if limits else 0
+
+
+def _worker_count(value) -> int:
+    """Bounded opt-in tuning; legacy default remains exactly one worker.
+
+    LPERF measured 100 synthetic Agents and 30 calls on a 10-logical-CPU lab:
+    6 workers reduced p95 without changing policy. Auto is *opt-in* and
+    deliberately chooses one worker when CPU/memory resources are unknown.
+    """
+    if isinstance(value, str) and value.strip().lower() == "auto":
+        try:
+            cpus = len(os.sched_getaffinity(0)) if hasattr(os, "sched_getaffinity") else (os.cpu_count() or 1)
+        except (OSError, ValueError):
+            cpus = 1
+        memory_bytes = _worker_memory_limit_bytes()
+        if memory_bytes < 2 * 1024 ** 3:
+            return 1
+        return min(MAX_WORKERS, 6 if cpus >= 8 else (2 if cpus >= 4 else 1))
+    return _clamp_workers(value)
+
+
 def _run_worker(host, port, root, index, count, rundir) -> None:
     signal.signal(signal.SIGTERM, signal.SIG_DFL)
     signal.signal(signal.SIGINT, signal.SIG_DFL)
@@ -2266,7 +2306,7 @@ def _supervise(host, port, root, count) -> None:
 
 
 def serve(host=DEFAULT_LISTEN, port=DEFAULT_PORT, root=None, workers=None):
-    count = _clamp_workers(os.environ.get("DRLINK_MCP_WORKERS", "1") if workers is None else workers)
+    count = _worker_count(os.environ.get("DRLINK_MCP_WORKERS", "1") if workers is None else workers)
     if count > 1:
         _supervise(host, int(port), root, count)
         return
@@ -2286,9 +2326,9 @@ def main(argv=None):
     parser.add_argument("--port", type=int, default=int(os.environ.get("DRLINK_MCP_PORT", DEFAULT_PORT)))
     parser.add_argument(
         "--workers",
-        type=int,
-        default=_clamp_workers(os.environ.get("DRLINK_MCP_WORKERS", "1")),
-        help="Bridge worker processes sharing the port (1 = a single process, the default)",
+        type=str,
+        default=os.environ.get("DRLINK_MCP_WORKERS", "1"),
+        help="Bridge worker processes (1..32 or opt-in auto; default 1)",
     )
     args = parser.parse_args(argv)
     serve(args.listen, args.port, workers=args.workers)

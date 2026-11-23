@@ -121,7 +121,7 @@ _E2E = _load_e2e_harness()
 
 TARGET_AGENTS = 100
 def descendant_cpu_seconds(root_pid: int) -> float:
-    """User+system CPU seconds used so far by the direct children of ``root_pid`` (Bridge workers)."""
+    """User+system CPU seconds of the Bridge supervisor and its direct workers."""
     tick = os.sysconf("SC_CLK_TCK")
     total = 0.0
     for entry in os.listdir("/proc"):
@@ -131,7 +131,7 @@ def descendant_cpu_seconds(root_pid: int) -> float:
             fields = Path("/proc/%s/stat" % entry).read_text().rsplit(")", 1)[1].split()
         except (OSError, IndexError):
             continue
-        if int(fields[1]) == root_pid:
+        if int(entry) == root_pid or int(fields[1]) == root_pid:
             total += (int(fields[11]) + int(fields[12])) / tick
     return total
 
@@ -149,7 +149,7 @@ def cpu_set(spec: str) -> set:
 
 
 def descendant_cpu_split(root_pid: int):
-    """(user s, system s, voluntary ctx switches, involuntary ctx switches) of the children of ``root_pid``."""
+    """User/system CPU and context switches of supervisor plus direct workers."""
     tick = os.sysconf("SC_CLK_TCK")
     user = system = 0.0
     voluntary = involuntary = 0
@@ -158,7 +158,7 @@ def descendant_cpu_split(root_pid: int):
             continue
         try:
             fields = Path("/proc/%s/stat" % entry).read_text().rsplit(")", 1)[1].split()
-            if int(fields[1]) != root_pid:
+            if int(entry) != root_pid and int(fields[1]) != root_pid:
                 continue
             user += int(fields[11]) / tick
             system += int(fields[12]) / tick
@@ -173,7 +173,7 @@ def descendant_cpu_split(root_pid: int):
 
 
 def descendant_memory_mb(root_pid: int):
-    """(proportional set size total, largest peak RSS) in MB of the direct children of ``root_pid``."""
+    """Total PSS and largest peak RSS of supervisor plus direct workers (MiB)."""
     pss_kb = 0
     peak_kb = 0
     for entry in os.listdir("/proc"):
@@ -181,7 +181,7 @@ def descendant_memory_mb(root_pid: int):
             continue
         try:
             fields = Path("/proc/%s/stat" % entry).read_text().rsplit(")", 1)[1].split()
-            if int(fields[1]) != root_pid:
+            if int(entry) != root_pid and int(fields[1]) != root_pid:
                 continue
             for line in Path("/proc/%s/smaps_rollup" % entry).read_text().splitlines():
                 if line.startswith("Pss:"):

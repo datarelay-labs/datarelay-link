@@ -97,6 +97,7 @@ def main() -> int:
     parser.add_argument("--mode", choices=("mcp", "egress", "both", "mixed"), default="both")
     parser.add_argument("--mcp-calls", type=lambda x: _integers(x, 30), default=[1, 10, 30])
     parser.add_argument("--egress-connections", type=lambda x: _integers(x, 100), default=[10, 50, 100])
+    parser.add_argument("--egress-protocols", choices=("connect", "http", "both"), default="both")
     parser.add_argument("--workers", type=int, default=1, help="isolated Bridge worker process count")
     parser.add_argument("--agent-procs", type=int, default=5)
     parser.add_argument("--agent-server-procs", type=int, default=2)
@@ -136,15 +137,16 @@ def main() -> int:
                         SCALE_ROUNDS=str(args.rounds))
         case = "test_thirty_calls_spread_over_thirty_hosts_all_succeed_quickly" if args.mcp_target == "spread" else "test_thirty_simultaneous_calls_all_succeed_quickly"
         return [sys.executable, str(MCP), "MCPBridgeScaleTargetTests." + case], env_case
-    def make_egress(conns: int) -> tuple[list[str], dict[str, str]]:
+    def make_egress(conns: int, protocol: str) -> tuple[list[str], dict[str, str]]:
         return [sys.executable, str(EGRESS), "--concurrency", str(conns),
-                "--transfer-kib", str(args.transfer_kib), "--hold-ms", "200"], env
+                "--transfer-kib", str(args.transfer_kib), "--hold-ms", "200",
+                "--protocol", protocol], env
     # Mixed is intentionally a same-host smoke screen only, not an independent
     # completion claim about shared Server/allocator/Bridge dispatch.
     if args.mode == "mixed":
         from concurrent.futures import ThreadPoolExecutor
         mcp_cmd, mcp_env = make_mcp(args.mcp_calls[-1])
-        eg_cmd, eg_env = make_egress(args.egress_connections[-1])
+        eg_cmd, eg_env = make_egress(args.egress_connections[-1], "connect")
         with ThreadPoolExecutor(max_workers=2) as pool:
             future_m = pool.submit(_execute, "mcp_mixed", mcp_cmd, mcp_env, dest, args.timeout)
             future_e = pool.submit(_execute, "egress_mixed", eg_cmd, eg_env, dest, args.timeout)
@@ -155,9 +157,13 @@ def main() -> int:
                 cmd, runenv = make_mcp(n)
                 report["results"].append(_execute("mcp_%02d" % n, cmd, runenv, dest, args.timeout))
         if args.mode in ("egress", "both"):
-            for n in args.egress_connections:
-                cmd, runenv = make_egress(n)
-                report["results"].append(_execute("egress_%03d" % n, cmd, runenv, dest, args.timeout))
+            protocols = ("connect", "http") if args.egress_protocols == "both" else (args.egress_protocols,)
+            for protocol in protocols:
+                for n in args.egress_connections:
+                    cmd, runenv = make_egress(n, protocol)
+                    report["results"].append(
+                        _execute("egress_%s_%03d" % (protocol, n), cmd, runenv, dest, args.timeout)
+                    )
     report["all_local_tests_passed"] = all(x["status"] == "PASS_LOCAL" for x in report["results"])
     report_path = dest / "report.json"
     report_path.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n")
