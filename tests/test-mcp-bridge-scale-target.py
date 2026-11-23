@@ -502,7 +502,11 @@ class MCPBridgeScaleTargetTests(unittest.TestCase):
                     )
                     elapsed = time.perf_counter() - started
                     failed = status != 200 or "error" in payload or marker not in self.text_of(payload)
-                    outcome = (elapsed, None if not failed else (payload.get("error") or {}).get("code", "bad-result"), routed_worker)
+                    error = payload.get("error") if isinstance(payload, dict) else None
+                    error_code = error.get("code", "bad-result") if isinstance(error, dict) else (error or "bad-result")
+                    if status != 200:
+                        error_code = "HTTP%d:%s" % (status, error_code)
+                    outcome = (elapsed, None if not failed else error_code, routed_worker)
                 except Exception as exc:  # connection reset, timeout, ...
                     outcome = (None, "transport:%s" % type(exc).__name__, None)
                 with guard:

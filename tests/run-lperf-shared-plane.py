@@ -4,6 +4,8 @@
 Uses the SAME SQLite ControlPlane root for synthetic multi-Agent MCP calls
 and gateway Internet Access policy, not two independent benchmark roots.
 No installed service, credentials, routes, ACLs or public ports are touched.
+LPERF_SHARED_SOAK_SECONDS=3600 opts into a one-hour periodic mixed-load
+run with the SAME live fixture; default 0 runs one burst. Lab evidence only.
 """
 import importlib.util
 import json
@@ -33,6 +35,11 @@ import drlink_v24 as v24
 
 class SharedControlPlaneLoad(scale.MCPBridgeScaleTargetTests):
     def test_mcp_and_egress_share_control_plane(self):
+        duration=int(os.environ.get("LPERF_SHARED_SOAK_SECONDS","0"))
+        self.assertTrue(0 <= duration <= 3600, "soak duration must be 0..3600 seconds")
+        if duration:
+            public_posts=(scale.TARGET_CONCURRENT_CALLS+int(scale.NEGATIVE_DURING_LOAD))*scale.ROUNDS
+            self.assertTrue(1 <= public_posts <= 120, "soak wave must fit the public POST budget")
         root=Path(self.tmp)
         os.environ["FRP_DEPLOY_TEST_ROOT"]=str(root)
         self.addCleanup(lambda:os.environ.pop("FRP_DEPLOY_TEST_ROOT",None))
@@ -99,6 +106,20 @@ class SharedControlPlaneLoad(scale.MCPBridgeScaleTargetTests):
                 raise OSError("Unexpected unauthorized upstream call")
             return socket.create_connection(("127.0.0.1",origin.port),timeout=timeout)
         cache=GW.PolicyCache(cfg)
+        self.assertIsNone(cache.load_error)
+        self.assertIsNotNone(cache.plane)
+        def main_db(p):
+            return Path(next(row[2] for row in p.conn.execute("PRAGMA database_list")
+                             if row[1]=="main")).resolve(strict=True)
+        mcp_db=main_db(plane)
+        with cache.lock:
+            egress_db=main_db(cache.plane)
+        expected_db=(root/"var/lib/drlink/drlink.db").resolve(strict=True)
+        self.assertTrue(os.path.samefile(mcp_db,expected_db))
+        self.assertTrue(os.path.samefile(mcp_db,egress_db))
+        print("SHARED_PLANEROOT",root,"SAME_SQLITE_ROOT",True,
+              "DB_INODE",mcp_db.stat().st_ino,flush=True)
+        self.addCleanup(cache._cp._close_cached_plane)
         gw=GW.GatewayState(cache,resolve_fn=lambda h:["1.2.3.4"] if h in ("allowed.test","denied.test") else [],
                            connect_fn=connect,max_concurrent=100,per_source_limit=100)
         gateway=GW.ThreadedTCPServer(("127.0.0.1",0),gw)
@@ -117,7 +138,11 @@ class SharedControlPlaneLoad(scale.MCPBridgeScaleTargetTests):
                     host="denied.test" if i==0 else "allowed.test"
                     sock.sendall(("CONNECT %s:443 HTTP/1.1\r\nHost: %s:443\r\n\r\n"%
                                   (host,host)).encode())
-                    result=sock.recv(4096)
+                    result=b""
+                    while b"\r\n\r\n" not in result and len(result)<16384:
+                        chunk=sock.recv(4096)
+                        if not chunk: break
+                        result+=chunk
                     if i==0:
                         print("MIXED_DENY_RESPONSE", repr(result[:230]), flush=True)
                         denies.append(result.startswith(b"HTTP/1.1 403"))
@@ -141,32 +166,62 @@ class SharedControlPlaneLoad(scale.MCPBridgeScaleTargetTests):
             with ThreadPoolExecutor(max_workers=21) as pool:
                 list(pool.map(one_egress,range(21)))
 
-        with ThreadPoolExecutor(max_workers=2) as pool:
-            mcp_task=pool.submit(self._simultaneous_calls,
-                                 lambda i:"scale%03d"%i)
-            egress_task=pool.submit(egress_burst)
-            egress_task.result(timeout=45)
-            mcp_task.result(timeout=90)
-
         audit_path=root/"var/log/drlink/egress/connections.jsonl"
-        audits=[json.loads(x) for x in audit_path.read_text().splitlines()]
-        ids={x.get("connection_id") for x in audits}
-        dbfile=plane.conn.execute("PRAGMA database_list").fetchall()
-        self.assertTrue(dbfile, "no SQLite backing DB")
-        jobs=plane.conn.execute(
-            "SELECT COUNT(*) FROM ai_jobs WHERE status='done'").fetchone()[0]
-        print("SHARED_PLANEROOT",root,"SAME_SQLITE_ROOT",str(root) in str(dbfile),flush=True)
-        print("SHARED_MCP_JOB_DONE",jobs,"EGRESS_ALLOWED",len(ok),
-              "EGRESS_DENIED",denies,"EGRESS_AUDITS",len(ids),
-              "ACKS",origin.acknowledged_transfers,"FORBIDDEN_CONNECTS",len(attempts),
-              "EGRESS_ERRORS",errors[:3],flush=True)
-        self.assertEqual(jobs,scale.TARGET_CONCURRENT_CALLS*scale.ROUNDS)
-        self.assertEqual(len(ok),20)
-        self.assertEqual(denies,[True])
-        self.assertEqual(origin.acknowledged_transfers,20)
-        self.assertEqual(len(ids),21)
-        self.assertFalse(attempts)
-        self.assertFalse(errors)
+        def audit_ids():
+            if not audit_path.exists(): return set()
+            return {json.loads(line)["connection_id"] for line in audit_path.read_text().splitlines()}
+        def done_ids():
+            return {row[0] for row in plane.conn.execute("SELECT id FROM ai_jobs WHERE status='done'")}
+        started=time.monotonic()
+        waves=0
+        fd_baseline=None
+        # One burst is 93 public MCP POSTs from one source (limit 120/60s).
+        # Keep the real limiter enabled and allow its entire window to expire.
+        cadence=65
+        while True:
+            ok.clear(); denies.clear(); errors.clear()
+            t0=time.monotonic()
+            prior_audits=audit_ids()
+            prior_jobs=done_ids()
+            prior_acks=origin.acknowledged_transfers
+            with ThreadPoolExecutor(max_workers=2) as pool:
+                mcp_task=pool.submit(self._simultaneous_calls,lambda i:"scale%03d"%i)
+                egress_task=pool.submit(egress_burst)
+                egress_task.result(timeout=45)
+                mcp_task.result(timeout=90)
+            # Let the origin and gateway finish accounting after socket receipt.
+            deadline=time.monotonic()+2
+            while time.monotonic()<deadline and (len(audit_ids()-prior_audits)<21 or
+                    origin.acknowledged_transfers-prior_acks<20):
+                time.sleep(.02)
+            ids=audit_ids()-prior_audits
+            jobs=len(done_ids()-prior_jobs)
+            acks=origin.acknowledged_transfers-prior_acks
+            self.assertEqual(jobs,scale.TARGET_CONCURRENT_CALLS*scale.ROUNDS)
+            self.assertEqual(len(ok),20)
+            self.assertEqual(denies,[True])
+            self.assertEqual(acks,20)
+            self.assertEqual(len(ids),21)
+            self.assertFalse(attempts)
+            self.assertFalse(errors)
+            waves+=1
+            # Only count descriptors in the isolated harness, not unrelated hosts.
+            fds=len(list(Path("/proc/self/fd").iterdir())) if Path("/proc/self/fd").is_dir() else None
+            if fds is not None:
+                if fd_baseline is None: fd_baseline=fds
+                self.assertLessEqual(fds,fd_baseline+16,"mixed fixture FD growth")
+            elapsed=time.monotonic()-started
+            print("SHARED_MCP_JOB_DONE",jobs,"EGRESS_ALLOWED",len(ok),
+                  "EGRESS_DENIED",denies,"EGRESS_AUDITS",len(ids),"ACKS",acks,
+                  "FORBIDDEN_CONNECTS",len(attempts),"EGRESS_ERRORS",errors[:3],
+                  "WAVE",waves,"ELAPSED_S",round(elapsed,3),"FD_COUNT",fds,flush=True)
+            remaining=duration-elapsed
+            if remaining<=0: break
+            # No additional wave within the last incomplete rate-limit window.
+            time.sleep(min(cadence,remaining))
+            if remaining<cadence: break
+        print("LPERF_SHARED_SOAK_RESULT", "PASS_LAB", "WAVES",waves,
+              "ELAPSED_S",round(time.monotonic()-started,3),"REQUESTED_S",duration,flush=True)
 
 if __name__=="__main__":
     unittest.main(defaultTest="SharedControlPlaneLoad.test_mcp_and_egress_share_control_plane")
