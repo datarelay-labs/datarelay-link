@@ -47,7 +47,6 @@ reg_path.write_text(json.dumps({
           "local_port": 22,
           "remote_port": 6002,
           "preset": "ssh",
-          "ssh_user": "aella",
           "enabled": True,
         },
         "grafana": {
@@ -131,7 +130,11 @@ fi
 python3 "$ROOT/tools/frp-client-info" dev-dp-mirror services >"$WORKDIR/info-svc.out"
 grep -q '127.0.0.1:22' "$WORKDIR/info-svc.out" || fail "info ssh target"
 grep -q '203.0.113.10:6002' "$WORKDIR/info-svc.out" || fail "info ssh public"
-grep -q 'ssh -p 6002 aella@203.0.113.10' "$WORKDIR/info-svc.out" || fail "info ssh connect"
+# The SSH login is supplied by the operator, not Enrollment metadata.
+grep -Fq -- 'ssh -p 6002 <username>@203.0.113.10' "$WORKDIR/info-svc.out" ||
+  { echo 'INFO_SSH_RENDER_MISMATCH' >&2; grep -F 'ssh -p' "$WORKDIR/info-svc.out" >&2 || true; fail "info ssh connect"; }
+! grep -q 'aella@203.0.113.10' "$WORKDIR/info-svc.out" ||
+  fail "legacy SSH login metadata leaked into connection example"
 grep -q '127.0.0.1:3000' "$WORKDIR/info-svc.out" || fail "info grafana target"
 grep -qi 'Exposure' "$WORKDIR/info-svc.out" || fail "info PUBLIC exposure banner"
 grep -q '6004' "$WORKDIR/info-svc.out" || fail "info should show disabled/reserved service"
@@ -194,7 +197,7 @@ state['clients']['lastsvc001']={
   'mgmt_status':'enrolled',
   'mgmt_pubkey':'KEEP',
   'services':{
-    'ssh':{'name':'SSH','protocol':'tcp','local_ip':'127.0.0.1','local_port':22,'remote_port':6020,'preset':'ssh','ssh_user':'aella','enabled':True},
+    'ssh':{'name':'SSH','protocol':'tcp','local_ip':'127.0.0.1','local_port':22,'remote_port':6020,'preset':'ssh','enabled':True},
   },
 }
 p.write_text(json.dumps(state, indent=2, sort_keys=True)+'\n')
@@ -272,9 +275,14 @@ p.write_text(json.dumps(state, indent=2, sort_keys=True)+'\n')
 PY
 
 python3 "$ROOT/tools/frp-clients" >"$WORKDIR/legacy-clients.out"
-grep -q 'legacy / unspecified' "$WORKDIR/legacy-clients.out" || fail "legacy SSH user display"
+grep -q 'legacy-ssh' "$WORKDIR/legacy-clients.out" || fail "legacy SSH host inventory"
+! grep -q 'legacy / unspecified' "$WORKDIR/legacy-clients.out" ||
+  fail "removed SSH username metadata resurfaced in host inventory"
 python3 "$ROOT/tools/frp-client-info" legacy-ssh services >"$WORKDIR/legacy-info.out"
-grep -q 'legacy / unspecified' "$WORKDIR/legacy-info.out" || fail "legacy SSH info display"
+grep -Fq -- 'ssh -p 6010 <username>@203.0.113.10' "$WORKDIR/legacy-info.out" ||
+  fail "legacy SSH service uses operator-owned login placeholder"
+! grep -q 'legacy / unspecified' "$WORKDIR/legacy-info.out" ||
+  fail "removed SSH username metadata resurfaced in service inventory"
 python3 - "$TREE/var/lib/drlink/registry.json" <<'PY' || fail "list mutated legacy record"
 import json,sys
 from pathlib import Path

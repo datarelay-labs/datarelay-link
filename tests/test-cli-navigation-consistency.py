@@ -436,12 +436,73 @@ class FrpctlWizardPrompts(unittest.TestCase):
         self.assertEqual(rc, 0, out)
 
     def test_confirm_step_help_explains_yes_no_and_zero_cancels(self):
-        rc, out = _source_frpctl(self.FLOW, ["1", "", "22", "", "?", "0"])
+        rc, out = _source_frpctl(self.FLOW, ["1", "", "22", "?", "0"])
         self.assertIn("Current step: Create profile?", out)
         self.assertIn("y or n", out)
         self.assertIn("Cancelled.", out)
         self.assertNotIn("INVOKED", out)
         self.assertEqual(rc, 0, out)
+
+    def test_cancel_nested_service_id_does_not_append_previous_service(self):
+        # Repro from PR #294 review: Add SSH, cancel the next HTTP service ID.
+        # The previous SSH JSON must not be appended a second time.
+        script = """
+_FRP_ZT_CLIENT_NAME=test-host
+_FRP_ZT_PLATFORM=linux
+frpctl_zt_invoke_create_client() {
+    if [[ "$1" == "--one-line" && "$2" == "--services-file" ]]; then
+        printf 'SERVICES_JSON '
+        cat "$3"
+    else
+        echo "INVOKED_INVALID_ARGS"
+    fi
+}
+frpctl_zt_run_services
+"""
+        rc, out = _source_frpctl(script, ["1", "", "", "", "2", "0", "5"])
+        self.assertEqual(rc, 0, out)
+        match = re.search(r"^SERVICES_JSON (.+)$", out, re.M)
+        self.assertIsNotNone(match, out)
+        import json
+        items = json.loads(match.group(1))
+        self.assertEqual(len(items), 1, items)
+        self.assertEqual(items[0]["id"], "ssh")
+        self.assertNotIn("INVOKED_INVALID_ARGS", out)
+
+    def test_cancel_nested_service_host_or_port_does_not_append_stale_service(self):
+        for answers in (
+            ["1", "", "", "", "2", "", "0", "5"],
+            ["1", "", "", "", "2", "", "", "0", "5"],
+        ):
+            with self.subTest(answers=answers):
+                script = """
+_FRP_ZT_CLIENT_NAME=test-host
+frpctl_zt_invoke_create_client() {
+    printf 'SERVICES_JSON '
+    cat "$3"
+}
+frpctl_zt_run_services
+"""
+                rc, out = _source_frpctl(script, answers)
+                self.assertEqual(rc, 0, out)
+                match = re.search(r"^SERVICES_JSON (.+)$", out, re.M)
+                self.assertIsNotNone(match, out)
+                import json
+                items = json.loads(match.group(1))
+                self.assertEqual([x["id"] for x in items], ["ssh"])
+
+    def test_cancel_nested_identification_cannot_invoke_enrollment(self):
+        for answers in (["0", "22"], ["test-host", "0", "22"]):
+            with self.subTest(answers=answers):
+                script = """
+_FRP_ZT_CLIENT_NAME=
+frpctl_zt_invoke_create_client() { echo "INVOKED_ENROLLMENT"; }
+frpctl_zt_run_ssh
+"""
+                rc, out = _source_frpctl(script, answers)
+                self.assertIn("Cancelled. No changes were applied.", out)
+                self.assertNotIn("INVOKED_ENROLLMENT", out)
+                self.assertNotEqual(rc, 0, out)
 
     def test_end_of_input_inside_wizard_is_announced_and_changes_nothing(self):
         rc, out = _source_frpctl(self.FLOW, ["1"])

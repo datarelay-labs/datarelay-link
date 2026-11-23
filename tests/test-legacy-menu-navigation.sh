@@ -15,7 +15,6 @@ fail() { echo "FAIL $1" >&2; exit 1; }
 
 export FRP_CLIENT_SOURCED=1
 export FRP_SKIP_CONNECTIVITY_CHECK=1
-export FRP_SSH_USER=aella
 # shellcheck source=../install-client.sh
 . "$ROOT/install-client.sh"
 
@@ -67,11 +66,23 @@ assert p.get("id") == "ssh" or p.get("service_id") == "ssh" or "ssh" in json.dum
 PY
 pass "? on a step shows help and stays on the step"
 
-# --- step prompts: 0 cancels the entry and returns to the menu ------------------
-run_add_menu $'1\n0\n0\n'
-[[ -z "$PAYLOAD" ]] || fail "0 on a step must cancel the entry"
-grep -q 'Cancelled' "$WORKDIR/add.err" "$WORKDIR/add.out" || fail "0 on a step must say it cancelled"
-pass "0 on a step cancels and returns to the menu"
+# --- SSH step prompts: 0 cancels without creating a stale service --------------
+# Check all three SSH fields under set -e, with an explicit Back afterwards.
+# A bare failing step used to exit the script before the menu could resume.
+for step in id host port; do
+  case "$step" in
+    id)   input=$'1\n0\n0\n' ;;
+    host) input=$'1\n\n0\n0\n' ;;
+    port) input=$'1\n\n\n0\n0\n' ;;
+  esac
+  run_add_menu "$input"
+  [[ -z "$PAYLOAD" ]] || fail "0 on SSH $step must not create a service"
+  grep -q 'Cancelled' "$WORKDIR/add.err" "$WORKDIR/add.out" ||
+    fail "0 on SSH $step must report cancellation"
+  [[ "$(count_line "$WORKDIR/add.out" '1) SSH')" == 2 ]] ||
+    fail "0 on SSH $step must return to the Add Service menu"
+  pass "0 on SSH $step cancels draft and returns to menu"
+done
 
 # --- frp_menu_nav: shared classification for the top-level menu ---------------
 nav_out="$(frp_menu_nav top "Agent menu" 8 0 2>&1)" && rc=0 || rc=$?
