@@ -220,6 +220,48 @@ def _new_ids() -> tuple[str, str]:
     return secrets.token_hex(8), secrets.token_hex(8)
 
 
+
+def _authorize_fixed_tcp_isolated(state: TcpEgressState, relay_id: str, source_ip: str) -> dict:
+    """Per-request SQLite authorization; never expose a shared cursor to TCP workers.
+
+    HTTP/CONNECT already calls PolicyCache.authorize with a request-private
+    snapshot. Fixed TCP previously took PolicyCache.snapshot() and used the
+    shared read-only plane outside the cache lock. Simultaneous relay threads
+    corrupted SQLite cursor state and could crash the Python interpreter.
+    """
+    deny = {"decision": EG.DECISION_DENY, "reason": "CONTROL_PLANE_UNAVAILABLE"}
+    if RP is None:
+        return deny
+    plane = None
+    try:
+        with state.cache.lock:
+            state.cache.reload(force=False)
+            snapshot = state.cache.engine.snapshot()
+            control_cache = state.cache._cp
+            unhealthy = (
+                bool(state.cache.load_error)
+                or control_cache is None
+                or snapshot is None
+                or not snapshot.healthy
+            )
+        if unhealthy:
+            return deny
+        plane, error, _cfg = control_cache.open_isolated()
+        if plane is None or error is not None:
+            return deny
+        result = RP.authorize_fixed_tcp(
+            plane, relay_id=relay_id, source_ip=source_ip,
+            validated_revision=plane._validated_revision,
+        )
+        return result
+    except Exception:
+        # DB unavailable/corrupt/racing invalidation must deny without fallback.
+        return deny
+    finally:
+        if plane is not None:
+            plane.close()
+
+
 def handle_tcp_client(
     state: TcpEgressState,
     request: socket.socket,
@@ -274,23 +316,8 @@ def handle_tcp_client(
                 return
             source_acquired = True
 
-        policy_plane, load_error, cfg, snap = state.cache.snapshot()
-        if RP is None or policy_plane is None or load_error is not None:
-            decision = {
-                "decision": EG.DECISION_DENY,
-                "reason": "CONTROL_PLANE_UNAVAILABLE",
-                "detail": load_error or "SQLite control plane unavailable",
-            }
-        else:
-            decision = RP.authorize_fixed_tcp(
-                policy_plane,
-                relay_id=relay_id,
-                source_ip=source_ip,
-            )
-            if decision.get("decision") == RP.DECISION_ALLOW:
-                decision["decision"] = EG.DECISION_ALLOW
-            else:
-                decision["decision"] = EG.DECISION_DENY
+        _shared_plane, _load_error, cfg, snap = state.cache.snapshot()
+        decision = _authorize_fixed_tcp_isolated(state, relay_id, source_ip)
         if snap is not None:
             decision["policy_generation"] = snap.generation
         if decision.get("decision") != EG.DECISION_ALLOW:
@@ -471,13 +498,10 @@ def ipaddress_compress(ip: str) -> str:
 
 
 def _session_still_authorized(state: TcpEgressState, session: dict) -> bool:
-    plane, err, _cfg, _snap = state.cache.snapshot()
-    if RP is None or plane is None or err is not None:
-        return False
-    decision = RP.authorize_fixed_tcp(
-        plane,
-        relay_id=session.get("relay_id") or "",
-        source_ip=session["source_ip"],
+    # Revalidation shares the same isolated authorization path as initial
+    # admission; concurrent session checks must never reuse one SQLite cursor.
+    decision = _authorize_fixed_tcp_isolated(
+        state, session.get("relay_id") or "", session["source_ip"],
     )
     if decision.get("decision") != RP.DECISION_ALLOW:
         return False
@@ -503,8 +527,21 @@ def _desired_enabled_relays(plane) -> dict[str, tuple[str, int]]:
 
 
 def sync_listeners(state: TcpEgressState) -> None:
-    plane, _err, _cfg, _snap = state.cache.snapshot()
-    desired = _desired_enabled_relays(plane)
+    # Reload can invalidate the shared plane concurrently with an active
+    # admission. Keep listener inventory on a private, pinned SQLite snapshot.
+    plane = None
+    desired = {}
+    try:
+        with state.cache.lock:
+            state.cache.reload(force=False)
+            control_cache = state.cache._cp if not state.cache.load_error else None
+        if control_cache is not None:
+            plane, error, _cfg = control_cache.open_isolated()
+            if plane is not None and error is None:
+                desired = _desired_enabled_relays(plane)
+    finally:
+        if plane is not None:
+            plane.close()
     # Stop removed / re-bound relays.
     for rid, server in list(state._servers.items()):
         want = desired.get(rid)
