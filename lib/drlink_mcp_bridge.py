@@ -2299,8 +2299,15 @@ def _worker_effective_cpus() -> int:
                     if quota <= 0 or period <= 0:
                         return 1
                     quota_cores.append(max(1, quota // period))
+            except FileNotFoundError:
+                # Cgroup v2 has no cpu.max at the TRUE hierarchy root.
+                # A bind-mounted subtree root is still a non-root cgroup,
+                # where a missing file must fail closed. Only ignore ENOENT
+                # for a root-mounted v2 hierarchy; never ignore EACCES.
+                if not (fs_type == "cgroup2" and current == base and mount_root == "/"):
+                    return 1
             except (OSError, ValueError):
-                # An unavailable ancestor's CPU quota cannot be proven safe.
+                # Unreadable or malformed non-root quota cannot be proven safe.
                 return 1
             if current == base:
                 break

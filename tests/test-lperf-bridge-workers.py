@@ -40,6 +40,18 @@ class WorkerSelectionTests(unittest.TestCase):
                 self.assertEqual(mcp._worker_effective_cpus(), 10)
                 self.assertEqual(mcp._worker_count("auto"), 8)
 
+    def test_bind_mounted_nonroot_cpu_quota_file_missing_fails_closed(self):
+        files = self._cgroup_v2_fixture()
+        files["/proc/self/mountinfo"] = (
+            "39 29 0:32 /system.slice /sys/fs/cgroup rw - cgroup2 cgroup rw\n"
+        )
+        files["/sys/fs/cgroup/drlink-mcp-bridge.service/cpu.max"] = "max 100000\n"
+        # Here /sys/fs/cgroup is a bind-mounted SUBTREE (not hierarchy root).
+        # Its cpu.max MUST exist, otherwise the effective quota is unknown.
+        with self._with_fake_proc(files):
+            with mock.patch.object(mcp.os, "sched_getaffinity", return_value=set(range(10))):
+                self.assertEqual(mcp._worker_effective_cpus(), 1)
+
     def test_cpu_quota_v1_nonroot_mount(self):
         files = {
             "/proc/self/cgroup": "9:cpu,cpuacct:/docker/abc/service\n",
@@ -54,14 +66,24 @@ class WorkerSelectionTests(unittest.TestCase):
             with mock.patch.object(mcp.os, "sched_getaffinity", return_value=set(range(10))):
                 self.assertEqual(mcp._worker_effective_cpus(), 1)
 
-    def test_cpu_quota_missing_or_traversal_fails_closed(self):
-        files = self._cgroup_v2_fixture()
+    def test_cgroup_v2_true_root_missing_and_traversal_fails_closed(self):
+        files = self._cgroup_v2_fixture(
+            child=str(8 * 1024 ** 3), parent=str(8 * 1024 ** 3)
+        )
         files["/sys/fs/cgroup/system.slice/drlink-mcp-bridge.service/cpu.max"] = "max 100000\n"
         files["/sys/fs/cgroup/system.slice/cpu.max"] = "max 100000\n"
-        # Deliberately missing mount-root cpu.max (unknown parent quota)
+        # On cgroup v2, the TRUE hierarchy root has no cpu.max by design.
+        # All non-root quotas are "max" -> effective capacity is the affinity.
+        with self._with_fake_proc(files):
+            with mock.patch.object(mcp.os, "sched_getaffinity", return_value=set(range(10))):
+                self.assertEqual(mcp._worker_effective_cpus(), 10)
+                self.assertEqual(mcp._worker_count("auto"), 8)
+        # Missing cpu.max on a NON-root cgroup must still fail closed.
+        files.pop("/sys/fs/cgroup/system.slice/cpu.max")
         with self._with_fake_proc(files):
             with mock.patch.object(mcp.os, "sched_getaffinity", return_value=set(range(10))):
                 self.assertEqual(mcp._worker_effective_cpus(), 1)
+        files["/sys/fs/cgroup/system.slice/cpu.max"] = "max 100000\n"
         files["/proc/self/cgroup"] = "0::/system.slice/../escaped\n"
         with self._with_fake_proc(files):
             with mock.patch.object(mcp.os, "sched_getaffinity", return_value=set(range(10))):
@@ -104,7 +126,7 @@ class WorkerSelectionTests(unittest.TestCase):
         def fake_read(path, *args, **kwargs):
             key = str(path)
             if key not in files:
-                raise OSError("fixture has no file: " + key)
+                raise FileNotFoundError("fixture has no file: " + key)
             return files[key]
         return mock.patch.object(Path, "read_text", new=fake_read)
 
