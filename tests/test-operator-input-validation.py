@@ -45,7 +45,7 @@ class InstallerUrlValidation(unittest.TestCase):
                 self.assertEqual(mod.validate_https_installer_url(value), value)
 
 
-class ZeroTouchUsernameValidation(unittest.TestCase):
+class ZeroTouchUsernameRemoval(unittest.TestCase):
     def validate(self, user):
         src = (ROOT / "tools/frpctl").read_text(encoding="utf-8")
         start = src.index("frpctl_zt_validate_field() {")
@@ -53,15 +53,14 @@ class ZeroTouchUsernameValidation(unittest.TestCase):
         fn = src[start:end]
         return subprocess.run(["bash", "-c", fn + "\nfrpctl_zt_validate_field ssh_user \"$1\"", "--", user], capture_output=True, text=True)
 
-    def test_blank_ssh_username_is_optional(self):
-        result = self.validate("")
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(result.stdout, "\n")
-
-    def test_invalid_ssh_username_is_rejected(self):
-        for value in ("invalid user", "a" * 33, "root;id"):
+    def test_removed_ssh_username_field_is_rejected_even_when_blank(self):
+        # SSH login is client-owned; neither blank nor explicit names are
+        # supported enrollment fields following PR #300.
+        for value in ("", "ubuntu", "invalid user", "a" * 33, "root;id"):
             with self.subTest(value=value):
-                self.assertNotEqual(self.validate(value).returncode, 0)
+                result = self.validate(value)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("unknown validation kind", result.stderr)
 
 
 if __name__ == "__main__":
