@@ -79,12 +79,19 @@ class ActivationAcknowledgementTests(unittest.TestCase):
             occupied.listen(1)
             port = occupied.getsockname()[1]
             state = SimpleNamespace(_servers={}, cache=mock.MagicMock())
-            state.cache.snapshot.return_value = (None, None, None, None)
+            # Listener inventory now reads a private pinned policy snapshot.
+            # Provide a healthy isolated plane rather than the obsolete shared
+            # snapshot fixture; retain the actual socket bind collision.
+            state.cache.load_error = None
+            isolated_plane = mock.MagicMock()
+            state.cache._cp.open_isolated.return_value = (isolated_plane, None, {})
             with mock.patch.object(module, '_desired_enabled_relays',
                                    return_value={'relay1':('127.0.0.1', port)}), \
                  mock.patch('sys.stderr', new_callable=io.StringIO) as err:
                 module.sync_listeners(state)
             self.assertEqual(state._servers, {})
+            state.cache._cp.open_isolated.assert_called_once_with()
+            isolated_plane.close.assert_called_once_with()
             self.assertIn('failed to bind tcp relay relay1', err.getvalue())
         # The same port can bind again after the competing listener exits.
         with socket.socket() as recovered:

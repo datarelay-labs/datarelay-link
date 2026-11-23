@@ -2133,9 +2133,13 @@ class _MgmtHandler(BaseHTTPRequestHandler):
         self.wfile.write(raw)
 
     def _dispatch(self, method: str, body: bytes):
-        handled = handle_allocator_http(
-            self.plane, method, self.path, self.headers, body, verifier=self.verifier
-        )
+        # This in-process HTTP server shares a ControlPlane across handlers.
+        # Match the production Allocator's request-local SQLite ownership;
+        # never dispatch concurrent signed requests on the primary connection.
+        with self.plane.request_scope():
+            handled = handle_allocator_http(
+                self.plane, method, self.path, self.headers, body, verifier=self.verifier
+            )
         if handled is None:
             self._send(404, {"error": "not found"})
             return

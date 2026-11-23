@@ -111,6 +111,39 @@ class MgmtApiAuthTests(unittest.TestCase):
         ):
             os.environ.pop(k, None)
 
+    def test_concurrent_signed_lifecycle_requests_use_distinct_db_connections(self):
+        from concurrent.futures import ThreadPoolExecutor
+        from threading import Barrier
+        from unittest import mock
+
+        entered = Barrier(2)
+        connection_ids = []
+        original = mgmt.handle_allocator_http
+
+        def observed(plane, *args, **kwargs):
+            connection_ids.append(id(plane.conn))
+            entered.wait(timeout=5)
+            return original(plane, *args, **kwargs)
+
+        with mock.patch.object(mgmt, "handle_allocator_http", side_effect=observed):
+            with ThreadPoolExecutor(max_workers=2) as pool:
+                futures = [
+                    pool.submit(mgmt.report_agent_lifecycle_on_server,
+                                root=self.agent_tmp, state="connected")
+                    for _ in range(2)
+                ]
+                results = []
+                errors = []
+                for future in futures:
+                    try:
+                        results.append(future.result(timeout=12))
+                    except Exception as exc:
+                        errors.append(type(exc).__name__)
+        self.assertEqual(len(set(connection_ids)), 2,
+                         "concurrent HTTP handlers must not share one SQLite connection")
+        self.assertFalse(errors, errors)
+        self.assertEqual(len(results), 2)
+
     def _snapshot(self):
         hosts = list(self.server.conn.execute("SELECT id FROM clients"))
         ports = list(
