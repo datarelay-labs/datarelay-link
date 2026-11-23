@@ -1899,7 +1899,13 @@ def services_match_authorized(requested, authorized):
 
 
 class Allocator:
+    # Each request exclusively owns its plane, including during a held claim.
+    # Only idle, fully checked planes are retained.
+    AI_JOB_PLANE_IDLE_MAX = 32
+
     def __init__(self, config_path):
+        self._ai_job_planes = []
+        self._ai_job_planes_lock = threading.Lock()
         self.config_path = config_path
         self._cfg_mtime_ns = None
         self.cfg = {}
@@ -1910,6 +1916,92 @@ class Allocator:
         except OSError:
             pass
         ensure_secret_dir(self.bootstrap_dir, 0o700)
+
+    def _ai_job_db_identity(self):
+        from drlink_control_db import db_path
+
+        root = RP.root_from_cfg(self.cfg)
+        path = db_path(root)
+        st = path.stat()
+        return (str(path), st.st_dev, st.st_ino)
+
+    def _borrow_ai_job_plane(self):
+        from drlink_control_db import (
+            SCHEMA_VERSION, current_schema_version, integrity_check,
+        )
+
+        while True:
+            with self._ai_job_planes_lock:
+                entry = self._ai_job_planes.pop() if self._ai_job_planes else None
+            if entry is None:
+                break
+            plane, identity, cookie = entry
+            try:
+                current = self._ai_job_db_identity()
+                actual_cookie = plane.conn.execute("PRAGMA schema_version").fetchone()[0]
+                if (identity != current or actual_cookie != cookie
+                        or current_schema_version(plane.conn) != SCHEMA_VERSION):
+                    plane.close()
+                    continue
+                # Preserve the former per-request full integrity + FK check.
+                # Avoid only redundant schema initialization/DDL on the same
+                # initialized connection; never cache an auth or policy result.
+                integrity_check(plane.conn)
+                if self._ai_job_db_identity() != identity:
+                    plane.close()
+                    continue
+                return entry
+            except Exception as exc:
+                plane.close()
+                print("allocator control-plane validation failed: %s" % exc, flush=True)
+                return None
+        plane = _open_control_plane(self.cfg)
+        if plane is None:
+            return None
+        try:
+            identity = self._ai_job_db_identity()
+            if (str(plane.db_file), *plane._db_ident) != identity:
+                raise RuntimeError("control DB replaced during initialization")
+            cookie = plane.conn.execute("PRAGMA schema_version").fetchone()[0]
+            return (plane, identity, cookie)
+        except Exception as exc:
+            plane.close()
+            print("allocator control-plane validation failed: %s" % exc, flush=True)
+            return None
+
+    @contextmanager
+    def ai_job_plane(self):
+        entry = self._borrow_ai_job_plane()
+        if entry is None:
+            yield None
+            return
+        plane, identity, cookie = entry
+        keep = False
+        try:
+            yield plane
+            # An open transaction, changed DB, or changed schema must never
+            # leak into the next request. The next open performs full migration.
+            try:
+                keep = (not plane.conn.in_transaction
+                        and (str(plane.db_file), *plane._db_ident) == identity
+                        and self._ai_job_db_identity() == identity
+                        and plane.conn.execute("PRAGMA schema_version").fetchone()[0] == cookie)
+            except Exception:
+                # Pool maintenance cannot change the outcome of a committed job.
+                keep = False
+        finally:
+            if keep:
+                with self._ai_job_planes_lock:
+                    if len(self._ai_job_planes) < self.AI_JOB_PLANE_IDLE_MAX:
+                        self._ai_job_planes.append(entry)
+                        keep = True
+                    else:
+                        keep = False
+            if not keep:
+                try:
+                    plane.close()
+                except Exception:
+                    pass
 
     def _config_mtime_ns(self):
         try:
@@ -3854,17 +3946,29 @@ def make_handler(allocator):
                         '/v1/ai-jobs/claim',
                         '/v1/ai-jobs/complete',
                     ) and MGMT_SYNC is not None:
-                        plane = _open_control_plane(allocator.cfg)
-                        if plane is None:
-                            self.send_json(
-                                503,
-                                api_error(
-                                    'control plane unavailable',
-                                    'SERVER_MUTATION_FAILED',
-                                ),
-                            )
-                            return
-                        try:
+                        @contextmanager
+                        def request_plane():
+                            if path in ('/v1/ai-jobs/claim', '/v1/ai-jobs/complete'):
+                                with allocator.ai_job_plane() as pooled:
+                                    yield pooled
+                                return
+                            plane = _open_control_plane(allocator.cfg)
+                            try:
+                                yield plane
+                            finally:
+                                if plane is not None:
+                                    plane.close()
+
+                        with request_plane() as plane:
+                            if plane is None:
+                                self.send_json(
+                                    503,
+                                    api_error(
+                                        'control plane unavailable',
+                                        'SERVER_MUTATION_FAILED',
+                                    ),
+                                )
+                                return
                             handled = MGMT_SYNC.handle_allocator_http(
                                 plane,
                                 'POST',
@@ -3873,14 +3977,9 @@ def make_handler(allocator):
                                 body,
                                 verifier=MGMT_SYNC.AllocatorMgmtVerifier(allocator),
                             )
-                            if handled is not None:
-                                self.send_json(handled[0], handled[1])
-                                return
-                        finally:
-                            try:
-                                plane.close()
-                            except Exception:
-                                pass
+                        if handled is not None:
+                            self.send_json(handled[0], handled[1])
+                            return
                     self.send_json(404, {'error': 'not found'})
                 except json.JSONDecodeError:
                     self.send_json(400, api_error('invalid JSON', 'AUTH_FAILED'))
