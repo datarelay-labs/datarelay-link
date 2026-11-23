@@ -48,20 +48,67 @@ class WorkerSelectionTests(unittest.TestCase):
             self.assertEqual(mcp._worker_count("9999"), mcp.MAX_WORKERS)
             self.assertEqual(mcp._worker_count("invalid"), 1)
 
-    def test_cgroup_memory_ceiling_is_respected(self):
-        # Patch only the reads, avoiding dependence on this host's cgroup.
-        original = Path.read_text
+    def _with_fake_proc(self, files):
+        """Mock ONLY per-test proc and cgroup entries; never read host state."""
         def fake_read(path, *args, **kwargs):
-            name = str(path)
-            if name == "/proc/meminfo":
-                return "MemTotal:  8192000 kB\n"
-            if name == "/sys/fs/cgroup/memory.max":
-                return str(1024 ** 3) + "\n"
-            if name == "/sys/fs/cgroup/memory/memory.limit_in_bytes":
-                raise OSError("not available")
-            return original(path, *args, **kwargs)
-        with mock.patch.object(Path, "read_text", new=fake_read):
+            key = str(path)
+            if key not in files:
+                raise OSError("fixture has no file: " + key)
+            return files[key]
+        return mock.patch.object(Path, "read_text", new=fake_read)
+
+    def _cgroup_v2_fixture(self, child="1073741824", parent="4294967296"):
+        return {
+            "/proc/meminfo": "MemTotal: 8388608 kB\n",
+            "/proc/self/cgroup": "0::/system.slice/drlink-mcp-bridge.service\n",
+            "/proc/self/mountinfo":
+                "39 29 0:32 / /sys/fs/cgroup rw,nosuid - cgroup2 cgroup rw\n",
+            "/sys/fs/cgroup/system.slice/drlink-mcp-bridge.service/memory.max": child + "\n",
+            "/sys/fs/cgroup/system.slice/memory.max": parent + "\n",
+            "/sys/fs/cgroup/memory.max": "max\n",
+        }
+
+    def test_cgroup_memory_ceiling_is_respected(self):
+        files = self._cgroup_v2_fixture(child=str(1024 ** 3))
+        with self._with_fake_proc(files):
             self.assertEqual(mcp._worker_memory_limit_bytes(), 1024 ** 3)
+            with mock.patch.object(mcp.os, "sched_getaffinity", return_value=set(range(10))):
+                self.assertEqual(mcp._worker_count("auto"), 1)
+
+    def test_nested_v2_ancestor_limit_when_child_is_unlimited(self):
+        files = self._cgroup_v2_fixture(child="max", parent=str(2 * 1024 ** 3))
+        with self._with_fake_proc(files):
+            self.assertEqual(mcp._worker_memory_limit_bytes(), 2 * 1024 ** 3)
+            with mock.patch.object(mcp.os, "sched_getaffinity", return_value=set(range(10))):
+                self.assertEqual(mcp._worker_count("auto"), 6)
+
+    def test_nested_v1_memory_mount_with_nonroot_mount_root(self):
+        files = {
+            "/proc/meminfo": "MemTotal: 8388608 kB\n",
+            "/proc/self/cgroup": "11:memory:/docker/abc/child\n",
+            "/proc/self/mountinfo":
+                "39 29 0:32 /docker/abc /sys/fs/cgroup/memory rw - cgroup cgroup rw,memory\n",
+            "/sys/fs/cgroup/memory/child/memory.limit_in_bytes": str(6 * 1024 ** 3),
+            "/sys/fs/cgroup/memory/memory.limit_in_bytes": str(1024 ** 3),
+        }
+        with self._with_fake_proc(files):
+            self.assertEqual(mcp._worker_memory_limit_bytes(), 1024 ** 3)
+
+    def test_unknown_or_malformed_cgroup_fails_closed(self):
+        cases = [
+            {"/proc/meminfo": "MemTotal: 8388608 kB\n"},
+            {
+                "/proc/meminfo": "MemTotal: 8388608 kB\n",
+                "/proc/self/cgroup": "0::/system.slice/../escaped\n",
+                "/proc/self/mountinfo": "39 29 0:32 / /sys/fs/cgroup rw - cgroup2 cgroup rw\n",
+            },
+        ]
+        for files in cases:
+            with self.subTest(files=files):
+                with self._with_fake_proc(files):
+                    self.assertEqual(mcp._worker_memory_limit_bytes(), 0)
+                    with mock.patch.object(mcp.os, "sched_getaffinity", return_value=set(range(10))):
+                        self.assertEqual(mcp._worker_count("auto"), 1)
 
 
 if __name__ == "__main__":

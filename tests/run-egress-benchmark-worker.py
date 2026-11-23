@@ -37,8 +37,14 @@ def build_client_hello(sni: str) -> bytes:
     return b"\x16\x03\x01" + len(handshake).to_bytes(2, "big") + handshake
 
 
+# This is a disposable local application-layer receipt, not a TLS response.
+# A CONNECT benchmark only passes after the origin itself has read every byte.
+TRANSFER_ACK = b"LPERF_ORIGIN_COMPLETE_v1"
+
 class Origin:
-    def __init__(self):
+    def __init__(self, expected_tls_bytes: int):
+        self.expected_tls_bytes = expected_tls_bytes
+        self.acknowledged_transfers = 0
         self._sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self._sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         self._sock.bind(("127.0.0.1", 0))
@@ -61,42 +67,52 @@ class Origin:
             threading.Thread(target=self._handle, args=(conn,), daemon=True).start()
 
     def _handle(self, conn: socket.socket):
-        """A bounded local origin: echo TLS ack or answer a complete HTTP upload."""
+        """Acknowledge CONNECT only after exact upstream byte receipt."""
         try:
-            conn.settimeout(5)
-            preface = bytearray()
-            http_body_remaining = None
+            conn.settimeout(10)
+            header_buf = bytearray()
+            http_remaining = None
+            tls_received = 0
+            is_tls = None
             while True:
                 data = conn.recv(65536)
                 if not data:
                     break
                 with self._bytes_lock:
                     self.bytes += len(data)
-                if http_body_remaining is not None:
-                    http_body_remaining -= len(data)
-                elif not preface or preface.startswith((b"GET ", b"POST ")):
-                    if len(preface) + len(data) > 65536:
+                if is_tls is None:
+                    # First byte is sufficient, even when TCP fragments a record.
+                    is_tls = data[:1] == b"\x16"
+                if is_tls:
+                    tls_received += len(data)
+                    if tls_received == self.expected_tls_bytes:
+                        conn.sendall(TRANSFER_ACK)
+                        with self._bytes_lock:
+                            self.acknowledged_transfers += 1
                         break
-                    preface.extend(data)
-                    if preface.startswith((b"GET ", b"POST ")) and b"\r\n\r\n" in preface:
-                        header, initial = bytes(preface).split(b"\r\n\r\n", 1)
-                        length = 0
-                        for field in header.split(b"\r\n")[1:]:
-                            if field.lower().startswith(b"content-length:"):
-                                length = int(field.split(b":", 1)[1].strip())
-                        http_body_remaining = length - len(initial)
-                        preface.clear()
-                else:
-                    # CONNECT TLS client hello/payload: no HTTP response framing.
-                    try:
-                        conn.sendall(b"\x16\x03\x03\x00\x01\x00")
-                    except OSError:
+                    if tls_received > self.expected_tls_bytes:
                         break
                     continue
-                if http_body_remaining is not None and http_body_remaining <= 0:
+                if http_remaining is not None:
+                    http_remaining -= len(data)
+                else:
+                    if len(header_buf) + len(data) > 65536:
+                        break  # Header cap; never buffer unbounded request bodies.
+                    header_buf.extend(data)
+                    if b"\r\n\r\n" not in header_buf:
+                        continue
+                    header, initial = bytes(header_buf).split(b"\r\n\r\n", 1)
+                    length = 0
+                    for field in header.split(b"\r\n")[1:]:
+                        if field.lower().startswith(b"content-length:"):
+                            length = int(field.split(b":", 1)[1].strip())
+                    http_remaining = length - len(initial)
+                    header_buf.clear()
+                if http_remaining is not None and http_remaining <= 0:
                     body = b"hello-egress"
                     conn.sendall(
-                        b"HTTP/1.1 200 OK\r\nContent-Length: %d\r\nConnection: close\r\n\r\n" % len(body) + body
+                        b"HTTP/1.1 200 OK\r\nContent-Length: %d\r\nConnection: close\r\n\r\n"
+                        % len(body) + body
                     )
                     break
         except (OSError, ValueError):
@@ -197,7 +213,10 @@ def main() -> int:
     finally:
         plane.close()
 
-    origin = Origin()
+    hello = build_client_hello("allowed.test")
+    if os.environ.get("DRLINK_EGRESS_BENCH_INVALID_TLS_PREFACE") == "1":
+        hello = b"NOT_A_TLS_CLIENTHELLO"
+    origin = Origin(expected_tls_bytes=len(hello) + transfer_kib * 1024)
     gw_path = ROOT / "server" / "frp-egress-gateway.py"
     spec = importlib.util.spec_from_file_location("frp_egress_gateway_bench", gw_path)
     GW = importlib.util.module_from_spec(spec)
@@ -229,7 +248,6 @@ def main() -> int:
     threading.Thread(target=server.serve_forever, daemon=True).start()
     time.sleep(0.1)
 
-    hello = build_client_hello("allowed.test")
     latencies_ms: list[float] = []
     setup_latencies_ms: list[float] = []
     failures = 0
@@ -305,7 +323,15 @@ def main() -> int:
                             count = min(remaining, len(data))
                             sock.sendall(data[:count])
                             remaining -= count
-                        time.sleep(hold_ms / 1000.0)
+                        if hold_ms:
+                            time.sleep(hold_ms / 1000.0)
+                        receipt = bytearray()
+                        while len(receipt) < len(TRANSFER_ACK):
+                            part = sock.recv(len(TRANSFER_ACK) - len(receipt))
+                            if not part:
+                                break
+                            receipt.extend(part)
+                        accepted = bytes(receipt) == TRANSFER_ACK
                 if not accepted:
                     with lock:
                         failures += 1
@@ -394,6 +420,7 @@ def main() -> int:
     print("TRANSFER_KIB_PER_CONNECTION=%d" % transfer_kib)
     print("BENCH_PROTOCOL=%s" % protocol)
     print("ORIGIN_RECEIVED_BYTES=%d" % origin.bytes)
+    print("ORIGIN_ACKNOWLEDGED_TRANSFERS=%d" % origin.acknowledged_transfers)
     print("RSS_MB=%.1f" % rss)
     print("CONNECT_P50_MS=%.2f" % percentile(latencies_ms, 50))
     print("CONNECT_P95_MS=%.2f" % percentile(latencies_ms, 95))

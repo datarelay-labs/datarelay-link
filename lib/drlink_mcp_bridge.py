@@ -2164,23 +2164,73 @@ def _clamp_workers(value) -> int:
 
 
 def _worker_memory_limit_bytes() -> int:
-    """Effective memory ceiling, including a container cgroup when present."""
-    limits = []
+    """Conservative memory ceiling of this process, not the cgroup mount root.
+
+    Resolve /proc/self/cgroup membership through /proc/self/mountinfo, accounting
+    for bind-mounted subtrees and nested parent limits on cgroup v2 and v1.
+    Missing membership/mount evidence fails closed for opt-in auto tuning.
+    """
     try:
-        for line in Path("/proc/meminfo").read_text().splitlines():
-            if line.startswith("MemTotal:"):
-                limits.append(int(line.split()[1]) * 1024)
+        memory_kib = next(
+            int(line.split()[1])
+            for line in Path("/proc/meminfo").read_text().splitlines()
+            if line.startswith("MemTotal:")
+        )
+        host_limit = memory_kib * 1024
+        memberships = {}
+        for line in Path("/proc/self/cgroup").read_text().splitlines():
+            hierarchy, controllers, path = line.split(":", 2)
+            if not path.startswith("/") or any(x in (".", "..") for x in path.split("/")):
+                continue
+            if hierarchy == "0" and not controllers:
+                memberships["cgroup2"] = path
+            if "memory" in controllers.split(","):
+                memberships["cgroup"] = path
+        if not memberships:
+            return 0
+        mounts = Path("/proc/self/mountinfo").read_text().splitlines()
+    except (OSError, ValueError, IndexError, StopIteration):
+        return 0
+
+    def unescape(value):
+        return re.sub(r"\\([0-7]{3})", lambda match: chr(int(match.group(1), 8)), value)
+
+    limits = [host_limit]
+    resolved = False
+    for line in mounts:
+        if " - " not in line:
+            continue
+        pre, post = line.split(" - ", 1)
+        fields, options = pre.split(), post.split()
+        if len(fields) < 5 or len(options) < 3:
+            continue
+        fs_type = options[0]
+        if fs_type not in memberships:
+            continue
+        if fs_type == "cgroup" and "memory" not in options[2].split(","):
+            continue
+        mount_root = unescape(fields[3])
+        mount_point = unescape(fields[4])
+        member = memberships[fs_type]
+        root_parts = tuple(part for part in mount_root.split("/") if part)
+        member_parts = tuple(part for part in member.split("/") if part)
+        if any(part in (".", "..") for part in root_parts) or member_parts[:len(root_parts)] != root_parts:
+            continue
+        base = Path(mount_point)
+        current = base.joinpath(*member_parts[len(root_parts):])
+        name = "memory.max" if fs_type == "cgroup2" else "memory.limit_in_bytes"
+        resolved = True
+        while True:
+            try:
+                value = (current / name).read_text().strip()
+                if value.isdecimal() and int(value) > 0:
+                    limits.append(int(value))
+            except (OSError, ValueError):
+                pass
+            if current == base:
                 break
-    except (OSError, ValueError, IndexError):
-        pass
-    for location in ("/sys/fs/cgroup/memory.max", "/sys/fs/cgroup/memory/memory.limit_in_bytes"):
-        try:
-            raw = Path(location).read_text().strip()
-            if raw.isdecimal():
-                limits.append(int(raw))
-        except (OSError, ValueError):
-            pass
-    return min(limits) if limits else 0
+            current = current.parent
+    return min(limits) if resolved else 0
 
 
 def _worker_count(value) -> int:
