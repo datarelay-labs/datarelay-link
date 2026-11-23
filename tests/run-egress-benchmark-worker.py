@@ -106,13 +106,14 @@ def main() -> int:
     concurrency = int(os.environ.get("DRLINK_EGRESS_BENCH_CONCURRENCY", "100"))
     hold_ms = int(os.environ.get("DRLINK_EGRESS_BENCH_HOLD_MS", "100"))
     churn = int(os.environ.get("DRLINK_EGRESS_BENCH_CHURN", "0"))
+    transfer_kib = int(os.environ.get("DRLINK_EGRESS_BENCH_TRANSFER_KIB", "0"))
 
     tmp = tempfile.TemporaryDirectory()
     root = Path(tmp.name)
     os.environ["FRP_DEPLOY_TEST_ROOT"] = str(root)
     libdir = root / "usr/local/lib/drlink"
     libdir.mkdir(parents=True)
-    for name in ("frp_egress_control.py", "frp_public_suffix.py", "frp_bounded_server.py"):
+    for name in ("frp_egress_control.py", "frp_public_suffix.py", "frp_bounded_server.py", "frp_policy_fingerprint.py"):
         (libdir / name).write_text((ROOT / "lib" / name).read_text(encoding="utf-8"), encoding="utf-8")
     data_dst = libdir / "data"
     data_dst.mkdir(parents=True)
@@ -140,7 +141,24 @@ def main() -> int:
     cfg_path = root / "etc/drlink/config.json"
     cfg_path.parent.mkdir(parents=True)
     cfg_path.write_text(json.dumps(cfg, indent=2) + "\n", encoding="utf-8")
-    (root / "var/log/drlink").mkdir(parents=True)
+    (root / "var/log/drlink/egress").mkdir(parents=True, exist_ok=True)
+
+    # Both a gateway profile and a compiled Internet Access rule are required.
+    from drlink_control_plane import ControlPlane
+    import drlink_v24 as v24
+
+    plane = ControlPlane(str(root))
+    try:
+        v24.set_network_object(plane, "proxy-src", type="ip", value="127.0.0.1", oneshot=True)
+        v24.set_network_object(plane, "allowed-host", type="fqdn", value="allowed.test", oneshot=True)
+        v24.set_service_object(plane, "https", type="tcp", port=443, oneshot=True)
+        v24.set_access_rule(
+            plane, "internet", "allow-https", mode="whitelist", source="proxy-src",
+            destination="allowed-host", service="https", enabled=True, oneshot=True,
+        )
+        plane.compile_runtime()
+    finally:
+        plane.close()
 
     origin = Origin()
     gw_path = ROOT / "server" / "frp-egress-gateway.py"
@@ -182,7 +200,7 @@ def main() -> int:
             sock = socket.create_connection(("127.0.0.1", proxy_port), timeout=10)
             sock.settimeout(10)
             sock.sendall(
-                b"CONNECT allowed.test:443 HTTP/1.1\r\nHost: allowed.test:443\r\n\r\n" + hello
+                b"CONNECT allowed.test:443 HTTP/1.1\r\nHost: allowed.test:443\r\n\r\n"
             )
             first = sock.recv(4096)
             if not first.startswith(b"HTTP/1.1 200"):
@@ -191,20 +209,32 @@ def main() -> int:
                 sock.close()
                 return
             elapsed = (time.perf_counter() - t0) * 1000.0
+            sock.sendall(hello)  # SNI checked after CONNECT 200.
             with lock:
                 latencies_ms.append(elapsed)
+            if transfer_kib:
+                payload = b"x" * 16384
+                remaining = transfer_kib * 1024
+                while remaining:
+                    chunk = min(remaining, len(payload))
+                    sock.sendall(payload[:chunk])
+                    remaining -= chunk
             time.sleep(hold_ms / 1000.0)
             sock.close()
         except Exception:
             with lock:
                 failures += 1
 
+    cpu_start = resource.getrusage(resource.RUSAGE_SELF)
     t_wall0 = time.perf_counter()
     with ThreadPoolExecutor(max_workers=concurrency) as pool:
         futs = [pool.submit(one_connect, i) for i in range(concurrency)]
         for fut in as_completed(futs):
             fut.result()
     wall = time.perf_counter() - t_wall0
+    cpu_end = resource.getrusage(resource.RUSAGE_SELF)
+    user_cpu = cpu_end.ru_utime - cpu_start.ru_utime
+    sys_cpu = cpu_end.ru_stime - cpu_start.ru_stime
 
     # Optional churn sample
     churn_ok = 0
@@ -247,7 +277,12 @@ def main() -> int:
 
     print("MAX_STABLE_CONCURRENT=%d" % concurrency)
     print("THROUGHPUT_MBPS=%.3f" % (throughput * 8.0))
-    print("CPU_PERCENT=n/a")
+    print("CPU_PERCENT=%.2f" % (100 * (user_cpu + sys_cpu) / wall if wall else 0))
+    print("CPU_USER_S=%.5f" % user_cpu)
+    print("CPU_SYS_S=%.5f" % sys_cpu)
+    print("CPU_SCOPE=combined_local_gateway_origin_and_clients")
+    print("TRANSFER_KIB_PER_CONNECTION=%d" % transfer_kib)
+    print("ORIGIN_RECEIVED_BYTES=%d" % origin.bytes)
     print("RSS_MB=%.1f" % rss)
     print("CONNECT_P50_MS=%.2f" % percentile(latencies_ms, 50))
     print("CONNECT_P95_MS=%.2f" % percentile(latencies_ms, 95))
@@ -255,13 +290,13 @@ def main() -> int:
     print("DNS_P95_MS=n/a")
     print("TCP_CONNECT_P95_MS=n/a")
     print("FAILURE_RATE=%.4f" % failure_rate)
-    print("AUDIT_DROP_COUNT=0")
+    print("AUDIT_DROP_COUNT=n/a")  # No measured audit loss accounting in this lab harness.
     if churn > 0:
         print("CHURN_TARGET_PER_SEC=%d" % churn)
         print("CHURN_OK=%d" % churn_ok)
         print("CHURN_FAIL=%d" % churn_fail)
     print(
-        "NOTES=local userspace gateway; DNS/connect stubbed; not a production capacity claim"
+        "NOTES=local userspace gateway; DNS/connect stubbed; no production/network capacity claim"
     )
 
     try:

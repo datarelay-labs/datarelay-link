@@ -510,7 +510,7 @@ class MCPBridgeScaleTargetTests(unittest.TestCase):
             "r%d=%.0f/%.0f" % (rnd + 1, _pct(vals, 0.5), _pct(vals, 0.95)) for rnd, vals in sorted(by_round.items())
         )
         print(
-            "SCALE_METRICS rounds(median/p95 ms)[%s] agent_procs=%d server_procs=%d bridge_procs=%d calls=%d median_ms=%.0f p95_ms=%.0f max_ms=%.0f "
+            "SCALE_METRICS rounds(median/p95 ms)[%s] agent_procs=%d server_procs=%d bridge_procs=%d calls=%d median_ms=%.0f p95_ms=%.0f p99_ms=%.0f max_ms=%.0f "
             "test_process_cpu_s=%.2f (user %.2f sys %.2f) wall_s=%.2f cpu_per_call_ms=%.0f "
             "ctx_voluntary=%d ctx_involuntary=%d bridge_worker_cpu_per_call_ms=%.1f "
             "bridge_pss_mb=%.0f bridge_worker_peak_rss_mb=%.0f bridge_cpus=%s %s"
@@ -522,6 +522,7 @@ class MCPBridgeScaleTargetTests(unittest.TestCase):
                 len(durations),
                 statistics.median(durations) * 1000,
                 p95 * 1000,
+                _pct(durations, 0.99),
                 durations[-1] * 1000,
                 cpu_used,
                 ru_ended.ru_utime - ru_started.ru_utime,
