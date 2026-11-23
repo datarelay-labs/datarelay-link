@@ -130,7 +130,6 @@ python3 tests/test-core-correctness-p1.py
 ./tests/test-cli-catalog-parity.sh
 python3 tests/test-no-legacy-current-surface.py
 python3 tests/test-canonical-runtime-policy.py
-./tests/test-release-blockers-cli.sh
 ./tests/test-enroll-bulk.sh
 ./tests/test-zero-service-client.sh
 ./tests/test-management-commands.sh
@@ -232,10 +231,8 @@ python3 tests/test-fresh-client-trust-bootstrap.py
 ./tests/test-perf-baseline-evidence-contract.sh
 ./tests/test-harness-gate-truthfulness.sh
 python3 tests/test-access-control.py
-./tests/test-access-control.sh
 python3 tests/test-egress-control.py
 python3 tests/test-fixed-tcp-egress.py
-./tests/test-fixed-tcp-egress.sh
 python3 tests/test-tcp-egress-admission-ordering.py
 python3 tests/test-bounded-server-slot-release.py
 python3 tests/test-egress-conn-log-traverse-only.py
@@ -265,7 +262,6 @@ python3 tests/test-policy-fingerprint.py
 python3 tests/test-strict-cli-parsing.py
 python3 tests/test-cli-backend-reverse-parity.py
 python3 tests/test-egress-runtime-permissions.py
-./tests/test-egress-control.sh
 ./tests/test-client-stop-fail-closed.sh
 python3 tests/test-machine-id-validation.py
 ./tests/test-authoritative-state-missing.sh
@@ -273,7 +269,6 @@ python3 tests/test-machine-id-validation.py
 ./tests/test-support-bundle.sh
 python3 tests/test-support-canonical-policy.py
 python3 tests/test-service-profiles.py
-./tests/test-service-profiles.sh
 ./tests/test-user-facing-branding.sh
 ./tests/test-legacy-identity-migration.sh
 ./tests/test-legacy-frpc-unit-migration.sh

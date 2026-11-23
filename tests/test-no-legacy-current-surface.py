@@ -377,6 +377,26 @@ class LegacyReintroductionGate(unittest.TestCase):
         self.assertNotIn('def _rw_', (ROOT / 'lib/frp_cli_catalog.py').read_text())
         self.assertNotIn('def expand_compat_alias(', (ROOT / 'lib/frp_cli_catalog.py').read_text())
 
+    def test_retired_noop_policy_test_scripts_are_not_reported_as_passed(self):
+        retired = (
+            'test-access-control.sh', 'test-egress-control.sh',
+            'test-fixed-tcp-egress.sh', 'test-release-blockers-cli.sh',
+            'test-service-profiles.sh', 'test-egress-schema-v3.sh',
+            'run-egress-real-e2e-smoke.sh',
+        )
+        run_all = (ROOT / 'tests/run-all.sh').read_text(encoding='utf-8')
+        allow = (ROOT / 'tests/orphan-test-allowlist.txt').read_text(encoding='utf-8')
+        for name in retired:
+            with self.subTest(retired=name):
+                self.assertFalse((ROOT / 'tests' / name).exists())
+                self.assertNotIn(name, run_all)
+                self.assertNotIn(name, allow)
+        # Retiring inert stub files must not discard live policy/migration tests.
+        for name in ('test-access-control.py', 'test-egress-control.py',
+                     'test-fixed-tcp-egress.py', 'test-service-profiles.py'):
+            self.assertTrue((ROOT / 'tests' / name).is_file(), name)
+            self.assertIn(name, run_all)
+
     def test_windows_agent_never_creates_or_forwards_ssh_login_metadata(self):
         current_windows = (
             'windows/lib/FrpDraft.ps1', 'windows/lib/FrpState.ps1',
