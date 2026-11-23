@@ -3,7 +3,7 @@
   "project_version": "2.4.0",
   "frp_version": "0.71.0",
   "channel": "development",
-  "git_ref": "9581044b67130d8fbd609620b2ae272f909212eb",
+  "git_ref": "b70e465e2cb991a8085bf9271740ded552f2d20b",
   "owner": "datarelay-labs",
   "repo": "datarelay-link",
   "https_raw_base": "https://raw.githubusercontent.com/datarelay-labs/datarelay-link",
@@ -66,32 +66,32 @@
     "bootstrap-client.sh": {
       "path": "dist/bootstrap-client.sh",
       "url_path": "dist/bootstrap-client.sh",
-      "sha256": "538655b73e327d3dff4a10d93be226bc7f2b50d49e0c48d49a941db3508c4380"
+      "sha256": "0336f278e0ee59aaef69e1fc7a9dc9b903447d4f577a60f58908b0ee65c0d143"
     },
     "bootstrap-client.ps1": {
       "path": "dist/bootstrap-client.ps1",
       "url_path": "dist/bootstrap-client.ps1",
-      "sha256": "5456d5688930f4b87fc8c8105c239407c4c4bab7943c04075137e2d4cd5429fb"
+      "sha256": "250742db38b7bcab43f1cc61f4538f578c40a1ee3492583ebb2d772b94eb040e"
     },
     "bootstrap-server.sh": {
       "path": "dist/bootstrap-server.sh",
       "url_path": "dist/bootstrap-server.sh",
-      "sha256": "6ddf0345b939a17b8c04d6cfe1630ff862b15feb3e6e006038b51c0e10e83b15"
+      "sha256": "0714c7c3051e0dc242fbe7759292cff2749bc113b2f60c42016a9eaa4f0b85d7"
     },
     "uninstall-client.sh": {
       "path": "dist/uninstall-client.sh",
       "url_path": "dist/uninstall-client.sh",
-      "sha256": "c7ac1ebc4ed5dc0ca8f6d67531a8b15a16aac2fa33dbddaab99c9e41f1387554"
+      "sha256": "5985cda128d7804ac43dab0be9fb0ee25e514e3c6cd8fa17bb38e33e54b652b4"
     },
     "uninstall-server.sh": {
       "path": "dist/uninstall-server.sh",
       "url_path": "dist/uninstall-server.sh",
-      "sha256": "e49f8fbf55301fb00ce456cb880fb0e3083e216f7e44404f406e9de8362671c7"
+      "sha256": "6b268bb042d719ed7d2138f2636c5091e8cd1c7e644ed501ac7f0d67e2ca31ec"
     }
   },
-  "source_head": "9581044b67130d8fbd609620b2ae272f909212eb",
+  "source_head": "b70e465e2cb991a8085bf9271740ded552f2d20b",
   "features": {
     "mcp_included": true
   },
-  "immutable_source_ref": "9581044b67130d8fbd609620b2ae272f909212eb"
+  "immutable_source_ref": "b70e465e2cb991a8085bf9271740ded552f2d20b"
 }
