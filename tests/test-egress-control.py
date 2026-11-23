@@ -1017,6 +1017,26 @@ class EgressAdversarialTests(EgressProxyFunctionalTests):
         self.assertFalse(self._upstream_saw(junk))
         self.assertFalse(self._upstream_saw(b"NOTLS"))
 
+    def test_connect_non_tls_ssh_payload_denied(self):
+        """CONNECT remains HTTPS-only; an SSH banner is never raw-TCP relayed."""
+        ssh_banner = b"SSH-2.0-OpenSSH_9.9\r\n"
+        req = b"CONNECT allowed.test:443 HTTP/1.1\r\nHost: allowed.test:443\r\n\r\n"
+        with socket.create_connection(("127.0.0.1", self.proxy_port), timeout=5) as sock:
+            sock.sendall(req)
+            buf = b""
+            while b"\r\n\r\n" not in buf:
+                buf += sock.recv(4096)
+            self.assertTrue(buf.startswith(b"HTTP/1.1 200"))
+            sock.sendall(ssh_banner)
+            sock.settimeout(2)
+            self.assertEqual(sock.recv(1), b"")
+
+        self.assertFalse(self._upstream_saw(ssh_banner))
+        deadline = time.time() + 2.0
+        while time.time() < deadline and "POST_CONNECT_TLS_IDENTITY_DENY" not in self._conn_log():
+            time.sleep(0.05)
+        self.assertIn("POST_CONNECT_TLS_IDENTITY_DENY", self._conn_log())
+
     def test_connect_no_sni_behavior(self):
         """CONNECT_NO_SNI_POLICY: missing SNI on port 443 fail-closed."""
         # ClientHello with no extensions / no SNI.

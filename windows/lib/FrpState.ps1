@@ -229,6 +229,61 @@ function Get-FrpCommittedMachineId {
     return $pendingId
 }
 
+function Get-FrpDurableClientIdPath {
+    # Uninstall removes the enrolled identity key and product configuration, but
+    # must not reassign an OS installation to a different Server Managed Host.
+    # Keep only the non-secret machine binding outside the removable Agent root.
+    # Test roots have isolated sidecars; they never access real ProgramData.
+    if ($env:FRP_WINDOWS_ROOT -or -not (Test-FrpIsWindowsHost)) {
+        return (Join-Path ([string](Get-FrpWindowsRoot) + '.machine-id-anchor') 'machine-id')
+    }
+    return (Join-Path (Join-Path $env:ProgramData 'DataRelayLinkHostIdentity') 'machine-id')
+}
+
+function Read-FrpDurableClientId {
+    $path = Get-FrpDurableClientIdPath
+    if (-not (Test-Path -LiteralPath $path)) { return $null }
+    try { $value = ([System.IO.File]::ReadAllText($path)).Trim() } catch {
+        throw 'ERROR: persistent Windows machine identity could not be read. Refusing to generate a new identity.'
+    }
+    if (-not (Test-FrpClientIdWellFormed -Value $value)) {
+        throw 'ERROR: persistent Windows machine identity is invalid. Refusing to generate a new identity.'
+    }
+    return $value
+}
+
+function Assert-FrpDurableClientId {
+    param([Parameter(Mandatory = $true)][string]$ClientId)
+    $path = Get-FrpDurableClientIdPath
+    $stored = Read-FrpDurableClientId
+    if ($stored) {
+        if ($stored -ne $ClientId) {
+            throw 'ERROR: persistent Windows machine identity disagrees with Agent identity. Refusing to generate a new identity or orphan Server reservations.'
+        }
+        return
+    }
+    $dir = Split-Path -Parent $path
+    if (-not (Test-Path -LiteralPath $dir)) {
+        New-Item -ItemType Directory -Path $dir -Force -ErrorAction Stop | Out-Null
+    }
+    Restrict-FrpDirectoryAcl -Path $dir
+    $tmp = "$path.$PID.tmp"
+    try {
+        [System.IO.File]::WriteAllText($tmp, $ClientId + "`n")
+        Restrict-FrpFileAcl -Path $tmp
+        if (Test-Path -LiteralPath $path) {
+            # A concurrent enrollment must not be silently overwritten.
+            $existing = Read-FrpDurableClientId
+            if ($existing -ne $ClientId) { throw 'ERROR: concurrent Windows machine identity conflict.' }
+        } else {
+            Move-Item -LiteralPath $tmp -Destination $path -ErrorAction Stop
+        }
+        Restrict-FrpFileAcl -Path $path
+    } finally {
+        if (Test-Path -LiteralPath $tmp) { Remove-Item -LiteralPath $tmp -Force }
+    }
+}
+
 function Get-FrpOrCreateClientId {
     <#
     .SYNOPSIS
@@ -251,11 +306,16 @@ function Get-FrpOrCreateClientId {
     }
 
     $committedId = Get-FrpCommittedMachineId
+    $durableId = Read-FrpDurableClientId
+    if ($durableId -and $committedId -and $durableId -ne $committedId) {
+        throw 'ERROR: persistent Windows machine identity disagrees with enrolled client-state.json. Refusing to generate a new identity.'
+    }
 
     if (Test-FrpClientIdWellFormed -Value $fileId) {
         if ($committedId -and $committedId -ne $fileId) {
             throw ("ERROR: client identity mismatch: state\client-id is '{0}' but this host is enrolled as '{1}'. Refusing to generate a new client identity, which would orphan the server-side reservations. Restore the matching state\client-id, or uninstall locally and re-enroll." -f $fileId, $committedId)
         }
+        Assert-FrpDurableClientId -ClientId $fileId
         return $fileId
     }
 
@@ -265,6 +325,7 @@ function Get-FrpOrCreateClientId {
         } else {
             Write-Host 'WARNING: state\client-id is missing; recovering the exact enrolled machine id from local records.'
         }
+        Assert-FrpDurableClientId -ClientId $committedId
         Write-FrpClientIdFile -ClientId $committedId | Out-Null
         return $committedId
     }
@@ -273,7 +334,8 @@ function Get-FrpOrCreateClientId {
         throw 'ERROR: state\client-id is corrupt and no enrolled machine id is recorded locally, so the original client identity cannot be recovered. Refusing to generate a new one. Uninstall locally and re-enroll.'
     }
 
-    $id = New-FrpClientId
+    $id = $(if ($durableId) { $durableId } else { New-FrpClientId })
+    Assert-FrpDurableClientId -ClientId $id
     Write-FrpClientIdFile -ClientId $id | Out-Null
     return $id
 }

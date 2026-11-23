@@ -287,6 +287,29 @@ class RuntimeApplyRemoveTests(unittest.TestCase):
         self.assertIsNotNone(runtime._trusted_existing_frpc_admin(config, text))
         return config, state
 
+    def test_s021_supervised_restart_fault_returns_immediately_without_sleep(self):
+        from drlink_control_db import ControlPlaneError
+        with (mock.patch.dict(os.environ, {"DRLINK_FAULT_RUNTIME_RESTART": "1"}),
+              mock.patch.object(time, "sleep") as sleep,
+              mock.patch.object(runtime, "_current_runtime_ready") as ready):
+            with self.assertRaisesRegex(ControlPlaneError, "injected fault"):
+                runtime._wait_supervised_runtime(self.tmp, "agent-1", {})
+        sleep.assert_not_called()
+        ready.assert_not_called()
+
+    def test_s021_failed_rollback_has_bounded_recovery_window(self):
+        from drlink_control_db import ControlPlaneError
+        with (mock.patch.object(runtime, '_supervised_invocation', return_value='a' * 32),
+              mock.patch.object(runtime, '_current_runtime_ready', return_value=True),
+              mock.patch.object(runtime, '_wait_supervised_runtime',
+                                side_effect=[ControlPlaneError('primary failed'),
+                                             ControlPlaneError('rollback failed')]) as wait):
+            result = runtime.apply_agent_runtime(self.plane, root=self.tmp)
+        self.assertFalse(result['ok'])
+        self.assertIn('RECOVERY_REQUIRED', result['error'])
+        self.assertEqual(wait.call_count, 2)
+        self.assertEqual(wait.call_args_list[1].kwargs['timeout_seconds'], 15)
+
     def test_isolated_apply_and_failed_rollback_never_restart_unrelated_runtime(self):
         from drlink_control_db import ControlPlaneError
         config = Path(self.tmp, 'etc/frp/frpc.toml')
@@ -918,6 +941,7 @@ class RuntimeApplyRemoveTests(unittest.TestCase):
             server_reachable=True,
         )
         self.assertEqual(result["view"]["status"], "DEGRADED")
+        self.assertTrue(result.get("activation_failed"), result)
         self.assertNotEqual(result["view"]["status"], "HEALTHY")
 
 

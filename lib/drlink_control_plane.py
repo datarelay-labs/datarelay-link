@@ -29,6 +29,7 @@ from typing import Any, Callable, Iterable, Optional
 from drlink_control_db import (
     SCHEMA_VERSION,
     ControlPlaneError,
+    NoOpMutation,
     DatabaseCorruptError,
     SchemaTooNewError,
     connect_worker,
@@ -41,6 +42,27 @@ from drlink_control_db import (
     runtime_dir,
     utc_now_iso,
 )
+
+#: Newest rollback snapshots kept in ``revision_snapshots`` (OBS-P005). The
+#: ledger (``config_revisions``) and audit trail are never pruned.
+REVISION_SNAPSHOT_RETENTION_DEFAULT = 100
+
+
+def revision_snapshot_retention() -> int:
+    """Return how many newest snapshots to keep; 0 means keep every snapshot.
+
+    ``DRLINK_REVISION_SNAPSHOT_RETENTION`` overrides the default. An invalid or
+    negative value falls back to the default instead of disabling retention.
+    """
+    raw = str(os.environ.get("DRLINK_REVISION_SNAPSHOT_RETENTION") or "").strip()
+    if not raw:
+        return REVISION_SNAPSHOT_RETENTION_DEFAULT
+    try:
+        value = int(raw)
+    except ValueError:
+        return REVISION_SNAPSHOT_RETENTION_DEFAULT
+    return value if value >= 0 else REVISION_SNAPSHOT_RETENTION_DEFAULT
+
 
 class OAuthScopeError(ControlPlaneError):
     """OAuth request exceeds the server/client scope contract."""
@@ -392,8 +414,10 @@ class ControlPlane:
         read_only: bool = False,
     ):
         self.root = root
+        # Resolve the live DB once: db_path() probes several host marker files and used to run three times
+        # per request plane (db_file, runtime_dir, read-only connect). runtime_dir() is db_path().parent/runtime.
         self.db_file = db_path(root)
-        self.runtime = runtime_dir(root)
+        self.runtime = self.db_file.parent / "runtime"
         self._read_only = bool(read_only and conn is None)
         # A caller-supplied connection (doctor, support bundle, in-memory preview)
         # is the only connection this plane may use. Pooled request connections
@@ -404,7 +428,9 @@ class ControlPlane:
         self._worker_pool_lock = threading.Lock()
         self._worker_generation = 0
         self.conn = conn or (
-            open_control_db_readonly(root) if self._read_only else open_control_db(root)
+            open_control_db_readonly(root, path=self.db_file)
+            if self._read_only
+            else open_control_db(root)
         )
         self._db_ident = self._db_file_ident()
         self._batch_mode = False
@@ -615,7 +641,33 @@ class ControlPlane:
             "INSERT INTO revision_snapshots(revision, snapshot_json) VALUES (?, ?)",
             (rev, payload),
         )
+        retention = revision_snapshot_retention()
+        if retention:
+            self._prune_revision_snapshots(retention)
         return rev
+
+    def _prune_revision_snapshots(self, keep_last: int) -> int:
+        """Delete rollback snapshots older than the newest ``keep_last``.
+
+        Only ``revision_snapshots`` rows are removed. ``config_revisions`` (the
+        revision ledger) and ``audit_events`` are never touched, so history,
+        optimistic concurrency and audit stay complete; a pruned revision just
+        reports "has no rollback snapshot". Every snapshot is a full
+        ConfigurationBundle and the table dominates the control DB (about 85%
+        of the production file), so it drives the O(DB size) integrity scan that
+        NewUserConn runs per connection (OBS-P005). Runs inside the caller's
+        transaction. Returns the number of snapshots deleted.
+        """
+        keep_last = int(keep_last)
+        if keep_last < 1:
+            raise ControlPlaneError("snapshot retention must be at least 1")
+        cursor = self.conn.execute(
+            "DELETE FROM revision_snapshots WHERE revision <= ("
+            "SELECT revision FROM revision_snapshots "
+            "ORDER BY revision DESC LIMIT 1 OFFSET ?)",
+            (keep_last,),
+        )
+        return int(cursor.rowcount or 0)
 
     def advance_restored_revision(self, previous_revision: int) -> int:
         """Restore data, never a reusable optimistic-concurrency token.
@@ -649,8 +701,13 @@ class ControlPlane:
             (int(revision),),
         ).fetchone()
         if row is None:
+            keep = revision_snapshot_retention()
+            hint = (
+                " (rollback snapshots are kept for the newest %d revisions)" % keep
+                if keep else ""
+            )
             raise ControlPlaneError(
-                "revision %s has no rollback snapshot" % int(revision)
+                "revision %s has no rollback snapshot%s" % (int(revision), hint)
             )
         try:
             payload = json.loads(str(row["snapshot_json"] or "{}"))
@@ -1020,6 +1077,13 @@ class ControlPlane:
             self._commit_open_transaction()
             if public_expected_revision is not None:
                 self._public_revision_guard_consumed = True
+        except NoOpMutation:
+            # Writer proved the desired state is already current before changing
+            # anything: no revision, no snapshot, no audit, no activation, and no
+            # runtime artifact rewrite.
+            self._rollback_open_transaction()
+            self._cleanup_activation_checkpoint(checkpoint)
+            raise
         except ConfirmationRequired:
             self._rollback_open_transaction()
             if runtime_checkpoint is not None:
@@ -3916,7 +3980,16 @@ class ControlPlane:
             )
 
         def write():
-            self.conn.execute("DELETE FROM ai_sessions WHERE principal_id = ?", (existing["id"],))
+            # Credential/session rows are owned by the identity (F-006): remove
+            # them with it so an unreferenced identity is always deletable.
+            for table in (
+                "ai_sessions",
+                "ai_oauth_codes",
+                "ai_oauth_tokens",
+                "ai_oauth_pending",
+                "ai_oauth_clients",
+            ):
+                self.conn.execute("DELETE FROM %s WHERE principal_id = ?" % table, (existing["id"],))
             self.conn.execute("DELETE FROM ai_principals WHERE id = ?", (existing["id"],))
             return {"entity": {"type": "ai-principal", "id": existing["id"], "name": name}, "operation": "delete"}
 
@@ -6453,8 +6526,12 @@ class ControlPlane:
         if env:
             candidates.append(Path(env))
         if self.root:
+            # Explicit filesystem roots are isolation boundaries, including
+            # temporary E2E fixtures. A missing config in that root must not
+            # silently inherit the installed Server's public URL or TLS mode.
             candidates.append(Path(self.root) / "etc" / "drlink" / "config.json")
-        candidates.append(Path("/etc/drlink/config.json"))
+        else:
+            candidates.append(Path("/etc/drlink/config.json"))
         for path in candidates:
             try:
                 if path.is_file():

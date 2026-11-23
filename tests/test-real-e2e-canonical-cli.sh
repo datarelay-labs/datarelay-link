@@ -152,4 +152,41 @@ print("ok")
 PY
 pass "SERVER_INSTALLER_URL_SINGLE_CANONICAL_PATH"
 
+# v2.4 contract drift guards (found by the Full Real E2E campaign on the
+# release candidate): the harness must follow the shipped CLI/state contract
+# instead of pre-v2.4 spellings. Every drift is reported before failing.
+drift=0
+drift_fail() { echo "FAIL drift: $1" >&2; drift=1; }
+
+# 1) The zero-touch one-liner for an IP allocator is `bash -c '...'` (no sudo).
+grep -qF '(?:sudo )?bash -c' "$E2E" \
+  || drift_fail "zero-touch command matcher rejects the bash -c one-liner"
+
+# 2) The Agent keys the Remote Service as rs-ssh in client-state.json.
+grep -q 'rs-ssh' "$E2E" \
+  || drift_fail "client identity discovery does not read services[rs-ssh]"
+
+# 3) set remote-service takes one bare enabled|disabled flag, never both.
+if grep -nE "set remote-service .* enabled (enabled|disabled)" "$E2E" >/dev/null; then
+  grep -nE "set remote-service .* enabled (enabled|disabled)" "$E2E" >&2 || true
+  drift_fail "set remote-service passes contradictory enabled/disabled flags"
+fi
+
+# 4) Destructive server-side unset commands are y/N confirmed; the harness
+#    must answer them instead of letting the prompt cancel the change.
+if grep -nE 'run_server .*drlink unset (service-object|network-object|server public-hostname)' "$E2E" \
+   | grep -v "printf 'y" >/dev/null; then
+  grep -nE 'run_server .*drlink unset (service-object|network-object|server public-hostname)' "$E2E" \
+    | grep -v "printf 'y" >&2 || true
+  drift_fail "server-side unset is not confirmed with y"
+fi
+
+# 5) show status no longer prints the public hostname; the DNS step must prove
+#    resolution to the server IP instead of grepping the status text.
+grep 'dns-02-status' "$E2E" | grep -q 'getent hosts' \
+  || drift_fail "dns-02-status still greps show status for the public hostname"
+
+[[ "$drift" == 0 ]] || fail "Real E2E harness drifted from the v2.4 CLI/state contract"
+pass "REAL_E2E_V24_CONTRACT_DRIFT_GUARDS"
+
 echo "REAL_E2E_CANONICAL_CLI_CONTRACT=PASS"

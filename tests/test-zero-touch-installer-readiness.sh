@@ -20,6 +20,9 @@ out="$(frp_report_zero_touch_readiness)"
 cat > "$T/tools/frp-create-client" <<'PY'
 import os,sys
 assert sys.argv[1:] == ['--preflight-zero-touch','--platform','linux'],sys.argv
+if os.getenv('DRLINK_MOCK_PINNED') == '1':
+    print('Zero-Touch prerequisites verified via pinned Private CA at numeric IP; no ticket was issued.')
+    raise SystemExit(0)
 if os.getenv('DRLINK_MOCK_UNTRUSTED') == '1':
     print('ERROR: public TLS chain is untrusted; no enrollment ticket was issued')
     raise SystemExit(2)
@@ -33,6 +36,10 @@ out="$(frp_report_zero_touch_readiness)"
 [[ "$out" == *'public TLS chain is untrusted'* ]] || { echo "FAIL missing TLS diagnosis: $out"; exit 1; }
 [[ "$out" == *'matching IP SAN'* ]] || { echo "FAIL missing private CA guidance: $out"; exit 1; }
 unset DRLINK_MOCK_UNTRUSTED
+export DRLINK_MOCK_PINNED=1
+out="$(frp_report_zero_touch_readiness)"
+[[ "$out" == *'READY (numeric IP + pinned Private CA; read-only, no ticket issued)'* ]] || { echo "FAIL pinned-IP readiness: $out"; exit 1; }
+unset DRLINK_MOCK_PINNED
 ! grep -q 'Zero-Touch.*READY' "$T/tools/frp-create-client"
 # The status is read-only and never writes an enrollment or secret.
 [[ ! -d "$T/var/lib/drlink/enrollments" ]]

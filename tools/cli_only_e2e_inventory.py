@@ -11,6 +11,8 @@ import io
 import json
 import os
 from pathlib import Path
+
+from e2e_candidate_identity import bound_installed_head
 import re
 import tempfile
 
@@ -218,8 +220,10 @@ def record(
     if current["RESULT"] == "PASS":
         raise ValueError("freeze passed evidence; use a new RUN_ID to retest")
     if result == "PASS":
-        if installed_head != current["SOURCE_HEAD"]:
-            raise ValueError("current candidate must equal actually installed Source HEAD")
+        # Bundles correctly report the content parent for a generated-only
+        # provenance candidate. Preserve exact-Git binding rather than
+        # misclassifying a legitimate build as stale (or accepting an ancestor).
+        bound_installed_head(CANONICAL.parents[1], current["SOURCE_HEAD"], installed_head)
         if not evidence_file(root, evidence):
             raise ValueError("PASS evidence path must be safe and contain actual output")
     if evidence and not evidence_file(root, evidence):

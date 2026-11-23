@@ -130,8 +130,20 @@ def reconcile_once(root: Optional[str] = None) -> dict:
         return _reconcile_once(root)
 
 
+# Set when a heartbeat could not reach the Server. The Server only requests
+# reconciliation after >AGENT_HEARTBEAT_SECONDS of silence, so a shorter outage
+# in which the Server catalog changed would otherwise never reach this Agent.
+_reconnect_sync_pending = False
+
+
 def _reconcile_once(root: Optional[str] = None) -> dict:
-    heartbeat = heartbeat_once(root)
+    global _reconnect_sync_pending
+    try:
+        heartbeat = heartbeat_once(root)
+    except Exception:
+        _reconnect_sync_pending = True
+        raise
+    reconnect_sync = _reconnect_sync_pending
     server_requests_reconciliation = bool((heartbeat or {}).get("reconcile_required", False))
     from drlink_control_plane import ControlPlane
     from drlink_v24 import ensure_v2_schema, synchronize_agent_remote_services
@@ -146,7 +158,7 @@ def _reconcile_once(root: Optional[str] = None) -> dict:
                  or current_runtime_verification_lost(plane, root))
         )
         if (not server_requests_reconciliation and not local_reconciliation_needed
-                and not local_verification_retry):
+                and not local_verification_retry and not reconnect_sync):
             return {"status": "HEARTBEAT", "updated": 0}
         # A verification retry must not replay unchanged desired
         # services or replace a currently verified FRP generation. The signed
@@ -154,12 +166,17 @@ def _reconcile_once(root: Optional[str] = None) -> dict:
         # missing ownership or an actual local pending change executes normal
         # full reconciliation with its original concurrency/rollback guards.
         if ((server_requests_reconciliation or local_verification_retry)
-                and not local_reconciliation_needed):
+                and not local_reconciliation_needed and not reconnect_sync):
             return synchronize_agent_remote_services(
                 plane, root=root, force_runtime=False,
                 server_verification_only=True,
             )
-        return synchronize_agent_remote_services(plane, root=root, force_runtime=False)
+        # Reconnect after a lost heartbeat: the Server catalog may have changed
+        # meanwhile, so run the normal full reconciliation exactly once.
+        result = synchronize_agent_remote_services(plane, root=root, force_runtime=False)
+        if reconnect_sync and str((result or {}).get("status") or "").upper() != "OFFLINE":
+            _reconnect_sync_pending = False
+        return result
     finally:
         plane.close()
 

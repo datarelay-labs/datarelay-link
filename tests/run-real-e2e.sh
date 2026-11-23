@@ -333,6 +333,8 @@ assert_host_identity() {
   local alias="$1" expected="$2" role="$3"
   local got
   got="$(ssh "${SSH_OPTS[@]}" "$alias" 'hostname' 2>/dev/null || echo unreachable)"
+  # Windows OpenSSH terminates output with CRLF; a CR must never reach the compare.
+  got="${got//$'\r'/}"
   note "$role hostname=$got expected=${expected:-<explicit target only>}"
   if [[ -n "$CONTROLLER_HOST" && "$got" == "$CONTROLLER_HOST" ]]; then
     note "ABORT: SSH target resolves to this E2E controller host $CONTROLLER_HOST"
@@ -386,7 +388,7 @@ discover_client_identity() {
   if [[ "$rc" -eq 0 && -n "$CLIENT_MID" ]]; then
     CLIENT_MID_PREFIX="${CLIENT_MID:0:8}"
     SSH_PUBLIC_PORT="$(ssh "${SSH_OPTS[@]}" "$CLIENT_ALIAS" \
-      'sudo python3 -c "import json; d=json.load(open(\"/etc/frp/client-state.json\")); s=(d.get(\"services\") or {}).get(\"ssh\") or {}; print(s.get(\"remote_port\") or \"\")"' \
+      'sudo python3 -c "import json; d=json.load(open(\"/etc/frp/client-state.json\")); s=(d.get(\"services\") or {}).get(\"rs-ssh\") or (d.get(\"services\") or {}).get(\"ssh\") or {}; print(s.get(\"remote_port\") or \"\")"' \
       2>>"$OUT_DIR/discover-mid.err")"
     rc=$?
   fi
@@ -478,13 +480,20 @@ create_zero_touch() {
     python3 - "$out" "$cmd_out" <<'PY'
 import re, sys
 text = open(sys.argv[1], encoding="utf-8").read()
-# Short URL: curl ... | sudo bash
-# zt1 fallback: curl ... | sudo bash -s -- 'zt1....'
+# Allow only the current stock-trust FQDN launcher or the separately
+# CA-pinned numeric-IP launcher. Never accept a raw curl|bash pipeline,
+# a legacy opaque zt1 package, or an unpinned private-CA download.
 commands = [line for line in text.splitlines()
             if (line.startswith('(drlink_bootstrap=$(curl -fsSL https://')
-                and line.endswith(' | sudo bash)'))
-            or (line.startswith("bash -c 'set -euo pipefail;")
-                and '--cacert' in line and '/i/' in line)]
+                and '/i/' in line and line.endswith(' | sudo bash)')
+                and 'bt1.' not in line)
+            or (re.match(r"^(?:sudo )?bash -c 'set -euo pipefail;", line)
+                and line.endswith("'")
+                and '--cacert' in line and '/i/' in line
+                and 'openssl dgst -sha256' in line
+                and 'FRP_ALLOCATOR_CA_FILE=' in line
+                and '--insecure' not in line
+                and 'bt1.' not in line)]
 if len(commands) != 1:
     raise SystemExit("missing or ambiguous current Zero-Touch command")
 open(sys.argv[2], "w", encoding="utf-8").write(commands[0] + "\n")
@@ -514,19 +523,9 @@ create_zero_touch_windows() {
   rc=$?
   set -uo pipefail
   if [[ "$rc" -eq 0 ]]; then
-    python3 - "$out" "$enc_out" <<'PY'
-import base64, re, sys
-text = open(sys.argv[1], encoding="utf-8").read()
-line = next((l for l in text.splitlines() if l.startswith("powershell.exe -NoProfile")), "")
-m = re.match(r"powershell\.exe -NoProfile -ExecutionPolicy Bypass -Command '(.*)'\s*$", line)
-if not m:
-    raise SystemExit("missing windows one-line command")
-# Official -Command uses '' escapes; EncodedCommand needs the decoded script body.
-script = m.group(1).replace("''", "'")
-open(sys.argv[2], "w", encoding="utf-8").write(
-    base64.b64encode(script.encode("utf-16le")).decode("ascii")
-)
-PY
+    # Shared, unit-tested parser (tests/test-real-e2e-windows-command-parse.py):
+    # accepts -Command, -EncodedCommand and the raw private-CA IP script form.
+    python3 "$ROOT/tests/lib/real_e2e_windows_command.py" "$out" "$enc_out"
     rc=$?
   fi
   if [[ "$rc" -eq 0 ]] && grep -qE 'Managed Host name[[:space:]]*:[[:space:]]*1$|SSH port[[:space:]]*:[[:space:]]*1$' "$out"; then
@@ -625,7 +624,9 @@ scenario_windows_full() {
 
   pin_windows_installer_url || fail_stop
 
-  run_client 04-client-uninstall "powershell.exe -NoProfile -ExecutionPolicy Bypass -Command \"if (Test-Path 'C:\\ProgramData\\drlink\\tools\\frp-client.cmd') { & 'C:\\ProgramData\\drlink\\tools\\frp-client.cmd' uninstall; if (Test-Path 'C:\\ProgramData\\drlink') { exit 1 }; Write-Output UNINSTALL_OK } else { Write-Output NO_INSTALL }\"" || fail_stop
+  local probe_enc
+  probe_enc="$(python3 "$ROOT/tests/lib/real_e2e_windows_command.py" --encode-file "$ROOT/tests/lib/real_e2e_windows_preinstall_probe.ps1")" || fail_stop
+  run_client 04-client-uninstall "powershell.exe -NoProfile -ExecutionPolicy Bypass -EncodedCommand $probe_enc" || fail_stop
   record 03-server-purge SKIP 0 0
   record 05-server-install SKIP 0 0
   MATRIX_INSTALL=PASS
@@ -681,11 +682,11 @@ scenario_macos_full() {
 
   run_client 10-client-doctor "sudo /usr/local/bin/drlink system diagnostics" || fail_stop
   # Verify current Remote Access policy semantics through the public CLI.
-  run_server 11-remote-policy-probe "sudo /usr/local/bin/drlink unset network-object real-e2e-loopback >/dev/null 2>&1 || true; sudo /usr/local/bin/drlink set network-object real-e2e-loopback type ip value 127.0.0.1; sudo /usr/local/bin/drlink test remote-access source real-e2e-loopback destination '$CLIENT_LABEL' service ssh | tee /tmp/real-e2e-remote-policy.txt; grep -q 'Effective Result.*ALLOW' /tmp/real-e2e-remote-policy.txt; sudo /usr/local/bin/drlink unset network-object real-e2e-loopback" || fail_stop
+  run_server 11-remote-policy-probe "printf 'y\n' | sudo /usr/local/bin/drlink unset network-object real-e2e-loopback >/dev/null 2>&1 || true; sudo /usr/local/bin/drlink set network-object real-e2e-loopback type ip value 127.0.0.1; sudo /usr/local/bin/drlink test remote-access source real-e2e-loopback destination '$CLIENT_LABEL' service ssh | tee /tmp/real-e2e-remote-policy.txt; grep -q 'Effective Result.*ALLOW' /tmp/real-e2e-remote-policy.txt; sudo /usr/local/bin/drlink unset network-object real-e2e-loopback" || fail_stop
 
   run_client 12-http-fixtures 'mkdir -p /tmp/frp-e2e-http && printf "macos-web\n" >/tmp/frp-e2e-http/index.html; nohup python3 -m http.server 18080 --bind 127.0.0.1 -d /tmp/frp-e2e-http >/tmp/frp-http.log 2>&1 </dev/null & sleep 1; curl -fsS http://127.0.0.1:18080' || fail_stop
   run_client_confirm_yes 12b-http-cleanup "sudo /usr/local/bin/drlink unset remote-service web >/dev/null 2>&1 || true" || fail_stop
-  run_server 12c-http-object-cleanup "sudo /usr/local/bin/drlink unset service-object macos-e2e-http >/dev/null 2>&1 || true" || fail_stop
+  run_server 12c-http-object-cleanup "printf 'y\n' | sudo /usr/local/bin/drlink unset service-object macos-e2e-http >/dev/null 2>&1 || true" || fail_stop
   run_server 13-http-object-create "sudo /usr/local/bin/drlink set service-object macos-e2e-http type tcp port 18080" || fail_stop
   run_client 13b-http-sync "sudo /usr/local/bin/drlink system synchronize" || fail_stop
   run_client 13c-http-add "sudo /usr/local/bin/drlink set remote-service web destination this-host service macos-e2e-http enabled && sudo /usr/local/bin/drlink show remote-service web" || fail_stop
@@ -696,7 +697,7 @@ scenario_macos_full() {
   note "HTTP_PUBLIC_PORT=$http_port"
   run_server 14-http-external "curl -fsS 'http://127.0.0.1:$http_port' | grep -q macos-web" || fail_stop
   run_client_confirm_yes 14b-http-delete "sudo /usr/local/bin/drlink unset remote-service web" || fail_stop
-  run_server 14c-http-object-delete "sudo /usr/local/bin/drlink unset service-object macos-e2e-http" || fail_stop
+  run_server 14c-http-object-delete "printf 'y\n' | sudo /usr/local/bin/drlink unset service-object macos-e2e-http" || fail_stop
   MATRIX_SERVICE=PASS
   MATRIX_REBOOT=SKIP
   MATRIX_DNS=SKIP
@@ -733,7 +734,7 @@ scenario_dns_checks() {
     return 0
   fi
   run_server dns-01-doctor-hostname "sudo /usr/local/bin/drlink system diagnostics | tee /tmp/frp-dns-doctor.txt; grep -E 'public_hostname_dn' /tmp/frp-dns-doctor.txt | grep -E 'PASS|WARN'" || fail_stop
-  run_server dns-02-status "sudo /usr/local/bin/drlink show status | tee /tmp/frp-dns-status.txt; grep -F '$PUBLIC_HOSTNAME' /tmp/frp-dns-status.txt" || fail_stop
+  run_server dns-02-status "sudo /usr/local/bin/drlink show status | tee /tmp/frp-dns-status.txt; getent hosts '$PUBLIC_HOSTNAME' | tee /tmp/frp-dns-resolve.txt; grep -F '$SERVER_IP' /tmp/frp-dns-resolve.txt" || fail_stop
   run_client dns-03-access-info "sudo /usr/local/bin/drlink show remote-services; echo ====; sudo python3 - <<'PY'
 from pathlib import Path
 text = Path('/etc/frp/access-info.txt').read_text(encoding='utf-8', errors='replace')
@@ -789,7 +790,7 @@ scenario_services() {
   # Canonical v2.4 model: the Server owns the Service Object definition and
   # the Agent owns the Remote Service that binds it to this-host.
   run_client_confirm_yes 10b-http-cleanup "sudo /usr/local/bin/drlink unset remote-service '$remote_service' >/dev/null 2>&1 || true" || fail_stop
-  run_server 10c-http-object-cleanup "sudo /usr/local/bin/drlink unset service-object '$service_object' >/dev/null 2>&1 || true" || fail_stop
+  run_server 10c-http-object-cleanup "printf 'y\n' | sudo /usr/local/bin/drlink unset service-object '$service_object' >/dev/null 2>&1 || true" || fail_stop
   run_server 11-http-object-create "sudo /usr/local/bin/drlink set service-object '$service_object' type tcp port 18080 && sudo /usr/local/bin/drlink show service-object '$service_object'" || fail_stop
   run_client 11b-http-sync "sudo /usr/local/bin/drlink system synchronize" || fail_stop
   run_client 11c-http-add "sudo /usr/local/bin/drlink set remote-service '$remote_service' destination this-host service '$service_object' enabled && sudo /usr/local/bin/drlink show remote-service '$remote_service'" || fail_stop
@@ -808,16 +809,16 @@ scenario_services() {
   run_client 13c-http-edit "sudo /usr/local/bin/drlink set remote-service '$remote_service' service '$service_object' enabled && sudo /usr/local/bin/drlink show remote-service '$remote_service'" || fail_stop
   run_server 14-http-external-edited "curl -fsS 'http://127.0.0.1:$http_port' | grep -q web-b" || fail_stop
 
-  run_client 15-http-disable "sudo /usr/local/bin/drlink set remote-service '$remote_service' enabled disabled && sudo /usr/local/bin/drlink show remote-service '$remote_service'" || fail_stop
+  run_client 15-http-disable "sudo /usr/local/bin/drlink set remote-service '$remote_service' disabled && sudo /usr/local/bin/drlink show remote-service '$remote_service'" || fail_stop
   run_server 16-http-disabled "! curl -fsS --max-time 5 'http://127.0.0.1:$http_port'" || fail_stop
 
-  run_client 17-http-enable "sudo /usr/local/bin/drlink set remote-service '$remote_service' enabled enabled && sudo /usr/local/bin/drlink show remote-service '$remote_service'" || fail_stop
+  run_client 17-http-enable "sudo /usr/local/bin/drlink set remote-service '$remote_service' enabled && sudo /usr/local/bin/drlink show remote-service '$remote_service'" || fail_stop
   run_server 18-http-reenabled "curl -fsS 'http://127.0.0.1:$http_port' | grep -q web-b" || fail_stop
 
   run_client_confirm_yes 19-http-delete "sudo /usr/local/bin/drlink unset remote-service '$remote_service' && sudo /usr/local/bin/drlink show remote-services" || fail_stop
   run_server 20-http-released "! curl -fsS --max-time 5 'http://127.0.0.1:$http_port'" || fail_stop
   run_server 21-server-remote-services "sudo /usr/local/bin/drlink show managed-host '$CLIENT_MID_PREFIX' remote-services | tee /tmp/real-e2e-remote-services.txt; ! grep -q '$remote_service' /tmp/real-e2e-remote-services.txt" || fail_stop
-  run_server 22-http-object-delete "sudo /usr/local/bin/drlink unset service-object '$service_object'" || fail_stop
+  run_server 22-http-object-delete "printf 'y\n' | sudo /usr/local/bin/drlink unset service-object '$service_object'" || fail_stop
   run_client 23-client-show-services "sudo /usr/local/bin/drlink show remote-services" || fail_stop
 
   wait_external_ssh 24b-ssh-unaffected || fail_stop
@@ -845,7 +846,7 @@ scenario_backup_repeat() {
   local i
   local marker="real-e2e-restore-marker"
   for i in $(seq 1 "$BACKUP_REPEAT"); do
-    run_server "39-backup-clean-$i" "sudo /usr/local/bin/drlink unset network-object '$marker' >/dev/null 2>&1 || true" || fail_stop
+    run_server "39-backup-clean-$i" "printf 'y\n' | sudo /usr/local/bin/drlink unset network-object '$marker' >/dev/null 2>&1 || true" || fail_stop
     run_server "40-backup-$i" "sudo /usr/local/bin/drlink system backup /var/lib/drlink/backups/real-e2e-backup-$i.tar.gz" || fail_stop
 
     # Mutate canonical v2.4 control-plane state after the backup. A successful
@@ -894,7 +895,7 @@ scenario_dns_only() {
   ACCESS_HOST="$PUBLIC_HOSTNAME"
   scenario_dns_checks
   # Configuration change to a second hostname that also resolves (sslip alternate form not required).
-  run_server dns-change-unset "sudo /usr/local/bin/drlink unset server public-hostname" || fail_stop
+  run_server dns-change-unset "printf 'y\n' | sudo /usr/local/bin/drlink unset server public-hostname" || fail_stop
   ACCESS_HOST="$SERVER_IP"
   wait_external_ssh dns-ip-fallback "$EXT_TRIES" "$EXT_DELAY" "$SERVER_IP" "$SSH_PUBLIC_PORT" "$TUNNEL_SSH_USER" || fail_stop
   run_server dns-change-reset "sudo /usr/local/bin/drlink set server public-hostname '$PUBLIC_HOSTNAME'" || fail_stop

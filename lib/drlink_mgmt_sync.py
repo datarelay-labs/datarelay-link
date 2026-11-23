@@ -38,7 +38,7 @@ from pathlib import Path
 from typing import Optional
 from urllib.parse import quote, unquote, urlparse, urlunparse
 
-from drlink_control_db import ControlPlaneError, utc_now_iso
+from drlink_control_db import ControlPlaneError, NoOpMutation, utc_now_iso
 import drlink_v24 as v24
 import frp_mgmt_auth as MGMT
 
@@ -1250,6 +1250,83 @@ def _publication_receipt(row):
     return {field: row[field] for field in PUBLICATION_RECEIPT_FIELDS}
 
 
+def _remote_service_state_current(plane, pub, *, client_id, target_mode, target_host,
+                                  target_port, enabled, endpoint_port, status, reason,
+                                  pool_class, service_object_id, destination,
+                                  destination_client_id, runtime_verified):
+    """Return the stored (status, reason) when the stored publication, meta and
+    port claim already equal the desired Remote Service state, so an upsert
+    would only churn the revision; otherwise None.
+
+    An *unverified* re-publish (runtime_verified=False, what every explicit
+    `system synchronize` sends before it re-applies the runtime) of a publication
+    the Server already holds as HEALTHY + runtime_verified is also current: the
+    intent is identical, so demoting it to DEGRADED "Runtime activation pending."
+    would only record a transient state that the runtime verification then
+    reverts without a revision. A runtime failure is still reported by the
+    Agent's status push, which does not depend on this write.
+
+    Fail-safe: any missing row or differing field returns None and the normal
+    revision-recording path runs.
+    """
+    try:
+        if int(pub["released"] or 0) != 0:
+            return None
+        if (
+            str(pub["service_type"]) != "tcp"
+            or str(pub["target_mode"]) != str(target_mode)
+            or str(pub["target_host"]) != str(target_host)
+            or int(pub["target_port"]) != int(target_port)
+            or int(pub["enabled"]) != int(bool(enabled))
+            or pub["public_port"] is None
+            or int(pub["public_port"]) != int(endpoint_port)
+        ):
+            return None
+        meta = plane.conn.execute(
+            "SELECT status, pool_class, service_object_id, destination_name, "
+            "destination_client_id, pending_allocation, delete_pending, reason, "
+            "runtime_verified FROM remote_service_meta WHERE service_id = ?",
+            (pub["id"],),
+        ).fetchone()
+        if meta is None:
+            return None
+        if (
+            str(meta["pool_class"]) != str(pool_class)
+            or str(meta["service_object_id"]) != str(service_object_id)
+            or str(meta["destination_name"] or "") != str(destination or "")
+            or str(meta["destination_client_id"] or "") != str(destination_client_id or "")
+            or int(meta["pending_allocation"] or 0) != 0
+            or int(meta["delete_pending"] or 0) != 0
+        ):
+            return None
+        stored_status = str(meta["status"])
+        stored_reason = str(meta["reason"] or "")
+        stored_verified = int(meta["runtime_verified"] or 0)
+        exact = (
+            stored_reason == str(reason or "")
+            and stored_verified == (1 if status == "HEALTHY" and runtime_verified else 0)
+        )
+        verified_hold = (
+            bool(enabled)
+            and not runtime_verified
+            and stored_status == "HEALTHY"
+            and stored_verified == 1
+            and stored_reason == ""
+        )
+        if not ((exact and stored_status == str(status)) or verified_hold):
+            return None
+        claim = plane.conn.execute(
+            "SELECT 1 FROM port_reservations WHERE public_port = ? AND client_id = ? "
+            "AND service_id = ? AND released = 0",
+            (int(endpoint_port), client_id, pub["id"]),
+        ).fetchone()
+        if claim is None:
+            return None
+        return stored_status, stored_reason
+    except (KeyError, TypeError, ValueError):
+        return None
+
+
 def _mutate_publication(plane, auth, *args, **kwargs):
     allocator = getattr(auth, "allocator", None)
     guard = getattr(allocator, "remote_service_transaction", None)
@@ -1531,6 +1608,29 @@ def server_upsert_remote_service(plane, auth: MgmtAuthContext, body: dict) -> di
                     reservation["client_id"] != client["id"] or
                     reservation["service_id"] != existing["id"])):
                 raise MgmtSyncError("Remote Service endpoint is reserved by another publication")
+        # An explicit `system synchronize` re-POSTs every Remote Service with the
+        # Agent's current desired state. When Server state already equals it,
+        # recording another revision (+ snapshot + audit + policy recompile) is
+        # pure churn. Detect that under the write lock, before any mutation.
+        if endpoint_port is not None:
+            current_pub = plane.conn.execute(
+                "SELECT * FROM published_services WHERE client_id = ? AND name = ?",
+                (client["id"], name),
+            ).fetchone()
+            stored_state = None if current_pub is None else _remote_service_state_current(
+                plane, current_pub, client_id=client["id"],
+                target_mode=target_mode, target_host=target_host,
+                target_port=target_port, enabled=enabled,
+                endpoint_port=endpoint_port, status=status, reason=reason,
+                pool_class=pool_class, service_object_id=sobj["id"],
+                destination=destination,
+                destination_client_id=destination_client_id,
+                runtime_verified=runtime_verified,
+            )
+            if stored_state is not None:
+                status, reason = stored_state
+                publication = _publication_receipt(current_pub)
+                raise NoOpMutation("Remote Service %s already current" % name)
         nested_prev = getattr(plane, "_batch_mode", False)
         plane._batch_mode = True
         try:
@@ -1580,11 +1680,14 @@ def server_upsert_remote_service(plane, auth: MgmtAuthContext, body: dict) -> di
         finally:
             plane._batch_mode = nested_prev
 
-    _mutate_publication(plane, auth,
-        "mgmt set remote-service %s [agent %s]" % (name, machine_id),
-        "mgmt set remote service",
-        write,
-    )
+    try:
+        _mutate_publication(plane, auth,
+            "mgmt set remote-service %s [agent %s]" % (name, machine_id),
+            "mgmt set remote service",
+            write,
+        )
+    except NoOpMutation:
+        pass  # unchanged: `publication`, status, endpoint_port already bound by write()
     endpoint_host = "127.0.0.1"
     try:
         import frp_server_config as scfg

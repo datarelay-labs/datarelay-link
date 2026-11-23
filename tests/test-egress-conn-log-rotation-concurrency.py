@@ -15,9 +15,11 @@ import os
 import tempfile
 import threading
 import unittest
+from unittest import mock
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+from egress_log_test_contract import assert_private_log
 
 WRITERS = 12
 PER_WRITER = 40
@@ -42,6 +44,10 @@ class ConnLogRotationConcurrency(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory(prefix="drlink-rot-conc-")
         self.root = Path(self.tmp.name)
+        # Root-run tests must never repair permissions on the installed Server.
+        sandbox = mock.patch.dict(os.environ, {"FRP_DEPLOY_TEST_ROOT": str(self.root)})
+        sandbox.start()
+        self.addCleanup(sandbox.stop)
         self.parent = self.root / "var/log/drlink"
         self.egress_dir = self.parent / "egress"
         self.egress_dir.mkdir(parents=True)
@@ -145,11 +151,9 @@ class ConnLogRotationConcurrency(unittest.TestCase):
         for seq in range(60):
             self._emit("seq-%03d" % seq)
         self.assertTrue(self.log_path.is_file())
-        self.assertEqual(self.log_path.stat().st_mode & 0o777, 0o600)
+        assert_private_log(self, self.log_path)
         for path in self._generations():
-            self.assertEqual(
-                path.stat().st_mode & 0o777, 0o600, "%s must stay 0600" % path.name
-            )
+            assert_private_log(self, path)
 
 
 if __name__ == "__main__":

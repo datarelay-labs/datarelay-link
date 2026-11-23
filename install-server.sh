@@ -1958,7 +1958,11 @@ frp_report_zero_touch_readiness() {
     return 0
   fi
   if result="$(timeout 16 python3 "$command_path" --preflight-zero-touch --platform linux 2>&1)"; then
-    echo 'Zero-Touch HTTPS readiness: READY (read-only, no ticket issued)'
+    if [[ "$result" == *'pinned Private CA at numeric IP'* ]]; then
+      echo 'Zero-Touch HTTPS readiness: READY (numeric IP + pinned Private CA; read-only, no ticket issued)'
+    else
+      echo 'Zero-Touch HTTPS readiness: READY (read-only, no ticket issued)'
+    fi
   else
     echo 'Zero-Touch HTTPS readiness: NOT_READY (no ticket issued)'
     printf '  %s\n' "$result"
@@ -3066,7 +3070,7 @@ FRP version       : ${FRP_VERSION}
 Deployment mode   : ${FRP_DEPLOYMENT_MODE}
 Public IP         : ${FRP_PUBLIC_IP}
 Public hostname   : ${FRP_PUBLIC_HOSTNAME:-not configured}
-Bootstrap hostname: ${FRP_BOOTSTRAP_HOSTNAME:-not configured}
+Bootstrap hostname: ${FRP_BOOTSTRAP_HOSTNAME:-automatic (public FQDN or pinned-CA IP, if qualified)}
 Enrollment HTTPS  : ${FRP_ALLOCATOR_PUBLIC_URL}
 FRP control public: TCP/${FRP_CONTROL_PUBLIC_PORT}
 FRP transport     : ${FRP_TRANSPORT}

@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import argparse
+import ipaddress
 import importlib.util
 import json
 import os
@@ -268,12 +269,14 @@ def resolve_configured_installer_url(cfg, *, windows=False):
     return server_local_installer_url(cfg, windows=windows)
 
 
-def preflight_installer_url(url, *, label='Agent installer', strict_https=False):
-    """Bounded read-only HEAD before ticket issuance.
+def preflight_installer_url(
+        url, *, label='Agent installer', strict_https=False, ca_file=None):
+    """Bounded read-only HTTPS proof before issuing a one-time ticket.
 
-    FQDN Zero-Touch MUST prove the installer is reachable through OS-trusted
-    HTTPS. A 404 always fails, including in private-IP mode; private-IP CA
-    pinning is qualified independently and never falls back to untrusted code.
+    The bundled Server artifact handler supports GET but can answer HEAD
+    501. Fall back only for HEAD 405/501, using the same strict TLS context
+    (stock OS trust or the already locally verified issuer CA). Read at most
+    one payload byte; never execute or follow redirects.
     """
     import ssl
     import urllib.error
@@ -285,9 +288,15 @@ def preflight_installer_url(url, *, label='Agent installer', strict_https=False)
     parsed = urlparse(url)
     if parsed.scheme.lower() != 'https' or not parsed.hostname or parsed.username or parsed.password:
         fail('%s must be an HTTPS URL without credentials; no enrollment ticket was issued' % label)
-    req = urllib.request.Request(url, method='HEAD')
-    req.add_header('User-Agent', 'DataRelayLink-InstallerPreflight/2.4')
-    ctx = ssl.create_default_context()
+    if parsed.fragment:
+        fail('%s must not contain a fragment; no enrollment ticket was issued' % label)
+    try:
+        if ca_file is not None:
+            ctx = ssl.create_default_context(cafile=str(ca_file))
+        else:
+            ctx = ssl.create_default_context()
+    except (OSError, ssl.SSLError, ValueError):
+        fail('%s pinned CA is invalid; no enrollment ticket was issued' % label)
 
     class NoRedirect(urllib.request.HTTPRedirectHandler):
         def redirect_request(self, req, fp, code, msg, headers, newurl):
@@ -298,23 +307,35 @@ def preflight_installer_url(url, *, label='Agent installer', strict_https=False)
         urllib.request.HTTPSHandler(context=ctx),
         NoRedirect(),
     )
-    try:
-        with opener.open(req, timeout=5) as resp:
-            code = int(getattr(resp, 'status', None) or resp.getcode())
-            if strict_https and code != 200:
-                fail('%s returned HTTPS %s, expected 200; no enrollment ticket was issued' % (label, code))
-    except urllib.error.HTTPError as exc:
-        if strict_https or exc.code == 404:
-            fail('%s URL returned HTTPS %s: %s; no enrollment ticket was issued' %
-                 (label, exc.code, url))
-    except (OSError, ValueError) as exc:
-        if strict_https:
-            fail('%s HTTPS TLS/reachability check failed: %s; no enrollment ticket was issued. '
-                 'Verify the public certificate chain and DNS/SAN before creating the Agent.'
-                 % (label, type(exc).__name__))
-        # Private-IP CA stage-1 separately pins the Server CA and IP SAN. An
-        # inaccessible HEAD URL cannot be proven using stock OS trust here.
-        return
+    for method in ('HEAD', 'GET'):
+        req = urllib.request.Request(url, method=method)
+        req.add_header('User-Agent', 'DataRelayLink-InstallerPreflight/2.4')
+        try:
+            with opener.open(req, timeout=5) as resp:
+                code = int(getattr(resp, 'status', None) or resp.getcode())
+                if strict_https and code != 200:
+                    fail('%s returned HTTPS %s, expected 200; no enrollment ticket was issued'
+                         % (label, code))
+                if method == 'GET' and not resp.read(1):
+                    fail('%s returned an empty installer response; no enrollment ticket was issued'
+                         % label)
+                return
+        except urllib.error.HTTPError as exc:
+            code = exc.code
+            exc.close()
+            if method == 'HEAD' and code in (405, 501):
+                continue
+            if strict_https or code == 404:
+                fail('%s URL returned HTTPS %s: %s; no enrollment ticket was issued'
+                     % (label, code, url))
+            return
+        except (OSError, ValueError) as exc:
+            if strict_https:
+                fail('%s HTTPS TLS/reachability check failed: %s; no enrollment ticket was issued. '
+                     'Verify the certificate chain and DNS/IP SAN before creating the Agent.'
+                     % (label, type(exc).__name__))
+            return
+    fail('%s does not support GET after HEAD 405/501; no enrollment ticket was issued' % label)
 
 
 def confirm_client_setup():
@@ -511,20 +532,49 @@ def short_url_host_for_cfg(cfg, bootstrap_hostname='', public_hostname=''):
 
 
 def private_ca_ip_bootstrap_plan(cfg, ca_fp):
-    """Allow a DNS-free short command only when local Server PKI is valid.
+    """Qualify pinned Private-CA bootstrap over a numeric IP without mutating
+    the configured FQDN allocator endpoint.
 
-    This pre-ticket read checks the actual private CA, Server leaf chain and
-    numeric-IP SAN. The remote client independently pins the same CA before
-    sending its one-time credential. No DNS or CA-trust shortcut is implied.
+    The FQDN may use the Server's intentionally private CA, so system-trust
+    short URLs are unavailable. If the operator-configured public IP also
+    appears in the same verified Server leaf, use that IP only for the
+    credential's first pinned stage. Stage 1 keeps the original allocator
+    URL and uses the pinned CA for later TLS. Never turn a failed FQDN probe
+    into an unpinned FQDN command or silently trust a DNS name.
     """
     zt = load_zero_touch()
     pki = load_frp_pki()
     if zt is None or pki is None:
         return None
-    allocator = str(cfg.get('allocator_public_url') or '')
+    allocator = str(cfg.get('allocator_public_url') or '').strip()
     endpoint = zt.private_ca_ip_endpoint(allocator)
+    requested_fqdn = ''
+    selected_allocator = allocator
     if endpoint is None:
-        return None
+        try:
+            parsed = urlparse(allocator)
+            if (parsed.scheme != 'https' or not parsed.hostname or not parsed.netloc
+                    or parsed.username is not None or parsed.password is not None
+                    or parsed.query or parsed.fragment or parsed.path != '/enroll'):
+                return None
+            # A plain FQDN must remain subject to the stock TLS gate; the IP
+            # alternative is restricted to the configured numeric public IP.
+            if zt.private_ca_ip_endpoint('https://%s/enroll' % parsed.netloc):
+                return None
+            requested_fqdn = parsed.hostname
+            public_ip = ipaddress.ip_address(
+                str(cfg.get('public_ip') or '').strip().strip('[]')
+            )
+            if public_ip.is_multicast or public_ip.is_unspecified:
+                return None
+            ip_literal = '[%s]' % public_ip if public_ip.version == 6 else str(public_ip)
+            authority = ip_literal + (':%d' % parsed.port if parsed.port and parsed.port != 443 else '')
+            selected_allocator = 'https://%s/enroll' % authority
+            endpoint = zt.private_ca_ip_endpoint(selected_allocator)
+        except (ValueError, TypeError):
+            return None
+        if endpoint is None:
+            return None
     ca = remap(str(cfg.get('tls_ca_cert') or '/etc/drlink/pki/ca.crt'))
     leaf = remap(str(cfg.get('tls_server_cert') or '/etc/drlink/pki/server.crt'))
     try:
@@ -536,12 +586,18 @@ def private_ca_ip_bootstrap_plan(cfg, ca_fp):
         if pki.fingerprint_from_cert_file(ca) != str(ca_fp or '').lower():
             return None
         pki.verify_cert_signed_by_ca(ca, leaf)
-        if not pki.cert_covers_identities(leaf, [], [endpoint[1].strip('[]')]):
+        if not pki.cert_covers_identities(
+                leaf, [requested_fqdn] if requested_fqdn else [],
+                [endpoint[1].strip('[]')]):
             return None
     except Exception:
         return None
-    return {'mode': 'private_ca_ip', 'authority': endpoint[0],
-            'allocator': allocator, 'leaf_sha256': pki.fingerprint_from_cert_file(leaf)}
+    return {
+        'mode': 'private_ca_ip',
+        'authority': endpoint[0],
+        'allocator': selected_allocator,
+        'leaf_sha256': pki.fingerprint_from_cert_file(leaf),
+    }
 
 
 def validate_zero_touch_prerequisites(cfg, platform, installer, ca_fp):
@@ -574,8 +630,23 @@ def validate_zero_touch_prerequisites(cfg, platform, installer, ca_fp):
                  'matching IP SAN. DNS alone does not establish trust. '
                  'No enrollment ticket was issued.')
     label = 'Windows Agent installer URL' if platform == 'windows' else 'Agent installer URL'
-    preflight_installer_url(installer, label=label,
-                            strict_https=bool(compact_host) and not bool(_test_root()))
+    issuer_ca_file = None
+    if private_ip_plan:
+        # The private CA was verified above; require actual TLS and HTTP 200
+        # using that CA for Server-owned installer hosts, not system-trust
+        # (which correctly rejects this privately issued certificate).
+        allowed_hosts = {
+            urlparse(allocator).hostname,
+            urlparse(private_ip_plan['allocator']).hostname,
+        }
+        if urlparse(installer).hostname in allowed_hosts:
+            issuer_ca_file = remap(str(
+                cfg.get('tls_ca_cert') or '/etc/drlink/pki/ca.crt'
+            ))
+    preflight_installer_url(
+        installer, label=label, strict_https=not bool(_test_root()),
+        ca_file=issuer_ca_file if not _test_root() else None,
+    )
     if platform == 'windows' and private_ip_plan:
         module = load_allocator()
         renderer = getattr(module, 'windows_renderer_inputs_from_cfg', None)
@@ -1094,7 +1165,8 @@ def print_one_line_windows(
             fail('pinned Private CA bootstrap helper unavailable')
         try:
             command = zt.private_ca_ip_windows_command(
-                allocator, ca_fp, stage1_sha256, short_handle
+                private_ip_plan['allocator'] if private_ip_plan else allocator,
+                ca_fp, stage1_sha256, short_handle
             )
         except (KeyError, ValueError) as exc:
             fail('unable to construct authenticated IP Windows bootstrap: %s' % exc)
@@ -1177,7 +1249,9 @@ def print_one_line(ticket, ttl, note, public_host, control_public, allocator, ca
         if zt is None:
             fail('pinned private CA bootstrap helper unavailable')
         try:
-            command = zt.private_ca_ip_linux_command(allocator, ca_fp, short_handle)
+            command = zt.private_ca_ip_linux_command(
+                private_ip_plan['allocator'], ca_fp, short_handle
+            )
         except ValueError as exc:
             fail('unable to construct secure IP bootstrap: %s' % exc)
     if bootstrap_host and not private_ip_plan and short_handle:
@@ -1283,10 +1357,13 @@ def main(argv=None):
         except OSError:
             ca_fp = ''
         installer = resolve_configured_installer_url(cfg, windows=(platform == 'windows'))
-        validate_zero_touch_prerequisites(
+        _compact_host, private_ip_plan = validate_zero_touch_prerequisites(
             cfg, platform, installer, ca_fp
         )
-        print('Zero-Touch prerequisites verified; no ticket was issued.')
+        if private_ip_plan:
+            print('Zero-Touch prerequisites verified via pinned Private CA at numeric IP; no ticket was issued.')
+        else:
+            print('Zero-Touch prerequisites verified; no ticket was issued.')
         return 0
     enroll_dir = remap(cfg['enrollments_dir'])
     enroll_dir.mkdir(parents=True, exist_ok=True)

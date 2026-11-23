@@ -60,10 +60,50 @@ except SystemExit as exc:
     _BOUNDED = None
     _BOUNDED_LOAD_ERROR = str(exc) or "ERROR: missing frp_bounded_server.py"
 
-ACCESS_MAX_CONCURRENT = int(os.environ.get("FRP_ACCESS_MAX_CONCURRENT", "32"))
+# NewUserConn bursts may require one independent auth request per new FRP
+# connection. Preserve a finite overload reject rather than an unbounded
+# thread pool; SQLite read-only reader capacity stays independently bounded
+# below. 512 slots (listen backlog twice that) absorb the qualified 64-connection
+# burst (P-006) with headroom; the 96-slot default of the CLI100 candidate lineage
+# addressed the same finding with a smaller bound and is superseded by this one.
+ACCESS_MAX_CONCURRENT = int(os.environ.get("FRP_ACCESS_MAX_CONCURRENT", "512"))
 # NewUserConn authorization is read-only, but each SQLite reader owns a file
-# descriptor. Keep a smaller DB-reader bound under the HTTP worker bound.
-ACCESS_DB_MAX_CONCURRENT = 8
+# descriptor, and each authorization (open, integrity/FK scan, proxy map, ACL) is CPU-bound. Keep a small DB-reader
+# bound under the HTTP worker bound. Running many at once is SLOWER in total because the readers contend for the GIL
+# and SQLite: on the live control DB (OBS-P005 B, 16 requesters) a bound of 1/2/4/8/unbounded gave 82/91/54/36/26
+# authorizations per second, so the previous bound of 8 capped Relay Remote Service at ~28 new connections per second.
+# 2 is the measured throughput optimum; the 512 HTTP slots above still absorb a burst and overload still fails closed.
+# FRP_ACCESS_DB_MAX_CONCURRENT overrides it; invalid or non-positive values fall back to the default.
+_ACCESS_DB_MAX_CONCURRENT_DEFAULT = 2
+
+
+def _db_max_concurrent_from_env() -> int:
+    try:
+        value = int(os.environ.get("FRP_ACCESS_DB_MAX_CONCURRENT", "") or _ACCESS_DB_MAX_CONCURRENT_DEFAULT)
+    except ValueError:
+        return _ACCESS_DB_MAX_CONCURRENT_DEFAULT
+    return value if value >= 1 else _ACCESS_DB_MAX_CONCURRENT_DEFAULT
+
+
+ACCESS_DB_MAX_CONCURRENT = _db_max_concurrent_from_env()
+# OPT-IN (owner decision), DEFAULT OFF. Opening + closing a read-only SQLite connection for every authorization
+# (connect, PRAGMAs, schema parse, close) is ~60% of the per-request CPU. With FRP_ACCESS_CONNECTION_REUSE=1 a request
+# that finished cleanly parks its connection for the next request (at most ACCESS_DB_MAX_CONCURRENT of them).
+# Nothing about the POLICY is retained: every request still starts a fresh read transaction (new WAL snapshot),
+# runs the complete integrity + foreign-key scan, re-reads the revision/generations and re-evaluates the policy.
+# A replaced DB file, an open transaction or any fault discards the connection.
+ACCESS_CONNECTION_REUSE = os.environ.get("FRP_ACCESS_CONNECTION_REUSE", "").strip().lower() in ("1", "true", "yes", "on")
+# A verdict reached through one of these reasons means the request did NOT run on a healthy, consistent database.
+_REUSE_FAULT_REASONS = frozenset(
+    {RP.REASON_DB_UNAVAILABLE, RP.REASON_AUTHORIZATION_ERROR, RP.REASON_GENERATION_MISMATCH}
+)
+# The full SQLite integrity/foreign-key scan is O(control DB size): ~44 ms CPU at 7 MB, 94% of the per-connection
+# cost measured on the shared Server (OBS-P005). DEFAULT 0 KEEPS THE EXISTING CONTRACT: one full fail-closed scan per
+# NewUserConn (test-access-control: test_newuserconn_integrity_scan_count). A value N>0 is an OPT-IN trade-off (owner
+# decision): the scan then runs on the first request, whenever the DB/WAL file fingerprint changes, and at least every
+# N seconds; in between only the cheap revision/generation check runs. Corruption that changes no file would be
+# noticed within N seconds instead of on the next connection.
+ACCESS_INTEGRITY_RECHECK_SECONDS = float(os.environ.get("FRP_ACCESS_INTEGRITY_RECHECK_SECONDS", "0"))
 _ACCESS_REQUEST_SLOTS = threading.BoundedSemaphore(ACCESS_MAX_CONCURRENT)
 
 
@@ -92,7 +132,7 @@ if _BOUNDED is not None:
         # HTTPServer inherits TCPServer's backlog of 5. That queues only a
         # fraction of the authorized worker capacity and makes connection
         # bursts wait for TCP retransmission before policy code even runs.
-        request_queue_size = ACCESS_MAX_CONCURRENT
+        request_queue_size = ACCESS_MAX_CONCURRENT * 2
         request_timeout = 30.0
         daemon_threads = True
         reject_callback = staticmethod(_reject_busy)
@@ -115,6 +155,10 @@ class PolicyCache:
         self._inner = RP.ControlPlaneCache(config_path)
         self._reader_slots = threading.BoundedSemaphore(ACCESS_DB_MAX_CONCURRENT)
         self._meta_lock = threading.RLock()
+        self._idle = []  # parked read-only planes (reuse mode only); never holds a reader slot
+        self._idle_lock = threading.Lock()
+        self._validate_lock = threading.Lock()
+        self._validated = None  # (db/wal file fingerprint, revision, monotonic time) of the last healthy full scan
         self._root = None
         # Test-compat aliases (legacy fingerprint fields unused for authority).
         self.access_fp = None
@@ -144,11 +188,14 @@ class PolicyCache:
 
     def reload(self, force: bool = False) -> None:
         """Validate current config/DB, then drop the long-lived SQLite handle."""
+        if force:
+            self._validated = None
         self._inner.reload(force=force)
         self.cfg = dict(self._inner.cfg)
         self.load_error = self._inner.load_error
         self.fingerprint = self._inner.fingerprint
         self._close_inner_plane()
+        self._drop_idle()
 
     def snapshot(self):
         """Compatibility snapshot for non-threaded tests/legacy callers."""
@@ -182,7 +229,9 @@ class PolicyCache:
         self._reader_slots.acquire()
         plane = None
         try:
-            plane = RP.ControlPlane(root, read_only=True)
+            plane = self._checkout_idle(root, db)
+            if plane is None:
+                plane = RP.ControlPlane(root, read_only=True)
         except Exception as exc:
             if plane is not None:
                 try:
@@ -196,7 +245,132 @@ class PolicyCache:
         # ControlPlane.close() already supports a release callback for
         # request-private readers. Reuse that lifecycle hook for this slot.
         plane._release_isolated_conn_lock = self._release_reader_slot
+        try:
+            plane._access_validated_revision = self._validated_revision_for(plane, root)
+        except Exception:
+            plane._access_validated_revision = None  # fail closed to the complete scan
         return plane, None, cfg
+
+    def _checkout_idle(self, root, db):
+        """Return a parked plane that is still safe to reuse, else None (caller opens a fresh one).
+
+        Called with a reader slot held. A parked plane is discarded unless its connection is outside any transaction,
+        its database path and file identity (st_dev, st_ino) are unchanged (a restore/rollback replaces the file), and
+        it belongs to the same root.
+        """
+        if not ACCESS_CONNECTION_REUSE:
+            return None
+        while True:
+            with self._idle_lock:
+                if not self._idle:
+                    return None
+                plane = self._idle.pop()
+            try:
+                conn = plane.conn
+                ident = plane._db_file_ident()
+                if (
+                    conn is not None
+                    and not conn.in_transaction
+                    and plane.root == root
+                    and plane.db_file == db
+                    and ident is not None
+                    and ident == plane._db_ident
+                ):
+                    return plane
+            except Exception:
+                pass
+            self._discard(plane)
+
+    @staticmethod
+    def _discard(plane):
+        try:
+            plane.close()
+        except Exception:
+            pass
+
+    def _drop_idle(self):
+        with self._idle_lock:
+            stale, self._idle = self._idle, []
+        for plane in stale:
+            self._discard(plane)
+
+    def release_isolated(self, plane, reusable=False):
+        """End one request's use of a plane from open_isolated(): park it for reuse, or close it.
+
+        ``reusable`` is True only for a request that completed without a fault. The reader slot is always given back
+        here, so a parked connection never holds one.
+        """
+        if plane is None:
+            return
+        if not (ACCESS_CONNECTION_REUSE and reusable) or not self._park(plane):
+            self._discard(plane)
+
+    def _park(self, plane):
+        try:
+            conn = plane.conn
+            if conn is None or conn.in_transaction or plane._db_file_ident() != plane._db_ident:
+                return False
+            with self._idle_lock:
+                if len(self._idle) >= ACCESS_DB_MAX_CONCURRENT:
+                    return False
+                # The slot is handed back explicitly below; close() must not release it a second time.
+                plane._release_isolated_conn_lock = None
+                self._idle.append(plane)
+        except Exception:
+            return False
+        self._release_reader_slot()
+        return True
+
+    @staticmethod
+    def _db_fingerprint(root):
+        """Change detector for the authoritative DB: main file + WAL (inode, size, mtime_ns)."""
+        base = RP.db_path(root)
+        parts = []
+        for candidate in (Path(base), Path(str(base) + "-wal")):
+            try:
+                st = candidate.stat()
+                parts.append((st.st_ino, st.st_size, st.st_mtime_ns))
+            except OSError:
+                parts.append(None)
+        return tuple(parts) if parts[0] is not None else None
+
+    def _validated_revision_for(self, plane, root):
+        """Return the revision proven healthy by a full scan of this exact DB state, or None.
+
+        None makes authorize_remote run the complete scan itself (first request, changed DB/WAL, stale
+        validation, or any unhealthy result), so unhealthy state is never cached and always fails closed.
+        The fingerprint is taken BEFORE the scan so a commit racing the scan forces another full scan.
+        """
+        if ACCESS_INTEGRITY_RECHECK_SECONDS <= 0:
+            return None  # strict default: authorize_remote runs its own complete scan, exactly as before
+        fingerprint = self._db_fingerprint(root)
+        if fingerprint is None:
+            return None
+
+        def fresh():
+            state = self._validated
+            if (
+                state is not None
+                and state[0] == fingerprint
+                and (time.monotonic() - state[2]) < ACCESS_INTEGRITY_RECHECK_SECONDS
+            ):
+                return state[1]
+            return None
+
+        revision = fresh()
+        if revision is not None:
+            return revision
+        with self._validate_lock:  # one scanner; concurrent requests then reuse its result
+            revision = fresh()
+            if revision is not None:
+                return revision
+            started = time.monotonic()
+            gen = RP.generation_status(plane, "remote")  # complete integrity + foreign-key scan
+            if gen.get("healthy") and gen.get("revision") is not None:
+                self._validated = (fingerprint, int(gen["revision"]), started)
+                return int(gen["revision"])
+            self._validated = None
+            return None
 
 
 def make_handler(cache: PolicyCache, plugin_path: str):
@@ -239,13 +413,16 @@ def make_handler(cache: PolicyCache, plugin_path: str):
             self.end_headers()
             self.wfile.write(body)
 
-        def _close_plane(self, plane):
+        def _close_plane(self, plane, reusable=False):
             if plane is None:
                 return
             try:
-                plane.close()
+                cache.release_isolated(plane, reusable)
             except Exception:
-                pass
+                try:
+                    plane.close()
+                except Exception:
+                    pass
 
         def do_GET(self):
             def _handle():
@@ -310,6 +487,7 @@ def make_handler(cache: PolicyCache, plugin_path: str):
                     return
 
                 plane = None
+                reusable = False
                 proxy_name = str(content.get("proxy_name") or "")
                 remote_addr = str(content.get("remote_addr") or "")
                 try:
@@ -340,10 +518,15 @@ def make_handler(cache: PolicyCache, plugin_path: str):
                         return
 
                     try:
+                        extra = {}
+                        validated = getattr(plane, "_access_validated_revision", None)
+                        if validated is not None:
+                            extra["validated_revision"] = validated
                         verdict = RP.authorize_remote(
                             plane,
                             proxy_name=proxy_name,
                             source_ip=remote_addr,
+                            **extra,
                         )
                     except Exception:
                         # A DB/API fault must reject this connection, not drop
@@ -358,6 +541,7 @@ def make_handler(cache: PolicyCache, plugin_path: str):
                         )
                         return
                     # Logging must not affect allow/deny.
+                    reusable = str(verdict.get("reason") or "") not in _REUSE_FAULT_REASONS
                     if ACL is not None:
                         try:
                             ACL.emit_conn_log(verdict, cfg=cfg)
@@ -372,7 +556,7 @@ def make_handler(cache: PolicyCache, plugin_path: str):
                             {"reject": True, "reject_reason": reason, "unchange": True},
                         )
                 finally:
-                    self._close_plane(plane)
+                    self._close_plane(plane, reusable)
 
             self._with_slot(_handle)
 

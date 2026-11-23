@@ -573,9 +573,15 @@ def _supervised_invocation(root=None):
     return ''
 
 
-def _wait_supervised_runtime(root, host_id, desired):
+def _wait_supervised_runtime(root, host_id, desired, *, timeout_seconds=60):
     import time
-    until = time.monotonic() + 60
+    # Explicit fault injection must terminate the public operation rather than
+    # consume the primary and rollback wait windows (S-021).
+    if str(os.environ.get("DRLINK_FAULT_RUNTIME_RESTART") or "").strip().lower() in (
+        "1", "yes", "y", "true"
+    ):
+        raise ControlPlaneError("Agent runtime restart failed (injected fault)")
+    until = time.monotonic() + timeout_seconds
     while time.monotonic() < until:
         if _current_runtime_ready(root, host_id, desired):
             return
@@ -725,6 +731,7 @@ def apply_agent_runtime(
     root: Optional[str] = None,
     names: Optional[list] = None,
     force_reapply: bool = False,
+    before_generation_change=None,
 ) -> dict:
     """Serialize all Agent runtime applies through activation and restart.
 
@@ -750,7 +757,8 @@ def apply_agent_runtime(
     try:
         with ExclusiveFileLock(lock_path, timeout=180):
             return _apply_agent_runtime_serialized(
-                plane_db, root=root, names=names, force_reapply=force_reapply)
+                plane_db, root=root, names=names, force_reapply=force_reapply,
+                before_generation_change=before_generation_change)
     except LockTimeout:
         return {
             "ok": False, "applied": [], "removed": [], "generation": 0,
@@ -764,6 +772,7 @@ def _apply_agent_runtime_serialized(
     root: Optional[str] = None,
     names: Optional[list] = None,
     force_reapply: bool = False,
+    before_generation_change=None,
 ) -> dict:
     """Render + apply frpc runtime for desired Remote Services.
 
@@ -995,6 +1004,17 @@ def _apply_agent_runtime_serialized(
                 "ok": False, "applied": [], "removed": [], "generation": 0,
                 "error": "Agent Remote Service intent changed before runtime activation; retry synchronization",
             }
+        # The unchanged-runtime shortcut above was not taken: this apply really
+        # replaces the generation. A caller that deliberately kept verified
+        # services HEALTHY because live proof still held (explicit synchronize of
+        # an unchanged service) must now fail closed first, and publish that, so no
+        # reader ever sees HEALTHY with runtime_verified=0 across the restart. This
+        # is the last intent-snapshot comparison, so the hook may rewrite status.
+        if before_generation_change is not None:
+            try:
+                before_generation_change()
+            except Exception:
+                pass
         # Any changed generation invalidates prior verification until fresh
         # runtime and registered-proxy evidence is obtained.
         # Refresh all included rows after the complete generation is verified.
@@ -1045,7 +1065,11 @@ def _apply_agent_runtime_serialized(
             if artifacts_written and backup_toml is not None:
                 _atomic_write_text(prev_toml, backup_toml)
             if isolated_attempted and backup_toml is not None:
-                _wait_supervised_runtime(root, host_id, state.get('services') or {})
+                # Do not repeat a full 60-second wait after the first failure:
+                # preserve a bounded recovery attempt and return a truthful
+                # RECOVERY_REQUIRED status when prior runtime is unverified.
+                _wait_supervised_runtime(
+                    root, host_id, state.get('services') or {}, timeout_seconds=15)
             elif restart_attempted and backup_toml is not None:
                 _restart_frpc(root)
             elif reload_attempted and backup_toml is not None:
@@ -1210,6 +1234,38 @@ def mark_runtime_status(plane_db, *, ok: bool, reason: str = "", generation: int
             commit()
         else:
             plane_db.conn.commit()
+
+
+def desired_runtime_drift(
+    plane_db, name: str, *, root: Optional[str] = None,
+) -> bool:
+    """True when the catalog now desires a different runtime than the installed record.
+
+    An online Server catalog edit (for example a Service Object port) changes the
+    desired runtime of an already-published Remote Service while the Agent stays
+    connected. The status-only verification path must not keep re-verifying the old
+    installed target in that case: only the full reconciliation can apply the edit.
+    A missing record or desired entry is not drift (that is a missing proxy, which
+    keeps its own status-only handling), and neither is a disabled/deleted service.
+    """
+    row = plane_db.conn.execute(
+        "SELECT enabled, delete_pending FROM agent_remote_services "
+        "WHERE name = ? COLLATE NOCASE", (name,)
+    ).fetchone()
+    if row is None or not row['enabled'] or row['delete_pending']:
+        return False
+    actual_root = root if root is not None else getattr(plane_db, 'root', None)
+    if _isolated_skip_fixture(actual_root):
+        return False
+    state = load_client_state(actual_root)
+    proxy_id = remote_service_proxy_id(name)
+    record = (state.get('services') or {}).get(proxy_id)
+    if not record:
+        return False
+    desired = build_desired_runtime_services(
+        plane_db, state, root=actual_root, only_name=name
+    ).get(proxy_id)
+    return bool(desired) and record != desired
 
 
 def verified_remote_service_status(

@@ -290,8 +290,13 @@ class FullControlRuntimeTests(unittest.TestCase):
             ]))
             child_pid = int(result["stdout"]["text"].strip())
             state = Path("/proc") / str(child_pid) / "stat"
-            if state.exists():
-                self.assertEqual(state.read_text().split(") ", 1)[1][0], "Z",
+            try:
+                text = state.read_text()
+            except FileNotFoundError:
+                # Already reaped by init between spawn and read: not running.
+                text = None
+            if text is not None:
+                self.assertEqual(text.split(") ", 1)[1][0], "Z",
                                  "child still runs after its job completed")
             with patch.object(full.os, "killpg", wraps=full.os.killpg) as kill:
                 self.runtime.stop(self.owner, result["job_id"])

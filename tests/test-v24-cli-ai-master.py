@@ -48,6 +48,23 @@ class V24MasterScenarios(unittest.TestCase):
     def _run(self, *tokens):
         return cli.dispatch(list(tokens), root=self.tmp, plane=self.plane)
 
+    def test_remote_access_enforcement_repeated_desired_state_is_noop(self):
+        self.plane.conn.execute(
+            "UPDATE access_policies SET mode = 'blacklist', enforcement = 'enabled' WHERE plane = 'remote'"
+        )
+        self.plane.conn.commit()
+
+        revision = self.plane.current_revision()
+        v24.set_policy_enforcement(self.plane, "remote", True, confirm=True)
+        self.assertEqual(self.plane.current_revision(), revision)
+        self.assertEqual(v24.get_access_policy(self.plane, "remote")["enforcement"], "enabled")
+
+        v24.set_policy_enforcement(self.plane, "remote", False, confirm=True)
+        revision = self.plane.current_revision()
+        v24.set_policy_enforcement(self.plane, "remote", False, confirm=True)
+        self.assertEqual(self.plane.current_revision(), revision)
+        self.assertEqual(v24.get_access_policy(self.plane, "remote")["enforcement"], "disabled")
+
     def test_A_first_run_no_policy_allow(self):
         pol = v24.get_access_policy(self.plane, "remote")
         self.assertIsNone(pol["mode"])
@@ -125,12 +142,18 @@ class V24MasterScenarios(unittest.TestCase):
             enabled=True,
             oneshot=True,
         )
+
+        def resolve_example(hostname):
+            self.assertEqual(hostname, "example.com")
+            return ["1.1.1.1"]
+
         allowed = v24.evaluate_selector_policy(
             self.plane,
             "internet",
             source_name="src",
             destination_name="dst",
             service_name="https",
+            resolve_fn=resolve_example,
         )
         self.assertEqual(allowed["result"], "ALLOW")
         v24.set_policy_enforcement(self.plane, "internet", False, confirm=True)
@@ -140,6 +163,7 @@ class V24MasterScenarios(unittest.TestCase):
             source_name="src",
             destination_name="dst",
             service_name="https",
+            resolve_fn=resolve_example,
         )
         self.assertEqual(denied["result"], "DENY")
 

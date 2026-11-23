@@ -18,6 +18,8 @@ import re
 import subprocess
 import sys
 
+from e2e_candidate_identity import bound_installed_head
+
 ALLOWED_ALIASES = frozenset({
     "frp-e2e-server", "frp-e2e-client", "frp-e2e-aws",
     "frp-e2e-rocky8", "frp-e2e-rocky9-rescue", "frp-e2e-windows",
@@ -441,6 +443,31 @@ def write_run_evidence(root: Path, report: dict, hosts: list[dict]) -> Path:
     return run_dir
 
 
+
+def resolve_installed_content_head(repo: Path, candidate: str, expected: str) -> str:
+    """Accept either operator manifest spelling, but enforce immutable binding.
+
+    When a manifest pins the final provenance SHA, the native public CLI reports
+    its source parent. A literal installed-content pin is also valid ONLY when
+    the candidate is exactly that content or a verified generated-only child.
+    """
+    if expected != candidate:
+        bound_installed_head(repo, candidate, expected)
+        return expected
+    parent = subprocess.run(
+        ["git", "-C", str(repo), "rev-parse", "--verify", candidate + "^1"],
+        text=True, capture_output=True, check=False, timeout=15,
+    )
+    if parent.returncode == 0:
+        try:
+            content = parent.stdout.strip()
+            if bound_installed_head(repo, candidate, content) == "provenance-parent":
+                return content
+        except ValueError:
+            pass  # Direct/source-only commits still require their exact SHA.
+    bound_installed_head(repo, candidate, candidate)
+    return candidate
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--manifest", required=True, type=Path)
@@ -468,17 +495,25 @@ def main() -> int:
         print("Manifest requires lab_phase PREINSTALL_CLEANROOM or INSTALLED_CANDIDATE",
               file=sys.stderr)
         return 2
-    hosts = [collect_host(h, expected, phase) for h in manifest["hosts"]]
+    try:
+        effective_installed_source = resolve_installed_content_head(
+            opts.worktree, head, expected
+        )
+    except ValueError as exc:
+        print("Candidate/install source binding invalid: " + str(exc), file=sys.stderr)
+        return 2
+    hosts = [collect_host(h, effective_installed_source, phase) for h in manifest["hosts"]]
     # The owner's independent MCP/DNS test Server must be checked separately
     # from the six functional/native E2E hosts. Historical manifests remain valid.
     if "mcp_server" in manifest:
-        hosts.append(collect_mcp_server(manifest["mcp_server"], expected, phase))
+        hosts.append(collect_mcp_server(manifest["mcp_server"], effective_installed_source, phase))
     report = evaluate(manifest, hosts, head)
     report.update({"run_id": "lab-readiness-" + dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
                    + "-" + str(os.getpid()), "utc": utc_now(),
                    "worktree": str(opts.worktree.resolve()),
                    "repo_head": head, "lab_phase": phase,
                    "candidate_source_head": expected,
+                   "effective_installed_source_head": effective_installed_source,
                    "manifest_sha256": hashlib.sha256(data).hexdigest(),
                    "hosts": hosts,
                    "excluded_hosts": sorted(EXCLUDED_ALIASES),

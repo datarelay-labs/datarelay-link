@@ -207,6 +207,58 @@ class BundleStalePlanSafety(unittest.TestCase):
         self.assertEqual(result["revision"], rev_before)
         self.assertEqual(self.plane.current_revision(), rev_before)
 
+    def test_exported_bundle_reapply_is_no_change_after_own_success(self):
+        """An identical replay must not fail solely because its own apply bumped revision."""
+        v24.set_network_object(
+            self.plane, "office", type="ip", value="198.51.100.10", oneshot=True
+        )
+        exported = export_configuration_v24(self.plane)
+        changed = exported.replace("198.51.100.10", "198.51.100.20", 1)
+        self.assertNotEqual(changed, exported)
+        first = prepare_v24_plan(self.plane, changed)
+        self.assertFalse(first.no_change)
+        applied = apply_v24_plan(self.plane, first, confirm=True)
+        self.assertEqual(applied["status"], "APPLIED")
+        rev_after = self.plane.current_revision()
+        second = prepare_v24_plan(self.plane, changed)
+        self.assertTrue(second.no_change)
+        self.assertLess(second.base_revision, rev_after)
+        result = apply_v24_plan(self.plane, second)
+        self.assertEqual(result, {"status": "NO_CHANGE", "revision": rev_after})
+        self.assertEqual(self.plane.current_revision(), rev_after)
+        self.assertEqual(
+            self.plane._object_values(self.plane.get_object("office")["id"])[:1],
+            ["198.51.100.20"],
+        )
+
+    def test_public_cli_reapply_does_not_claim_stale_noop_will_be_rejected(self):
+        """Keep user-visible stale warning aligned with the guarded replay path."""
+        v24.set_network_object(
+            self.plane, "office", type="ip", value="198.51.100.10", oneshot=True
+        )
+        exported = export_configuration_v24(self.plane)
+        changed = exported.replace("198.51.100.10", "198.51.100.20", 1)
+        path = Path(self.tmp) / "repeat.yaml"
+        path.write_text(changed, encoding="utf-8")
+        with mock.patch("drlink_control_cli._approve_configuration_mutation", return_value="apply"), \
+             redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+            first_rc = cli.dispatch(
+                ["system", "apply", "configuration", str(path)],
+                root=self.tmp, plane=self.plane,
+            )
+        self.assertEqual(first_rc, 0)
+        revision = self.plane.current_revision()
+        output = io.StringIO()
+        with redirect_stdout(output), redirect_stderr(io.StringIO()):
+            rc = cli.dispatch(
+                ["system", "apply", "configuration", str(path)],
+                root=self.tmp, plane=self.plane,
+            )
+        self.assertEqual(rc, 0)
+        self.assertIn("NO CHANGE", output.getvalue())
+        self.assertNotIn("Apply will reject this stale snapshot", output.getvalue())
+        self.assertEqual(self.plane.current_revision(), revision)
+
     def test_normal_apply_still_applied(self):
         v24.set_network_object(
             self.plane, "office", type="ip", value="198.51.100.10", oneshot=True
