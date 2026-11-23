@@ -2233,6 +2233,83 @@ def _worker_memory_limit_bytes() -> int:
     return min(limits) if resolved else 0
 
 
+def _worker_effective_cpus() -> int:
+    """Conservative effective CPU count from affinity and inherited cgroup quota.
+
+    v2 cpu.max and v1 cpu.cfs_quota_us/period_us are read at each visible
+    ancestor of THIS process's cgroup. Missing/invalid resource facts return
+    one CPU; an explicit worker count always overrides automatic selection.
+    """
+    try:
+        affinity = len(os.sched_getaffinity(0)) if hasattr(os, "sched_getaffinity") else (os.cpu_count() or 1)
+        affinity = max(1, int(affinity))
+        memberships = {}
+        for line in Path("/proc/self/cgroup").read_text().splitlines():
+            hierarchy, controllers, membership = line.split(":", 2)
+            if any(x in (".", "..") for x in membership.split("/")) or not membership.startswith("/"):
+                continue
+            if hierarchy == "0" and not controllers:
+                memberships["cgroup2"] = membership
+            if "cpu" in controllers.split(","):
+                memberships["cgroup"] = membership
+        if not memberships:
+            return 1
+        mounts = Path("/proc/self/mountinfo").read_text().splitlines()
+    except (OSError, ValueError, IndexError):
+        return 1
+
+    def unescape(value):
+        return re.sub(r"\\([0-7]{3})", lambda m: chr(int(m.group(1), 8)), value)
+
+    quota_cores = []
+    observed = False
+    for line in mounts:
+        if " - " not in line:
+            continue
+        pre, post = line.split(" - ", 1)
+        fields, options = pre.split(), post.split()
+        if len(fields) < 5 or len(options) < 3:
+            continue
+        fs_type = options[0]
+        if fs_type not in memberships:
+            continue
+        if fs_type == "cgroup" and "cpu" not in options[2].split(","):
+            continue
+        mount_root = unescape(fields[3])
+        member = memberships[fs_type]
+        root_parts = tuple(x for x in mount_root.split("/") if x)
+        member_parts = tuple(x for x in member.split("/") if x)
+        if any(x in (".", "..") for x in root_parts) or member_parts[:len(root_parts)] != root_parts:
+            continue
+        base = Path(unescape(fields[4]))
+        current = base.joinpath(*member_parts[len(root_parts):])
+        observed = True
+        while True:
+            try:
+                if fs_type == "cgroup2":
+                    record = (current / "cpu.max").read_text().split()
+                    if len(record) != 2:
+                        raise ValueError("invalid cpu.max")
+                    raw_quota, raw_period = record
+                else:
+                    raw_quota = (current / "cpu.cfs_quota_us").read_text().strip()
+                    raw_period = (current / "cpu.cfs_period_us").read_text().strip()
+                if raw_quota not in ("max", "-1"):
+                    quota, period = int(raw_quota), int(raw_period)
+                    if quota <= 0 or period <= 0:
+                        return 1
+                    quota_cores.append(max(1, quota // period))
+            except (OSError, ValueError):
+                # An unavailable ancestor's CPU quota cannot be proven safe.
+                return 1
+            if current == base:
+                break
+            current = current.parent
+    if not observed:
+        return 1
+    return max(1, min([affinity] + quota_cores))
+
+
 def _worker_count(value) -> int:
     """Bounded opt-in tuning; legacy default remains exactly one worker.
 
@@ -2243,7 +2320,7 @@ def _worker_count(value) -> int:
     """
     if isinstance(value, str) and value.strip().lower() == "auto":
         try:
-            cpus = len(os.sched_getaffinity(0)) if hasattr(os, "sched_getaffinity") else (os.cpu_count() or 1)
+            cpus = _worker_effective_cpus()
         except (OSError, ValueError):
             cpus = 1
         memory_bytes = _worker_memory_limit_bytes()
