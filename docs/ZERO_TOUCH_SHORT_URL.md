@@ -5,7 +5,7 @@
 
 ## Current beginner-facing behavior
 
-The standard `set enrollment zero-touch` journey **defaults to a short, copyable HTTPS launcher**. A publicly trusted `bootstrap_hostname` or independently qualified `public_hostname` / `public_url_host` uses stock OS trust and DRLink's exact invalid-handle `404 bootstrap unavailable` probe. **DNS is optional:** when no qualified public short-URL hostname exists, an HTTPS numeric IP allocator with a valid local Private CA and matching IP SAN is an eligible compact route. In that route the Agent receives only the public CA first, checks its DER SHA256 against the issuer's command, and sends its one-time handle only after strict CA-verified HTTPS succeeds. Neither a generic HTTPS 404 nor an arbitrary IP address constitutes bootstrap trust.
+The standard `set enrollment zero-touch` journey **defaults to a short, copyable HTTPS launcher**. A publicly trusted `bootstrap_hostname` or independently qualified `public_hostname` / `public_url_host` uses stock OS trust and DRLink's exact invalid-handle `404 bootstrap unavailable` probe. **DNS is optional:** when no qualified public short-URL hostname exists, a numeric-IP bootstrap endpoint with the verified local Private CA and matching IP SAN is an eligible compact route. This endpoint may be derived from the Server's configured public IP even when the allocator URL remains an FQDN, but only if the local Server leaf is signed by that CA and covers **both** the FQDN and numeric IP. In that route the Agent receives only the public CA first, checks its DER SHA256 against the issuer's command, and sends its one-time handle only after strict CA-verified HTTPS succeeds. Neither a generic HTTPS 404 nor an arbitrary IP address constitutes bootstrap trust.
 
 Example Linux/macOS command **shape** (not a real ticket; the product supplies the handle):
 
@@ -32,20 +32,24 @@ Zero-Touch is ready. On the Server, the installation completion report runs a
 read-only Linux Zero-Touch prerequisite check and prints either:
 
 - `Zero-Touch HTTPS readiness: READY (read-only, no ticket issued)`
+- `Zero-Touch HTTPS readiness: READY (numeric IP + pinned Private CA; read-only, no ticket issued)`
 - `Zero-Touch HTTPS readiness: NOT_READY (no ticket issued)` with the concrete
   certificate/URL problem and recovery action.
 
 Public-DNS Zero-Touch requires independently OS-trusted HTTPS for
 `/i/invalid-qualification-probe` (exact `404 bootstrap unavailable`) **and**
-for the configured Agent installer URL (`HEAD` must return HTTP 200 without
-TLS errors, redirects, or an intervening HTTP proxy). A valid DNS A record,
+for the configured Agent installer URL (authenticated `HEAD 200`; if the
+artifact handler rejects HEAD with `405` or `501`, an authenticated, bounded
+`GET 200` is accepted instead; redirects and TLS errors remain failures). A valid DNS A record,
 matching SAN, or private Data Relay Link CA **alone is insufficient**.
 The Server installer does not silently disable TLS verification, issue ACME
 certificates, or consider a Private-CA DNS endpoint publicly trusted.
-If the public edge is not ready, Server/FRP installation can complete, but
-**Zero-Touch issuance is blocked until that separate trust prerequisite is met**.
-An eligible numeric-IP allocator with a pinned Private CA and matching IP SAN
-remains the independent supported route. Run `sudo drlink set enrollment zero-touch`
+If neither the publicly trusted FQDN nor the independently verified
+numeric-IP/Private-CA route is ready, Server/FRP installation can complete,
+but **Zero-Touch issuance is blocked**. With a privately issued FQDN leaf,
+the Server can retain its existing allocator hostname and use its configured
+public IP for the first CA-pinned bootstrap stage, provided the leaf contains
+both SANs. This is not a claim that public FQDN TLS gained OS trust. Run `sudo drlink set enrollment zero-touch`
 to repeat the pre-ticket check after correcting public TLS.
 
 ## Trust boundary

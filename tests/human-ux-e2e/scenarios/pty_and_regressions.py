@@ -79,7 +79,7 @@ def hux_reg_001(env: ScenarioEnv) -> None:
 
 @scenario(
     "HUX-REG-002",
-    "SSH username optionality shell regression",
+    "Retired SSH username rejection shell regression",
     execution_context=ExecutionContext.EXTERNAL_TEST_CLIENT,
     interaction_mode=InteractionMode.CONTRACT,
     layer=Layer.NORMAL,

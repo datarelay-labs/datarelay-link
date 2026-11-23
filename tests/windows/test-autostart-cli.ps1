@@ -65,7 +65,7 @@ try {
     } else {
         Assert-FrpTrue (Test-Path -LiteralPath $markerPath) 'autostart re-enabled before uninstall'
     }
-    $uninstallOut = & $hostExe -NoProfile -ExecutionPolicy Bypass -File $clientPath system uninstall 2>&1 | Out-String
+    $uninstallOut = & $hostExe -NoProfile -ExecutionPolicy Bypass -File $clientPath system uninstall --yes 2>&1 | Out-String
     Assert-FrpTrue ($LASTEXITCODE -eq 0) 'uninstall exits 0'
     Assert-FrpTrue ($uninstallOut -match 'SERVER-SIDE RESERVATIONS PRESERVED') 'uninstall message'
     if ($isWin) {

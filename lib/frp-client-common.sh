@@ -1035,6 +1035,115 @@ read_tty() {
   printf '%s' "${value:-$default}"
 }
 
+# Menu selection read that reports end of input (Ctrl-D or an exhausted scripted
+# input) with status 1 instead of returning an empty choice forever.
+# frp_read_menu_choice <out_var> <prompt>
+frp_read_menu_choice() {
+  local _frp_out="$1" _frp_prompt="$2" _frp_line="" _frp_file=""
+  if frp_using_test_input; then
+    printf '%s\n' "$_frp_prompt" >&2
+    frp_open_test_input
+    _frp_file="$(frp_test_input_path)"
+    if [[ ! -s "$_frp_file" ]]; then
+      echo "End of input. Leaving the menu." >&2
+      return 1
+    fi
+    printf -v "$_frp_out" '%s' "$(frp_read_test_line)"
+    return 0
+  fi
+  if [[ -r /dev/tty ]]; then
+    if ! read -r -p "$_frp_prompt" _frp_line </dev/tty; then
+      echo >&2
+      echo "End of input. Leaving the menu." >&2
+      return 1
+    fi
+    printf -v "$_frp_out" '%s' "$_frp_line"
+    return 0
+  fi
+  echo "ERROR: no TTY for interactive setup; set FRP_SERVICES_JSON or FRP_CLIENT_TEST_INPUT" >&2
+  exit 1
+}
+
+# U-013: shared navigation semantics for the Agent menus.
+#   ?  context help, stay          0  previous menu (submenu) / cancel (step)
+#   top-level menu: 0 is explained, never a silent exit
+# frp_menu_nav <top|sub> <title> <exit_number> <input>
+# return: 0 = pass through (a normal choice), 10 = help shown (stay),
+#         11 = 0 at the top menu (explained, stay), 12 = 0 in a submenu (go back)
+frp_menu_nav() {
+  local kind="$1" title="$2" exit_n="$3" input="$4"
+  case "$input" in
+    '?')
+      {
+        echo
+        echo "Menu help — ${title}"
+        echo "Type a number and press Enter to choose an item."
+        echo "  ?   Show this help. You stay in this menu."
+        if [[ "$kind" == top ]]; then
+          echo "  ${exit_n}   Exit. 0 is not used here because this is the top menu."
+        else
+          echo "  0   Go back to the previous menu (same as ${exit_n})."
+        fi
+        echo
+      } >&2
+      return 10
+      ;;
+    0)
+      if [[ "$kind" == top ]]; then
+        echo "0 is not available here: this is the top menu. Enter ${exit_n} to exit, or ? for help." >&2
+        return 11
+      fi
+      return 12
+      ;;
+  esac
+  return 0
+}
+
+# Invalid menu input: keep the "ERROR: select 1-N" prefix and name the keys that exist here.
+frp_menu_invalid() {
+  local kind="$1" max="$2" exit_n="$3"
+  if [[ "$kind" == top ]]; then
+    echo "ERROR: select 1-${max} (? for help, ${exit_n} to exit)" >&2
+  else
+    echo "ERROR: select 1-${max} (? for help, 0 to go back)" >&2
+  fi
+}
+
+# Reads one step of a guided entry. '?' shows this step's help and asks again
+# (the step is kept); '0' cancels the entry. Returns 2 when cancelled.
+# frp_read_step <out_var> <prompt> <default> <help_fn> [help_args...]
+frp_read_step() {
+  local _frp_out="$1" _frp_prompt="$2" _frp_default="$3" _frp_help="$4"
+  shift 4
+  local _frp_val
+  while true; do
+    _frp_val="$(read_tty "$_frp_prompt" "$_frp_default")"
+    case "$_frp_val" in
+      '?')
+        "$_frp_help" "$@" >&2
+        echo "Step help — ? shows this help and stays on this step; 0 cancels this entry." >&2
+        ;;
+      0|c|C|cancel|Cancel)
+        echo "Cancelled. Nothing was changed." >&2
+        return 2
+        ;;
+      *)
+        printf -v "$_frp_out" '%s' "$_frp_val"
+        return 0
+        ;;
+    esac
+  done
+}
+
+frp_ux_display_name_help() {
+  echo "Display name: a label shown in status and connection information."
+  echo "Press Enter to keep the default."
+}
+
+frp_ux_service_number_help() {
+  echo "Enter the number of a Remote Service from the list above."
+}
+
 probe_tcp() {
   local host="$1" port="$2"
   # Host and port are argv, never interpolated into a shell command string.
@@ -1280,6 +1389,8 @@ Select the type of service you want to publish.
 
 5) Back
 
+? Help   0 Back
+
 For normal remote SSH access, choose 1.
 
 You may publish one or more services.
@@ -1345,13 +1456,13 @@ frp_prompt_service_id() {
   frp_ux_service_id_help "$default"
   echo
   # Bash 3.2 portable out-param (no nameref).
-  printf -v "$out_var" '%s' "$(read_tty "Service ID [${default}]: " "$default")"
+  frp_read_step "$out_var" "Service ID [${default}]: " "$default" frp_ux_service_id_help "$default"
 }
 
 frp_prompt_target_host() {
   local default="${1:-127.0.0.1}" out_var="$2"
   frp_ux_target_host_help
-  printf -v "$out_var" '%s' "$(read_tty "Target host [${default}]: " "$default")"
+  frp_read_step "$out_var" "Target host [${default}]: " "$default" frp_ux_target_host_help
 }
 
 frp_prompt_target_port() {
@@ -1360,9 +1471,9 @@ frp_prompt_target_port() {
   frp_ux_target_port_help "$preset"
   while true; do
     if [[ -n "$default" ]]; then
-      _frp_port_input="$(read_tty "Target port [${default}]: " "$default")"
+      frp_read_step _frp_port_input "Target port [${default}]: " "$default" frp_ux_target_port_help "$preset" || return 2
     else
-      _frp_port_input="$(read_tty "Target port: " "")"
+      frp_read_step _frp_port_input "Target port: " "" frp_ux_target_port_help "$preset" || return 2
     fi
     # Validate before returning to the service collector. A later payload error
     # would discard this draft and send the operator back to the service menu.
@@ -1382,7 +1493,18 @@ frp_ux_prompt_new_service() {
   while true; do
     echo
     frp_ux_add_service_menu
-    choice="$(read_tty "Select: " "")"
+    if ! frp_read_menu_choice choice "Select: "; then
+      if [[ -n "$dest" ]]; then
+        printf -v "$dest" '%s' ""
+      fi
+      return 0
+    fi
+    local _frp_nav_rc=0
+    frp_menu_nav sub "Add a service" 5 "$choice" || _frp_nav_rc=$?
+    case "$_frp_nav_rc" in
+      10) continue ;;
+      12) choice=5 ;;
+    esac
     case "$choice" in
       1)
         frp_prompt_service_id ssh sid
@@ -1392,26 +1514,26 @@ frp_ux_prompt_new_service() {
         _frp_new_payload="$(service_payload ssh "$sid" SSH "$host" "$port")"
         ;;
       2)
-        frp_prompt_service_id http sid
-        frp_prompt_target_host 127.0.0.1 host
-        frp_prompt_target_port http 80 port
+        frp_prompt_service_id http sid || continue
+        frp_prompt_target_host 127.0.0.1 host || continue
+        frp_prompt_target_port http 80 port || continue
         maybe_warn_connectivity "$host" "$port" "HTTP"
         _frp_new_payload="$(service_payload http "$sid" HTTP "$host" "$port")"
         ;;
       3)
-        frp_prompt_service_id https sid
-        frp_prompt_target_host 127.0.0.1 host
-        frp_prompt_target_port https 443 port
+        frp_prompt_service_id https sid || continue
+        frp_prompt_target_host 127.0.0.1 host || continue
+        frp_prompt_target_port https 443 port || continue
         maybe_warn_connectivity "$host" "$port" "HTTPS"
         _frp_new_payload="$(service_payload https "$sid" HTTPS "$host" "$port")"
         ;;
       4)
         frp_ux_service_id_help
         echo
-        sid="$(read_tty "Service ID: " "")"
-        name="$(read_tty "Display name [${sid}]: " "$sid")"
-        frp_prompt_target_host 127.0.0.1 host
-        frp_prompt_target_port custom "" port
+        frp_read_step sid "Service ID: " "" frp_ux_service_id_help || continue
+        frp_read_step name "Display name [${sid}]: " "$sid" frp_ux_display_name_help || continue
+        frp_prompt_target_host 127.0.0.1 host || continue
+        frp_prompt_target_port custom "" port || continue
         maybe_warn_connectivity "$host" "$port" "TCP"
         _frp_new_payload="$(service_payload custom "$sid" "$name" "$host" "$port")"
         ;;
@@ -1421,7 +1543,7 @@ frp_ux_prompt_new_service() {
         fi
         return 0
         ;;
-      *) echo "ERROR: select 1-5" >&2; continue ;;
+      *) frp_menu_invalid sub 5 5; continue ;;
     esac
     if [[ -n "$dest" ]]; then
       printf -v "$dest" '%s' "$_frp_new_payload"

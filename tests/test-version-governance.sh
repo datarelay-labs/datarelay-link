@@ -3,6 +3,9 @@
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
+# One per-run scratch directory; never reuse shared /tmp/vg-*.out files.
+WORKDIR="$(mktemp -d)"
+trap 'rm -rf "$WORKDIR"' EXIT
 # shellcheck disable=SC1091
 . "$ROOT/VERSION"
 # shellcheck source=../lib/frp-common.sh
@@ -262,8 +265,7 @@ pass "STABLE_IDENTITY_GUARD"
 pass "PRODUCT_ENGINE_VERSION_SEPARATION"
 
 # --- system version parity across roles -------------------------------------
-WORKDIR="$(mktemp -d)"
-trap 'rm -rf "$WORKDIR"' EXIT
+# WORKDIR and cleanup trap are initialized at process entry.
 for role in client server both; do
   tree="$WORKDIR/$role"
   mkdir -p "$tree/etc/drlink" "$tree/usr/local/lib/drlink"

@@ -17,6 +17,11 @@ An unqualified request for `User E2E`, `사용자 E2E`, `Full User E2E`, `전체
 
 Appendix A of the same file retains the v2.4 operator manual runbook. It does not replace FULL_USER_E2E and it is not a second canonical document.
 
+**Test environment:** Do not use LXC/LXD for this release's E2E (owner decision
+2026-11-02). Validate on authorized native Server/Agent hosts; isolated local
+processes and temporary ports are supporting smoke evidence only, never a
+substitute for mandatory installed-host acceptance.
+
 A targeted subset is valid only when the requested scope is explicitly narrowed. Final release qualification still requires the exact-HEAD double Full Real E2E passes defined later in this document.
 
 ## 1. Gate philosophy

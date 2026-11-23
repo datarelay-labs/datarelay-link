@@ -15,6 +15,9 @@
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
+# Avoid shared /tmp/version-consistency.out collisions across CI users.
+WORKDIR="$(mktemp -d)"
+trap 'rm -rf "$WORKDIR"' EXIT
 
 fail_count=0
 pass() { echo "PASS $1"; }

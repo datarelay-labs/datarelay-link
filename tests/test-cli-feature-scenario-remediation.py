@@ -43,6 +43,7 @@ class CliFeatureScenarioRemediation(unittest.TestCase):
         )
         os.close(slave)
         output = bytearray()
+        sent_help = False
         sent_cancel = False
         sent_exit = False
         try:
@@ -54,8 +55,15 @@ class CliFeatureScenarioRemediation(unittest.TestCase):
                         output.extend(os.read(master, 65536))
                     except OSError:
                         break
-                    if b"Managed Host name (empty cancels):" in output and not sent_cancel:
-                        os.write(master, b"   \n")
+                    prompt = b"Managed Host name (? help, 0 or empty cancels):"
+                    if prompt in output and not sent_help:
+                        # U-013/F-013: ? shows this step's help and stays on the prompt.
+                        os.write(master, b"?\n")
+                        sent_help = True
+                    elif sent_help and not sent_cancel and b"Input help" in output \
+                            and output.count(prompt) >= 2:
+                        # 0 cancels like an empty line (consistent with the other menus).
+                        os.write(master, b"0\n")
                         sent_cancel = True
                     if b"Cancelled." in output and not sent_exit:
                         os.write(master, b"5\n9\n")
@@ -69,7 +77,8 @@ class CliFeatureScenarioRemediation(unittest.TestCase):
                 proc.wait()
             os.close(master)
         text = output.decode("utf-8", "replace")
-        self.assertTrue(sent_cancel and sent_exit, text)
+        self.assertTrue(sent_help and sent_cancel and sent_exit, text)
+        self.assertIn("Current step: Managed Host name", text)
         self.assertEqual(proc.returncode, 0, text)
         self.assertNotIn("ERROR", text)
         self.assertEqual(self.plane.current_revision(), revision)
@@ -646,7 +655,9 @@ frpctl_nav_prompt_id 'Name: '
     def test_public_bulk_invalid_ttl_rejected_before_review(self):
         """Enforce the exact public 24h bound before accepting the operator's review."""
         for ttl, valid in (
-            ("25h", False), ("86401", False), ("2d", False), ("0", False),
+            ("25h", False), ("86401", False), ("2d", False),
+            # U-013: `0` cancels the current Wizard step (it is not a lifetime value).
+            ("0", "cancel"),
             ("24h", True), ("1d", True),
         ):
             with self.subTest(ttl=ttl):
@@ -683,8 +694,11 @@ frpctl_nav_prompt_id 'Name: '
                         proc.wait()
                     os.close(master)
                 text = output.decode("utf-8", "replace")
-                self.assertEqual(proc.returncode, 0 if valid else 2, text)
-                if valid:
+                self.assertEqual(proc.returncode, 2 if valid is False else 0, text)
+                if valid == "cancel":
+                    self.assertIn("Cancelled. No changes were applied.", text)
+                    self.assertNotIn("Review", text)
+                elif valid:
                     self.assertIn("Review", text)
                     self.assertIn("Cancelled.", text)
                 else:
@@ -975,7 +989,7 @@ os.replace(sys.argv[1] + ".tmp", sys.argv[1])
 while True:
     time.sleep(1)
 ''')
-        runner = "import sys,os;sys.path.insert(0,sys.argv[1]);from frp_ctl_repl import _run_backend;assert _run_backend([sys.executable,sys.argv[2],sys.argv[3]],os.environ.copy()) is None;print('PROMPT_RECOVERED')"
+        runner = "import sys,os,signal;signal.signal(signal.SIGINT,signal.default_int_handler);sys.path.insert(0,sys.argv[1]);from frp_ctl_repl import _run_backend;assert _run_backend([sys.executable,sys.argv[2],sys.argv[3]],os.environ.copy()) is None;print('PROMPT_RECOVERED')"
         proc = subprocess.Popen([sys.executable, "-c", runner, str(LIB), str(backend), str(pids)],
                                 stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         owned = []

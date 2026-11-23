@@ -59,6 +59,14 @@ PY
 
 export FRP_DEPLOY_TEST_ROOT="$TREE"
 OUT="$WORKDIR/one-line.out"
+# The retired long command is forbidden: do not resurrect a bypass.
+if python3 "$ROOT/tools/frp-create-client" --one-line --long-bootstrap \
+    --client-name retired-zt >"$WORKDIR/retired.out" 2>&1; then
+  fail "retired --long-bootstrap unexpectedly accepted"
+fi
+grep -q 'unrecognized arguments: --long-bootstrap' "$WORKDIR/retired.out" \
+  || fail "retired mode did not fail closed"
+# Current product uses only compact qualified bootstrap.
 python3 "$ROOT/tools/frp-create-client" --one-line --client-name short-zt --note 'pkg' \
   >"$OUT" || { cat "$OUT"; fail "create one-line"; }
 grep -q 'Zero-touch Agent command' "$OUT" || fail "header"

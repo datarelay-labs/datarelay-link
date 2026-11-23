@@ -531,6 +531,38 @@ clearly resembles a DRLink command, the Wizard must reject the input with guidan
 to leave the Wizard (Back/Cancel) and run the command at the `drlink>` prompt.
 It must not execute pasted commands inside the Wizard.
 
+### Menu and Wizard navigation contract (U-013)
+
+All guided surfaces — the `drlink` Server and Agent menus, the legacy Agent menu
+(`frp-client`), Help, error guidance and every Wizard — use the same keys:
+
+| Key | Meaning |
+|---|---|
+| `?` | Context help for the **current** menu or Wizard step. The operator stays where they are; no value is consumed and no state changes. |
+| `0` | Go back to the previous menu. In a Wizard step or a text prompt, `0` cancels the current entry (`c` / `cancel` also work in Wizards); nothing is applied. |
+| top-level menu `0` | There is no previous menu. The CLI says so ("this is the top menu, enter N to exit") and stays; it never exits silently. |
+| empty line | Same as cancel in a text prompt; the documented default in a prompt that shows `[default]`. |
+
+Every Wizard step — including the guided steps of `drlink create ...` and the Server and
+Agent menus — shows help for that step on `?` ("Current step: <step name>") and stays on
+it. A numbered step accepts only the listed numbers and answers anything else with
+`ERROR: select 1-N (? for help, 0 to cancel)`; it never falls back to a default
+silently. A yes/no step accepts only `y`, `yes`, `n` or `no` (an empty line uses the
+default shown in `[ ]`). `0` cancels with `Cancelled. No changes were applied.`.
+End of input (Ctrl-D) inside a Wizard says `End of input. Cancelled; no changes were
+applied.`; at a menu it says `End of input. Leaving the menu.` once and exits with
+status 0.
+
+Error guidance names only keys that exist at that prompt: top menus name the Exit
+number, submenus name `0` / previous menu, Wizard steps name `0` / Cancel. Guidance
+never says "choose Back/Cancel" at a prompt that has no such item.
+
+The sentence `This command is destructive.` is printed only for commands that
+irreversibly remove or replace data (`risk: irreversible`, policy resets and
+`system restore`). Every other state-changing command prints an `Impact:` line that
+states exactly what it changes (for example a Network Object, an Access setting or a
+service restart) and what it does not.
+
 ---
 
 # 9. Fixed TCP Service Object
@@ -1693,7 +1725,10 @@ Remote Service user-facing states:
 HEALTHY
 DEGRADED
 DISABLED
+PAUSED
 ```
+
+`PAUSED` means the Agent runtime was intentionally paused; it is distinct from a degraded service.
 
 ## HEALTHY
 
@@ -5160,7 +5195,7 @@ A v2.4 CLI implementation is conformant only if the following can all be demonst
 - Agent local `show/set/unset remote-service` works.
 - Direct `This Host` flow works.
 - Relay Host flow works without a separate Relay-specific configuration object.
-- `HEALTHY / DEGRADED / DISABLED` transitions are correct.
+- `HEALTHY / DEGRADED / DISABLED / PAUSED` transitions are correct.
 - Offline create/edit can remain DEGRADED/Pending allocation and synchronize after reconnect.
 - Offline Remote Service deletion eventually releases its Server-side endpoint reservation after reconnect.
 - Endpoint/port survives restart/disconnect/disable.

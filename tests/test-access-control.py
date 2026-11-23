@@ -675,9 +675,20 @@ class PolicyCacheFailClosedTests(unittest.TestCase):
                     with self.lock:
                         self.active -= 1
 
-        cache = BlockingCache(self.plugin.ACCESS_MAX_CONCURRENT)
+        # Saturation semantics (503 fail-closed, slot recovery, FD bound) are
+        # exercised at a small fixed bound. The production default is much larger
+        # (F-008: connection bursts must not be rejected; see
+        # test-access-plugin-burst-capacity.py), and saturating it here would
+        # need ~1000 threads.
+        saturation_bound = 32
+        small_server_cls = type(
+            "SmallAccessServer",
+            (self.plugin.AccessServer,),
+            {"max_concurrent": saturation_bound, "request_queue_size": saturation_bound * 2},
+        )
+        cache = BlockingCache(saturation_bound)
         handler = self.plugin.make_handler(cache, "/access-auth")
-        server = self.plugin.AccessServer(("127.0.0.1", 0), handler)
+        server = small_server_cls(("127.0.0.1", 0), handler)
         port = server.server_address[1]
         thread = threading.Thread(target=server.serve_forever, daemon=True)
         thread.start()

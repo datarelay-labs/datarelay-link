@@ -22,6 +22,10 @@ try {
         -Transport 'tcp' | Out-Null
 
     $root = Get-FrpWindowsRoot
+    $binding = Get-FrpDurableClientIdPath
+    # Existing 2.4 Agent upgrades need an explicit one-time migration at
+    # uninstall even when they never called Get-FrpOrCreateClientId earlier.
+    Remove-Item -LiteralPath $binding -Force
     Assert-FrpTrue (Test-Path -LiteralPath $root) 'root exists'
     $env:FRP_AUTOSTART_TASK_NAME = 'DataRelayLinkClient-Test-' + [guid]::NewGuid().ToString('N').Substring(0, 8)
     $env:FRP_LIFECYCLE_TASK_NAME = 'DataRelayLinkLifecycle-Test-' + [guid]::NewGuid().ToString('N').Substring(0, 8)
@@ -35,20 +39,38 @@ try {
     New-Item -ItemType Directory -Path $emptyDir -Force | Out-Null
     Assert-FrpTrue (Test-Path -LiteralPath $emptyDir) 'empty product subdirectory exists before uninstall'
 
+    # A headless uninstall with no operator confirmation must be rejected
+    # before touching identity, process, tasks or the Server.
+    $beforeIdentity = [string](Get-FrpOrCreateClientId)
+    # A cancelled uninstall must not even migrate machine-id into a durable
+    # location. Preserve the legacy state for the explicit approved path.
+    Remove-Item -LiteralPath $binding -Force
+    Assert-FrpTrue (-not (Test-Path -LiteralPath $binding)) 'no durable binding before declined uninstall'
+    $cancelOut = & $hostExe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $clientPath system uninstall 2>&1 | Out-String
+    $cancelRc = $LASTEXITCODE
+    Assert-FrpTrue ($cancelRc -ne 0) 'unconfirmed uninstall must not report success'
+    Assert-FrpTrue ($cancelOut -match 'Cancelled|confirmation required') 'unconfirmed uninstall cancellation message'
+    Assert-FrpTrue (Test-Path -LiteralPath $root) 'unconfirmed uninstall retained local product'
+    Assert-FrpTrue (Test-FrpAutostartTaskExists) 'unconfirmed uninstall retained autostart'
+    Assert-FrpEqual $beforeIdentity ([string](Read-FrpClientState).machine_id) 'unconfirmed uninstall retained identity'
+    Assert-FrpTrue (-not (Test-Path -LiteralPath $binding)) 'unconfirmed uninstall did not migrate machine binding'
+
     $env:FRP_WINDOWS_FAIL_AUTOSTART = '1'
-    $failOut = & $hostExe -NoProfile -ExecutionPolicy Bypass -File $clientPath system uninstall 2>&1 | Out-String
+    $failOut = & $hostExe -NoProfile -ExecutionPolicy Bypass -File $clientPath system uninstall --yes 2>&1 | Out-String
     $rcFail = $LASTEXITCODE
     Remove-Item Env:FRP_WINDOWS_FAIL_AUTOSTART -ErrorAction SilentlyContinue
     Assert-FrpEqual 1 $rcFail 'uninstall fails closed when autostart removal fails'
     Assert-FrpTrue ($failOut -match 'leaving product files in place') 'fail-closed uninstall message'
     Assert-FrpTrue (Test-Path -LiteralPath $root) 'product root left in place after failed uninstall'
+    Assert-FrpEqual $mid (([IO.File]::ReadAllText($binding)).Trim()) 'legacy Agent migrated machine binding before attempted uninstall'
     Assert-FrpTrue (Test-FrpAutostartTaskExists) 'autostart still present after failed uninstall'
 
-    $okOut = & $hostExe -NoProfile -ExecutionPolicy Bypass -File $clientPath system uninstall 2>&1 | Out-String
+    $okOut = & $hostExe -NoProfile -ExecutionPolicy Bypass -File $clientPath system uninstall --yes 2>&1 | Out-String
     $rc = $LASTEXITCODE
     Assert-FrpEqual 0 $rc 'uninstall succeeds after autostart can be removed'
     Assert-FrpTrue ($okOut -match 'SERVER-SIDE RESERVATIONS PRESERVED') 'uninstall reservation message'
     Assert-FrpTrue (-not (Test-Path -LiteralPath $root)) 'root removed after successful uninstall'
+    Assert-FrpEqual $mid (([IO.File]::ReadAllText($binding)).Trim()) 'machine ID survives full Agent uninstall'
     Assert-FrpTrue (-not (Test-FrpAutostartTaskExists)) 'autostart gone after successful uninstall'
     Assert-FrpTrue (-not (Test-FrpAutostartTaskExists -TaskName $env:FRP_LIFECYCLE_TASK_NAME)) 'lifecycle task gone after successful uninstall'
     Assert-FrpTrue ($okOut -match 'Signed disconnect notification') 'best-effort disconnect is reported'

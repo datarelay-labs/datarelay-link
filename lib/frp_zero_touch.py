@@ -175,7 +175,7 @@ def private_ca_ip_windows_command(allocator_url, ca_sha256, stage1_sha256, handl
         '[Convert]::ToBase64String($cert.RawData,[Base64FormattingOptions]::InsertLineBreaks)+'
         '"`n-----END CERTIFICATE-----`n";'
         "[IO.File]::WriteAllText($ca,$pem);"
-        "& curl.exe -fsSL --max-redirs 0 --proto '=https' --cacert $ca -o $st '%s';"
+        "& curl.exe -fsSL --max-redirs 0 --proto '=https' --cacert $ca --ssl-revoke-best-effort -o $st '%s';"
         "if($LASTEXITCODE){throw 'verified stage-1 fetch failed'};"
         "if((Get-FileHash -LiteralPath $st).Hash -ne '%s'){throw 'stage-1 hash mismatch'};"
         "& powershell.exe -NoProfile -ExecutionPolicy Bypass -File $st;"
@@ -235,8 +235,9 @@ def _private_ca_pin_shell(allocator_url, ca_sha256):
         "-o $d/ca.crt %s; "
         "openssl x509 -in $d/ca.crt -outform DER -out $d/ca.der >/dev/null; "
         'fp=$(openssl dgst -sha256 $d/ca.der | awk "{print \\$NF}" | tr A-F a-f); '
-        'test "$fp" = %s; '
-    ) % (shell_quote(ca_url), shell_quote(fp))
+        'test "$fp" = %s || { echo "ERROR: CA fingerprint mismatch (pinned %s, '
+        'got $fp). Nothing was installed." >&2; exit 1; }; '
+    ) % (shell_quote(ca_url), shell_quote(fp), fp)
 
 
 def _qualified_linux_shell(installer_url, allocator_url, ca_file, bundle_file, workdir):

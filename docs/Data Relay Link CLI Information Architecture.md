@@ -299,7 +299,10 @@ User-facing states:
 HEALTHY
 DEGRADED
 DISABLED
+PAUSED
 ```
+
+`PAUSED` means the Agent runtime was intentionally paused; it is distinct from a degraded service.
 
 A valid but unreachable destination remains configured and becomes `DEGRADED`.
 

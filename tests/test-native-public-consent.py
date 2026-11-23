@@ -39,7 +39,8 @@ class NativePublicConsent(unittest.TestCase):
         self.env = dict(os.environ, TMPDIR=str(self.fixture), FRP_CTL_TEST_INPUT='yes\n',
                         DRLINK_CONFIRM='yes', DRLINK_EXPECTED_REVISION='42')
         self.read_helpers = '\n'.join(native_function(self.source, name) for name in (
-            'frpctl_input_init', 'frpctl_try_read', 'frpctl_read'))
+            'frpctl_input_init', 'frpctl_try_read', 'frpctl_read',
+            'frpctl_step_label', 'frpctl_step_help', 'frpctl_read_step', 'frpctl_read_abort'))
         # No installed tool, database, archive, uninstaller or product writer is called.
         self.stubs = '''
 frpctl_require_server() { return 0; }

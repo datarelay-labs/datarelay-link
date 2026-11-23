@@ -629,7 +629,7 @@ for platform in 1 2 3; do
   run_repl "$VALID" "$WORKDIR/early-preflight-pass-$platform.out" \
     'set enrollment zero-touch' "$platform" 'escare' '' "$back" exit \
     || fail "preflight prevented valid Private CA platform $platform"
-  grep -q 'Zero-Touch prerequisites verified; no ticket was issued' \
+  grep -q 'Zero-Touch prerequisites verified via pinned Private CA at numeric IP; no ticket was issued' \
     "$WORKDIR/early-preflight-pass-$platform.out" \
     || fail "valid Private CA preflight not announced for platform $platform"
   grep -q '^Managed Host details$' "$WORKDIR/early-preflight-pass-$platform.out" \

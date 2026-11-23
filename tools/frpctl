@@ -1041,14 +1041,33 @@ choice = sys.argv[3]
 spec = importlib.util.spec_from_file_location("frp_cli_catalog", str(path))
 mod = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(mod)
-row = mod.navigation_resolve(menu_key, choice)
-if not row:
-    raise SystemExit(1)
-action_id, label, description, kind, target = row
-print(action_id)
-print(kind)
-print(target or "")
-print(label)
+cls, row = mod.navigation_classify(menu_key, choice)
+print(cls)
+if row:
+    action_id, label, description, kind, target = row
+    print(action_id)
+    print(kind)
+    print(target or "")
+    print(label)
+PY
+}
+
+# Context help / guidance text for one menu level (catalog owns the wording).
+# fn: navigation_help | navigation_top_message | navigation_invalid_message
+frpctl_nav_text() {
+  local fn="$1" menu_key="$2" raw="${3:-}"
+  local cat
+  cat="$(frpctl_catalog_py)" || return 1
+  python3 - "$cat" "$fn" "$menu_key" "$raw" <<'PY'
+import importlib.util, sys
+from pathlib import Path
+spec = importlib.util.spec_from_file_location("frp_cli_catalog", str(Path(sys.argv[1])))
+mod = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(mod)
+fn, menu_key, raw = sys.argv[2], sys.argv[3], sys.argv[4]
+func = getattr(mod, fn)
+text = func(menu_key, raw) if fn == "navigation_invalid_message" else func(menu_key)
+sys.stdout.write(text if text.endswith("\n") else text + "\n")
 PY
 }
 
@@ -1060,17 +1079,17 @@ frpctl_nav_dispatch_command() {
   toks=($cmd)
   case "$cmd" in
     "set network-object"|"set network-group"|"set service-object"|"set service-group"|"set permission-object"|"set permission-group"|"set remote-access"|"set internet-access"|"set ai-access"|"set ai-identity")
-      prompt="Name (empty cancels): "
+      prompt="Name (? help, 0 or empty cancels): "
       ;;
     "test configuration"|"system diff configuration"|"system apply configuration")
-      prompt="Configuration file path or '-' for pasted YAML (empty cancels): "
+      prompt="Configuration file path or '-' for pasted YAML (? help, 0 or empty cancels): "
       ;;
     "system export configuration")
-      prompt="Output file path (empty cancels): "
+      prompt="Output file path (? help, 0 or empty cancels): "
       ;;
   esac
   if [[ -n "$prompt" ]]; then
-    path="$(frpctl_read "$prompt" "")" || return 1
+    path="$(frpctl_read_text "$prompt" "")" || return 1
     if [[ -z "${path//[[:space:]]/}" ]]; then
       echo "Cancelled."
       echo "No changes were applied."
@@ -1095,7 +1114,7 @@ frpctl_nav_prompt_id() {
   local prompt="$1"
   local allow_cancel="${2:-false}"
   local value=""
-  value="$(frpctl_read "$prompt" "")" || return 1
+  value="$(frpctl_read_text "$prompt" "")" || return 1
   value="${value#"${value%%[![:space:]]*}"}"
   value="${value%"${value##*[![:space:]]}"}"
   if [[ -z "$value" ]]; then
@@ -1194,7 +1213,7 @@ PY
     done
     echo "Or type a selector."
   fi
-  choice="$(frpctl_read "$prompt" "")" || return 1
+  choice="$(frpctl_read_step "$prompt" "")" || { frpctl_read_abort $?; return 1; }
   choice="${choice#"${choice%%[![:space:]]*}"}"
   choice="${choice%"${choice##*[![:space:]]}"}"
   [[ -n "$choice" ]] || return 1
@@ -1241,7 +1260,7 @@ PY
     done
     echo "Or type a service id."
   fi
-  choice="$(frpctl_read "$prompt" "")" || return 1
+  choice="$(frpctl_read_step "$prompt" "")" || { frpctl_read_abort $?; return 1; }
   choice="${choice#"${choice%%[![:space:]]*}"}"
   choice="${choice%"${choice##*[![:space:]]}"}"
   [[ -n "$choice" ]] || return 1
@@ -1261,7 +1280,7 @@ frpctl_nav_workflow() {
     manage_client) frpctl_manage_clients ;;
     manage_host)
       frpctl_dispatch show managed-hosts || return $?
-      id="$(frpctl_nav_prompt_id "Managed Host name (empty cancels): " true)" || return 1
+      id="$(frpctl_nav_prompt_id "Managed Host name (? help, 0 or empty cancels): " true)" || return 1
       if [[ -z "$id" ]]; then echo "Cancelled."; return 0; fi
       frpctl_dispatch show managed-host "$id" || return $?
       echo "Group membership: set managed-host $id group <GROUP>"
@@ -1271,19 +1290,19 @@ frpctl_nav_workflow() {
         echo "3) Addresses"
         echo "4) Retire Managed Host (reference checks and confirmation required)"
         echo "5) Back"
-        value="$(frpctl_read "Select: " "5")" || return 1
+        value="$(frpctl_read_menu 5 Back "Select: " "5")" || { frpctl_eof_note; return $?; }
         case "$value" in
           1) frpctl_dispatch show managed-host "$id" agent || return $? ;;
           2) frpctl_dispatch show managed-host "$id" remote-services || return $? ;;
           3) frpctl_dispatch show managed-host "$id" addresses || return $? ;;
           4) if frpctl_dispatch unset managed-host "$id"; then return 0; fi ;;
           5|'') return 0 ;;
-          *) echo "ERROR: select a valid menu number" >&2 ;;
+          *) echo "ERROR: select 1-5 (? for help, 0 to go back)" >&2 ;;
         esac
       done
       ;;
     create_remote_service)
-      id="$(frpctl_nav_prompt_id "Remote Service name (empty cancels): " true)" || return 1
+      id="$(frpctl_nav_prompt_id "Remote Service name (? help, 0 or empty cancels): " true)" || return 1
       if [[ -z "$id" ]]; then
         echo "Cancelled."
         echo "No changes were applied."
@@ -1295,18 +1314,18 @@ frpctl_nav_workflow() {
       ;;
     manage_remote_service)
       frpctl_dispatch show remote-services || return $?
-      id="$(frpctl_nav_prompt_id "Remote Service name (empty cancels): " true)" || return 1
+      id="$(frpctl_nav_prompt_id "Remote Service name (? help, 0 or empty cancels): " true)" || return 1
       if [[ -z "$id" ]]; then echo "Cancelled."; return 0; fi
       frpctl_dispatch show remote-service "$id" || return $?
       echo "1) Edit destination, Service Object or enabled state (review before apply)"
       echo "2) Delete (interactive confirmation required)"
       echo "3) Back"
-      value="$(frpctl_read "Select: " "3")" || return 1
+      value="$(frpctl_read_menu 3 Back "Select: " "3")" || { frpctl_eof_note; return $?; }
       case "$value" in
         1) frpctl_dispatch set remote-service "$id" ;;
         2) frpctl_dispatch unset remote-service "$id" ;;
         3|'') return 0 ;;
-        *) echo "ERROR: select a valid menu number" >&2; return 1 ;;
+        *) echo "ERROR: select 1-3 (? for help, 0 to go back)" >&2; return 1 ;;
       esac
       ;;
     create_group)
@@ -1356,7 +1375,7 @@ frpctl_nav_workflow() {
       frpctl_dispatch show access-service "$id" "$value" || true
       echo
       echo "This will make the Remote Service PUBLIC."
-      path="$(frpctl_read "Continue? [y/N]: " "N")" || return 1
+      path="$(frpctl_read_step "Continue? [y/N]: " "N")" || { frpctl_read_abort $?; return $?; }
       case "$(printf '%s' "$path" | tr '[:upper:]' '[:lower:]')" in
         y|yes)
           path="$(python3 - "$(frpctl_path /etc/drlink/config.json)" "${FRP_CTL_TEST_ROOT:-${FRP_DEPLOY_TEST_ROOT:-}}" "$id" "$value" <<'PY'
@@ -1516,7 +1535,7 @@ PY
 
 frpctl_nav_loop() {
   local menu_key="$1"
-  local choice action_id kind target label top
+  local choice action_id kind target label top nav_cls
   local -a stack=()
   local shown_identity=0
   while true; do
@@ -1535,29 +1554,41 @@ frpctl_nav_loop() {
     if [[ "${FRP_CTL_TEST_MENU:-}" == "1" ]]; then
       return 0
     fi
-    choice="$(frpctl_read "Select: " "")" || return 1
-    if ! {
+    choice="$(frpctl_read "Select: " "")" || { frpctl_eof_note; return $?; }
+    nav_cls=""
+    action_id=""
+    kind=""
+    target=""
+    label=""
+    {
+      read -r nav_cls
       read -r action_id
       read -r kind
       read -r target
       read -r label
-    } < <(frpctl_nav_resolve "$menu_key" "$choice" 2>/dev/null); then
-      if frpctl_looks_like_drlink_command "$choice"; then
-        cat >&2 <<EOF
-ERROR:
-This prompt is waiting for a menu selection.
-
-The entered text looks like a DRLink command.
-
-Choose Back/Cancel to leave this menu,
-then run the command at the drlink> prompt.
-
-No changes were applied.
-EOF
-      else
-        echo "ERROR: select a valid menu number" >&2
-      fi
-      continue
+    } < <(frpctl_nav_resolve "$menu_key" "$choice" 2>/dev/null) || true
+    case "$nav_cls" in
+      help)
+        # `?` = context help for this menu; stay in the menu.
+        frpctl_nav_text navigation_help "$menu_key" || true
+        continue
+        ;;
+      top)
+        # `0` at a top-level menu: there is no previous menu; stay and say so.
+        frpctl_nav_text navigation_top_message "$menu_key" >&2 || true
+        continue
+        ;;
+      select|back)
+        :
+        ;;
+      *)
+        frpctl_nav_text navigation_invalid_message "$menu_key" "$choice" >&2 || \
+          echo "ERROR: invalid selection. Enter ? for help." >&2
+        continue
+        ;;
+    esac
+    if [[ "$nav_cls" == "back" && -z "$kind" ]]; then
+      kind="back"
     fi
     case "$kind" in
       exit)
@@ -1590,7 +1621,7 @@ EOF
         frpctl_menu_commands
         ;;
       *)
-        echo "ERROR: select a valid menu number" >&2
+        echo "ERROR: unknown menu action. Enter ? for help." >&2
         ;;
     esac
   done
@@ -1672,6 +1703,9 @@ frpctl_try_read() {
   return 0
 }
 
+# Raw line read: no `?`/`0` interpretation. Menus and text prompts that classify those
+# keys themselves (read_menu, read_text, nav_loop) use this; Wizard steps use
+# frpctl_read_step / frpctl_read_choice below.
 frpctl_read() {
   local prompt="$1" default="${2:-}"
   local value=""
@@ -1682,6 +1716,109 @@ frpctl_read() {
     value="$default"
   fi
   printf '%s' "$value"
+}
+
+# U-013 Wizard step label: "Target host [127.0.0.1]: " -> "Target host".
+frpctl_step_label() {
+  local l="${1:-}"
+  l="${l%: }"
+  l="${l%:}"
+  l="${l%% \[*}"
+  l="${l%% \(*}"
+  printf '%s' "${l:-this entry}"
+}
+
+frpctl_step_help() {
+  # args: label kind(text|choice|yesno) [max]; help goes to stderr (callers capture stdout)
+  local label="${1:-this entry}" kind="${2:-text}" max="${3:-}"
+  {
+    echo
+    echo "Input help"
+    echo "----------"
+    echo "  Current step: ${label}"
+    case "$kind" in
+      choice) echo "  Type the number of an item (1-${max}) and press Enter." ;;
+      yesno) echo "  Type y or n and press Enter (an empty line uses the default shown in [ ])." ;;
+      *) echo "  Type a value and press Enter (an empty line uses the default or skips an optional value)." ;;
+    esac
+    echo "  ?   Show this help. You stay on this step."
+    echo "  0   Cancel this step. No changes are applied."
+  } >&2
+}
+
+# Wizard prompt. `?` shows help for this step and stays; `0` cancels (status 3);
+# end of input returns 1. Yes/No prompts only accept y/yes/n/no.
+frpctl_read_step() {
+  local prompt="$1" default="${2:-}"
+  local value="" probe="" label="" kind="text"
+  label="${_FRP_STEP_LABEL:-$(frpctl_step_label "$prompt")}"
+  case "$prompt" in
+    *"[Y/n]"*|*"[y/N]"*|*"[y/n]"*) kind=yesno ;;
+  esac
+  while true; do
+    value="$(frpctl_read "$prompt" "$default")" || return 1
+    probe="${value//[[:space:]]/}"
+    case "$probe" in
+      '?')
+        frpctl_step_help "$label" "$kind"
+        continue
+        ;;
+      0)
+        return 3
+        ;;
+    esac
+    if [[ "$kind" == yesno ]]; then
+      case "$(printf '%s' "$probe" | tr '[:upper:]' '[:lower:]')" in
+        y|yes|n|no) ;;
+        *)
+          echo "ERROR: answer y or n (? for help, 0 to cancel)" >&2
+          continue
+          ;;
+      esac
+    fi
+    printf '%s' "$value"
+    return 0
+  done
+}
+
+# Numbered choice step: args max label prompt [default]. Rejects anything outside 1..max
+# instead of silently falling back to a default.
+frpctl_read_choice() {
+  local max="$1" label="$2" prompt="$3" default="${4:-}"
+  local value="" probe=""
+  while true; do
+    value="$(frpctl_read "$prompt" "$default")" || return 1
+    probe="${value//[[:space:]]/}"
+    case "$probe" in
+      '?')
+        frpctl_step_help "$label" choice "$max"
+        continue
+        ;;
+      0)
+        return 3
+        ;;
+    esac
+    if [[ "$probe" =~ ^[0-9]+$ ]] && ((10#$probe >= 1 && 10#$probe <= max)); then
+      printf '%s' "$((10#$probe))"
+      return 0
+    fi
+    echo "ERROR: select 1-${max} (? for help, 0 to cancel)" >&2
+  done
+}
+
+# Report why a Wizard prompt ended. Status 3 = cancelled by the user, 1 = end of input.
+# Always returns 0 for cancel and 1 for end of input, so wizards can `return $?`.
+frpctl_read_abort() {
+  case "${1:-1}" in
+    3)
+      echo "Cancelled. No changes were applied." >&2
+      return 0
+      ;;
+    *)
+      echo "End of input. Cancelled; no changes were applied." >&2
+      return 1
+      ;;
+  esac
 }
 
 frpctl_looks_like_drlink_command() {
@@ -1696,6 +1833,106 @@ frpctl_looks_like_drlink_command() {
   return 1
 }
 
+# --- U-013: consistent prompt semantics ---------------------------------------
+#   ?  show context help for the current prompt and stay on it
+#   0  go back to the previous menu (menus) / cancel (text prompts)
+frpctl_eof_note() {
+  # End of input (Ctrl-D / scripted input that ran out) at a menu is a normal way to
+  # leave, like a shell. Announce it once per process (runs in the main shell, so the
+  # flag persists while it unwinds through nested menus) and return 0.
+  # When there is no input source at all (stdin is not a TTY and no scripted input),
+  # frpctl_try_read already printed "ERROR: no TTY for interactive menu". That is a
+  # failure, not a user leaving: stay silent here and return 1 so callers fail closed.
+  if [[ -z "${FRP_CTL_TEST_INPUT:-}" && ! -t 0 ]]; then
+    return 1
+  fi
+  if [[ -z "${_FRP_CTL_EOF_NOTED:-}" ]]; then
+    _FRP_CTL_EOF_NOTED=1
+    echo "End of input. Leaving the menu." >&2
+  fi
+  return 0
+}
+
+frpctl_menu_help() {
+  # args: back_n label (Back|Cancel); help goes to stderr (callers capture stdout)
+  local back_n="${1:-}" label="${2:-Back}"
+  {
+    echo
+    echo "Menu help"
+    echo "---------"
+    echo "  Type the number of an item and press Enter."
+    echo "  ?   Show this help. You stay on this step."
+    if [[ -z "$back_n" ]]; then
+      echo "  0   Not used here: there is no previous menu."
+    elif [[ "$label" == "Cancel" ]]; then
+      echo "  0   Cancel this step; no changes are applied (same as ${back_n})."
+    else
+      echo "  0   Go back to the previous menu (same as ${back_n})."
+    fi
+  } >&2
+}
+
+frpctl_read_menu() {
+  # args: back_n label prompt [default]
+  local back_n="$1" label="$2" prompt="$3" default="${4:-}"
+  local value="" probe=""
+  while true; do
+    value="$(frpctl_read "$prompt" "$default")" || return 1
+    probe="${value//[[:space:]]/}"
+    case "$probe" in
+      '?')
+        frpctl_menu_help "$back_n" "$label"
+        continue
+        ;;
+      0)
+        if [[ -n "$back_n" ]]; then
+          printf '%s' "$back_n"
+          return 0
+        fi
+        echo "ERROR: 0 is not available here: there is no previous menu. Enter ? for help." >&2
+        continue
+        ;;
+    esac
+    printf '%s' "$value"
+    return 0
+  done
+}
+
+frpctl_read_text() {
+  # args: prompt [default]; `?` helps and stays, `0` cancels (returns empty)
+  local prompt="$1" default="${2:-}"
+  local value="" probe="" step_label=""
+  step_label="${prompt%% (\?*}"
+  step_label="${step_label%: }"
+  step_label="${step_label%:}"
+  while true; do
+    value="$(frpctl_read "$prompt" "$default")" || {
+      echo "End of input. Cancelled; no changes were applied." >&2
+      return 1
+    }
+    probe="${value//[[:space:]]/}"
+    case "$probe" in
+      '?')
+        {
+          echo
+          echo "Input help"
+          echo "----------"
+          echo "  Current step: ${step_label:-this entry}"
+          echo "  Type a value and press Enter."
+          echo "  ?   Show this help. You stay on this step."
+          echo "  0   Cancel (an empty line also cancels). No changes are applied."
+        } >&2
+        continue
+        ;;
+      0)
+        value=""
+        ;;
+    esac
+    printf '%s' "$value"
+    return 0
+  done
+}
+
 frpctl_menu_selection_error() {
   # args: lo hi [raw]
   local lo="$1" hi="$2" raw="${3:-}"
@@ -1706,14 +1943,14 @@ This prompt is waiting for a menu selection (${lo}-${hi}).
 
 The entered text looks like a DRLink command.
 
-Choose Back/Cancel to leave this Wizard,
+Enter 0 to go back to the previous menu,
 then run the command at the drlink> prompt.
 
 No changes were applied.
 EOF
     return 0
   fi
-  echo "ERROR: select ${lo}-${hi}" >&2
+  echo "ERROR: select ${lo}-${hi}. Enter ? for help, or 0 to go back." >&2
 }
 
 frpctl_zt_validate_field() {
@@ -1774,12 +2011,12 @@ frpctl_zt_prompt_client_identification() {
   echo "===================="
   echo
   while true; do
-    name="$(frpctl_read "Managed Host name: " "")" || return 1
+    name="$(frpctl_read_step "Managed Host name: " "")" || { frpctl_read_abort $?; return $?; }
     if name="$(frpctl_zt_validate_field label "$name")"; then
       break
     fi
   done
-  note="$(frpctl_read "Description [optional]: " "")" || return 1
+  note="$(frpctl_read_step "Description [optional]: " "")" || { frpctl_read_abort $?; return $?; }
   note="${note#"${note%%[![:space:]]*}"}"
   note="${note%"${note##*[![:space:]]}"}"
   _FRP_ZT_CLIENT_NAME="$name"
@@ -1794,7 +2031,7 @@ frpctl_zt_prompt_ssh() {
   echo "==="
   echo
   while true; do
-    port="$(frpctl_read "SSH port [22]: " "22")" || return 1
+    port="$(frpctl_read_step "SSH port [22]: " "22")" || { frpctl_read_abort $?; return $?; }
     if port="$(frpctl_zt_validate_field target_port "$port")"; then
       break
     fi
@@ -1861,7 +2098,7 @@ frpctl_zt_run_rdp() {
   echo
   echo "This installer does not enable Remote Desktop or change Windows Firewall."
   while true; do
-    rdp_port="$(frpctl_read "RDP port [3389]: " "3389")" || return 1
+    rdp_port="$(frpctl_read_step "RDP port [3389]: " "3389")" || { frpctl_read_abort $?; return $?; }
     if rdp_port="$(frpctl_zt_validate_field target_port "$rdp_port")"; then
       break
     fi
@@ -1906,25 +2143,25 @@ frpctl_zt_prompt_service_fields() {
   local sid host port name
   while true; do
     if [[ -n "$default_id" ]]; then
-      sid="$(frpctl_read "Service ID [${default_id}]: " "$default_id")" || return 1
+      sid="$(frpctl_read_step "Service ID [${default_id}]: " "$default_id")" || { frpctl_read_abort $?; return $?; }
     else
-      sid="$(frpctl_read "Service ID: " "")" || return 1
+      sid="$(frpctl_read_step "Service ID: " "")" || { frpctl_read_abort $?; return $?; }
     fi
     if sid="$(frpctl_zt_validate_field service_id "$sid")"; then
       break
     fi
   done
   while true; do
-    host="$(frpctl_read "Target host [${default_host}]: " "$default_host")" || return 1
+    host="$(frpctl_read_step "Target host [${default_host}]: " "$default_host")" || { frpctl_read_abort $?; return $?; }
     if host="$(frpctl_zt_validate_field target_host "$host")"; then
       break
     fi
   done
   while true; do
     if [[ -n "$default_port" ]]; then
-      port="$(frpctl_read "Target port [${default_port}]: " "$default_port")" || return 1
+      port="$(frpctl_read_step "Target port [${default_port}]: " "$default_port")" || { frpctl_read_abort $?; return $?; }
     else
-      port="$(frpctl_read "Target port: " "")" || return 1
+      port="$(frpctl_read_step "Target port: " "")" || { frpctl_read_abort $?; return $?; }
     fi
     if port="$(frpctl_zt_validate_field target_port "$port")"; then
       break
@@ -1932,7 +2169,7 @@ frpctl_zt_prompt_service_fields() {
   done
   name="$default_name"
   if [[ "$preset" == "custom" ]]; then
-    name="$(frpctl_read "Display name [${sid}]: " "$sid")" || return 1
+    name="$(frpctl_read_step "Display name [${sid}]: " "$sid")" || { frpctl_read_abort $?; return $?; }
     name="${name#"${name%%[![:space:]]*}"}"
     name="${name%"${name##*[![:space:]]}"}"
     [[ -n "$name" ]] || name="$sid"
@@ -1979,7 +2216,7 @@ frpctl_zt_run_services() {
     echo "5) Finish"
     echo "6) Cancel"
     echo
-    choice="$(frpctl_read "Select: " "")" || return 1
+    choice="$(frpctl_read_menu 6 Cancel "Select: " "")" || { frpctl_eof_note; return $?; }
     case "$choice" in
       1)
         frpctl_zt_prompt_service_fields ssh ssh SSH 127.0.0.1 22 || continue
@@ -2013,7 +2250,7 @@ frpctl_zt_run_services() {
         return 0
         ;;
       *)
-        echo "ERROR: select 1-6" >&2
+        echo "ERROR: select 1-6 (? for help, 0 to go back)" >&2
         ;;
     esac
   done
@@ -2049,7 +2286,7 @@ frpctl_guided_zero_touch_linux() {
     echo "2) Choose Remote Services"
     echo "3) Back"
     echo
-    choice="$(frpctl_read "Select: " "")" || return 1
+    choice="$(frpctl_read_menu 3 Back "Select: " "")" || { frpctl_eof_note; return $?; }
     case "$choice" in
       1) _FRP_ZT_PLATFORM=linux; frpctl_zt_run_ssh; return $? ;;
       2) _FRP_ZT_PLATFORM=linux; frpctl_zt_run_services; return $? ;;
@@ -2071,7 +2308,7 @@ frpctl_guided_zero_touch_windows() {
     echo "3) Choose Remote Services"
     echo "4) Back"
     echo
-    choice="$(frpctl_read "Select: " "")" || return 1
+    choice="$(frpctl_read_menu 4 Back "Select: " "")" || { frpctl_eof_note; return $?; }
     case "$choice" in
       1) frpctl_zt_run_rdp; return $? ;;
       2) _FRP_ZT_PLATFORM=windows; frpctl_zt_run_ssh; return $? ;;
@@ -2095,7 +2332,7 @@ frpctl_guided_zero_touch_macos() {
     echo "2) Choose Remote Services"
     echo "3) Back"
     echo
-    choice="$(frpctl_read "Select: " "")" || return 1
+    choice="$(frpctl_read_menu 3 Back "Select: " "")" || { frpctl_eof_note; return $?; }
     case "$choice" in
       1) _FRP_ZT_PLATFORM=linux; frpctl_zt_run_ssh; return $? ;;
       2) _FRP_ZT_PLATFORM=linux; frpctl_zt_run_services; return $? ;;
@@ -2119,7 +2356,7 @@ frpctl_guided_zero_touch() {
   echo "3) macOS"
   echo "4) Back"
   echo
-  choice="$(frpctl_read "Select: " "")" || return 1
+  choice="$(frpctl_read_menu 4 Back "Select: " "")" || { frpctl_eof_note; return $?; }
   case "$choice" in
     1)
       frpctl_zt_preflight linux || return 1
@@ -2144,7 +2381,7 @@ frpctl_guided_zero_touch() {
       ;;
     4|"") return 0 ;;
     *)
-      echo "ERROR: select 1-4" >&2
+      echo "ERROR: select 1-4 (? for help, 0 to go back)" >&2
       return 1
       ;;
   esac
@@ -2166,13 +2403,13 @@ frpctl_guided_client_onboarding() {
   echo
   echo "3) Back"
   echo
-  choice="$(frpctl_read "Select: " "")" || return 1
+  choice="$(frpctl_read_menu 3 Back "Select: " "")" || { frpctl_eof_note; return $?; }
   case "$choice" in
     1) frpctl_guided_zero_touch ;;
     2) frpctl_guided_manual_enrollment ;;
     3|"") return 0 ;;
     *)
-      echo "ERROR: select 1-3" >&2
+      echo "ERROR: select 1-3 (? for help, 0 to go back)" >&2
       return 1
       ;;
   esac
@@ -2184,10 +2421,17 @@ frpctl_guided_manual_enrollment() {
   echo "Create Enrollment"
   echo "================="
   echo
-  client_name="$(frpctl_read "Managed Host name [optional]: " "")" || return 1
-  lifetime="$(frpctl_read "Lifetime [1h]: " "1h")" || return 1
+  client_name="$(frpctl_read_step "Managed Host name [optional]: " "")" || { frpctl_read_abort $?; return $?; }
+  lifetime="$(frpctl_read_step "Lifetime [1h]: " "1h")" || { frpctl_read_abort $?; return $?; }
   [[ -n "$lifetime" ]] || lifetime=1h
-  note="$(frpctl_read "Note [optional]: " "")" || return 1
+  # Fail before Review for invalid lifetimes (same principle as bulk issuance):
+  # the operator must not confirm a value the backend will refuse (F-004).
+  if [[ ! "$lifetime" =~ ^([0-9]+)[sSmMhHdD]$ ]] || (( 10#${BASH_REMATCH[1]:0:18} < 1 )); then
+    echo "ERROR: Lifetime must be a positive duration such as 30m, 1h or 1d. No enrollment was issued." >&2
+    echo "Retry: drlink set enrollment" >&2
+    return 2
+  fi
+  note="$(frpctl_read_step "Note [optional]: " "")" || { frpctl_read_abort $?; return $?; }
   echo
   echo "Review"
   echo "------"
@@ -2195,7 +2439,7 @@ frpctl_guided_manual_enrollment() {
   echo "  Lifetime    : $lifetime"
   echo "  Note        : ${note:-"(none)"}"
   echo
-  confirm="$(frpctl_read "Create? [Y/n]: " "Y")" || return 1
+  confirm="$(frpctl_read_step "Create? [Y/n]: " "Y")" || { frpctl_read_abort $?; return $?; }
   case "$(printf '%s' "$confirm" | tr '[:upper:]' '[:lower:]')" in
     n|no) echo "Cancelled."; return 0 ;;
   esac
@@ -2218,10 +2462,10 @@ frpctl_guided_bulk_enrollment() {
   echo "1) Issue by count (1-10)"
   echo "2) Import CSV (label,note; at most 10 rows)"
   echo "3) Cancel"
-  choice="$(frpctl_read "Select: " "3")" || return 1
+  choice="$(frpctl_read_menu 3 Cancel "Select: " "3")" || { frpctl_eof_note; return $?; }
   case "$choice" in
     1)
-      count="$(frpctl_read "Count [1-10]: " "")" || return 1
+      count="$(frpctl_read_step "Count [1-10]: " "")" || { frpctl_read_abort $?; return $?; }
       case "$count" in
         [1-9]|10) ;;
         *) echo "ERROR: count must be between 1 and 10. No enrollments were issued." >&2; return 2 ;;
@@ -2231,7 +2475,7 @@ frpctl_guided_bulk_enrollment() {
       args=(--count "$count" --label-prefix "$prefix" --note "$note")
       ;;
     2)
-      csv_path="$(frpctl_read "CSV path: " "")" || return 1
+      csv_path="$(frpctl_read_step "CSV path: " "")" || { frpctl_read_abort $?; return $?; }
       if [[ ! -f "$csv_path" || ! -r "$csv_path" ]]; then
         echo "ERROR: cannot read CSV. Check the file path and permissions, then retry 'set enrollment bulk'." >&2
         return 2
@@ -2239,9 +2483,9 @@ frpctl_guided_bulk_enrollment() {
       args=(--csv "$csv_path")
       ;;
     3|"") echo "Cancelled."; return 0 ;;
-    *) echo "ERROR: select 1-3. No enrollments were issued." >&2; return 2 ;;
+    *) echo "ERROR: select 1-3 (? for help, 0 to cancel). No enrollments were issued." >&2; return 2 ;;
   esac
-  lifetime="$(frpctl_read "Lifetime [1h; maximum 24h]: " "1h")" || return 1
+  lifetime="$(frpctl_read_step "Lifetime [1h; maximum 24h]: " "1h")" || { frpctl_read_abort $?; return $?; }
   # Fail before Review for invalid lifetimes. The backend must not be relied on
   # to reject bad values after the operator has already confirmed issuance.
   local ttl_number ttl_unit ttl_max
@@ -2270,7 +2514,7 @@ frpctl_guided_bulk_enrollment() {
   [[ "$choice" == 2 ]] && printf '  CSV: %s\n' "$csv_path"
   printf '  Lifetime: %s\n' "$lifetime"
   echo "Each row issues a separate one-time enrollment command. Protect the output."
-  confirm="$(frpctl_read "Issue enrollments? [y/N]: " "N")" || return 1
+  confirm="$(frpctl_read_step "Issue enrollments? [y/N]: " "N")" || { frpctl_read_abort $?; return $?; }
   case "$confirm" in
     y|Y|yes|YES) frpctl_run frp-enroll-bulk "${args[@]}" ;;
     *) echo "Cancelled." ;;
@@ -2287,7 +2531,7 @@ frpctl_guided_enroll() {
   echo "2) Manual Enrollment Code"
   echo "3) Back"
   echo
-  choice="$(frpctl_read "Select: " "")" || return 1
+  choice="$(frpctl_read_menu 3 Back "Select: " "")" || { frpctl_eof_note; return $?; }
   case "$choice" in
     1)
       frpctl_zt_preflight linux || return 1
@@ -2300,7 +2544,7 @@ frpctl_guided_enroll() {
       return 0
       ;;
     *)
-      echo "ERROR: select 1-3" >&2
+      echo "ERROR: select 1-3 (? for help, 0 to go back)" >&2
       return 1
       ;;
   esac
@@ -2325,7 +2569,7 @@ frpctl_manage_one_client() {
     echo
     frpctl_print_manage_client_actions
     echo
-    action="$(frpctl_read "Select: " "")" || return 1
+    action="$(frpctl_read_menu 7 Back "Select: " "")" || { frpctl_eof_note; return $?; }
     case "$action" in
       1)
         frpctl_dispatch show client "$mid" || true
@@ -2338,10 +2582,10 @@ frpctl_manage_one_client() {
         echo
         echo "1) Release a service reservation"
         echo "2) Back"
-        sub="$(frpctl_read "Select: " "")" || continue
+        sub="$(frpctl_read_menu 2 Back "Select: " "")" || { frpctl_eof_note; return $?; }
         case "$sub" in
           1)
-            sid="$(frpctl_read "Service ID: " "")"
+            sid="$(frpctl_read_step "Service ID: " "")" || { frpctl_read_abort $?; continue; }
             if [[ -z "$sid" ]]; then
               echo "ERROR: service ID is required" >&2
               continue
@@ -2359,27 +2603,27 @@ frpctl_manage_one_client() {
         echo "5) Set tag"
         echo "6) Unset tag"
         echo "7) Back"
-        sub="$(frpctl_read "Select: " "")" || continue
+        sub="$(frpctl_read_menu 7 Back "Select: " "")" || { frpctl_eof_note; return $?; }
         case "$sub" in
           1)
-            label="$(frpctl_read "New label: " "")"
+            label="$(frpctl_read_step "New label: " "")" || { frpctl_read_abort $?; continue; }
             [[ -n "$label" ]] || { echo "ERROR: label is required" >&2; continue; }
             frpctl_dispatch set client "$mid" label "$label" || true
             ;;
           2) frpctl_dispatch unset client "$mid" label || true ;;
           3)
-            note="$(frpctl_read "New description: " "")"
+            note="$(frpctl_read_step "New description: " "")" || { frpctl_read_abort $?; continue; }
             frpctl_dispatch set client "$mid" note "$note" || true
             ;;
           4) frpctl_dispatch unset client "$mid" note || true ;;
           5)
-            tag="$(frpctl_read "Tag KEY: " "")"
+            tag="$(frpctl_read_step "Tag KEY: " "")" || { frpctl_read_abort $?; continue; }
             [[ -n "$tag" ]] || { echo "ERROR: tag key is required" >&2; continue; }
-            value="$(frpctl_read "Tag VALUE: " "")"
+            value="$(frpctl_read_step "Tag VALUE: " "")" || { frpctl_read_abort $?; continue; }
             frpctl_dispatch set client "$mid" tag "$tag" "$value" || true
             ;;
           6)
-            tag="$(frpctl_read "Tag key to remove: " "")"
+            tag="$(frpctl_read_step "Tag key to remove: " "")" || { frpctl_read_abort $?; continue; }
             [[ -n "$tag" ]] || { echo "ERROR: tag key is required" >&2; continue; }
             frpctl_dispatch unset client "$mid" tag "$tag" || true
             ;;
@@ -2391,7 +2635,7 @@ frpctl_manage_one_client() {
         echo "1) Add Managed Host to group"
         echo "2) Remove Managed Host from group"
         echo "3) Back"
-        sub="$(frpctl_read "Select: " "")" || continue
+        sub="$(frpctl_read_menu 3 Back "Select: " "")" || { frpctl_eof_note; return $?; }
         case "$sub" in
           1)
             label="$(frpctl_nav_prompt_id "Group name: ")" || continue
@@ -2414,7 +2658,7 @@ frpctl_manage_one_client() {
         return 0
         ;;
       *)
-        echo "ERROR: select 1-7" >&2
+        echo "ERROR: select 1-7 (? for help, 0 to go back)" >&2
         ;;
     esac
   done
@@ -2471,7 +2715,7 @@ for idx, (mid, client) in enumerate(clients, start=1):
     print('   State    : %s' % mod.mgmt_status(client))
     print()
 PY
-  choice="$(frpctl_read "Select Managed Host number: " "")" || return 1
+  choice="$(frpctl_read_step "Select Managed Host number: " "")" || { frpctl_read_abort $?; return $?; }
   [[ -n "$choice" ]] || return 0
   mid="$(python3 - "$cfg" "$root" "$libdir" "$choice" <<'PY'
 import importlib.util
@@ -2585,7 +2829,7 @@ frpctl_manage_one_group() {
     echo
     frpctl_print_manage_group_actions
     echo
-    action="$(frpctl_read "Select: " "")" || return 1
+    action="$(frpctl_read_menu 7 Back "Select: " "")" || { frpctl_eof_note; return $?; }
     case "$action" in
       1)
         frpctl_dispatch show managed-host-group "$gid" || true
@@ -2595,17 +2839,17 @@ frpctl_manage_one_group() {
         echo "1) Rename"
         echo "2) Set description"
         echo "3) Back"
-        sub="$(frpctl_read "Select: " "")" || continue
+        sub="$(frpctl_read_menu 3 Back "Select: " "")" || { frpctl_eof_note; return $?; }
         case "$sub" in
           1)
-            name="$(frpctl_read "New name: " "")"
+            name="$(frpctl_read_step "New name: " "")" || { frpctl_read_abort $?; continue; }
             [[ -n "$name" ]] || { echo "ERROR: name is required" >&2; continue; }
             frpctl_dispatch set managed-host-group "$gid" name "$name" || true
             display="$(frpctl_group_display_name "$gid" 2>/dev/null || true)"
             [[ -n "$display" ]] || display="$name"
             ;;
           2)
-            value="$(frpctl_read "New description: " "")"
+            value="$(frpctl_read_step "New description: " "")" || { frpctl_read_abort $?; continue; }
             frpctl_dispatch set managed-host-group "$gid" description "$value" || true
             ;;
         esac
@@ -2629,7 +2873,7 @@ frpctl_manage_one_group() {
         return 0
         ;;
       *)
-        echo "ERROR: select 1-7" >&2
+        echo "ERROR: select 1-7 (? for help, 0 to go back)" >&2
         ;;
     esac
   done
@@ -2651,7 +2895,7 @@ frpctl_manage_one_acl() {
     echo "5) Delete ACL"
     echo "6) Back"
     echo
-    action="$(frpctl_read "Select: " "")" || return 1
+    action="$(frpctl_read_menu 6 Back "Select: " "")" || { frpctl_eof_note; return $?; }
     case "$action" in
       1)
         frpctl_dispatch show acl "$acl" || true
@@ -2661,7 +2905,7 @@ frpctl_manage_one_acl() {
         echo "1) Rename"
         echo "2) Set description"
         echo "3) Back"
-        sub="$(frpctl_read "Select: " "")" || continue
+        sub="$(frpctl_read_menu 3 Back "Select: " "")" || { frpctl_eof_note; return $?; }
         case "$sub" in
           1)
             value="$(frpctl_nav_prompt_id "New name: ")" || continue
@@ -2669,7 +2913,7 @@ frpctl_manage_one_acl() {
             acl="$value"
             ;;
           2)
-            value="$(frpctl_read "New description: " "")"
+            value="$(frpctl_read_step "New description: " "")" || { frpctl_read_abort $?; continue; }
             frpctl_dispatch set acl "$acl" description "$value" || true
             ;;
         esac
@@ -2679,7 +2923,7 @@ frpctl_manage_one_acl() {
         echo "1) Add source"
         echo "2) Remove source"
         echo "3) Back"
-        sub="$(frpctl_read "Select: " "")" || continue
+        sub="$(frpctl_read_menu 3 Back "Select: " "")" || { frpctl_eof_note; return $?; }
         case "$sub" in
           1)
             value="$(frpctl_nav_prompt_id "Source IP or CIDR: ")" || continue
@@ -2696,7 +2940,7 @@ frpctl_manage_one_acl() {
         echo "1) Assign service"
         echo "2) Remove assignment"
         echo "3) Back"
-        sub="$(frpctl_read "Select: " "")" || continue
+        sub="$(frpctl_read_menu 3 Back "Select: " "")" || { frpctl_eof_note; return $?; }
         case "$sub" in
           1)
             client="$(frpctl_select_inventory clients "CLIENT: ")" || continue
@@ -2718,7 +2962,7 @@ frpctl_manage_one_acl() {
         return 0
         ;;
       *)
-        echo "ERROR: select 1-6" >&2
+        echo "ERROR: select 1-6 (? for help, 0 to go back)" >&2
         ;;
     esac
   done
@@ -2738,7 +2982,7 @@ frpctl_manage_one_service_profile() {
     echo "3) Delete"
     echo "4) Back"
     echo
-    action="$(frpctl_read "Select: " "")" || return 1
+    action="$(frpctl_read_menu 4 Back "Select: " "")" || { frpctl_eof_note; return $?; }
     case "$action" in
       1)
         frpctl_dispatch show service-profile "$profile" || true
@@ -2774,7 +3018,7 @@ frpctl_manage_one_service_profile() {
         return 0
         ;;
       *)
-        echo "ERROR: select 1-4" >&2
+        echo "ERROR: select 1-4 (? for help, 0 to go back)" >&2
         ;;
     esac
   done
@@ -2798,7 +3042,7 @@ frpctl_manage_one_egress_profile() {
     echo "7) Delete"
     echo "8) Back"
     echo
-    action="$(frpctl_read "Select: " "")" || return 1
+    action="$(frpctl_read_menu 8 Back "Select: " "")" || { frpctl_eof_note; return $?; }
     case "$action" in
       1)
         frpctl_dispatch show internet-profile "$profile" || true
@@ -2808,7 +3052,7 @@ frpctl_manage_one_egress_profile() {
         echo "1) Rename"
         echo "2) Set description"
         echo "3) Back"
-        sub="$(frpctl_read "Select: " "")" || continue
+        sub="$(frpctl_read_menu 3 Back "Select: " "")" || { frpctl_eof_note; return $?; }
         case "$sub" in
           1)
             value="$(frpctl_nav_prompt_id "New name: ")" || continue
@@ -2816,7 +3060,7 @@ frpctl_manage_one_egress_profile() {
             profile="$value"
             ;;
           2)
-            value="$(frpctl_read "New description: " "")"
+            value="$(frpctl_read_step "New description: " "")" || { frpctl_read_abort $?; continue; }
             frpctl_dispatch set internet-profile "$profile" description "$value" || true
             ;;
         esac
@@ -2826,7 +3070,7 @@ frpctl_manage_one_egress_profile() {
         echo "1) Add source"
         echo "2) Remove source"
         echo "3) Back"
-        sub="$(frpctl_read "Select: " "")" || continue
+        sub="$(frpctl_read_menu 3 Back "Select: " "")" || { frpctl_eof_note; return $?; }
         case "$sub" in
           1)
             value="$(frpctl_nav_prompt_id "Source IP or CIDR: ")" || continue
@@ -2843,7 +3087,7 @@ frpctl_manage_one_egress_profile() {
         echo "1) Add destination"
         echo "2) Remove destination"
         echo "3) Back"
-        sub="$(frpctl_read "Select: " "")" || continue
+        sub="$(frpctl_read_menu 3 Back "Select: " "")" || { frpctl_eof_note; return $?; }
         case "$sub" in
           1)
             host="$(frpctl_nav_prompt_id "Host: ")" || continue
@@ -2864,7 +3108,7 @@ frpctl_manage_one_egress_profile() {
         echo "1) Enable"
         echo "2) Disable"
         echo "3) Back"
-        sub="$(frpctl_read "Select: " "")" || continue
+        sub="$(frpctl_read_menu 3 Back "Select: " "")" || { frpctl_eof_note; return $?; }
         case "$sub" in
           1) frpctl_dispatch set internet-profile "$profile" enabled || true ;;
           2) frpctl_dispatch unset internet-profile "$profile" enabled || true ;;
@@ -2881,7 +3125,7 @@ frpctl_manage_one_egress_profile() {
         return 0
         ;;
       *)
-        echo "ERROR: select 1-8" >&2
+        echo "ERROR: select 1-8 (? for help, 0 to go back)" >&2
         ;;
     esac
   done
@@ -2902,7 +3146,7 @@ frpctl_manage_one_fixed_tcp() {
     echo "4) Delete"
     echo "5) Back"
     echo
-    action="$(frpctl_read "Select: " "")" || return 1
+    action="$(frpctl_read_menu 5 Back "Select: " "")" || { frpctl_eof_note; return $?; }
     case "$action" in
       1)
         frpctl_dispatch show fixed-tcp "$name" || true
@@ -2912,7 +3156,7 @@ frpctl_manage_one_fixed_tcp() {
         echo "1) Enable"
         echo "2) Disable"
         echo "3) Back"
-        sub="$(frpctl_read "Select: " "")" || continue
+        sub="$(frpctl_read_menu 3 Back "Select: " "")" || { frpctl_eof_note; return $?; }
         case "$sub" in
           1) frpctl_dispatch set fixed-tcp "$name" enabled || true ;;
           2) frpctl_dispatch unset fixed-tcp "$name" enabled || true ;;
@@ -2930,7 +3174,7 @@ frpctl_manage_one_fixed_tcp() {
         return 0
         ;;
       *)
-        echo "ERROR: select 1-5" >&2
+        echo "ERROR: select 1-5 (? for help, 0 to go back)" >&2
         ;;
     esac
   done
@@ -3371,7 +3615,7 @@ PY
   echo "${enter_idx}) Enter another path"
   echo "${back_idx}) Back"
   echo
-  choice="$(frpctl_read "Select backup: " "")" || return 1
+  choice="$(frpctl_read_menu "$back_idx" Back "Select backup: " "")" || return 1
   if [[ "$choice" == "$back_idx" || "$choice" == "q" || "$choice" == "Q" ]]; then
     return 1
   fi
@@ -3407,7 +3651,7 @@ frpctl_confirm_restore() {
   fi
   # Test-input spools and internal passthrough flags cannot supply operator
   # consent for the public interactive-only restore workflow.
-  ans="$(FRP_CTL_TEST_INPUT= frpctl_read "Continue with restore? [y/N]: " "N")" || return 1
+  ans="$(FRP_CTL_TEST_INPUT= frpctl_read_step "Continue with restore? [y/N]: " "N")" || { frpctl_read_abort $?; return $?; }
   case "$(printf '%s' "$ans" | tr '[:upper:]' '[:lower:]')" in
     y|yes) return 0 ;;
     *)
@@ -4134,7 +4378,7 @@ frpctl_unset_enrollment() {
   esac
 
   if [[ -t 0 ]]; then
-    ans="$(FRP_CTL_TEST_INPUT= frpctl_read "Continue? [y/N]: " "N")" || return 1
+    ans="$(FRP_CTL_TEST_INPUT= frpctl_read_step "Continue? [y/N]: " "N")" || { frpctl_read_abort $?; return $?; }
   elif IFS= read -r ans; then
     :
   else
@@ -4501,9 +4745,9 @@ frpctl_dispatch_canonical() {
         echo "Add Internet Access Destination"
         echo "==============================="
         echo
-        _eg_host="$(frpctl_read "Destination FQDN: " "")" || return 1
+        _eg_host="$(frpctl_read_step "Destination FQDN: " "")" || { frpctl_read_abort $?; return $?; }
         [[ -n "$_eg_host" ]] || { echo "ERROR: destination FQDN is required" >&2; return 1; }
-        _eg_port="$(frpctl_read "Port [443]: " "443")" || return 1
+        _eg_port="$(frpctl_read_step "Port [443]: " "443")" || { frpctl_read_abort $?; return $?; }
         [[ -n "$_eg_port" ]] || _eg_port=443
         echo
         echo "Protocol:"
@@ -4511,14 +4755,14 @@ frpctl_dispatch_canonical() {
         echo "  2) HTTP"
         echo "  3) TCP"
         echo
-        _eg_proto="$(frpctl_read "Select: " "1")" || return 1
+        _eg_proto="$(frpctl_read_choice 3 Protocol "Select: " "1")" || { frpctl_read_abort $?; return $?; }
         case "$_eg_proto" in
           2) _eg_proto=http ;;
           3) _eg_proto=tcp ;;
           *) _eg_proto=https ;;
         esac
         echo
-        _eg_confirm="$(frpctl_read "Add destination? [Y/n]: " "Y")" || return 1
+        _eg_confirm="$(frpctl_read_step "Add destination? [Y/n]: " "Y")" || { frpctl_read_abort $?; return $?; }
         case "$(printf '%s' "$_eg_confirm" | tr '[:upper:]' '[:lower:]')" in
           n|no) echo "Cancelled."; return 0 ;;
         esac
@@ -4589,8 +4833,10 @@ frpctl_dispatch_canonical() {
         echo "Delete Managed Host Group \"${_del_group}\"?"
         echo "Group membership is removed. Managed Host identity, Remote Services, and public ports"
         echo "are not changed."
-        _del_ans="$(FRP_CTL_TEST_INPUT= frpctl_read "Delete Managed Host Group? [y/N]: " "N")" || {
-          _FRP_CTL_RC=1
+        _del_ans="$(FRP_CTL_TEST_INPUT= frpctl_read_step "Delete Managed Host Group? [y/N]: " "N")" || {
+          _del_rc=$?
+          frpctl_read_abort "$_del_rc" || true
+          [[ "$_del_rc" == 3 ]] || _FRP_CTL_RC=1
           return 0
         }
       else
@@ -4788,7 +5034,7 @@ frpctl_dispatch_canonical() {
           fi
           echo
           echo "Remove expired sources from Access Rule \"${_acl_rule}\"?"
-          _acl_ans="$(frpctl_read "Continue? [y/N]: " "N")" || return 1
+          _acl_ans="$(frpctl_read_step "Continue? [y/N]: " "N")" || { frpctl_read_abort $?; return $?; }
           case "$(printf '%s' "$_acl_ans" | tr '[:upper:]' '[:lower:]')" in
             y|yes) ;;
             *) echo "Cancelled."; return 0 ;;
@@ -4909,7 +5155,7 @@ frpctl_client_uninstall_flow() {
   echo "This does not retire the Managed Host or release Server-side reservations."
   echo
   if [[ "$yes" != "1" ]]; then
-    ans="$(FRP_CTL_TEST_INPUT= frpctl_read "Remove local Data Relay Link Agent? [y/N]: " "N")" || return 1
+    ans="$(FRP_CTL_TEST_INPUT= frpctl_read_step "Remove local Data Relay Link Agent? [y/N]: " "N")" || { frpctl_read_abort $?; return $?; }
     case "$(printf '%s' "$ans" | tr '[:upper:]' '[:lower:]')" in
       y|yes) ;;
       *) echo "Cancelled."; return 0 ;;
@@ -4960,7 +5206,7 @@ frpctl_server_uninstall_flow() {
   echo "This cannot be undone. Back up the server first if you need to restore later."
   echo
   if [[ "$yes" != "1" ]]; then
-    ans="$(FRP_CTL_TEST_INPUT= frpctl_read "Remove the Data Relay Link server role from this host? [y/N]: " "N")" || return 1
+    ans="$(FRP_CTL_TEST_INPUT= frpctl_read_step "Remove the Data Relay Link server role from this host? [y/N]: " "N")" || { frpctl_read_abort $?; return $?; }
     case "$(printf '%s' "$ans" | tr '[:upper:]' '[:lower:]')" in
       y|yes) ;;
       *) echo "Cancelled."; return 0 ;;
@@ -5005,7 +5251,7 @@ frpctl_system_uninstall() {
     echo "2) Uninstall server role"
     echo "3) Back"
     echo
-    choice="$(frpctl_read "Select [3]: " "3")" || return 1
+    choice="$(frpctl_read_menu 3 Back "Select [3]: " "3")" || { frpctl_eof_note; return $?; }
     case "$choice" in
       1) frpctl_client_uninstall_flow ;;
       2) frpctl_server_uninstall_flow ;;
@@ -5034,16 +5280,16 @@ frpctl_guided_service_profile_create() {
   echo "  3) https"
   echo "  4) custom"
   echo
-  preset="$(frpctl_read "Select [1]: " "1")" || return 1
+  preset="$(frpctl_read_choice 4 Preset "Select [1]: " "1")" || { frpctl_read_abort $?; return $?; }
   case "$preset" in
     2) preset=http ;;
     3) preset=https ;;
     4) preset=custom ;;
     *) preset=ssh ;;
   esac
-  target_host="$(frpctl_read "Target host [127.0.0.1]: " "127.0.0.1")" || return 1
+  target_host="$(frpctl_read_step "Target host [127.0.0.1]: " "127.0.0.1")" || { frpctl_read_abort $?; return $?; }
   [[ -n "$target_host" ]] || target_host=127.0.0.1
-  target_port="$(frpctl_read "Target port: " "")" || return 1
+  target_port="$(frpctl_read_step "Target port: " "")" || { frpctl_read_abort $?; return $?; }
   [[ -n "$target_port" ]] || { echo "ERROR: target port is required" >&2; return 1; }
   echo
   echo "Review"
@@ -5053,7 +5299,7 @@ frpctl_guided_service_profile_create() {
   echo "  target-host: $target_host"
   echo "  target-port: $target_port"
   echo
-  confirm="$(frpctl_read "Create profile? [Y/n]: " "Y")" || return 1
+  confirm="$(frpctl_read_step "Create profile? [Y/n]: " "Y")" || { frpctl_read_abort $?; return $?; }
   case "$(printf '%s' "$confirm" | tr '[:upper:]' '[:lower:]')" in
     n|no) echo "Cancelled."; return 0 ;;
   esac
@@ -5073,11 +5319,11 @@ frpctl_guided_fixed_tcp_create() {
   echo
   echo "New Fixed TCP entries are created DISABLED."
   echo
-  profile="$(frpctl_read "Internet Access profile: " "")" || return 1
+  profile="$(frpctl_read_step "Internet Access profile: " "")" || { frpctl_read_abort $?; return $?; }
   [[ -n "$profile" ]] || { echo "ERROR: profile is required" >&2; return 1; }
-  dest="$(frpctl_read "TCP destination ID or host:port: " "")" || return 1
+  dest="$(frpctl_read_step "TCP destination ID or host:port: " "")" || { frpctl_read_abort $?; return $?; }
   [[ -n "$dest" ]] || { echo "ERROR: destination is required" >&2; return 1; }
-  listen_port="$(frpctl_read "Listen port (blank = auto): " "")" || return 1
+  listen_port="$(frpctl_read_step "Listen port (blank = auto): " "")" || { frpctl_read_abort $?; return $?; }
   echo
   echo "Review"
   echo "------"
@@ -5087,7 +5333,7 @@ frpctl_guided_fixed_tcp_create() {
   echo "  listen-port: ${listen_port:-auto}"
   echo "  state:       DISABLED"
   echo
-  confirm="$(frpctl_read "Create Fixed TCP entry? [Y/n]: " "Y")" || return 1
+  confirm="$(frpctl_read_step "Create Fixed TCP entry? [Y/n]: " "Y")" || { frpctl_read_abort $?; return $?; }
   case "$(printf '%s' "$confirm" | tr '[:upper:]' '[:lower:]')" in
     n|no) echo "Cancelled."; return 0 ;;
   esac
@@ -5107,7 +5353,7 @@ frpctl_delete_fixed_tcp() {
   local name="$1" confirm
   echo
   echo "Delete Fixed TCP entry \"$name\"?"
-  confirm="$(frpctl_read "Type DELETE to confirm: " "")" || return 1
+  confirm="$(frpctl_read_step "Type DELETE to confirm: " "")" || { frpctl_read_abort $?; return $?; }
   [[ "$confirm" == "DELETE" ]] || { echo "Cancelled."; return 0; }
   frpctl_invoke frp-egress tcp delete "$name" --yes
 }

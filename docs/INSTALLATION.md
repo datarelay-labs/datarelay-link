@@ -79,6 +79,34 @@ If installation allows a domain to be selected as the product public identity, t
 
 Changing a friendly Remote Service hostname alias must not silently change management identity.
 
+### Zero-Touch HTTPS readiness with a private CA
+
+The Server install can complete even if Zero-Touch reports `NOT_READY`:
+service health and secure Agent bootstrap readiness are separate checks.
+A private Server CA is **not** automatically trusted by Agent operating systems.
+Do not disable TLS verification or make an unverified `curl | bash` pipeline
+to work around this.
+
+If the configured public/Bootstrap FQDN serves a publicly trusted certificate
+with the expected DNS SAN and the exact short-URL proof, the CLI uses the
+compact FQDN Zero-Touch command. Otherwise, where the Server's **configured
+numeric public IP** and the FQDN both appear in its valid private-CA-signed
+Server certificate, the CLI can use a pinned-CA numeric-IP bootstrap without
+changing the saved FQDN, enrollment identity, or TLS credentials. It checks
+the issuer-owned CA fingerprint and certificate signature/IP SAN before
+creating a ticket. The Agent verifies the same CA before fetching any
+ticket-bearing stage and continues to validate TLS against the configured
+allocator hostname.
+
+The installation summary explicitly distinguishes `READY (numeric IP +
+pinned Private CA)` from FQDN stock-trust readiness. An automatic hostname
+selection is not a promise of publicly trusted FQDN TLS. If both routes fail,
+no Zero-Touch ticket is issued; inspect `system diagnostics`, the public
+`/ca.crt` endpoint, DNS, firewall/NAT and the certificate SANs. A configured
+service range (for example `6000-6098`) is preserved across reinstall;
+the private Relay Engine backend port (often `7000`) must not overlap a
+published-service range.
+
 ### Internet Access listener recovery
 
 The Internet Access listener address and port are **installer-owned** deployment
