@@ -610,6 +610,22 @@ class SQLiteFixedTcpRuntimeTests(unittest.TestCase):
             os.environ["FRP_DEPLOY_TEST_ROOT"] = self.saved_root
         self.tmp.cleanup()
 
+    def test_relay_backlog_is_applied_before_socket_listen(self):
+        """The configured bounded backlog must be effective at activation."""
+        from unittest import mock
+
+        observed = []
+        activate = TCP.socketserver.TCPServer.server_activate
+
+        def observe(server):
+            observed.append(server.request_queue_size)
+            return activate(server)
+
+        with mock.patch.object(TCP.socketserver.TCPServer, "server_activate", observe):
+            with TCP.RelayServer(("127.0.0.1", 0), self.state, self.relay_id):
+                pass
+        self.assertEqual(observed, [64])
+
     def test_sqlite_policy_allows_bidirectional_fixed_tcp_application_data(self):
         with socket.create_connection(("127.0.0.1", self.listen_port), timeout=2) as client:
             client.settimeout(2)

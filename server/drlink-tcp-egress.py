@@ -139,12 +139,13 @@ class TcpEgressState:
 class RelayServer(socketserver.ThreadingTCPServer):
     allow_reuse_address = True
     daemon_threads = True
+    # TCPServer.__init__ calls server_activate()/listen() before returning.
+    request_queue_size = 64
 
     def __init__(self, server_address, state: TcpEgressState, relay_id: str):
         self.state = state
         self.relay_id = relay_id
         super().__init__(server_address, _RelayHandler)
-        self.request_queue_size = 64
 
     def process_request(self, request, client_address):
         """Reserve concurrency slots in the accept loop, before any worker.
