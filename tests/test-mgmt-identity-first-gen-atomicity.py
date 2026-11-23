@@ -80,6 +80,55 @@ class MgmtIdentityFirstGenAtomicity(unittest.TestCase):
             sorted(p.name for p in self.dir.iterdir()), [], "temp files left behind"
         )
 
+    def test_repeated_signature_verification_parses_public_key_once_but_verifies_every_message(self):
+        from unittest import mock
+
+        MGMT.generate_keypair(self.key, self.pub)
+        pem = self.pub.read_text(encoding="utf-8")
+        sig = MGMT.sign_message(self.key, "first")
+        second = MGMT.sign_message(self.key, "second")
+        other_key = self.dir / "other.key"
+        other_pub = self.dir / "other.pub"
+        MGMT.generate_keypair(other_key, other_pub)
+        other_pem = other_pub.read_text(encoding="utf-8")
+        with mock.patch.object(MGMT, "canonicalize_pubkey_pem",
+                               wraps=MGMT.canonicalize_pubkey_pem) as parse, \
+             mock.patch.object(MGMT.subprocess, "run",
+                               wraps=MGMT.subprocess.run) as openssl:
+            self.assertTrue(MGMT.verify_signature(pem, "first", sig))
+            self.assertTrue(MGMT.verify_signature(pem, "second", second))
+            self.assertFalse(MGMT.verify_signature(pem, "second", sig))
+            self.assertFalse(MGMT.verify_signature(other_pem, "first", sig))
+            self.assertTrue(MGMT.verify_signature(pem, "first", sig))
+            self.assertEqual(parse.call_count, 2,
+                             "only exact validated public key material may be reused")
+            verifies = [c for c in openssl.call_args_list
+                        if "-verify" in c.args[0]]
+            self.assertEqual(len(verifies), 5,
+                             "ECDSA signature must be verified on every request")
+
+    def test_verification_cache_rejects_invalid_and_non_p256_keys(self):
+        from unittest import mock
+
+        MGMT.generate_keypair(self.key, self.pub)
+        sig = MGMT.sign_message(self.key, "message")
+        p384 = self.dir / "p384.key"
+        MGMT._run_openssl(["ecparam", "-name", "secp384r1", "-genkey",
+                          "-noout", "-out", str(p384)])
+        wrong_curve = MGMT._run_openssl(["ec", "-in", str(p384), "-pubout"]).decode()
+        with mock.patch.object(MGMT, "canonicalize_pubkey_pem",
+                               wraps=MGMT.canonicalize_pubkey_pem) as parse:
+            for _ in range(2):
+                with self.assertRaises(ValueError):
+                    MGMT.verify_signature(wrong_curve, "message", sig)
+                with self.assertRaises(ValueError):
+                    MGMT.verify_signature("not a key", "message", sig)
+                with self.assertRaises(ValueError):
+                    MGMT.verify_signature("x" * (MGMT.MAX_PUBKEY_PEM_LEN + 1),
+                                          "message", sig)
+            self.assertEqual(parse.call_count, 4, "invalid keys must never be cached")
+        self.assertLessEqual(MGMT._validated_verification_public_key.cache_info().maxsize, 256)
+
     def test_failure_during_keygen_leaves_no_placeholder(self):
         MGMT._run_openssl = _FailAtCall(self._orig_openssl, 1)
         with self.assertRaises(RuntimeError):

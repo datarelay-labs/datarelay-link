@@ -56,6 +56,7 @@ import sys
 import tempfile
 import time
 from pathlib import Path
+from functools import lru_cache
 
 MGMT_ALG = 'ecdsa-p256-sha256'
 MGMT_SIGN_SCHEMA = 1
@@ -435,6 +436,17 @@ def sign_message(key_path, message):
             pass
 
 
+@lru_cache(maxsize=256)
+def _validated_verification_public_key(pem):
+    """Cache only bounded, immutable, successfully validated public key bytes.
+
+    Never cache signature/authentication results, identity status, nonce state,
+    or private key material. A replaced key uses a different cache key; invalid
+    keys are not cached. OpenSSL still verifies every message below.
+    """
+    return canonicalize_pubkey_pem(pem)
+
+
 def verify_signature(pub_pem, message, signature_b64):
     if isinstance(message, str):
         message = message.encode('utf-8')
@@ -447,7 +459,10 @@ def verify_signature(pub_pem, message, signature_b64):
         raise ValueError('malformed signature') from exc
     if not sig:
         raise ValueError('malformed signature')
-    canon = canonicalize_pubkey_pem(pub_pem)
+    text = str(pub_pem or '').replace('\r\n', '\n').strip() + '\n'
+    if len(text) > MAX_PUBKEY_PEM_LEN:
+        raise ValueError('public key is too large')
+    canon = _validated_verification_public_key(text)
     fd_pub, tmp_pub = tempfile.mkstemp(prefix='frp-pub.', suffix='.pem')
     os.close(fd_pub)
     fd_sig, tmp_sig = tempfile.mkstemp(prefix='frp-sig.', suffix='.bin')
