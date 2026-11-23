@@ -583,7 +583,8 @@ class InProcessDeleteRaceTests(unittest.TestCase):
             config = base / "config.json"
             config.write_text(json.dumps({"port_start": 6000, "port_end": 6098,
                 "registry_file": str(registry), "token_file": str(token),
-                "enrollments_dir": str(base / "enrollments")}))
+                "enrollments_dir": str(base / "enrollments"),
+                "control_plane_root": str(base)}))
             allocator = module.Allocator(str(config))
             server = ControlPlane(root)
             self.addCleanup(server.close)

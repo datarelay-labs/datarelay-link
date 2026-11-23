@@ -112,6 +112,7 @@ def write_env(tmp, listen_port, public_host='127.0.0.1', extra_hosts=None, publi
         'registry_file': str(Path(tmp) / 'registry.json'),
         'enrollments_dir': str(Path(tmp) / 'enrollments'),
         'token_file': str(Path(tmp) / 'server_token'),
+        'control_plane_root': str(tmp),
     }
     Path(cfg['enrollments_dir']).mkdir(parents=True, exist_ok=True)
     Path(cfg['token_file']).write_text('test-frp-token-do-not-use\n')
@@ -374,6 +375,7 @@ def test_enroll_uses_public_control_port():
             'registry_file': str(tmp / 'registry.json'),
             'enrollments_dir': str(tmp / 'enrollments'),
             'token_file': str(tmp / 'token'),
+            'control_plane_root': str(tmp),
         }
         Path(cfg['enrollments_dir']).mkdir()
         Path(cfg['token_file']).write_text('test-frp-token-do-not-use\n')
@@ -432,6 +434,7 @@ def test_enroll_single443_transport():
             'registry_file': str(tmp / 'registry.json'),
             'enrollments_dir': str(tmp / 'enrollments'),
             'token_file': str(tmp / 'token'),
+            'control_plane_root': str(tmp),
         }
         Path(cfg['enrollments_dir']).mkdir()
         Path(cfg['token_file']).write_text('test-frp-token-do-not-use\n')

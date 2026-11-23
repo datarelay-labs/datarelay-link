@@ -102,6 +102,7 @@ pki = root / 'pki'
     'registry_file': str(root / 'registry.json'),
     'enrollments_dir': str(root / 'enrollments'),
     'token_file': str(root / 'server_token'),
+    'control_plane_root': str(root),
 }, indent=2) + '\n')
 PY
 start_allocator "$ALLOC_ROOT/config.json"

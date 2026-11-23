@@ -211,6 +211,7 @@ class EnrollEnv:
             'registry_file': str(self.registry),
             'enrollments_dir': str(self.enrollments),
             'token_file': str(self.token),
+            'control_plane_root': str(self.root),
         }, indent=2) + '\n')
         MOD.atomic_write_json(self.registry, MOD.empty_registry())
         self.allocator = MOD.Allocator(str(self.cfg))
@@ -381,6 +382,7 @@ def test_redeem_nested_lock_bounded():
         'enrollments_dir': str(enrollments),
         'bootstrap_dir': str(bootstrap),
         'token_file': str(token),
+        'control_plane_root': str(root),
         'enrollment_retention_days': 1,
     }
     cfg_path.write_text(json.dumps(cfg) + '\n')

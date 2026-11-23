@@ -122,6 +122,7 @@ tree = Path(sys.argv[1])
     'bootstrap_dir': str(tree / 'var/lib/drlink/bootstrap'),
     'registry_file': str(tree / 'var/lib/drlink/registry.json'),
     'token_file': str(tree / 'etc/frp/server_token'),
+    'control_plane_root': str(tree),
 }, indent=2) + '\n')
 PY
 
@@ -637,6 +638,7 @@ pki = root / 'pki'
     'enrollments_dir': str(root / 'enrollments'),
     'bootstrap_dir': str(root / 'bootstrap'),
     'token_file': str(root / 'server_token'),
+    'control_plane_root': str(root),
     'client_installer_url': 'https://example.test/bootstrap-client.sh',
     'windows_client_installer_url': 'https://example.test/bootstrap-client.ps1',
     'allocator_public_url': 'https://127.0.0.1:%s/enroll' % port,
@@ -738,6 +740,7 @@ port = int(sys.argv[2])
     'bootstrap_dir': '/var/lib/drlink/bootstrap',
     'registry_file': '/var/lib/drlink/registry.json',
     'token_file': '/etc/frp/server_token',
+    'control_plane_root': str(tree),
 }, indent=2) + '\n')
 PY
 ln -sfn "$ALLOC_ROOT/enrollments" "$LIVE_TREE/var/lib/drlink/enrollments"

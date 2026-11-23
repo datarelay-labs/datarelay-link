@@ -93,6 +93,7 @@ cfg = {
     "bootstrap_dir": str(tree / "var/lib/drlink/bootstrap"),
     "registry_file": str(tree / "var/lib/drlink/registry.json"),
     "token_file": str(tree / "etc/frp/server_token"),
+    "control_plane_root": str(tree),
 }
 Path(sys.argv[1]).write_text(json.dumps(cfg, indent=2) + "\n")
 (tree / "var/lib/drlink/registry.json").write_text(

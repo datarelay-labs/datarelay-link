@@ -89,12 +89,37 @@ pki = root / 'pki'
     'enrollments_dir': str(root / 'enrollments'),
     'bootstrap_dir': str(root / 'bootstrap'),
     'token_file': str(root / 'server_token'),
+    'control_plane_root': str(root),
     'client_installer_url': 'https://raw.githubusercontent.com/datarelay-labs/datarelay-link/main/dist/bootstrap-client.sh',
     'allocator_public_url': 'https://127.0.0.1:%s/enroll' % port,
 }, indent=2) + '\n')
 PY
 start_allocator "$ALLOC_ROOT/config.json"
-SSH_USER="$(id -un)"
+
+# Enrollment recovery should exercise successful pre-redeem SSH port readiness
+# without requiring root, a local sshd, or an actual login account. The
+# product preflight checks TCP connectability only; this loopback fixture
+# provides that one precondition on a private ephemeral port.
+SSH_PROBE_FILE="$WORKDIR/ssh-ready-port"
+python3 -u - "$SSH_PROBE_FILE" <<'PY_SSH_PROBE' >"$WORKDIR/ssh-probe.log" 2>&1 &
+import socket, sys
+from pathlib import Path
+with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as listener:
+    listener.bind(('127.0.0.1', 0))
+    listener.listen(32)
+    Path(sys.argv[1]).write_text(str(listener.getsockname()[1]))
+    while True:
+        client, _ = listener.accept()
+        client.close()
+PY_SSH_PROBE
+LISTEN_PID=$!
+for attempt in $(seq 1 40); do
+  [[ -s "$SSH_PROBE_FILE" ]] && break
+  kill -0 "$LISTEN_PID" 2>/dev/null || fail "SSH TCP preflight fixture exited"
+  sleep 0.1
+done
+[[ -s "$SSH_PROBE_FILE" ]] || fail "SSH TCP preflight fixture did not start"
+SSH_PROBE_PORT="$(cat "$SSH_PROBE_FILE")"
 
 # Server-side tree used only by frp-create-client to mint tickets.
 LIVE_TREE="$WORKDIR/live-server"
@@ -119,6 +144,7 @@ port = int(sys.argv[2])
     'bootstrap_dir': '/var/lib/drlink/bootstrap',
     'registry_file': '/var/lib/drlink/registry.json',
     'token_file': '/etc/frp/server_token',
+    'control_plane_root': str(tree),
 }, indent=2) + '\n')
 PY
 ln -sfn "$ALLOC_ROOT/enrollments" "$LIVE_TREE/var/lib/drlink/enrollments"
@@ -129,7 +155,7 @@ ln -sfn "$ALLOC_ROOT/server_token" "$LIVE_TREE/etc/frp/server_token"
 issue_ticket() {
   local note="$1"
   FRP_DEPLOY_TEST_ROOT="$LIVE_TREE" python3 "$ROOT/tools/frp-create-client" \
-    --one-line --ssh --ssh-user "$SSH_USER" --note "$note"
+    --one-line --ssh --ssh-port "$SSH_PROBE_PORT" --note "$note"
 }
 
 run_client() {
@@ -153,13 +179,10 @@ run_client() {
     if [[ -n "$ticket" ]]; then
       export FRP_BOOTSTRAP_TICKET="$ticket"
       export FRP_ZERO_TOUCH=1
-      # This suite validates enrollment transaction recovery, not local SSH
-      # reachability. SSH username is optional metadata, so keep it blank to
-      # avoid making the recovery test depend on host sshd/listen-port state.
-      export FRP_SSH_USER=""
-      export FRP_SSH_PORT=22
+      # Enrollment recovery does not depend on a local SSH login account.
+      export FRP_SSH_PORT="$SSH_PROBE_PORT"
     else
-      unset FRP_BOOTSTRAP_TICKET FRP_ZERO_TOUCH FRP_SSH_USER FRP_SSH_PORT 2>/dev/null || true
+      unset FRP_BOOTSTRAP_TICKET FRP_ZERO_TOUCH FRP_SSH_PORT 2>/dev/null || true
     fi
     for kv in "$@"; do
       export "$kv"
