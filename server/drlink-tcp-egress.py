@@ -222,42 +222,45 @@ def _new_ids() -> tuple[str, str]:
 
 
 
-def _authorize_fixed_tcp_isolated(state: TcpEgressState, relay_id: str, source_ip: str) -> dict:
-    """Per-request SQLite authorization; never expose a shared cursor to TCP workers.
+def _authorize_fixed_tcp_isolated(state: TcpEgressState, relay_id: str, source_ip: str) -> tuple[dict, dict]:
+    """Return the decision and audit config from one isolated authorization.
 
-    HTTP/CONNECT already calls PolicyCache.authorize with a request-private
-    snapshot. Fixed TCP previously took PolicyCache.snapshot() and used the
-    shared read-only plane outside the cache lock. Simultaneous relay threads
-    corrupted SQLite cursor state and could crash the Python interpreter.
+    Never expose the shared SQLite connection to TCP workers. Do not overwrite
+    the pinned decision generation with an earlier cache snapshot.
     """
     deny = {"decision": EG.DECISION_DENY, "reason": "CONTROL_PLANE_UNAVAILABLE"}
-    if RP is None:
-        return deny
+    cfg = {}
     plane = None
     try:
         with state.cache.lock:
             state.cache.reload(force=False)
+            cfg = dict(state.cache.cfg)
             snapshot = state.cache.engine.snapshot()
             control_cache = state.cache._cp
             unhealthy = (
-                bool(state.cache.load_error)
+                RP is None
+                or bool(state.cache.load_error)
                 or control_cache is None
                 or snapshot is None
                 or not snapshot.healthy
             )
+            if snapshot is not None:
+                deny["policy_generation"] = snapshot.generation
         if unhealthy:
-            return deny
-        plane, error, _cfg = control_cache.open_isolated()
+            return deny, cfg
+        plane, error, isolated_cfg = control_cache.open_isolated()
+        if isolated_cfg:
+            cfg = isolated_cfg
         if plane is None or error is not None:
-            return deny
+            return deny, cfg
         result = RP.authorize_fixed_tcp(
             plane, relay_id=relay_id, source_ip=source_ip,
             validated_revision=plane._validated_revision,
         )
-        return result
+        return result, cfg
     except Exception:
         # DB unavailable/corrupt/racing invalidation must deny without fallback.
-        return deny
+        return deny, cfg
     finally:
         if plane is not None:
             plane.close()
@@ -317,10 +320,7 @@ def handle_tcp_client(
                 return
             source_acquired = True
 
-        _shared_plane, _load_error, cfg, snap = state.cache.snapshot()
-        decision = _authorize_fixed_tcp_isolated(state, relay_id, source_ip)
-        if snap is not None:
-            decision["policy_generation"] = snap.generation
+        decision, cfg = _authorize_fixed_tcp_isolated(state, relay_id, source_ip)
         if decision.get("decision") != EG.DECISION_ALLOW:
             EG.emit_conn_log(
                 {
@@ -501,7 +501,7 @@ def ipaddress_compress(ip: str) -> str:
 def _session_still_authorized(state: TcpEgressState, session: dict) -> bool:
     # Revalidation shares the same isolated authorization path as initial
     # admission; concurrent session checks must never reuse one SQLite cursor.
-    decision = _authorize_fixed_tcp_isolated(
+    decision, _cfg = _authorize_fixed_tcp_isolated(
         state, session.get("relay_id") or "", session["source_ip"],
     )
     if decision.get("decision") != RP.DECISION_ALLOW:

@@ -633,6 +633,41 @@ class SQLiteFixedTcpRuntimeTests(unittest.TestCase):
             self.assertEqual(client.recv(128), b"fixed-tcp-application-payload")
         self.assertEqual(self.connect_attempts, [("8.8.8.8", 443, "fixed.test")])
 
+    def test_admission_audit_uses_pinned_policy_generation_without_extra_snapshot(self):
+        """A healthy commit between cache reload and pinning must not mislabel audit."""
+        from unittest import mock
+        from drlink_control_plane import ControlPlane
+        import drlink_v24 as v24
+
+        before = self.cache.engine.snapshot().generation
+        actual_open = self.cache._cp.open_isolated
+        revisions = []
+
+        def commit_before_open():
+            writer = ControlPlane(str(self.root))
+            try:
+                v24.set_network_object(writer, "unrelated-generation", type="ip",
+                                       value="192.0.2.18", oneshot=True)
+                writer.compile_runtime()
+                revisions.append(writer.current_revision())
+            finally:
+                writer.close()
+            return actual_open()
+
+        with mock.patch.object(self.cache._cp, "open_isolated", side_effect=commit_before_open), \
+                mock.patch.object(self.cache, "snapshot", wraps=self.cache.snapshot) as snapshot:
+            with socket.create_connection(("127.0.0.1", self.listen_port), timeout=5) as client:
+                client.settimeout(5)
+                client.sendall(b"pinned-generation")
+                self.assertEqual(client.recv(128), b"pinned-generation")
+            self.assertEqual(len(revisions), 1)
+            self.assertGreater(revisions[0], before)
+            records = [json.loads(line) for line in self.log_path.read_text().splitlines()]
+            connected = [r for r in records if r.get("outcome") == EG.AUDIT_CONNECTED]
+            self.assertEqual(len(connected), 1, records)
+            self.assertEqual(connected[0].get("policy_generation"), revisions[0])
+            snapshot.assert_not_called()
+
     def test_concurrent_fixed_tcp_policy_has_request_private_sqlite_cursors(self):
         """Regression: concurrent handlers must not share one SQLite cursor.
 
