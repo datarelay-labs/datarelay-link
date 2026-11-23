@@ -45,6 +45,7 @@ class NonceCapacityReplayTests(unittest.TestCase):
                     "registry_file": str(self.registry),
                     "enrollments_dir": str(self.enrollments),
                     "token_file": str(self.token),
+                    "control_plane_root": str(self.root),
                 }
             )
             + "\n"

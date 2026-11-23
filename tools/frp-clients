@@ -176,12 +176,8 @@ for idx, (mid, client) in enumerate(clients, start=1):
     ssh_txt = '-'
     _sid, ssh = CREG.first_ssh_service(client)
     if ssh:
-        user = CREG.ssh_user_display(ssh)
         port = ssh.get('remote_port') or '-'
-        if ssh.get('ssh_user'):
-            ssh_txt = '%s@%s:%s' % (user, access_host or 'host', port)
-        else:
-            ssh_txt = 'legacy / unspecified'
+        ssh_txt = 'ssh -p %s <username>@%s' % (port, access_host or 'host')
         ssh_txt = CREG.sanitize_display(ssh_txt, 48)
     print(
         f'{idx:<3} {short_id:<10} {label:<12} {hostname:<14} '

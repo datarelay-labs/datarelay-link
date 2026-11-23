@@ -11,7 +11,7 @@ try {
         -Services $services -Transport 'tcp' -InstallStatus 'installed' | Out-Null
 
     Add-FrpDraftService -Preset 'custom' -Id 'web' -Name 'Web' -TargetHost '10.0.0.5' -TargetPort 8080 | Out-Null
-    Add-FrpDraftService -Preset 'ssh' -SshUser 'alice' | Out-Null
+    Add-FrpDraftService -Preset 'ssh' | Out-Null
     Set-FrpDraftServiceEnabled -Id 'web' -Enable $false | Out-Null
 
     $draftMap = Get-FrpDraftServiceMap
@@ -31,7 +31,7 @@ try {
 
     $sshWire = @($enrollList | Where-Object { $_.id -eq 'ssh' })[0]
     Assert-FrpEqual 'ssh' $sshWire.preset 'ssh preset kept'
-    Assert-FrpEqual 'alice' $sshWire.ssh_user 'ssh_user forwarded on wire'
+    Assert-FrpTrue (-not ($sshWire.PSObject.Properties.Name -contains 'ssh_user')) 'SSH username never forwarded on wire'
 
     # None of the wire entries carry remote_port or enabled (server-facing shape only).
     foreach ($entry in $enrollList) {

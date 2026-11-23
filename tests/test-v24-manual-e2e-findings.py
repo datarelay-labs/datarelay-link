@@ -425,12 +425,12 @@ class SshUsernameOptionalTests(unittest.TestCase):
         self.assertNotIn("ssh_user", got)
         text = (ROOT / "server" / "frp-port-allocator.py").read_text(encoding="utf-8")
         self.assertNotIn("if spec['preset'] == 'ssh':", text)
-        self.assertIn("spec.get('ssh_user')", text)
+        self.assertIn("if 'ssh_user' in raw:", text)
 
     def test_access_info_uses_username_placeholder(self):
         src = (ROOT / "lib" / "frp-client-common.sh").read_text(encoding="utf-8")
-        self.assertIn("or '<username>'", src)
-        self.assertIn("connection-example metadata", src)
+        self.assertIn("user = '<username>'", src)
+        self.assertNotIn("SSH user (required)", src)
         self.assertNotIn("SSH user (required)", src)
 
 

@@ -398,7 +398,7 @@ Path(sys.argv[1]).write_text(json.dumps({
     "ssh": {
       "id": "ssh", "name": "SSH", "preset": "ssh", "protocol": "tcp",
       "local_ip": "127.0.0.1", "local_port": 22, "remote_port": 6001,
-      "ssh_user": "leeruda", "enabled": True,
+      "enabled": True,
     }
   }
 }, indent=2) + "\n")
@@ -408,9 +408,9 @@ export FRP_CLIENT_SOURCED=1
 . "$ROOT/install-client.sh"
 print_complete "203.0.113.10" "$WORKDIR/install-state.json" "access.example.com" \
   >"$WORKDIR/install-complete.out"
-grep -q 'ssh -p 6001 leeruda@access.example.com' "$WORKDIR/install-complete.out" \
+grep -q 'ssh -p 6001 <username>@access.example.com' "$WORKDIR/install-complete.out" \
   || fail "install complete missing preferred host"
-grep -q 'ssh -p 6001 leeruda@203.0.113.10' "$WORKDIR/install-complete.out" \
+grep -q 'ssh -p 6001 <username>@203.0.113.10' "$WORKDIR/install-complete.out" \
   || fail "install complete missing fallback host"
 pass "FRESH_INSTALL_OUTPUT_MATCHES_INFO"
 

@@ -25,6 +25,29 @@ The `/i/AAAAAAAAAAAAAAAAAAAAAA` handle resolves the internal `bt1.<id>.<secret>`
 
 See [Zero-Touch regression control](ZERO_TOUCH_REGRESSION_CONTROL.md) for the root-cause table, explicit advanced/private-CA behavior, test matrix, existing-install migration and exact-HEAD live acceptance rules. Legacy long-form command syntax is unsupported and is not part of the current CLI.
 
+## Install-time TLS readiness (no ticket issued)
+
+A successful Server installation is **not** a declaration that public-DNS
+Zero-Touch is ready. On the Server, the installation completion report runs a
+read-only Linux Zero-Touch prerequisite check and prints either:
+
+- `Zero-Touch HTTPS readiness: READY (read-only, no ticket issued)`
+- `Zero-Touch HTTPS readiness: NOT_READY (no ticket issued)` with the concrete
+  certificate/URL problem and recovery action.
+
+Public-DNS Zero-Touch requires independently OS-trusted HTTPS for
+`/i/invalid-qualification-probe` (exact `404 bootstrap unavailable`) **and**
+for the configured Agent installer URL (`HEAD` must return HTTP 200 without
+TLS errors, redirects, or an intervening HTTP proxy). A valid DNS A record,
+matching SAN, or private Data Relay Link CA **alone is insufficient**.
+The Server installer does not silently disable TLS verification, issue ACME
+certificates, or consider a Private-CA DNS endpoint publicly trusted.
+If the public edge is not ready, Server/FRP installation can complete, but
+**Zero-Touch issuance is blocked until that separate trust prerequisite is met**.
+An eligible numeric-IP allocator with a pinned Private CA and matching IP SAN
+remains the independent supported route. Run `sudo drlink set enrollment zero-touch`
+to repeat the pre-ticket check after correcting public TLS.
+
 ## Trust boundary
 
 ```text

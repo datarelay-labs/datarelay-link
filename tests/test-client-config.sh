@@ -23,8 +23,7 @@ cat >"$SERVICES_FILE" <<'EOF'
     "local_ip": "127.0.0.1",
     "local_port": 22,
     "remote_port": 6002,
-    "preset": "ssh",
-    "ssh_user": "aella"
+    "preset": "ssh"
   },
   {
     "id": "grafana",
@@ -127,7 +126,7 @@ from pathlib import Path
 import sys
 text = Path(sys.argv[1]).read_text()
 assert 'Data Relay Link Server: 203.0.113.10' in text
-assert 'ssh -p 6002 aella@203.0.113.10' in text
+assert 'ssh -p 6002 <username>@203.0.113.10' in text
 assert 'http://' not in text.split('grafana',1)[0] or True
 assert '203.0.113.10:6003' in text
 assert 'https://203.0.113.10:6004' in text
@@ -168,7 +167,7 @@ FRP_SERVICES_JSON='[]' services_load_from_env
 pass "empty services accepted for management-only enrollment"
 
 services_init
-if FRP_SERVICES_JSON='[{"id":"ssh","local_ip":"127.0.0.1","local_port":22,"preset":"ssh","ssh_user":"aella"},{"id":"ssh","local_ip":"127.0.0.1","local_port":22,"preset":"ssh","ssh_user":"aella"}]' \
+if FRP_SERVICES_JSON='[{"id":"ssh","local_ip":"127.0.0.1","local_port":22,"preset":"ssh"},{"id":"ssh","local_ip":"127.0.0.1","local_port":22,"preset":"ssh"}]' \
   services_load_from_env >"$WORKDIR/dup.out" 2>"$WORKDIR/dup.err"; then
   fail "duplicate id should be rejected"
 fi

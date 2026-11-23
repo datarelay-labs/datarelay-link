@@ -2066,26 +2066,14 @@ def _canonical_result(tokens, role, names=None):
     if not tokens:
         return None, None
 
-    # Hidden resource-first compatibility → action-first.
-    # Keep the caller's original tokens for to_internal so aliases that share a
-    # public path (access create vs access edit-info → set acl) stay distinct.
+    # Public input is canonical; retired resource-first aliases are not expanded.
     original = [str(t) for t in tokens]
-    expanded = None
-    if hasattr(CATALOG, "expand_compat_alias"):
-        expanded = CATALOG.expand_compat_alias(tokens)
-    work = list(expanded) if expanded is not None else list(tokens)
-    # Option policy applies to the canonical/expanded form so hidden machine
-    # flags declared on the public target (e.g. set enrollment) are accepted
-    # when invoked via create enrollment / enroll aliases.
+    work = list(original)
     opt_err = public_option_error(work)
     if opt_err is not None:
         return None, opt_err
 
-    # Alias-aware lookup is required: resolve_tokens may already have lifted a
-    # hidden form such as `update engine` to `system update engine`, but this
-    # helper is called with the pre-resolve tokens. Without aliases, find()
-    # misses the command, to_internal never runs, and match() then feeds the
-    # lifted `system …` tokens to _match_system as a dead-end.
+    # Only the final public catalog is dispatchable.
     cmd = CATALOG.find(work, include_aliases=True)
     if cmd is None:
         root = canonical_root(work[0])

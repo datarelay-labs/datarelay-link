@@ -268,47 +268,52 @@ def resolve_configured_installer_url(cfg, *, windows=False):
     return server_local_installer_url(cfg, windows=windows)
 
 
-def preflight_installer_url(url, *, label='Agent installer'):
-    """Bounded read-only preflight. Confirmed 404 blocks; uncertain does not."""
+def preflight_installer_url(url, *, label='Agent installer', strict_https=False):
+    """Bounded read-only HEAD before ticket issuance.
+
+    FQDN Zero-Touch MUST prove the installer is reachable through OS-trusted
+    HTTPS. A 404 always fails, including in private-IP mode; private-IP CA
+    pinning is qualified independently and never falls back to untrusted code.
+    """
     import ssl
     import urllib.error
     import urllib.request
 
     url = str(url or '').strip()
     if not url:
-        return
+        fail('%s is not configured; no enrollment ticket was issued' % label)
+    parsed = urlparse(url)
+    if parsed.scheme.lower() != 'https' or not parsed.hostname or parsed.username or parsed.password:
+        fail('%s must be an HTTPS URL without credentials; no enrollment ticket was issued' % label)
     req = urllib.request.Request(url, method='HEAD')
     req.add_header('User-Agent', 'DataRelayLink-InstallerPreflight/2.4')
     ctx = ssl.create_default_context()
+
+    class NoRedirect(urllib.request.HTTPRedirectHandler):
+        def redirect_request(self, req, fp, code, msg, headers, newurl):
+            return None
+
+    opener = urllib.request.build_opener(
+        urllib.request.ProxyHandler({}),
+        urllib.request.HTTPSHandler(context=ctx),
+        NoRedirect(),
+    )
     try:
-        with urllib.request.urlopen(req, timeout=5, context=ctx) as resp:
-            code = getattr(resp, 'status', None) or resp.getcode()
-            if int(code) == 404:
-                raise SystemExit(
-                    '%s is unavailable:\n\n'
-                    '  %s\n\n'
-                    'HTTP status: 404\n\n'
-                    'Fix:\n'
-                    '  set server installer-url <URL>\n'
-                    '  set server windows-installer-url <URL>\n\n'
-                    'No enrollment ticket was created.' % (label, url)
-                )
-            return
+        with opener.open(req, timeout=5) as resp:
+            code = int(getattr(resp, 'status', None) or resp.getcode())
+            if strict_https and code != 200:
+                fail('%s returned HTTPS %s, expected 200; no enrollment ticket was issued' % (label, code))
     except urllib.error.HTTPError as exc:
-        if int(getattr(exc, 'code', 0) or 0) == 404:
-                raise SystemExit(
-                    '%s is unavailable:\n\n'
-                    '  %s\n\n'
-                    'HTTP status: 404\n\n'
-                    'Fix:\n'
-                    '  set server installer-url <URL>\n'
-                    '  set server windows-installer-url <URL>\n\n'
-                    'No enrollment ticket was created.' % (label, url)
-                ) from None
-        # Non-404 HTTP: inconclusive for destroyer semantics.
-        return
-    except Exception:
-        # Network/TLS/timeout: do not block ticket issuance.
+        if strict_https or exc.code == 404:
+            fail('%s URL returned HTTPS %s: %s; no enrollment ticket was issued' %
+                 (label, exc.code, url))
+    except (OSError, ValueError) as exc:
+        if strict_https:
+            fail('%s HTTPS TLS/reachability check failed: %s; no enrollment ticket was issued. '
+                 'Verify the public certificate chain and DNS/SAN before creating the Agent.'
+                 % (label, type(exc).__name__))
+        # Private-IP CA stage-1 separately pins the Server CA and IP SAN. An
+        # inaccessible HEAD URL cannot be proven using stock OS trust here.
         return
 
 
@@ -569,7 +574,8 @@ def validate_zero_touch_prerequisites(cfg, platform, installer, ca_fp):
                  'matching IP SAN. DNS alone does not establish trust. '
                  'No enrollment ticket was issued.')
     label = 'Windows Agent installer URL' if platform == 'windows' else 'Agent installer URL'
-    preflight_installer_url(installer, label=label)
+    preflight_installer_url(installer, label=label,
+                            strict_https=bool(compact_host) and not bool(_test_root()))
     if platform == 'windows' and private_ip_plan:
         module = load_allocator()
         renderer = getattr(module, 'windows_renderer_inputs_from_cfg', None)

@@ -59,6 +59,7 @@ class Env:
             'registry_file': str(self.registry),
             'enrollments_dir': str(self.enrollments),
             'token_file': str(self.token),
+            'control_plane_root': str(self.root),
         }, indent=2) + '\n')
         MOD.atomic_write_json(self.registry, MOD.empty_registry())
         self.allocator = MOD.Allocator(str(self.cfg))
@@ -108,7 +109,7 @@ class Env:
                 'local_ip': '127.0.0.1',
                 'local_port': 22,
                 'preset': 'ssh',
-                'ssh_user': 'aella',
+
             }],
         }
         if include_pub:
@@ -162,6 +163,17 @@ def main():
             fail('private key mode', oct(mode))
         pass_('new key mode 0600')
 
+        # Old SSH account metadata must never reach the v2.4 allocator.
+        rejected = env.body(services=[{
+            'id': 'ssh', 'name': 'SSH', 'protocol': 'tcp',
+            'local_ip': '127.0.0.1', 'local_port': 22, 'preset': 'ssh',
+            'ssh_user': 'deprecated-user',
+        }])
+        denied_code, denied = env.enroll_hmac(rejected)
+        if denied_code == 200 or 'ssh_user' not in denied.get('error', ''):
+            fail('old SSH username metadata must be rejected', denied)
+        pass_('SSH username metadata rejected without enrollment')
+
         code, result = env.enroll_hmac()
         if code != 200:
             fail('enroll with pubkey', result)
@@ -188,7 +200,7 @@ def main():
 
         body = env.body(include_pub=False, services=[{
             'id': 'ssh', 'name': 'SSH', 'protocol': 'tcp',
-            'local_ip': '127.0.0.1', 'local_port': 22, 'preset': 'ssh', 'ssh_user': 'aella',
+            'local_ip': '127.0.0.1', 'local_port': 22, 'preset': 'ssh',
         }, {
             'id': 'grafana', 'name': 'Grafana', 'protocol': 'tcp',
             'local_ip': '127.0.0.1', 'local_port': 3000, 'preset': 'custom',
@@ -279,7 +291,7 @@ def main():
 
         edit_body = env.body(include_pub=False, services=[{
             'id': 'ssh', 'name': 'SSH', 'protocol': 'tcp',
-            'local_ip': '127.0.0.1', 'local_port': 2222, 'preset': 'ssh', 'ssh_user': 'aella',
+            'local_ip': '127.0.0.1', 'local_port': 2222, 'preset': 'ssh',
         }, {
             'id': 'grafana', 'name': 'Grafana', 'protocol': 'tcp',
             'local_ip': '127.0.0.1', 'local_port': 3000, 'preset': 'custom',
@@ -314,7 +326,7 @@ def main():
         # authority changes and leave the signed request replayable once.
         edit_body = env.body(include_pub=False, services=[{
             'id': 'ssh', 'name': 'SSH', 'protocol': 'tcp',
-            'local_ip': '127.0.0.1', 'local_port': 2222, 'preset': 'ssh', 'ssh_user': 'aella',
+            'local_ip': '127.0.0.1', 'local_port': 2222, 'preset': 'ssh',
         }, {
             'id': 'grafana', 'name': 'Grafana', 'protocol': 'tcp',
             'local_ip': '127.0.0.1', 'local_port': 3000, 'preset': 'custom',
@@ -378,7 +390,7 @@ def main():
             fail('re-enroll status')
         (code, result), _, _ = env.enroll_signed(env.body(include_pub=False, services=[{
             'id': 'ssh', 'name': 'SSH', 'protocol': 'tcp',
-            'local_ip': '127.0.0.1', 'local_port': 22, 'preset': 'ssh', 'ssh_user': 'aella',
+            'local_ip': '127.0.0.1', 'local_port': 22, 'preset': 'ssh',
         }]))
         if code != 200:
             fail('signed after re-enroll', result)

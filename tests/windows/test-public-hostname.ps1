@@ -11,7 +11,7 @@ try {
 
     $ssh = @{
         id = 'ssh'; name = 'SSH'; preset = 'ssh'; local_ip = '127.0.0.1'
-        local_port = 22; remote_port = 6003; enabled = $true; ssh_user = 'leeruda'
+        local_port = 22; remote_port = 6003; enabled = $true
     }
     Save-FrpClientState -AllocatorUrl 'https://example.test/enroll' -FrpServer '203.0.113.10' `
         -FrpServerPort 443 -Hostname 'win' -MachineId $mid -HostId 'h' `
@@ -38,8 +38,8 @@ try {
     Assert-FrpEqual 0 $LASTEXITCODE 'info exits 0'
     Assert-FrpTrue ($infoOut -match 'Public : access.example.com:6003') 'info preferred public'
     Assert-FrpTrue ($infoOut -match 'Fallback public : 203.0.113.10:6003') 'info fallback public'
-    Assert-FrpTrue ($infoOut -match 'ssh -p 6003 leeruda@access.example.com') 'info preferred ssh'
-    Assert-FrpTrue ($infoOut -match 'ssh -p 6003 leeruda@203.0.113.10') 'info fallback ssh'
+    Assert-FrpTrue ($infoOut -match 'ssh -p 6003 <username>@access.example.com') 'info preferred ssh'
+    Assert-FrpTrue ($infoOut -match 'ssh -p 6003 <username>@203.0.113.10') 'info fallback ssh'
 
     $env:FRP_CLIENT_RECONCILE_REGISTRY_IDS = '["ssh"]'
     $env:FRP_CLIENT_RECONCILE_PUBLIC_HOSTNAME_PRESENT = '1'

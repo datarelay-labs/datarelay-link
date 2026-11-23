@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+import tempfile
 import json
 import shutil
 import subprocess
@@ -77,6 +78,57 @@ class WindowsPinnedCaCommandTests(unittest.TestCase):
         )
         self.assertNotIn("--insecure", public_script)
         self.assertNotIn("ServerCertificateValidationCallback", public_script)
+
+    @unittest.skipUnless(shutil.which('pwsh') and shutil.which('openssl'),
+                         'isolated PowerShell and OpenSSL are required')
+    def test_pinned_private_ca_rejects_hostname_mismatch_without_losing_ca_trust(self):
+        """Execute the actual generated TLS callback against a valid wrong-SAN leaf."""
+        with tempfile.TemporaryDirectory(prefix='drlink-zt-hostname-') as tmp:
+            d = Path(tmp)
+            def openssl(*args):
+                proc = subprocess.run(['openssl', *map(str,args)], cwd=d,
+                                      capture_output=True, text=True)
+                self.assertEqual(proc.returncode, 0, proc.stderr)
+            openssl('req','-x509','-newkey','rsa:2048','-nodes','-days','1',
+                    '-subj','/CN=DRLink Audit CA','-addext',
+                    'basicConstraints=critical,CA:TRUE','-addext',
+                    'keyUsage=critical,keyCertSign,cRLSign',
+                    '-keyout','ca.key','-out','ca.crt')
+            openssl('req','-newkey','rsa:2048','-nodes',
+                    '-subj','/CN=wrong.example.test',
+                    '-keyout','leaf.key','-out','leaf.csr')
+            (d/'leaf.ext').write_text('subjectAltName=DNS:wrong.example.test\n'
+                    'extendedKeyUsage=serverAuth\n'
+                    'basicConstraints=critical,CA:FALSE\n')
+            openssl('x509','-req','-in','leaf.csr','-CA','ca.crt',
+                    '-CAkey','ca.key','-CAcreateserial','-out','leaf.crt',
+                    '-days','1','-extfile','leaf.ext')
+            script = zt.render_short_url_windows_bootstrap_script(
+                'https://127.0.0.1/enroll', 'a'*64,
+                'bt1.'+'b'*16+'.'+'c'*64,
+                'https://127.0.0.1/artifacts/agent/bootstrap-client.ps1')
+            start = script.index('  [Net.ServicePointManager]::ServerCertificateValidationCallback = {')
+            end = script.index('  $wc = New-Object Net.WebClient',start)
+            callback = script[start:end]
+            test = ("$ErrorActionPreference='Stop'\n"
+                "$script:drlinkCaCert = New-Object Security.Cryptography.X509Certificates.X509Certificate2('%s')\n"
+                "$script:drlinkCaThumb = $script:drlinkCaCert.Thumbprint\n"
+                "$script:drlinkPinHost = '127.0.0.1'\n%s\n"
+                "$leaf = New-Object Security.Cryptography.X509Certificates.X509Certificate2('%s')\n"
+                "$sender = [pscustomobject]@{RequestUri=[uri]'https://127.0.0.1/artifacts/agent/bootstrap-client.ps1'}\n"
+                "foreach($case in @(@('name_mismatch',2,$false),@('cert_missing',1,$false),"
+                "@('name_and_chain',6,$false),@('only_private_ca_chain',4,$true))){\n"
+                " $chain=New-Object Security.Cryptography.X509Certificates.X509Chain;"
+                " $result=[bool][Net.ServicePointManager]::ServerCertificateValidationCallback.Invoke($sender,$leaf,$chain,[Net.Security.SslPolicyErrors]$case[1]);"
+                " if($result -ne $case[2]){throw ('TLS_CASE_FAIL '+$case[0]+' '+$result)};"
+                " Write-Output ('TLS_CASE_PASS '+$case[0]);"
+                "}\n") % (str(d/'ca.crt'),callback,str(d/'leaf.crt'))
+            (d/'test.ps1').write_text(test)
+            proc = subprocess.run(['pwsh','-NoProfile','-File',str(d/'test.ps1')],
+                     capture_output=True,text=True,timeout=25)
+            self.assertEqual(proc.returncode,0,proc.stdout+proc.stderr)
+            for case in ('name_mismatch','cert_missing','name_and_chain','only_private_ca_chain'):
+                self.assertIn('TLS_CASE_PASS '+case,proc.stdout)
 
     def test_strict_launcher_is_420_and_hash_before_execute(self):
         digest = "ab" * 32

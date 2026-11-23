@@ -53,10 +53,21 @@ grep -q "set server windows-installer-url" "$E2E" || fail "missing canonical set
 grep -q 'drlink set enrollment zero-touch"' "$E2E" || fail "missing canonical set enrollment zero-touch onboarding"
 grep -q "FRP_CTL_TEST_INPUT" "$E2E" || fail "zero-touch must use FRP_CTL_TEST_INPUT under sudo use_pty"
 grep -q "base64" "$E2E" || fail "zero-touch TEST_INPUT must be base64-safe across remote shells"
-# Guided answers must include the post-identity service-mode choice (SSH only).
-grep -Fq '\"$note_text\" '\''1'\'' \"$TUNNEL_SSH_USER\"' "$E2E" \
-  || grep -Fq "\"\$note_text\" '1' \"\$TUNNEL_SSH_USER\"" "$E2E" \
-  || fail "zero-touch guided answers missing SSH-only step"
+# The public Wizard asks for platform, label, note, SSH-only mode and port.
+# It must never inject the removed SSH username prompt into FRP_CTL_TEST_INPUT.
+python3 - "$E2E" <<'PYUNIT' || fail "real E2E guided answer contract stale"
+from pathlib import Path
+import sys
+text=Path(sys.argv[1]).read_text()
+payloads = [line for line in text.splitlines()
+            if 'payload=' in line and '"$note_text"' in line]
+assert len(payloads) == 2, payloads
+for line in payloads:
+    assert "'22'" in line, line
+    assert '$TUNNEL_SSH_USER' not in line, line
+assert 'commands = [line for line in text.splitlines()' in text
+assert "line.startswith('(drlink_bootstrap=$(curl -fsSL https://')" in text
+PYUNIT
 pass "CANONICAL_INSTALLER_AND_ZERO_TOUCH"
 
 # Destructive Remote Service deletion is an interactive y/N contract. Release

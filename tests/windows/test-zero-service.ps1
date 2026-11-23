@@ -6,12 +6,10 @@ try {
     Assert-FrpEqual 1 @($local).Count 'local defaults still provide RDP'
     Assert-FrpEqual 'rdp' $local[0].id 'rdp for guided path'
 
-    $threw = $false
-    try { Get-FrpDefaultServices -Platform 'linux' | Out-Null } catch { $threw = $true }
-    Assert-FrpTrue $threw 'ssh defaults require explicit SshUser'
-
-    $ssh = Get-FrpDefaultServices -Platform 'linux' -SshUser 'alice'
-    Assert-FrpEqual 'alice' ([string]$ssh[0].ssh_user) 'explicit ssh_user kept'
+    $ssh = Get-FrpDefaultServices -Platform 'linux'
+    Assert-FrpEqual 'ssh' ([string]$ssh[0].id) 'non-Windows default is SSH'
+    Assert-FrpEqual 22 ([int]$ssh[0].local_port) 'SSH default port unchanged'
+    Assert-FrpTrue (-not ($ssh[0].PSObject.Properties.Name -contains 'ssh_user')) 'SSH username is never inferred'
 
     # Empty ticket services must not call defaults (logic mirror)
     $ticketServices = @()

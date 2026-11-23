@@ -69,6 +69,7 @@ class Env:
             'registry_file': str(self.registry),
             'enrollments_dir': str(self.enrollments),
             'token_file': str(self.token),
+            'control_plane_root': str(self.root),
         }
         self.cfg.write_text(json.dumps(cfg, indent=2) + '\n')
         MOD.atomic_write_json(self.registry, MOD.empty_registry())

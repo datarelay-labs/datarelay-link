@@ -573,7 +573,11 @@ def render_short_url_windows_bootstrap_script(
             '  $oldCertCallback = [Net.ServicePointManager]::ServerCertificateValidationCallback',
             '  [Net.ServicePointManager]::ServerCertificateValidationCallback = {',
             '    param($snd,$cert,$chain,$pol)',
-            '    if (-not $snd.RequestUri -or $snd.RequestUri.Host.ToLowerInvariant() -ne $script:drlinkPinHost) { return $false }',
+            '    if (-not $snd -or -not $snd.RequestUri -or $snd.RequestUri.Host.ToLowerInvariant() -ne $script:drlinkPinHost) { return $false }',
+            # The only permissible OS trust error is the expected untrusted
+            # private CA. A matching CA signature NEVER overrides hostname
+            # mismatch or a missing peer certificate.
+            '    if (([int]$pol -band 3) -ne 0 -or $null -eq $cert -or $null -eq $chain) { return $false }',
             '    $leaf = New-Object System.Security.Cryptography.X509Certificates.X509Certificate2 $cert',
             '    $chain.ChainPolicy.ExtraStore.Add($script:drlinkCaCert) | Out-Null',
             '    $chain.ChainPolicy.VerificationFlags = [System.Security.Cryptography.X509Certificates.X509VerificationFlags]::AllowUnknownCertificateAuthority',

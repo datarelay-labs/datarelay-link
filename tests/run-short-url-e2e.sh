@@ -334,7 +334,7 @@ ssh_client 'sudo bash -s --' <"$ROOT/dist/uninstall-client.sh" >"$OUT_DIR/client
 
 # Create short URL enrollment through the canonical guided Zero-Touch path and capture exact printed command.
 CREATE_OUT="$OUT_DIR/create.out"
-payload="$(printf '%s\\n' '1' "$CLIENT_LABEL" 'short-url-e2e' '1' "$TUNNEL_SSH_USER" '22' | base64 -w0 2>/dev/null || printf '%s\\n' '1' "$CLIENT_LABEL" 'short-url-e2e' '1' "$TUNNEL_SSH_USER" '22' | base64)"
+payload="$(printf '%s\\n' '1' "$CLIENT_LABEL" 'short-url-e2e' '1' '22' | base64 -w0 2>/dev/null || printf '%s\\n' '1' "$CLIENT_LABEL" 'short-url-e2e' '1' '22' | base64)"
 ssh_server "sudo env FRP_CTL_TEST_INPUT=\"\$(printf '%s' '$payload' | base64 -d)\" /usr/local/bin/drlink set enrollment zero-touch" \
   >"$CREATE_OUT" 2>&1 || { cat "$CREATE_OUT"; fail "create enrollment"; }
 
@@ -444,7 +444,7 @@ BAD_HOST="untrusted-bootstrap.invalid"
 # still produce a compact /i/ link; otherwise fail before ticket issuance.
 ssh_server "sudo /usr/local/bin/drlink unset server bootstrap-hostname" >/dev/null
 DEFAULT_OUT="$OUT_DIR/default-after-unset.out"
-default_payload="$(printf '%s\n' '1' "${CLIENT_LABEL}-default" 'compact-default-check' '1' "$TUNNEL_SSH_USER" '22' | base64 -w0 2>/dev/null || printf '%s\n' '1' "${CLIENT_LABEL}-default" 'compact-default-check' '1' "$TUNNEL_SSH_USER" '22' | base64)"
+default_payload="$(printf '%s\n' '1' "${CLIENT_LABEL}-default" 'compact-default-check' '1' '22' | base64 -w0 2>/dev/null || printf '%s\n' '1' "${CLIENT_LABEL}-default" 'compact-default-check' '1' '22' | base64)"
 if ssh_server "sudo env FRP_CTL_TEST_INPUT=\"\$(printf '%s' '$default_payload' | base64 -d)\" /usr/local/bin/drlink set enrollment zero-touch" >"$DEFAULT_OUT" 2>&1; then
   grep -q 'https://' "$DEFAULT_OUT" || fail "default lacks HTTPS URL"
   grep -q '/i/' "$DEFAULT_OUT" || fail "default lacks short URL"

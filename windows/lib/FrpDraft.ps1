@@ -114,24 +114,19 @@ function Test-FrpValidTargetHost {
     return $true
 }
 
-function Test-FrpValidSshUser {
-    param([string]$Value)
-    return ([string]$Value -cmatch '^[A-Za-z0-9._@-]{1,32}$')
-}
-
 function Add-FrpDraftService {
     <#
     .SYNOPSIS
       Add a pending service to the draft. Mirrors Unix
       frp_client_add_service_cli / frp_state_add_payload validation.
     #>
+    [CmdletBinding()]
     param(
         [string]$Preset = 'custom',
         [string]$Id,
         [string]$Name,
         [string]$TargetHost = '127.0.0.1',
-        [int]$TargetPort,
-        [string]$SshUser
+        [int]$TargetPort
     )
     $preset = ([string]$Preset).Trim().ToLowerInvariant()
     switch ($preset) {
@@ -139,7 +134,6 @@ function Add-FrpDraftService {
             if (-not $Id) { $Id = 'ssh' }
             if (-not $Name) { $Name = 'SSH' }
             if ($TargetPort -le 0) { $TargetPort = 22 }
-            if (-not $SshUser) { throw 'ERROR: -SshUser is required for ssh services' }
         }
         'http' {
             if (-not $Id) { $Id = 'http' }
@@ -171,9 +165,6 @@ function Add-FrpDraftService {
     if ($TargetPort -lt 1 -or $TargetPort -gt 65535) {
         throw 'ERROR: invalid local_port; must be an integer 1-65535'
     }
-    if ($preset -eq 'ssh' -and -not (Test-FrpValidSshUser -Value $SshUser)) {
-        throw 'ERROR: invalid ssh_user'
-    }
 
     Ensure-FrpDraftPending | Out-Null
     $map = Get-FrpDraftServiceMap
@@ -192,7 +183,6 @@ function Add-FrpDraftService {
         local_port = [int]$TargetPort
         enabled    = $true
     }
-    if ($preset -eq 'ssh') { $rec['ssh_user'] = $SshUser }
     $map[$sid] = $rec
     Save-FrpDraftServiceMap -ServiceMap $map
     return $sid
@@ -233,11 +223,6 @@ function Set-FrpDraftServiceField {
                 throw 'ERROR: invalid local_port; must be an integer 1-65535'
             }
             $item['local_port'] = $port
-        }
-        'ssh-user' {
-            if ([string]$item['preset'] -ne 'ssh') { throw 'ERROR: ssh-user is only valid for ssh services' }
-            if (-not (Test-FrpValidSshUser -Value $Value)) { throw 'ERROR: invalid ssh_user' }
-            $item['ssh_user'] = $Value
         }
         'health-type' {
             $type = $Value.Trim().ToLowerInvariant()

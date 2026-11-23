@@ -765,15 +765,12 @@ def subcommands(root, role):
 def find(tokens, role=None, include_aliases=False):
     """Longest canonical command whose path is a prefix of ``tokens``.
 
-    When ``include_aliases`` is true, also match hidden compatibility aliases
-    (historical resource-first forms) and return the canonical command.
+    The historical ``include_aliases`` argument is inert: there are no aliases.
     """
     best = None
     best_len = -1
     for cmd in COMMANDS:
         candidates = [cmd["path"]]
-        if include_aliases:
-            candidates.extend(cmd.get("aliases") or ())
         for path in candidates:
             path = tuple(path)
             if len(tokens) < len(path):
@@ -802,25 +799,9 @@ def find(tokens, role=None, include_aliases=False):
 
 
 def resolve_tokens(tokens, role=None):
-    """Expand a hidden compatibility alias into the canonical action-first path."""
-    if not tokens:
-        return list(tokens)
-    cmd = find(tokens, role=role, include_aliases=True)
-    if cmd is None:
-        return list(tokens)
-    # Prefer exact path match length when both path and alias could apply.
-    path = cmd["path"]
-    if tuple(tokens[: len(path)]) == path:
-        return list(tokens)
-    for alias in cmd.get("aliases") or ():
-        alias = tuple(alias)
-        if tuple(tokens[: len(alias)]) == alias:
-            rest = list(tokens[len(alias) :])
-            rewrite = REWRITES.get(alias)
-            if rewrite is not None:
-                return rewrite(rest)
-            return list(path) + rest
+    """Return canonical input unchanged; the v2.4 public catalog has no aliases."""
     return list(tokens)
+
 
 
 def usage_line(cmd):
@@ -835,24 +816,10 @@ def usage_line(cmd):
 
 
 # --- alias expansion ------------------------------------------------------
-def _alias_index():
-    index = {}
-    for cmd in COMMANDS:
-        for alias in cmd["aliases"]:
-            index.setdefault(alias, cmd)
-    return index
 
 
-ALIASES = _alias_index()
 
 
-def alias_rows():
-    """(alias, canonical) rows for 'help legacy'."""
-    rows = []
-    for cmd in COMMANDS:
-        for alias in cmd["aliases"]:
-            rows.append((" ".join(alias), " ".join(cmd["path"])))
-    return rows
 
 
 # --- canonical -> internal verb-first rewrite -----------------------------
@@ -901,54 +868,13 @@ def to_internal(tokens):
     if not tokens:
         return None
     original = [str(t) for t in tokens]
-    # Preserve distinct legacy safety semantics that collapse onto unset client.
-    if original[:2] in (["revoke", "client"], ["client", "revoke"]):
-        return ["revoke", "client"] + original[2:]
-    if original[:2] == ["release", "service"] or original[:1] == ["release-service"]:
-        return ["release", "service"] + original[2:] if original[:2] == ["release", "service"] else ["release", "service"] + original[1:]
-    if original[:1] == ["release-client"]:
-        # Hyphenated legacy: release-client <ID> [--yes]; never <SERVICE>.
-        return ["release", "client"] + original[1:]
-    if original[:2] in (["release", "client"], ["client", "release"]):
-        rest = original[2:]
-        if len(rest) >= 2 and not str(rest[1]).startswith("-"):
-            return ["release", "service", rest[0], rest[1]] + rest[2:]
-        return ["release", "client"] + rest
-    if original[:2] in (["revoke", "enrollment"], ["enrollment", "revoke"]):
-        return ["revoke", "enrollment"] + original[2:]
-    if original[:2] in (["delete", "enrollment"], ["purge", "enrollment"], ["enrollment", "purge"]):
-        return ["purge", "enrollment"] if original[0] != "delete" else ["delete", "enrollment"] + original[2:]
-    # access create and access edit-info both alias to set acl; keep create
-    # vs metadata-edit distinct so --description on create does not become
-    # edit-info against a missing list.
-    if original[:2] in (["access", "create"], ["create", "access-list"]):
-        return ["create", "access-list"] + original[2:]
-    if original[:2] == ["access", "edit-info"]:
-        return ["set", "access-list"] + original[2:]
-    if original[:2] == ["access", "replace-source"]:
-        return ["set", "access-source"] + original[2:]
-    if original[:2] in (["access", "add-source"], ["add", "access-source"]):
-        return ["add", "access-source"] + original[2:]
-    if original[:2] in (["create", "profile"], ["create", "service-profile"]):
-        return ["create", "service-profile"] + original[2:]
-    if original[:2] == ["add", "service"]:
-        return ["add", "service"] + original[2:]
-    # Prefer alias-aware resolution so legacy forms still dispatch.
-    resolved = resolve_tokens(tokens)
-    cmd = find(resolved, include_aliases=True)
+    # Dispatcher receives only canonical commands from the public grammar.
+    cmd = find(original)
     if cmd is None:
-        cmd = find(tokens, include_aliases=True)
-        if cmd is None:
-            return None
-        resolved = resolve_tokens(tokens)
+        return None
     path = cmd["path"]
-    # If tokens matched via alias length, use resolved canonical tokens.
-    if tuple(resolved[: len(path)]) != path:
-        # resolve_tokens should have canonicalized; fall back.
-        work = list(resolved)
-    else:
-        work = list(resolved)
-    rest = list(work[len(path) :])
+    work = list(original)
+    rest = list(work[len(path):])
 
     CONTROL_PLANE_RES = {
         "objects",
@@ -1310,25 +1236,6 @@ def to_internal(tokens):
         return ["history"] + rest
     if path == ("system", "clear"):
         return ["clear"] + rest
-
-    # Compat rewrites still keyed by historical resource-first paths.
-    for alias in cmd.get("aliases") or ():
-        rewrite = REWRITES.get(tuple(alias))
-        if rewrite is not None and tuple(tokens[: len(alias)]) == tuple(alias):
-            return rewrite(list(tokens[len(alias) :]))
-    rewrite = REWRITES.get(path)
-    if rewrite is not None:
-        return rewrite(rest)
-    rewrite = REWRITES.get(tuple(cmd.get("internal") or ()))
-    if rewrite is not None and cmd.get("internal"):
-        return rewrite(rest)
-
-    # Legacy specials retained for absorbed forms that still appear as internal.
-    # release client <ID> <SERVICE> → release service; flags like --yes stay on client.
-    if path == ("release", "client") and len(rest) >= 2 and not str(rest[1]).startswith("-"):
-        return ["release", "service", rest[0], rest[1]] + rest[2:]
-    if path == ("delete", "enrollment") and rest and rest[0] == "--older-than":
-        return ["purge", "enrollments"] + list(rest)
 
     internal = cmd["internal"]
     if internal is None:

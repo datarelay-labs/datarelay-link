@@ -62,7 +62,7 @@ def enroll_hmac(services):
 
 ssh_spec = [{
     'id': 'ssh', 'name': 'SSH', 'protocol': 'tcp',
-    'local_ip': '127.0.0.1', 'local_port': 22, 'preset': 'ssh', 'ssh_user': 'aella',
+    'local_ip': '127.0.0.1', 'local_port': 22, 'preset': 'ssh',
 }]
 
 # A management-only ticket authorizes no services: the Enrollment Code must
@@ -224,7 +224,7 @@ echo "$pass_f17"
   cp "$ROOT/lib/frp-client-common.sh" "$FRP_CLIENT_TEST_ROOT/usr/local/lib/drlink/"
   cp "$WORK/state.json" "$FRP_CLIENT_TEST_ROOT/etc/frp/client-state.json"
   "$ROOT/tools/frp-client" add-service --preset ssh --id ssh --name SSH \
-    --target-port 22 --ssh-user aella >"$LATER.out" 2>&1 \
+    --target-port 22 >"$LATER.out" 2>&1 \
     || { cat "$LATER.out" >&2; echo "FAIL F17 service add after management-only install" >&2; exit 1; }
   python3 - "$FRP_CLIENT_TEST_ROOT/var/lib/drlink/client-draft.json" <<'PY' \
     || { echo "FAIL F17 added service missing from pending state" >&2; exit 1; }

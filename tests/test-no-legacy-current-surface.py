@@ -377,6 +377,71 @@ class LegacyReintroductionGate(unittest.TestCase):
         self.assertNotIn('def _rw_', (ROOT / 'lib/frp_cli_catalog.py').read_text())
         self.assertNotIn('def expand_compat_alias(', (ROOT / 'lib/frp_cli_catalog.py').read_text())
 
+    def test_retired_noop_policy_test_scripts_are_not_reported_as_passed(self):
+        retired = (
+            'test-access-control.sh', 'test-egress-control.sh',
+            'test-fixed-tcp-egress.sh', 'test-release-blockers-cli.sh',
+            'test-service-profiles.sh', 'test-egress-schema-v3.sh',
+            'run-egress-real-e2e-smoke.sh',
+        )
+        run_all = (ROOT / 'tests/run-all.sh').read_text(encoding='utf-8')
+        allow = (ROOT / 'tests/orphan-test-allowlist.txt').read_text(encoding='utf-8')
+        for name in retired:
+            with self.subTest(retired=name):
+                self.assertFalse((ROOT / 'tests' / name).exists())
+                self.assertNotIn(name, run_all)
+                self.assertNotIn(name, allow)
+        # Retiring inert stub files must not discard live policy/migration tests.
+        for name in ('test-access-control.py', 'test-egress-control.py',
+                     'test-fixed-tcp-egress.py', 'test-service-profiles.py'):
+            self.assertTrue((ROOT / 'tests' / name).is_file(), name)
+            self.assertIn(name, run_all)
+
+    def test_windows_agent_never_creates_or_forwards_ssh_login_metadata(self):
+        current_windows = (
+            'windows/lib/FrpDraft.ps1', 'windows/lib/FrpState.ps1',
+            'windows/lib/FrpBootstrap.ps1', 'windows/install-client.ps1',
+            'windows/tools/FrpClient.ps1',
+        )
+        for relative in current_windows:
+            text = (ROOT / relative).read_text(encoding='utf-8')
+            with self.subTest(relative=relative):
+                self.assertNotIn('ssh_user', text)
+                self.assertNotIn('SshUser', text)
+                self.assertNotIn('ssh-user', text)
+        # A final CLI can display an explicit placeholder for the operator's
+        # local SSH account without storing or guessing an account.
+        self.assertIn('<username>@', (ROOT / 'windows/tools/FrpClient.ps1').read_text())
+
+    def test_windows_documented_enrollment_matches_ssh_contract(self):
+        document = (ROOT / 'docs' / 'WINDOWS_CLIENT.md').read_text(encoding='utf-8')
+        self.assertNotIn('ssh_user', document)
+        self.assertNotIn('-SshUser', document)
+        self.assertIn('SSH login usernames are **not** accepted', document)
+
+    def test_retired_aliases_never_reach_internal_dispatcher(self):
+        retired = (
+            ['release-client', 'demo'], ['release', 'client', 'demo'],
+            ['revoke', 'client', 'demo'], ['client', 'revoke', 'demo'],
+            ['access', 'create', 'Office'], ['access', 'add-source', 'Office'],
+            ['create', 'service-profile', 'obsolete'], ['add', 'service', 'ssh'],
+            ['delete', 'enrollment', 'expired'], ['enrollment', 'revoke', 'expired'],
+        )
+        for command in retired:
+            with self.subTest(command=command):
+                self.assertIsNone(catalog.to_internal(command))
+                self.assertIsNone(catalog.find(command, include_aliases=True))
+                self.assertEqual(catalog.resolve_tokens(command), command)
+        # Valid v2.4 final paths still resolve to the required dispatcher.
+        self.assertEqual(
+            catalog.to_internal(['unset', 'managed-host', 'host', 'group', 'ops']),
+            ['remove', 'client', 'host', 'group', 'ops'],
+        )
+        self.assertEqual(catalog.to_internal(['set', 'enrollment', 'zero-touch']),
+                         ['create', 'zero-touch'])
+        self.assertFalse(hasattr(catalog, 'alias_rows'))
+        self.assertFalse(hasattr(catalog, 'ALIASES'))
+
 
 if __name__ == "__main__":
     unittest.main()
