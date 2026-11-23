@@ -460,7 +460,7 @@ create_zero_touch() {
   start="$(date +%s)"
   set +e
   # Public guided Zero-Touch onboarding:
-  #   set enrollment zero-touch → platform → name → note → SSH only → user → port
+  #   set enrollment zero-touch → platform → name → note → SSH only → port
   # Platform: 1=Linux, 3=macOS (same bash installer path).
   case "$PLATFORM_KIND" in
     macos) platform_choice=3 ;;
@@ -468,7 +468,7 @@ create_zero_touch() {
   esac
   # Guided create under sudo use_pty cannot consume a pipe. Deliver answers via
   # FRP_CTL_TEST_INPUT using base64 so remote /bin/sh does not mangle newlines.
-  payload="$(printf '%s\n' "$platform_choice" "$CLIENT_LABEL" "$note_text" '1' "$TUNNEL_SSH_USER" '22' | base64 -w0 2>/dev/null || printf '%s\n' "$platform_choice" "$CLIENT_LABEL" "$note_text" '1' "$TUNNEL_SSH_USER" '22' | base64)"
+  payload="$(printf '%s\n' "$platform_choice" "$CLIENT_LABEL" "$note_text" '1' '22' | base64 -w0 2>/dev/null || printf '%s\n' "$platform_choice" "$CLIENT_LABEL" "$note_text" '1' '22' | base64)"
   ssh "${SSH_OPTS[@]}" "$SERVER_ALIAS" \
     "sudo env FRP_CTL_TEST_INPUT=\"\$(printf '%s' '$payload' | base64 -d)\" /usr/local/bin/drlink set enrollment zero-touch" \
     >"$out" 2>&1
@@ -480,14 +480,14 @@ import re, sys
 text = open(sys.argv[1], encoding="utf-8").read()
 # Short URL: curl ... | sudo bash
 # zt1 fallback: curl ... | sudo bash -s -- 'zt1....'
-cmd = re.search(
-    r"^(?:curl -fsSL .*|sudo bash -c .*)$",
-    text,
-    re.M,
-)
-if not cmd:
-    raise SystemExit("missing one-line command")
-open(sys.argv[2], "w", encoding="utf-8").write(cmd.group(0) + "\n")
+commands = [line for line in text.splitlines()
+            if (line.startswith('(drlink_bootstrap=$(curl -fsSL https://')
+                and line.endswith(' | sudo bash)'))
+            or (line.startswith("bash -c 'set -euo pipefail;")
+                and '--cacert' in line and '/i/' in line)]
+if len(commands) != 1:
+    raise SystemExit("missing or ambiguous current Zero-Touch command")
+open(sys.argv[2], "w", encoding="utf-8").write(commands[0] + "\n")
 PY
     rc=$?
   fi
@@ -506,8 +506,8 @@ create_zero_touch_windows() {
   local start rc=0 payload
   start="$(date +%s)"
   set +e
-  # Windows Zero-Touch SSH: set enrollment zero-touch → Windows → name → note → SSH only → user → port
-  payload="$(printf '%s\n' '2' "$CLIENT_LABEL" "$note_text" '2' "$TUNNEL_SSH_USER" '22' | base64 -w0 2>/dev/null || printf '%s\n' '2' "$CLIENT_LABEL" "$note_text" '2' "$TUNNEL_SSH_USER" '22' | base64)"
+  # Windows Zero-Touch SSH: set enrollment zero-touch → Windows → name → note → SSH only → port
+  payload="$(printf '%s\n' '2' "$CLIENT_LABEL" "$note_text" '2' '22' | base64 -w0 2>/dev/null || printf '%s\n' '2' "$CLIENT_LABEL" "$note_text" '2' '22' | base64)"
   ssh "${SSH_OPTS[@]}" "$SERVER_ALIAS" \
     "sudo env FRP_CTL_TEST_INPUT=\"\$(printf '%s' '$payload' | base64 -d)\" /usr/local/bin/drlink set enrollment zero-touch" \
     >"$out" 2>&1
