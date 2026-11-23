@@ -484,6 +484,26 @@ verify clean stable install/bootstrap/update
 
 ---
 
+## Cross-release performance track LPERF — MCP multi-host and Internet Access CPU spikes
+
+**Status:** BACKLOG / NOT STARTED (owner request 2026-11-23). **Priority:** P0 performance investigation. **Implementation tracker:** [#302](https://github.com/datarelay-labs/datarelay-link/issues/302). Recording this roadmap item is not implementation, deployment, or release approval. This bounded track covers the existing AI Access/MCP and Internet Access planes without overriding active source-bound E2E work.
+
+**Operator symptom:** CPU spikes and degraded responsiveness when several Managed Hosts are connected through MCP while the Link Server also handles outbound Internet Access. Actual deployed source HEAD, Bridge worker count, bottleneck, and production capacity have **not** been confirmed. Earlier [AUD-21 MCP dispatch findings](MCP_BRIDGE_DISPATCH_DESIGN.md) are historical evidence, not proof of current deployment.
+
+| WBS | Scope | Required result |
+| --- | --- | --- |
+| LPERF-0 | Read-only source/installed HEAD, topology, Worker count (including `DRLINK_MCP_WORKERS`), CPU cores/RAM and process profiles | Timestamped, source/host-bound baseline; preserve active worktrees |
+| LPERF-1 | MCP 1/10/30 concurrent calls across 1/10/30 Managed Hosts, representative 100-Agent fleet | CPU user/system, RSS/PSS, context switches, queue/run/total p50/p95/p99, errors, worker fairness; compare historical 30-call p95 <= 500 ms target on valid topology |
+| LPERF-2 | Internet Access HTTP forward/HTTPS CONNECT and applicable Fixed TCP: 10/50/100 connections, churn and throughput | Connection p95, traffic throughput, CPU/socket/DNS/policy bottlenecks, failed/denied traffic receipts |
+| LPERF-3 | Simultaneous multi-host MCP + Internet Access workloads on one Server | Isolate cross-plane contention and distinguish CPU hotspots from scheduling, SQLite and network I/O |
+| LPERF-4 | Confirm activation of already merged D1–D7 changes before making small measured fixes to bounded concurrency, scheduling, connection reuse and redundant work | Reproducible same-hardware A/B gain; no unbounded resource load, policy/audit change or duplicate command execution |
+| LPERF-5 | **Conditional** fast-anything/Rust trial only for proven CPU-intensive deterministic functions | Python reference/fallback, identical output/errors and portable builds; discard absent measurable end-to-end benefit |
+| LPERF-6 | Regression, mixed-load soak, security and genuine user E2E | No wrong-target operation, policy bypass, lost audit, result/queue failure, SSRF/DNS rebinding/CONNECT-SNI regression; exact-HEAD CI/E2E and before/after evidence |
+
+Reuse `tests/test-mcp-bridge-scale-target.py`, `tests/run-egress-benchmark.py` and current Engineering System acceptance contracts. Do not change production settings, OAuth/AI Access, sensitive secrets, or installed services without applicable separate authorization. Link-chat implementation should proceed from [#302](https://github.com/datarelay-labs/datarelay-link/issues/302) LPERF-0 through LPERF-6 after verifying source and active actor state.
+
+---
+
 ## 18. Post-v2.4 demand-driven work
 
 Potential later additions only with real demand:
