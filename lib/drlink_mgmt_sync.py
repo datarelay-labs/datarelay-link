@@ -964,21 +964,39 @@ class AllocatorMgmtVerifier:
     def __init__(self, allocator):
         self.allocator = allocator
 
-    def authenticate(self, headers, body, *, op, method, path) -> MgmtAuthContext:
+    def _authenticate_locked(self, headers, body, *, op, method, path) -> MgmtAuthContext:
         machine_id = MGMT.extract_machine_id(headers)
         if not machine_id:
             raise MgmtAuthError("missing machine id")
+        state = self.allocator.load_registry()
+        client = (state.get("clients") or {}).get(machine_id)
+        error, now, nonce = self.allocator.verify_mgmt_against_client(
+            client, machine_id, headers, body, op=op, method=method, path=path
+        )
+        if error:
+            raise MgmtAuthError(error)
+        if not isinstance(client, dict):
+            raise MgmtAuthError("unknown client identity")
+        return MgmtAuthContext(machine_id, client, nonce, int(now or time.time()), allocator=self.allocator)
+
+    def authenticate(self, headers, body, *, op, method, path) -> MgmtAuthContext:
         with self.allocator.registry_lock():
-            state = self.allocator.load_registry()
-            client = (state.get("clients") or {}).get(machine_id)
-            error, now, nonce = self.allocator.verify_mgmt_against_client(
-                client, machine_id, headers, body, op=op, method=method, path=path
-            )
+            return self._authenticate_locked(headers, body, op=op, method=method, path=path)
+
+    def admit_ai_job(self, plane, headers, body, *, op, method, path) -> MgmtAuthContext:
+        """One admission lock, including durable nonce consumption before any job action.
+
+        Keep the enrolled-key and exact trusted-host checks in the same order.
+        Neither job execution nor held-claim waiting may hold this registry lock.
+        Other management operations retain their original admission path.
+        """
+        with self.allocator.registry_lock():
+            auth = self._authenticate_locked(headers, body, op=op, method=method, path=path)
+            _require_managed_host(plane, auth.machine_id)
+            error = self.allocator.commit_nonce(auth.machine_id, auth.nonce, auth.now)
             if error:
                 raise MgmtAuthError(error)
-            if not isinstance(client, dict):
-                raise MgmtAuthError("unknown client identity")
-        return MgmtAuthContext(machine_id, client, nonce, int(now or time.time()), allocator=self.allocator)
+            return auth
 
     def commit_nonce(self, machine_id, nonce, now):
         with self.allocator.registry_lock():
@@ -2227,11 +2245,17 @@ def handle_allocator_http(
     op, canonical_path = bound
     raw = body if body is not None else b""
     try:
-        auth = _authenticate_mgmt_api(
-            verifier, headers, raw, op=op, method=method.upper(), path=canonical_path
-        )
-        _require_managed_host(plane, auth.machine_id)
-        _commit_auth_nonce(verifier, auth)
+        if (isinstance(verifier, AllocatorMgmtVerifier)
+                and op in (MGMT.MGMT_OP_AI_JOB_CLAIM, MGMT.MGMT_OP_AI_JOB_COMPLETE)):
+            auth = verifier.admit_ai_job(
+                plane, headers, raw, op=op, method=method.upper(), path=canonical_path
+            )
+        else:
+            auth = _authenticate_mgmt_api(
+                verifier, headers, raw, op=op, method=method.upper(), path=canonical_path
+            )
+            _require_managed_host(plane, auth.machine_id)
+            _commit_auth_nonce(verifier, auth)
         # Public Agent connectivity is owned exclusively by the dedicated
         # signed lifecycle operation. Catalog, Remote Service, and other
         # management traffic must not revive or refresh lifecycle presence.

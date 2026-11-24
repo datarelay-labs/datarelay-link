@@ -100,6 +100,81 @@ class AllocatorJobPlanePoolTests(unittest.TestCase):
         self.seed.close()
         self.tmp.cleanup()
 
+    def test_ai_claim_authentication_and_nonce_commit_share_registry_lock(self):
+        from unittest import mock
+        key, pub, mac = _write_identity(Path(self.tmp.name) / "agent", MACHINE_A, "agent-a")
+        state = self.mod.empty_registry()
+        state["clients"][MACHINE_A] = {
+            "hostname": "agent-a", "services": {}, "mgmt_status": "enrolled",
+            "mgmt_pubkey": pub, "mgmt_mac_key": mac,
+        }
+        self.mod.atomic_write_json(self.cfg["registry_file"], state)
+        body = b'{"limit":1}'
+        path = "/v1/ai-jobs/claim"
+        headers, _, nonce, _ = _signed_headers(
+            key, MACHINE_A, body, MGMT.MGMT_OP_AI_JOB_CLAIM, "POST", path)
+        verifier = mgmt.AllocatorMgmtVerifier(self.allocator)
+        with mock.patch.object(self.allocator, "registry_lock",
+                               wraps=self.allocator.registry_lock) as lock:
+            code, payload = mgmt.handle_allocator_http(
+                self.seed, "POST", path, headers, body, verifier=verifier)
+            self.assertEqual(code, 200, payload)
+            self.assertEqual(lock.call_count, 1, "AI admission must acquire registry lock once")
+        self.assertEqual(self.allocator.check_nonce(MACHINE_A, nonce, int(time.time())),
+                         "replayed request")
+        code, payload = mgmt.handle_allocator_http(
+            self.seed, "POST", path, headers, body, verifier=verifier)
+        self.assertEqual(code, 403, payload)
+        self.assertEqual(payload.get("error_class"), "REPLAY_REJECTED")
+
+        # A registry identity without a trusted Managed Host must not consume
+        # its nonce or run a job, even if its signature is valid.
+        self.seed.conn.execute("UPDATE clients SET trust_status='untrusted' WHERE id=?", (MACHINE_A,))
+        headers, _, rejected_nonce, _ = _signed_headers(
+            key, MACHINE_A, body, MGMT.MGMT_OP_AI_JOB_CLAIM, "POST", path)
+        code, payload = mgmt.handle_allocator_http(
+            self.seed, "POST", path, headers, body, verifier=verifier)
+        self.assertEqual(code, 403, payload)
+        self.assertIsNone(self.allocator.check_nonce(MACHINE_A, rejected_nonce, int(time.time())))
+
+    def test_parallel_ai_claim_replay_and_failed_nonce_write_fail_closed(self):
+        from concurrent.futures import ThreadPoolExecutor
+        from threading import Barrier
+        from unittest import mock
+
+        key, pub, mac = _write_identity(Path(self.tmp.name) / "agent", MACHINE_A, "agent-a")
+        state = self.mod.empty_registry()
+        state["clients"][MACHINE_A] = {
+            "hostname": "agent-a", "services": {}, "mgmt_status": "enrolled",
+            "mgmt_pubkey": pub, "mgmt_mac_key": mac,
+        }
+        self.mod.atomic_write_json(self.cfg["registry_file"], state)
+        path, body = "/v1/ai-jobs/claim", b'{"limit":1}'
+        headers, _, nonce, _ = _signed_headers(
+            key, MACHINE_A, body, MGMT.MGMT_OP_AI_JOB_CLAIM, "POST", path)
+        verifier = mgmt.AllocatorMgmtVerifier(self.allocator)
+        with mock.patch.object(self.allocator, "save_nonces", side_effect=OSError("injected fsync failure")), \
+             mock.patch.object(mgmt, "server_claim_ai_jobs", wraps=mgmt.server_claim_ai_jobs) as claim:
+            code, payload = mgmt.handle_allocator_http(
+                self.seed, "POST", path, headers, body, verifier=verifier)
+            self.assertEqual(code, 500, payload)
+            claim.assert_not_called()
+        self.assertIsNone(self.allocator.check_nonce(MACHINE_A, nonce, int(time.time())))
+        barrier = Barrier(2)
+
+        def request():
+            with self.allocator.ai_job_plane() as plane:
+                self.assertIsNotNone(plane)
+                barrier.wait(timeout=10)
+                return mgmt.handle_allocator_http(
+                    plane, "POST", path, headers, body, verifier=verifier)
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            outcomes = list(pool.map(lambda _: request(), range(2)))
+        self.assertEqual(sorted(code for code, _ in outcomes), [200, 403])
+        denied = next(payload for code, payload in outcomes if code == 403)
+        self.assertEqual(denied.get("error_class"), "REPLAY_REJECTED")
+
     def test_reuses_only_idle_private_planes_and_checks_integrity(self):
         from unittest import mock
         import drlink_control_db as cdb

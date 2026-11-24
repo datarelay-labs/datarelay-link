@@ -58,6 +58,19 @@ class NonceCapacityReplayTests(unittest.TestCase):
     def tearDown(self):
         self.tmp.cleanup()
 
+    def test_nonce_serialization_keeps_schema_and_compact_atomic_file(self):
+        nonce = "a" * 64
+        self.assertIsNone(self.allocator.commit_nonce(self.mid, nonce, self.now))
+        data = self.allocator.nonce_file.read_text()
+        self.assertEqual(len(data.splitlines()), 1, "nonce store must use compact JSON")
+        self.assertEqual(json.loads(data), {"schema_version": 1, "nonces": {
+            self.mid + ":" + nonce: self.now + MOD.MGMT_NONCE_TTL}})
+        self.assertEqual(self.allocator.nonce_file.stat().st_mode & 0o777, 0o600)
+        # Existing pretty-printed version-1 stores remain readable.
+        self.allocator.nonce_file.write_text(json.dumps(json.loads(data), indent=2))
+        self.assertEqual(self.allocator.check_nonce(self.mid, nonce, self.now),
+                         "replayed request")
+
     def test_capacity_boundary_rejects_full_without_evicting_fresh(self):
         # Fill to cap with fresh nonces.
         for i in range(MOD.MAX_NONCES_PER_CLIENT):

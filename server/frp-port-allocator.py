@@ -543,7 +543,9 @@ def load_json(path, default=None):
 def atomic_write_json(path, data, mode=0o600):
     p = Path(path)
     path_s = str(p)
-    if path_s.endswith('mgmt-nonces.json') or path_s.endswith('mgmt-nonces.json.tmp') or p.name.startswith('mgmt-nonces.json.'):
+    is_nonce_store = (path_s.endswith('mgmt-nonces.json') or path_s.endswith('mgmt-nonces.json.tmp')
+                      or p.name.startswith('mgmt-nonces.json.'))
+    if is_nonce_store:
         _test_before_nonce_write(path_s)
     else:
         _test_before_registry_write(path_s)
@@ -551,7 +553,12 @@ def atomic_write_json(path, data, mode=0o600):
     fd, tmp = tempfile.mkstemp(prefix=p.name + '.', suffix='.tmp', dir=str(p.parent))
     try:
         with os.fdopen(fd, 'w', encoding='utf-8') as f:
-            json.dump(data, f, indent=2, sort_keys=True)
+            if is_nonce_store:
+                # Same version-1 object, same fsync/replace and permissions;
+                # compact dumps avoids per-entry Python pretty-print writes.
+                f.write(json.dumps(data, separators=(',', ':'), sort_keys=True))
+            else:
+                json.dump(data, f, indent=2, sort_keys=True)
             f.write('\n')
             f.flush()
             os.fsync(f.fileno())
@@ -1938,8 +1945,11 @@ class Allocator:
             plane, identity, cookie = entry
             try:
                 current = self._ai_job_db_identity()
+                if identity != current:
+                    plane.close()
+                    continue
                 actual_cookie = plane.conn.execute("PRAGMA schema_version").fetchone()[0]
-                if (identity != current or actual_cookie != cookie
+                if (actual_cookie != cookie
                         or current_schema_version(plane.conn) != SCHEMA_VERSION):
                     plane.close()
                     continue
@@ -2819,10 +2829,9 @@ class Allocator:
         # never drop entries younger than that under size pressure.
         protect_after_commit = 2 * MAX_CLOCK_SKEW
         horizon_floor = now + (MGMT_NONCE_TTL - protect_after_commit)
-        owned = sorted(
-            ((k, nonces[k]) for k in list(nonces) if k.startswith(prefix)),
-            key=lambda item: item[1],
-        )
+        owned = [(k, value) for k, value in nonces.items() if k.startswith(prefix)]
+        if len(owned) >= MAX_NONCES_PER_CLIENT:
+            owned.sort(key=lambda item: item[1])
         while len(owned) >= MAX_NONCES_PER_CLIENT:
             old_key, old_exp = owned[0]
             # Still inside the signature acceptance window → refuse eviction.
