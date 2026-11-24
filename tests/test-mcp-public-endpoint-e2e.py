@@ -363,10 +363,19 @@ class PublicMcpEndpointTests(unittest.TestCase):
         self.assertIn("listen %s ssl" % self.frontend_port, text)
         if self.https_url:
             ctx = ssl.create_default_context(cafile=self.ca)
-            req = urllib.request.Request("https://127.0.0.1:%s/random" % self.frontend_port)
-            with self.assertRaises(urllib.error.HTTPError) as raised:
-                urllib.request.urlopen(req, context=ctx, timeout=5)
-            self.assertEqual(raised.exception.code, 404)
+            # Six-character root paths are now allocated to Zero-Touch.
+            # The MCP-only fixture deliberately has no allocator listener.
+            # Unrelated paths must still terminate at the frontend, while
+            # a valid-shaped entry must reach the separate allocator route.
+            for path, expected in (
+                ("/random-path", 404), ("/abcde", 404), ("/abcdefg", 404),
+                ("/abcdef/extra", 404), ("/mcp/extra", 404), ("/random", 502),
+            ):
+                with self.subTest(path=path):
+                    req = urllib.request.Request("https://127.0.0.1:%s%s" % (self.frontend_port, path))
+                    with self.assertRaises(urllib.error.HTTPError) as raised:
+                        urllib.request.urlopen(req, context=ctx, timeout=5)
+                    self.assertEqual(raised.exception.code, expected)
             req = urllib.request.Request("https://127.0.0.1:%s/healthz" % self.frontend_port)
             with self.assertRaises(urllib.error.HTTPError) as raised:
                 urllib.request.urlopen(req, context=ctx, timeout=5)

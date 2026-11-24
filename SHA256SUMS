@@ -476,7 +476,7 @@ a4e6adeeb8e6407f0b5cd83e222378cc2343d60a05e09fc6b5429600facb3a9c  tests/test-mcp
 93040d816de1702728f6104ef871e3955711d94c007ac9b417085c2341b8a21a  tests/test-mcp-native-letsencrypt-preflight.py
 06de316e93048c100a9bacd0b20a4b4fb9053dddc4f15873919cc5bf2db3ed43  tests/test-mcp-operator-rollout.py
 138d35f40f58a1abd53e23069cd3d2dd2371e64954ed138e32d838e7def8e73b  tests/test-mcp-owner-default-access.py
-8a85f70018bb737babdc0d0820a32073b4d2ff887478bb45f39f488285fdf4ea  tests/test-mcp-public-endpoint-e2e.py
+e2c17a79304bc05ad2ee1d2215d6e2ca4cffd9ea63c7a0a2d92c40df71a51274  tests/test-mcp-public-endpoint-e2e.py
 77f23f13bc06217f89fd4709a048feed7924d94fa7c23989e4900265ed746866  tests/test-mcp-public-tls-lifecycle.py
 cfcaceb73a3ffb6928d946c702774bdb1e30b7a27c3aa6e179a8c5cff0ea764a  tests/test-mcp-remote-connector-interop.py
 07fbf4d941e97144ca10be2af6e4f6d77779c205fe7658fd34a5060bab12d53e  tests/test-mcp-server-full-control-public.py
