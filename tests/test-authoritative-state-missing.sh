@@ -206,9 +206,20 @@ path = root / "var/lib/drlink/service-profiles.json"
 prof.initialize_profiles_state(path=path)
 state = prof.require_profiles_state(path=path)
 pid, _ = prof.create_profile(state, "Web", preset="http", local_ip="127.0.0.1", local_port=80)
-# atomic ssh transition
-pid2, profile, old = prof.update_profile(state, pid, "preset", "ssh:ops")
-assert profile["preset"] == "ssh" and profile["ssh_user"] == "ops"
+# SSH username metadata was retired: reject the old composite preset
+# without modifying the profile, then verify the supported transition.
+import copy
+before = copy.deepcopy(state)
+try:
+    prof.update_profile(state, pid, "preset", "ssh:ops")
+except prof.ProfileError:
+    pass
+else:
+    raise AssertionError("retired composite SSH preset was accepted")
+assert state == before, "invalid preset modified profile state"
+pid2, profile, old = prof.update_profile(state, pid, "preset", "ssh")
+assert pid2 == pid and old == "http"
+assert profile["preset"] == "ssh" and "ssh_user" not in profile
 # health old_value
 profile["health_check"] = {"type": "tcp", "timeout_seconds": 3, "interval_seconds": 10, "max_failed": 1}
 pid3, profile2, old_to = prof.update_profile(state, pid, "health-timeout", "7")
