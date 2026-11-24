@@ -1,8 +1,15 @@
 #!/usr/bin/env python3
 """Pure entry-field regression. Does not issue tickets or install agents."""
+import os
+import shutil
+import ssl
+import subprocess
 import sys
+import tempfile
+import threading
 import unittest
 from pathlib import Path
+from http.server import BaseHTTPRequestHandler, HTTPServer
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "lib"))
@@ -55,6 +62,78 @@ class EntryFields(unittest.TestCase):
         for platform in ("", "auto", "powershell", "LINUX"):
             with self.subTest(platform=platform), self.assertRaises(ValueError):
                 zt.render_entry_command("remote.xdr.ooo", "A3xK9m", platform)
+
+    @unittest.skipUnless(os.name == 'posix' and all(shutil.which(x) for x in
+                         ('curl', 'bash', 'openssl')), 'local TLS shell tools unavailable')
+    def test_loopback_entry_transport(self):
+        # Controlled inert response, no installation or enrollment. This
+        # tests actual native curl/Bash (and Linux pwsh if available), not
+        # downstream TLS security or installed-product qualification.
+        import frp_pki
+        with tempfile.TemporaryDirectory(prefix='drlink-entry-transport-') as temp:
+            root = Path(temp)
+            pki = frp_pki.ensure_pki(root / 'pki', '127.0.0.1')
+            paths = []
+
+            class Handler(BaseHTTPRequestHandler):
+                def log_message(self, *_args):
+                    pass
+
+                def do_GET(self):
+                    paths.append(self.path)
+                    payloads = {
+                        '/A3xK9m': b"printf 'ENTRY_BASH_OK\n'\n",
+                        '/W3xK9m': b"Write-Output 'ENTRY_PWSH_OK'\n",
+                    }
+                    body = payloads.get(self.path)
+                    if body is None:
+                        self.send_error(404)
+                        return
+                    self.send_response(200)
+                    self.send_header('Content-Length', str(len(body)))
+                    self.end_headers()
+                    self.wfile.write(body)
+
+            server = HTTPServer(('127.0.0.1', 0), Handler)
+            ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+            ctx.load_cert_chain(pki['server_crt'], pki['server_key'])
+            server.socket = ctx.wrap_socket(server.socket, server_side=True)
+            worker = threading.Thread(target=server.serve_forever, daemon=True)
+            worker.start()
+            (root / 'sudo').write_text('#!/bin/sh\nexec "$@"\n')
+            (root / 'sudo').chmod(0o755)
+            (root / 'curl.exe').symlink_to(shutil.which('curl'))
+            env = dict(os.environ, PATH=temp + os.pathsep + os.environ['PATH'])
+            authority = '127.0.0.1:%d' % server.server_port
+            try:
+                for os_name in ('linux', 'macos'):
+                    cmd = zt.render_entry_command(authority, 'A3xK9m', os_name)
+                    result = subprocess.run(['bash', '-c', cmd], env=env,
+                                            capture_output=True, text=True, timeout=10)
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    self.assertEqual(result.stdout.strip(), 'ENTRY_BASH_OK')
+                self.assertEqual(paths, ['/A3xK9m', '/A3xK9m'])
+                cmd = zt.render_entry_command(authority, 'BAD999', 'linux')
+                result = subprocess.run(['bash', '-c', cmd], env=env,
+                                        capture_output=True, text=True, timeout=10)
+                self.assertNotIn('ENTRY_BASH_OK', result.stdout)
+                self.assertIn('404', result.stderr)
+                # Pipeline exit alone is not evidence of installation.
+                if shutil.which('pwsh'):
+                    cmd = zt.render_entry_command(authority, 'W3xK9m', 'windows')
+                    result = subprocess.run(['pwsh', '-NoProfile', '-NonInteractive',
+                                             '-Command', cmd], env=env,
+                                            capture_output=True, text=True, timeout=15)
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    self.assertEqual(result.stdout.strip(), 'ENTRY_PWSH_OK')
+                    self.assertEqual(paths[-1], '/W3xK9m')
+                    print('LOOPBACK_LINUX_PWSH=PASS')
+                else:
+                    print('LOOPBACK_LINUX_PWSH=NOT_RUN')
+            finally:
+                server.shutdown()
+                server.server_close()
+                worker.join(timeout=3)
 
     def test_candidate_generation_skips_reserved(self):
         with patch.object(zt.secrets, "choice", side_effect=list("enrollA3xK9m")):

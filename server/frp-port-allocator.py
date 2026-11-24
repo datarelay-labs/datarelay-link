@@ -16,6 +16,7 @@ import re
 import secrets
 import socket
 import ssl
+import stat
 import subprocess
 import tempfile
 import threading
@@ -630,6 +631,83 @@ def hash_bootstrap_secret(secret):
 
 class BootstrapPathExists(Exception):
     """Derived ticket or enrollment path is already occupied."""
+
+
+def entry_locator_index_path(bootstrap_dir, locator):
+    """Separate routing namespace: never look up a locator as a bt1 secret."""
+    if ZT is None or not ZT.is_bootstrap_locator(locator):
+        return None
+    digest = hashlib.sha256(locator.encode('ascii')).hexdigest()
+    return Path(bootstrap_dir) / 'entry-locators' / (digest + '.json')
+
+
+def _valid_entry_locator_record(record, now):
+    return (isinstance(record, dict)
+            and set(record) == {'schema', 'ticket_id', 'platform', 'expires_at'}
+            and type(record['schema']) is int and record['schema'] == 1
+            and isinstance(record['ticket_id'], str)
+            and re.fullmatch(r'[0-9a-f]{16}', record['ticket_id']) is not None
+            and record['platform'] in ('linux', 'macos', 'windows')
+            and type(record['expires_at']) is int and record['expires_at'] > now)
+
+
+def claim_entry_locator(bootstrap_dir, ticket_id, platform, expires_at, *, now=None):
+    """Atomically reserve an immutable, secret-free routing index.
+
+    The caller must pair it with its issuance transaction. It grants no
+    authority to redeem a ticket. Expired entries are not silently reused.
+    """
+    now = int(time.time()) if now is None else now
+    record = {'schema': 1, 'ticket_id': ticket_id, 'platform': platform,
+              'expires_at': expires_at}
+    if ZT is None or not _valid_entry_locator_record(record, now):
+        raise ValueError('invalid bootstrap locator record')
+    directory = Path(bootstrap_dir) / 'entry-locators'
+    directory.mkdir(mode=0o700, parents=True, exist_ok=True)
+    for _ in range(BOOTSTRAP_ALLOCATE_ATTEMPTS):
+        locator = ZT.new_bootstrap_locator()
+        target = entry_locator_index_path(bootstrap_dir, locator)
+        if target is None:
+            continue
+        fd, temporary = tempfile.mkstemp(prefix='.claim-', dir=str(directory))
+        try:
+            with os.fdopen(fd, 'w', encoding='utf-8') as stream:
+                json.dump(record, stream, sort_keys=True)
+                stream.flush()
+                os.fsync(stream.fileno())
+            try:
+                # Publish fully written data without replacing an existing
+                # locator, even when separate processes race to allocate it.
+                os.link(temporary, str(target))
+            except FileExistsError:
+                continue
+            CLOCKS.fsync_dir(directory)
+            return locator
+        finally:
+            os.unlink(temporary)
+    raise BootstrapPathExists('unable to claim unique bootstrap locator')
+
+
+def resolve_entry_locator(bootstrap_dir, request_target, *, now=None):
+    """Resolve only the exact root-path target; no query or platform override."""
+    now = int(time.time()) if now is None else now
+    if not isinstance(request_target, str) or not request_target.startswith('/'):
+        return None
+    target = entry_locator_index_path(bootstrap_dir, request_target[1:])
+    if target is None:
+        return None
+    try:
+        fd = os.open(str(target), os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+        with os.fdopen(fd, 'rb') as stream:
+            if not stat.S_ISREG(os.fstat(stream.fileno()).st_mode):
+                return None
+            raw = stream.read(513)
+        if len(raw) > 512:
+            return None
+        record = json.loads(raw.decode('utf-8'))
+    except (OSError, ValueError, UnicodeError):
+        return None
+    return record if _valid_entry_locator_record(record, now) else None
 
 
 def generate_compact_bootstrap_credential():
