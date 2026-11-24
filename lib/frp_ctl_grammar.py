@@ -1055,7 +1055,7 @@ def _unset_help(role):
         "  unset server bootstrap-hostname\n\n"
         "unset removes metadata only. It does not release ports or revoke identity.\n"
         "unset server public-hostname falls back to Public IP access.\n"
-        "Unsetting bootstrap-hostname selects a qualified public-HTTPS hostname or verified Private-CA numeric-IP bootstrap. DNS is optional; unsafe prerequisites fail before ticket issuance. Unqualified bootstrap endpoints fail closed.\n"
+        "Unsetting bootstrap-hostname uses the configured allocator HTTPS authority. The entry command is unchanged for public and private HTTPS. Route or downstream TLS readiness failure prevents issuance.\n"
     )
 
 
@@ -1621,7 +1621,7 @@ def context_help(tokens, role, names=None, clients=None):
                 return _fmt_available(
                     [
                         ("public-hostname", "Optional public DNS hostname for published services"),
-                        ("bootstrap-hostname", "Optional Zero-Touch public TLS bootstrap hostname"),
+                        ("bootstrap-hostname", "Optional Zero-Touch HTTPS entry hostname"),
                         ("installer-url", "Linux Agent installer URL"),
                         ("windows-installer-url", "Windows Agent installer URL"),
                     ]
@@ -1631,9 +1631,9 @@ def context_help(tokens, role, names=None, clients=None):
                     "Usage:\n"
                     "  set server bootstrap-hostname <fqdn>\n\n"
                     "Purpose:\n"
-                    "  Set the publicly trusted Zero-Touch short URL hostname.\n"
+                    "  Set the Zero-Touch HTTPS entry hostname.\n"
                     "  Data Relay Link does not create DNS or issue certificates.\n"
-                    "  Operator terminates public TLS on a reverse proxy.\n\n"
+                    "  Operator configures the HTTPS entry route; initial entry TLS is not authenticated.\n\n"
                     "Example:\n"
                     "  set server bootstrap-hostname bootstrap.example.com\n\n"
                     "Remove:\n"
@@ -3390,6 +3390,11 @@ def _match_create(tokens, role, names=None):
     if len(tokens) == 1:
         return incomplete("Missing resource.", ["create <resource>"], avail)
     resource = tokens[1]
+    if resource == "entry-approval":
+        if len(tokens) != 5:
+            return incomplete("Missing approval identity.", ["set enrollment approve <ENROLLMENT> <MACHINE-ID> <SHA256>"])
+        return {"status": "ok", "action": "approve_entry_enrollment",
+                "id": tokens[2], "machine_id": tokens[3], "fingerprint": tokens[4]}
     if resource == "zero-touch":
         if len(tokens) > 2:
             return incomplete(
@@ -4311,7 +4316,7 @@ def _tab_desc_map(line, role, names=None, clients=None):
         if len(filled) == 2:
             return {
                 "public-hostname": "Optional public DNS hostname for published services",
-                "bootstrap-hostname": "Optional Zero-Touch public TLS bootstrap hostname",
+                "bootstrap-hostname": "Optional Zero-Touch HTTPS entry hostname",
                 "installer-url": "Linux/macOS Agent installer URL",
                 "windows-installer-url": "Windows Agent installer URL",
             }, "named"

@@ -738,24 +738,12 @@ frpctl_nav_prompt_id 'Name: '
                 600, "203.0.113.10", 443, "https://203.0.113.10/enroll", "0" * 64,
                 "https://203.0.113.10/artifacts/agent/bootstrap-client.sh",
             )
-            enrollment.print_one_line(
-                "bt1." + "a" * 16 + "." + "b" * 64, 600, "", "203.0.113.10", 443,
-                "https://203.0.113.10/enroll", "0" * 64,
-                "https://203.0.113.10/artifacts/agent/bootstrap-client.sh",
-                "", 22, cfg={"bootstrap_hostname":"bootstrap.example.test"},
-                short_handle="A"*22,
-            )
-            enrollment.print_one_line_windows(
-                "bt1." + "a" * 16 + "." + "b" * 64, 600, "", "203.0.113.10", 443,
-                "https://203.0.113.10/enroll", "0" * 64,
-                "https://203.0.113.10/artifacts/agent/bootstrap-client.ps1",
-                cfg={"bootstrap_hostname":"bootstrap.example.test"},
-                short_handle="A"*22,stage1_sha256="c"*64,
-            )
+            for platform in ("linux","windows"):
+                enrollment.print_entry_command("bootstrap.example.test","A3xK9m",platform,600,"a"*16)
         rendered = output.getvalue()
         self.assertIn("Agent install:", rendered)
         self.assertIn("Zero-touch Agent command", rendered)
-        self.assertIn("Zero-touch Windows Agent command", rendered)
+        self.assertIn("iex(curl.exe -kfsS https://bootstrap.example.test/A3xK9m|Out-String)", rendered)
         self.assertNotRegex(rendered, r"(?i)\bclient (install|command|after enrollment)")
         errors = io.StringIO()
         with redirect_stderr(errors), self.assertRaises(SystemExit):

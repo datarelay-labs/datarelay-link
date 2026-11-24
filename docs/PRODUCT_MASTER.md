@@ -230,17 +230,9 @@ A policy Rule never creates connectivity.
 
 ### Zero-Touch default and regression-prevention gate
 
-**ZT-P0-CONTRACT-20261026.** A first-time operator receives a short,
-copyable Zero-Touch command by default using either verified public HTTPS DNS
-or a direct numeric IP with the project's pinned Private CA. The latter
-verifies the fetched public CA certificate fingerprint **before** sending any
-one-time credential and uses strict TLS for subsequent requests. Neither DNS
-nor a third-party public certificate is mandatory. If neither safe path is
-configured, fail before the service wizard and ticket issuance. Never silently
-emit a multi-kilobyte `zt1` package. Long-form Zero-Touch issuance and decoding are removed. Optional SSH login metadata stays optional.
+**ZT-P0-CONTRACT-20261026 — fixed six-character entry target (owner revision 2026-11-24).** The customer starts with one OS-native command, one HTTPS authority (FQDN or IP), and one six-character root-path file locator. Public and private HTTPS use the same target form. No preinstalled DataRelay software, inline configuration, separate enrollment ID, fingerprint, artifact hash, or installer body in the customer command. All subsequent configuration, downloads, verification, installation, recovery and enrollment belong to the multi-stage Bootstrap; their size and count are unrestricted. The locator is not an enrollment credential. See `docs/ZERO_TOUCH_REGRESSION_CONTROL.md` for exact target templates, the independent enrollment requirement, the explicit initial-transport risk and actual acceptance status. This is a design target, not installed-product qualification.
 
-Linux/macOS and Windows must share this behavior, while Windows checks the
-downloaded stage-1 hash before running it. Signed Zero-Touch LAN destinations
+Linux/macOS and Windows must share the fixed entry behavior; the later-stage installer integrity requirement remains. Signed Zero-Touch LAN destinations
 must not be projected as Agent `this-host`; Server/Agent destination and
 public endpoint must remain authoritative and stable. Unit/CI PASS alone
 cannot qualify the installed product: see

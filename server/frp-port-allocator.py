@@ -16,6 +16,7 @@ import re
 import secrets
 import socket
 import ssl
+import stat
 import subprocess
 import tempfile
 import threading
@@ -632,6 +633,83 @@ class BootstrapPathExists(Exception):
     """Derived ticket or enrollment path is already occupied."""
 
 
+def entry_locator_index_path(bootstrap_dir, locator):
+    """Separate routing namespace: never look up a locator as a bt1 secret."""
+    if ZT is None or not ZT.is_bootstrap_locator(locator):
+        return None
+    digest = hashlib.sha256(locator.encode('ascii')).hexdigest()
+    return Path(bootstrap_dir) / 'entry-locators' / (digest + '.json')
+
+
+def _valid_entry_locator_record(record, now):
+    return (isinstance(record, dict)
+            and set(record) == {'schema', 'ticket_id', 'platform', 'expires_at'}
+            and type(record['schema']) is int and record['schema'] == 1
+            and isinstance(record['ticket_id'], str)
+            and re.fullmatch(r'[0-9a-f]{16}', record['ticket_id']) is not None
+            and record['platform'] in ('linux', 'macos', 'windows')
+            and type(record['expires_at']) is int and record['expires_at'] > now)
+
+
+def claim_entry_locator(bootstrap_dir, ticket_id, platform, expires_at, *, now=None):
+    """Atomically reserve an immutable, secret-free routing index.
+
+    The caller must pair it with its issuance transaction. It grants no
+    authority to redeem a ticket. Expired entries are not silently reused.
+    """
+    now = int(time.time()) if now is None else now
+    record = {'schema': 1, 'ticket_id': ticket_id, 'platform': platform,
+              'expires_at': expires_at}
+    if ZT is None or not _valid_entry_locator_record(record, now):
+        raise ValueError('invalid bootstrap locator record')
+    directory = Path(bootstrap_dir) / 'entry-locators'
+    directory.mkdir(mode=0o700, parents=True, exist_ok=True)
+    for _ in range(BOOTSTRAP_ALLOCATE_ATTEMPTS):
+        locator = ZT.new_bootstrap_locator()
+        target = entry_locator_index_path(bootstrap_dir, locator)
+        if target is None:
+            continue
+        fd, temporary = tempfile.mkstemp(prefix='.claim-', dir=str(directory))
+        try:
+            with os.fdopen(fd, 'w', encoding='utf-8') as stream:
+                json.dump(record, stream, sort_keys=True)
+                stream.flush()
+                os.fsync(stream.fileno())
+            try:
+                # Publish fully written data without replacing an existing
+                # locator, even when separate processes race to allocate it.
+                os.link(temporary, str(target))
+            except FileExistsError:
+                continue
+            CLOCKS.fsync_dir(directory)
+            return locator
+        finally:
+            os.unlink(temporary)
+    raise BootstrapPathExists('unable to claim unique bootstrap locator')
+
+
+def resolve_entry_locator(bootstrap_dir, request_target, *, now=None):
+    """Resolve only the exact root-path target; no query or platform override."""
+    now = int(time.time()) if now is None else now
+    if not isinstance(request_target, str) or not request_target.startswith('/'):
+        return None
+    target = entry_locator_index_path(bootstrap_dir, request_target[1:])
+    if target is None:
+        return None
+    try:
+        fd = os.open(str(target), os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+        with os.fdopen(fd, 'rb') as stream:
+            if not stat.S_ISREG(os.fstat(stream.fileno()).st_mode):
+                return None
+            raw = stream.read(513)
+        if len(raw) > 512:
+            return None
+        record = json.loads(raw.decode('utf-8'))
+    except (OSError, ValueError, UnicodeError):
+        return None
+    return record if _valid_entry_locator_record(record, now) else None
+
+
 def generate_compact_bootstrap_credential():
     """128-bit CSPRNG capability, unpadded base64url (22 chars)."""
     token = base64.urlsafe_b64encode(
@@ -1109,7 +1187,7 @@ def enrollment_state_dir(enrollments_dir, cfg=None):
 
 
 def _prepare_bootstrap_ticket_pair(
-    services, ttl, note='', label='', batch_id='', windows_inputs=None, wrap_secret=''
+    services, ttl, note='', label='', batch_id='', windows_inputs=None, wrap_secret='', entry_platform=None
 ):
     """Build enrollment+ticket records, bt1 secret, and display-once short handle.
 
@@ -1124,11 +1202,22 @@ def _prepare_bootstrap_ticket_pair(
     enrollment_id = secrets.token_hex(8)
     enroll_secret = secrets.token_hex(32)
     ticket_id = secrets.token_hex(8)
-    ticket_secret = secrets.token_hex(32)
-    raw_ticket = '%s.%s.%s' % (BOOTSTRAP_TICKET_PREFIX, ticket_id, ticket_secret)
-    short_handle = generate_compact_bootstrap_credential()
-    if not str(wrap_secret or '').strip():
-        raise RuntimeError('bootstrap ticket wrap secret is unavailable')
+    raw_ticket = None
+    legacy_fields = {}
+    if entry_platform is None:
+        # Historical compatibility fixtures and existing lifecycle readers.
+        # New public issuance never creates a legacy credential or handle.
+        ticket_secret = secrets.token_hex(32)
+        raw_ticket = '%s.%s.%s' % (BOOTSTRAP_TICKET_PREFIX, ticket_id, ticket_secret)
+        short_handle = generate_compact_bootstrap_credential()
+        if not str(wrap_secret or '').strip():
+            raise RuntimeError('bootstrap ticket wrap secret is unavailable')
+        legacy_fields = {
+            'secret_hash': hash_bootstrap_secret(ticket_secret),
+            'short_handle_hash': hash_bootstrap_secret(short_handle),
+            'bt1_wrapped': wrap_bootstrap_ticket(raw_ticket, wrap_secret),
+            '_short_handle': short_handle,
+        }
     now = int(time.time())
     expires_at = now + ttl
     enroll_record = {
@@ -1148,10 +1237,7 @@ def _prepare_bootstrap_ticket_pair(
     ticket_record = {
         'schema': 1,
         'id': ticket_id,
-        'secret_hash': hash_bootstrap_secret(ticket_secret),
-        'short_handle_hash': hash_bootstrap_secret(short_handle),
-        'bt1_wrapped': wrap_bootstrap_ticket(raw_ticket, wrap_secret),
-        '_short_handle': short_handle,
+        **legacy_fields,
         'enrollment_id': enrollment_id,
         'created_at': utc_now_iso(),
         'expires_at': expires_at,
@@ -1164,7 +1250,7 @@ def _prepare_bootstrap_ticket_pair(
     }
     if batch_id:
         ticket_record['batch_id'] = batch_id
-    if windows_inputs and ZT is not None:
+    if entry_platform is None and windows_inputs and ZT is not None:
         script = ZT.render_short_url_windows_bootstrap_script(
             windows_inputs['allocator_url'],
             windows_inputs['allocator_ca_sha256'],
@@ -1194,15 +1280,17 @@ def _persist_bootstrap_ticket_pair(enrollments_dir, bootstrap_dir, enroll_record
     index_path = None
     if HEX_RE.fullmatch(handle_hash) and len(handle_hash) == 64:
         index_path = short_handle_index_path(bootstrap_dir, handle_hash[:BOOTSTRAP_ID_HEX_LEN])
-    if enroll_path is None or ticket_path is None or index_path is None:
+    if enroll_path is None or ticket_path is None or (
+            index_path is None and 'entry_approval' not in public_ticket):
         raise RuntimeError('failed to allocate bootstrap ticket paths')
-    if enroll_path.exists() or ticket_path.exists() or index_path.exists():
+    if enroll_path.exists() or ticket_path.exists() or (index_path is not None and index_path.exists()):
         raise BootstrapPathExists('bootstrap ticket path already exists')
-    index_path.parent.mkdir(parents=True, exist_ok=True)
-    try:
-        os.chmod(str(index_path.parent), 0o700)
-    except OSError:
-        pass
+    if index_path is not None:
+        index_path.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            os.chmod(str(index_path.parent), 0o700)
+        except OSError:
+            pass
     try:
         atomic_write_json(enroll_path, enroll_record, mode=0o600)
         try:
@@ -1215,13 +1303,15 @@ def _persist_bootstrap_ticket_pair(enrollments_dir, bootstrap_dir, enroll_record
             os.chmod(str(ticket_path), 0o600)
         except OSError:
             pass
-        atomic_write_json(
-            index_path,
-            {'ticket_id': public_ticket['id'], 'handle_hash': handle_hash},
-            mode=0o600,
-        )
+        if index_path is not None:
+            atomic_write_json(
+                index_path,
+                {'ticket_id': public_ticket['id'], 'handle_hash': handle_hash},
+                mode=0o600,
+            )
     except Exception:
-        unlink_quiet(index_path)
+        if index_path is not None:
+            unlink_quiet(index_path)
         unlink_quiet(ticket_path)
         unlink_quiet(enroll_path)
         raise
@@ -1238,6 +1328,7 @@ def _allocate_and_persist_bootstrap_ticket_pair(
     batch_id='',
     windows_inputs=None,
     wrap_secret='',
+    entry_platform=None,
 ):
     """Persist one pair, retrying when the ticket or handle path already exists."""
     last = None
@@ -1250,15 +1341,32 @@ def _allocate_and_persist_bootstrap_ticket_pair(
             batch_id=batch_id,
             windows_inputs=windows_inputs,
             wrap_secret=wrap_secret,
+            entry_platform=entry_platform,
         )
+        locator_path = None
+        if entry_platform is not None:
+            # Only the root locator and independent approval are created.
+            locator = claim_entry_locator(bootstrap_dir, ticket_record['id'],
+                                          entry_platform, ticket_record['expires_at'])
+            locator_path = entry_locator_index_path(bootstrap_dir, locator)
+            ticket_record['entry_approval'] = {'platform': entry_platform, 'candidates': {}}
+            ticket_record['entry_locator_hash'] = hashlib.sha256(locator.encode('ascii')).hexdigest()
+            ticket_record['_entry_locator'] = locator
+            enroll_record['entry_ticket_id'] = ticket_record['id']
         try:
             _persist_bootstrap_ticket_pair(
                 enrollments_dir, bootstrap_dir, enroll_record, ticket_record
             )
             return raw_ticket, enroll_record, ticket_record
         except BootstrapPathExists as exc:
+            if locator_path is not None:
+                unlink_quiet(locator_path)
             last = exc
             continue
+        except Exception:
+            if locator_path is not None:
+                unlink_quiet(locator_path)
+            raise
     raise RuntimeError('failed to allocate a unique bootstrap ticket') from last
 
 
@@ -1273,6 +1381,7 @@ def issue_bootstrap_ticket(
     *,
     batch_id='',
     requested_count=1,
+    entry_platform=None,
 ):
     """Create a hashed bootstrap ticket plus a normal enrollment record.
 
@@ -1313,8 +1422,8 @@ def issue_bootstrap_ticket(
         or CLOCKS.DEFAULT_TIMEOUT_SEC
     )
     now = int(time.time())
-    windows_inputs = windows_renderer_inputs_from_cfg(cfg)
-    wrap_secret = bootstrap_wrap_secret(cfg, bootstrap_dir, create=True)
+    windows_inputs = windows_renderer_inputs_from_cfg(cfg) if entry_platform is None else None
+    wrap_secret = bootstrap_wrap_secret(cfg, bootstrap_dir, create=True) if entry_platform is None else ''
     with CLOCKS.acquire_state_dir_control_locks(state_dir, timeout=lock_timeout):
         cleanup_expired_bootstrap_tickets(
             bootstrap_dir, now, cfg=cleanup_cfg, force=True, already_locked=True
@@ -1332,6 +1441,7 @@ def issue_bootstrap_ticket(
             batch_id=batch_id,
             windows_inputs=windows_inputs,
             wrap_secret=wrap_secret,
+            entry_platform=entry_platform,
         )
 
 
@@ -1343,6 +1453,7 @@ def issue_bootstrap_ticket_batch(
     cfg=None,
     *,
     batch_id=None,
+    entry_platform=None,
 ):
     """Issue N unique single-use tickets under one capacity reservation.
 
@@ -1372,8 +1483,8 @@ def issue_bootstrap_ticket_batch(
         or CLOCKS.DEFAULT_TIMEOUT_SEC
     )
     now = int(time.time())
-    windows_inputs = windows_renderer_inputs_from_cfg(cfg)
-    wrap_secret = bootstrap_wrap_secret(cfg, bootstrap_dir, create=True)
+    windows_inputs = windows_renderer_inputs_from_cfg(cfg) if entry_platform is None else None
+    wrap_secret = bootstrap_wrap_secret(cfg, bootstrap_dir, create=True) if entry_platform is None else ''
     issued = []
     created_paths = []
     with CLOCKS.acquire_state_dir_control_locks(state_dir, timeout=lock_timeout):
@@ -1394,6 +1505,7 @@ def issue_bootstrap_ticket_batch(
                         batch_id=batch_id,
                         windows_inputs=windows_inputs,
                         wrap_secret=wrap_secret,
+                        entry_platform=entry_platform,
                     )
                 )
                 enroll_path = enrollment_file_path(enrollments_dir, enroll_record['id'])
@@ -1402,11 +1514,15 @@ def issue_bootstrap_ticket_batch(
                 index_path = short_handle_index_path(
                     bootstrap_dir, handle_hash[:BOOTSTRAP_ID_HEX_LEN]
                 )
-                created_paths.append((enroll_path, ticket_path, index_path))
+                locator_path = entry_locator_index_path(bootstrap_dir, ticket_record.get('_entry_locator'))
+                created_paths.append((enroll_path, ticket_path, index_path, locator_path))
                 issued.append((raw_ticket, enroll_record, ticket_record))
         except Exception:
-            for enroll_path, ticket_path, index_path in created_paths:
-                unlink_quiet(index_path)
+            for enroll_path, ticket_path, index_path, locator_path in created_paths:
+                if locator_path is not None:
+                    unlink_quiet(locator_path)
+                if index_path is not None:
+                    unlink_quiet(index_path)
                 unlink_quiet(ticket_path)
                 unlink_quiet(enroll_path)
             raise
@@ -1899,11 +2015,15 @@ def services_match_authorized(requested, authorized):
 
 
 class Allocator:
-    def __init__(self, config_path):
+    def __init__(self, config_path, *, initial_cfg=None):
         self.config_path = config_path
         self._cfg_mtime_ns = None
+        self._entry_rate_lock = threading.Lock()
+        self._entry_rate_window = -1
+        self._entry_rate_total = 0
+        self._entry_rate_sources = {}
         self.cfg = {}
-        self._apply_config(load_json(config_path), force_paths=True)
+        self._apply_config(initial_cfg if initial_cfg is not None else load_json(config_path), force_paths=True)
         self.enrollments_dir.mkdir(parents=True, exist_ok=True)
         try:
             os.chmod(str(self.enrollments_dir), 0o700)
@@ -2264,7 +2384,7 @@ class Allocator:
             already_locked=already_locked,
         )
 
-    def issue_bootstrap_ticket(self, services, ttl, note='', label='', *, batch_id='', requested_count=1):
+    def issue_bootstrap_ticket(self, services, ttl, note='', label='', *, batch_id='', requested_count=1, entry_platform=None):
         ensure_secret_dir(self.bootstrap_dir, 0o700)
         return issue_bootstrap_ticket(
             self.enrollments_dir,
@@ -2276,9 +2396,10 @@ class Allocator:
             cfg=self.cfg,
             batch_id=batch_id,
             requested_count=requested_count,
+            entry_platform=entry_platform,
         )
 
-    def issue_bootstrap_ticket_batch(self, rows, ttl, *, batch_id=None):
+    def issue_bootstrap_ticket_batch(self, rows, ttl, *, batch_id=None, entry_platform=None):
         ensure_secret_dir(self.bootstrap_dir, 0o700)
         return issue_bootstrap_ticket_batch(
             self.enrollments_dir,
@@ -2287,6 +2408,7 @@ class Allocator:
             ttl,
             cfg=self.cfg,
             batch_id=batch_id,
+            entry_platform=entry_platform,
         )
 
     def count_active_unused_bootstrap_tickets(self, now=None):
@@ -2300,6 +2422,204 @@ class Allocator:
 
     def _invalid_ticket_response(self):
         return 403, api_error('bootstrap ticket is invalid', 'BOOTSTRAP_TICKET_INVALID')
+
+    def entry_rate_limited(self, source, now=None):
+        # Bound both per-peer and aggregate work, including unsuccessful GETs.
+        # A fixed-size window cannot accumulate unbounded attacker state.
+        window = int((time.monotonic() if now is None else now) // 60)
+        with self._entry_rate_lock:
+            if window != self._entry_rate_window:
+                self._entry_rate_window = window
+                self._entry_rate_total = 0
+                self._entry_rate_sources.clear()
+            if self._entry_rate_total >= 600:
+                return True
+            key = str(source or 'unknown')
+            hits = self._entry_rate_sources.get(key, 0)
+            if hits >= 60:
+                return True
+            self._entry_rate_sources[key] = hits + 1
+            self._entry_rate_total += 1
+            return False
+
+    def _entry_active_ticket(self, locator, *, allow_completed=False):
+        idx = resolve_entry_locator(self.bootstrap_dir, '/' + locator)
+        if not idx:
+            return None, None
+        record, path = self.load_bootstrap(idx['ticket_id'])
+        if (not isinstance(record, dict) or record.get('revoked_at') or
+                (record.get('completed_at') and not allow_completed) or
+                type(record.get('expires_at')) is not int or record['expires_at'] <= int(time.time())):
+            return None, None
+        approval = record.get('entry_approval')
+        if (not isinstance(approval, dict) or approval.get('platform') != idx['platform'] or
+                record.get('expires_at') != idx['expires_at'] or
+                record.get('entry_locator_hash') != hashlib.sha256(locator.encode('ascii')).hexdigest()):
+            return None, None
+        return record, path
+
+    def _entry_claim_identity(self, action, payload):
+        if not isinstance(payload, dict):
+            raise ValueError('invalid claim')
+        if set(payload) != {'locator', 'machine_id', 'hostname', 'public_key',
+                            'nonce', 'timestamp', 'signature'}:
+            raise ValueError('invalid claim fields')
+        if not ZT.is_bootstrap_locator(payload['locator']):
+            raise ValueError('invalid locator')
+        if type(payload['timestamp']) is not int or abs(int(time.time()) - payload['timestamp']) > MAX_CLOCK_SKEW:
+            raise ValueError('invalid claim timestamp')
+        if not isinstance(payload['nonce'], str) or not NONCE_RE.fullmatch(payload['nonce']):
+            raise ValueError('invalid claim nonce')
+        if not isinstance(payload['signature'], str) or len(payload['signature']) > 256:
+            raise ValueError('invalid claim signature')
+        machine = MID.validate_machine_id(payload['machine_id'], required=True)
+        hostname = CREG.validate_hostname(payload['hostname'])
+        if machine != payload['machine_id'] or hostname != payload['hostname']:
+            raise ValueError('noncanonical identity')
+        if not isinstance(payload['public_key'], str) or len(payload['public_key']) > 2048:
+            raise ValueError('invalid public key')
+        pem = MGMT.canonicalize_pubkey_pem(payload['public_key'])
+        if not MGMT.verify_signature(pem, ZT.entry_claim_message(action, payload), payload['signature']):
+            raise ValueError('invalid claim proof')
+        return machine, hostname, pem, MGMT.pubkey_fingerprint(pem)
+
+    def request_entry_approval(self, payload):
+        """Queue a proof-of-possession candidate, not a registration credential."""
+        try:
+            machine, hostname, pem, fingerprint = self._entry_claim_identity('request', payload)
+            with LOCK:
+                with self.registry_lock():
+                    record, path = self._entry_active_ticket(payload['locator'])
+                    if record is None:
+                        return self._invalid_ticket_response()
+                    approval = record['entry_approval']
+                    candidates = approval.get('candidates')
+                    if not isinstance(candidates, dict):
+                        return self._invalid_ticket_response()
+                    approved = approval.get('approved')
+                    if approved is not None and (not isinstance(approved, dict) or
+                            approved.get('fingerprint') != fingerprint or
+                            approved.get('machine_id') != machine):
+                        return self._invalid_ticket_response()
+                    existing = candidates.get(fingerprint)
+                    if existing is not None:
+                        if (not isinstance(existing, dict) or existing.get('machine_id') != machine or
+                                existing.get('public_key') != pem):
+                            return self._invalid_ticket_response()
+                    else:
+                        if len(candidates) >= 4:
+                            return 429, api_error('pending approval capacity reached', 'BOOTSTRAP_APPROVAL_CAPACITY')
+                        existing = {'machine_id': machine, 'hostname': hostname, 'public_key': pem,
+                                    'challenge': secrets.token_hex(32)}
+                        candidates[fingerprint] = existing
+                        self.save_bootstrap(path, record)
+                    challenge = existing.get('challenge')
+                    if not isinstance(challenge, str) or not NONCE_RE.fullmatch(challenge):
+                        return self._invalid_ticket_response()
+                    return 200, {'status': 'approved' if approved else 'pending',
+                                 'fingerprint': fingerprint, 'challenge': challenge}
+        except (ValueError, TypeError, KeyError, RuntimeError):
+            return self._invalid_ticket_response()
+        except OSError:
+            return 500, api_error('approval state unavailable', 'SERVER_MUTATION_FAILED')
+
+    def approve_entry_request(self, ticket_id, machine_id, fingerprint):
+        """Trusted local operator boundary: approve one independently verified key."""
+        if not isinstance(fingerprint, str) or not re.fullmatch(r'[0-9a-f]{64}', fingerprint):
+            return self._invalid_ticket_response()
+        with LOCK:
+            with self.registry_lock():
+                record, path = self.load_bootstrap(ticket_id)
+                if (not isinstance(record, dict) or record.get('revoked_at') or record.get('completed_at') or
+                        type(record.get('expires_at')) is not int or record['expires_at'] <= int(time.time())):
+                    return self._invalid_ticket_response()
+                enrollment, _ = self.load_enrollment(record.get('enrollment_id'))
+                if (not isinstance(enrollment, dict) or enrollment.get('entry_ticket_id') != record.get('id') or
+                        enrollment.get('revoked_at') or enrollment.get('used_at') or
+                        type(enrollment.get('expires_at')) is not int or enrollment['expires_at'] <= int(time.time())):
+                    return self._invalid_ticket_response()
+                approval = record.get('entry_approval')
+                if not isinstance(approval, dict) or not isinstance(approval.get('candidates'), dict):
+                    return self._invalid_ticket_response()
+                candidate = approval['candidates'].get(fingerprint)
+                if not isinstance(candidate, dict) or candidate.get('machine_id') != machine_id:
+                    return self._invalid_ticket_response()
+                try:
+                    if MGMT.pubkey_fingerprint(candidate['public_key']) != fingerprint:
+                        return self._invalid_ticket_response()
+                except Exception:
+                    return self._invalid_ticket_response()
+                selected = {'machine_id': machine_id, 'fingerprint': fingerprint}
+                if approval.get('approved') is not None and approval['approved'] != selected:
+                    return self._invalid_ticket_response()
+                # A new locator cannot replace a previously registered key.
+                existing = self.load_registry().get('clients', {}).get(machine_id)
+                if existing:
+                    if existing.get('mgmt_status') == 'revoked' or existing.get('mgmt_fingerprint') != fingerprint:
+                        return self._invalid_ticket_response()
+                approval['approved'] = selected
+                approval['candidates'] = {fingerprint: candidate}
+                self.save_bootstrap(path, record)
+                return 200, {'status': 'approved', 'fingerprint': fingerprint}
+
+    def redeem_entry_approval(self, payload):
+        """Release the scoped Enrollment Code only after approval + fresh proof."""
+        try:
+            machine, _hostname, pem, fingerprint = self._entry_claim_identity('redeem', payload)
+            with LOCK:
+                with self.registry_lock():
+                    record, path = self._entry_active_ticket(payload['locator'])
+                    if record is None:
+                        return self._invalid_ticket_response()
+                    approval = record['entry_approval']
+                    if approval.get('approved') != {'machine_id': machine, 'fingerprint': fingerprint}:
+                        return self._invalid_ticket_response()
+                    candidate = approval.get('candidates', {}).get(fingerprint)
+                    if (not isinstance(candidate, dict) or candidate.get('public_key') != pem or
+                            candidate.get('machine_id') != machine or
+                            candidate.get('challenge') != payload['nonce'] or
+                            record.get('bound_machine_id') not in (None, '', machine)):
+                        return self._invalid_ticket_response()
+                    eid = record.get('enrollment_id')
+                    enrollment, _ = self.load_enrollment(eid)
+                    if (not isinstance(enrollment, dict) or enrollment.get('entry_ticket_id') != record.get('id') or
+                            enrollment.get('revoked_at') or enrollment.get('used_at') or
+                            type(enrollment.get('expires_at')) is not int or enrollment['expires_at'] <= int(time.time())):
+                        return self._invalid_ticket_response()
+                    if not re.fullmatch(r'[0-9a-f]{64}', str(enrollment.get('secret') or '')):
+                        return self._invalid_ticket_response()
+                    services = normalize_services(record.get('services'))
+                    candidate['challenge'] = secrets.token_hex(32)
+                    record['bound_machine_id'] = machine
+                    self.save_bootstrap(path, record)
+                    return 200, {'enrollment_code': eid + '.' + enrollment['secret'],
+                                 'services': services, 'note': str(record.get('note') or '')}
+        except (ValueError, TypeError, KeyError, RuntimeError, AttributeError):
+            return self._invalid_ticket_response()
+        except OSError:
+            return 500, api_error('approval state unavailable', 'SERVER_MUTATION_FAILED')
+
+    def _entry_enrollment_proof(self, record, payload, timestamp, body, headers):
+        if 'entry_ticket_id' not in record:
+            return True
+        ticket, _ = self.load_bootstrap(record.get('entry_ticket_id'))
+        try:
+            if (not isinstance(ticket, dict) or ticket.get('revoked_at') or
+                    ticket.get('enrollment_id') != record.get('id') or
+                    ticket.get('bound_machine_id') != payload.get('machine_id') or
+                    type(ticket.get('expires_at')) is not int or ticket['expires_at'] <= int(time.time())):
+                return False
+            approved = ticket['entry_approval']['approved']
+            pem = MGMT.canonicalize_pubkey_pem(payload['mgmt_pubkey'])
+            fingerprint = MGMT.pubkey_fingerprint(pem)
+            if approved != {'machine_id': payload.get('machine_id'), 'fingerprint': fingerprint}:
+                return False
+            proof = headers.get('X-Entry-Key-Proof', '')
+            if not isinstance(proof, str) or not proof or len(proof) > 256:
+                return False
+            return MGMT.verify_signature(pem, ZT.entry_enroll_message(record['id'], timestamp, body), proof)
+        except Exception:
+            return False
 
     def short_url_bootstrap_available(self, raw_ticket):
         """Return True only for a short handle when GET /i/<handle> is valid.
@@ -2323,7 +2643,7 @@ class Allocator:
             expires_at = 0
         if now > expires_at:
             return False
-        if record.get('revoked_at') or record.get('completed_at'):
+        if record.get('revoked_at') or record.get('completed_at') or 'entry_approval' in record:
             return False
         return True
 
@@ -2342,7 +2662,7 @@ class Allocator:
         )
         if not matched or not isinstance(record, dict):
             return None
-        if not isinstance(record.get('bt1_wrapped'), dict):
+        if 'entry_approval' in record or not isinstance(record.get('bt1_wrapped'), dict):
             return None
         raw = unwrap_bootstrap_ticket(
             record['bt1_wrapped'],
@@ -2365,6 +2685,18 @@ class Allocator:
             frozen = self._frozen_windows_stage1(raw_ticket, credential)
             if frozen is not False:
                 return frozen
+        return self._render_bootstrap_script(platform, credential)
+
+    def build_entry_script(self, locator):
+        if ZT is None or not ZT.is_bootstrap_locator(locator):
+            return None
+        record, _path = self._entry_active_ticket(locator, allow_completed=True)
+        if record is None:
+            return None
+        return self._render_bootstrap_script(record['entry_approval']['platform'], None,
+                                             entry_locator=locator)
+
+    def _render_bootstrap_script(self, platform, credential, *, entry_locator=None):
         self.reload_cfg_if_changed()
         allocator = str(self.cfg.get('allocator_public_url') or '').strip()
         if platform == 'windows':
@@ -2398,9 +2730,12 @@ class Allocator:
         if not ca_fp:
             return None
         try:
+            entry_kwargs = ({'entry_locator': entry_locator,
+                             'ca_pem': Path(ca_path).read_text(encoding='ascii')}
+                            if entry_locator is not None else {})
             if platform == 'windows':
                 return ZT.render_short_url_windows_bootstrap_script(
-                    allocator, ca_fp, credential, installer
+                    allocator, ca_fp, credential, installer, **entry_kwargs
                 )
             provenance = None
             # Public DNS aliases can differ from the allocator's pinned-IP
@@ -2422,9 +2757,9 @@ class Allocator:
                     return None
             return ZT.render_short_url_bootstrap_script(
                 allocator, ca_fp, credential, installer,
-                qualified_provenance=provenance,
+                qualified_provenance=provenance, **entry_kwargs,
             )
-        except ValueError:
+        except (ValueError, OSError):
             return None
 
     def _frozen_windows_stage1(self, raw_ticket, credential):
@@ -2525,7 +2860,7 @@ class Allocator:
                         return self._invalid_ticket_response()
                     # Only records issued with the current protected short-handle
                     # flow are redeemable. Old unwrapped records are unsupported.
-                    if not isinstance(record.get('bt1_wrapped'), dict):
+                    if 'entry_approval' in record or not isinstance(record.get('bt1_wrapped'), dict):
                         return self._invalid_ticket_response()
 
                     now = int(time.time())
@@ -3142,6 +3477,15 @@ class Allocator:
                         record, enroll_path = self.load_enrollment(enrollment_id)
                         if not record:
                             return 403, api_error('unknown enrollment id', 'AUTH_FAILED')
+                        if not self._entry_enrollment_proof(record, payload, timestamp, body, headers):
+                            return 403, api_error('approved Agent key proof required', 'AUTH_FAILED')
+                        if 'entry_ticket_id' in record:
+                            existing_entry_client = self.load_registry().get('clients', {}).get(machine_id)
+                            if existing_entry_client and (
+                                    existing_entry_client.get('mgmt_status') == 'revoked' or
+                                    existing_entry_client.get('mgmt_fingerprint') !=
+                                    MGMT.pubkey_fingerprint(payload['mgmt_pubkey'])):
+                                return 403, api_error('Agent identity does not match approved key', 'AUTH_FAILED')
                         bound_machine_id = record.get('bound_machine_id')
                         if bound_machine_id and bound_machine_id != machine_id:
                             return 403, api_error(
@@ -3610,6 +3954,21 @@ def make_handler(allocator):
                 return 'windows'
             return 'linux'
 
+        def _handle_entry_get(self, path):
+            if ZT is None or not ZT.BOOTSTRAP_LOCATOR_RE.fullmatch(path[1:]):
+                return False
+            source = CREG.request_source_ip(self.client_address[0], self.headers)
+            if allocator.entry_rate_limited(source):
+                self._send_bootstrap_headers(429, 'text/plain; charset=utf-8', 'bootstrap unavailable\n')
+                return True
+            # Never accept a query, encoded path or client-selected platform.
+            script = allocator.build_entry_script(path[1:]) if self.path == path else None
+            if script is None:
+                self._send_bootstrap_headers(404, 'text/plain; charset=utf-8', 'bootstrap unavailable\n')
+                return True
+            self._send_bootstrap_headers(200, 'text/plain; charset=utf-8', script)
+            return True
+
         def _handle_short_url_get(self, path):
             match = SHORT_URL_PATH_RE.match(path)
             if not match:
@@ -3682,6 +4041,8 @@ def make_handler(allocator):
             def _handle():
                 allocator.reload_cfg_if_changed()
                 path = self._request_path()
+                if self._handle_entry_get(path):
+                    return
                 if self._handle_short_url_get(path):
                     return
                 if self._handle_artifact_get(path):
@@ -3842,6 +4203,18 @@ def make_handler(allocator):
                             peer_host=peer_host,
                         )
                         self.send_json(code, result)
+                        return
+                    if path in ('/bootstrap/entry/request', '/bootstrap/entry/redeem'):
+                        source = CREG.request_source_ip(self.client_address[0], self.headers)
+                        if self.path != path or allocator.entry_rate_limited(source):
+                            self._send_bootstrap_headers(429, 'application/json',
+                                json.dumps(api_error('bootstrap unavailable', 'BOOTSTRAP_APPROVAL_CAPACITY')))
+                            return
+                        payload = json.loads(body.decode('utf-8'))
+                        handler = (allocator.request_entry_approval if path.endswith('/request')
+                                   else allocator.redeem_entry_approval)
+                        code, result = handler(payload)
+                        self._send_bootstrap_headers(code, 'application/json', json.dumps(result))
                         return
                     if path == '/bootstrap/redeem':
                         code, result = allocator.redeem_bootstrap(body)

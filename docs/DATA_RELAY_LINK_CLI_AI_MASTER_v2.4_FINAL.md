@@ -3918,27 +3918,7 @@ Server:
 set enrollment zero-touch
 ```
 
-**ZT-P0-CONTRACT-20261026 (normative):** Zero-Touch defaults to a short,
-copyable bootstrap command, not an automatic multi-kilobyte pinned-CA dump.
-An explicit operator `bootstrap_hostname` declares the intended public
-HTTPS edge; the installed Agent still verifies the public certificate.
-When unset, the generator may qualify configured public DNS
-`public_hostname`/`public_url_host` only after a real stock-CA HTTPS probe
-against `/i/invalid-qualification-probe` and DRLink's exact invalid-handle
-`404 bootstrap unavailable` response. A generic 404, unrelated webpage,
-redirect, invalid TLS certificate or IP literal is not a trust proof.
-
-When public DNS is absent, an allocator addressed by a numeric IP can still
-produce a compact launcher if its Server TLS certificate has the IP SAN and
-its Private CA can be authenticated by the issuer's SHA256 fingerprint.
-The public CA is fetched without any bearer token; all subsequent handle-
-bearing requests require strict CA-verified HTTPS. If neither safe mode is
-available, fail before service prompts and ticket issuance, without silently
-printing a multi-kilobyte `zt1` line.
-Legacy long Zero-Touch command issuance and package decoding are removed.
-New issuances use only verified compact HTTPS/DNS or CA-pinned numeric-IP launchers. At the `remote.xdr.ooo` reference hostname, automated
-copy-paste bounds are Linux/macOS <= 200 characters and Windows <= 500
-characters (Windows checks stage-1 SHA-256 before execution).
+**ZT-P0-CONTRACT-20261026 — fixed six-character entry target (owner revision 2026-11-24).** The customer starts with one OS-native command, one HTTPS authority (FQDN or IP), and one six-character root-path file locator. Public and private HTTPS use the same target form. No preinstalled DataRelay software, inline configuration, separate enrollment ID, fingerprint, artifact hash, or installer body in the customer command. All subsequent configuration, downloads, verification, installation, recovery and enrollment belong to the multi-stage Bootstrap; their size and count are unrestricted. The locator is not an enrollment credential. See `docs/ZERO_TOUCH_REGRESSION_CONTROL.md` for exact target templates, the independent enrollment requirement, the explicit initial-transport risk and actual acceptance status. This is a design target, not installed-product qualification.
 
 Zero-Touch signed LAN targets must not be rewritten as `this-host`: use
 the same canonical Network Object/destination across Server and Agent.

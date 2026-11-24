@@ -45,7 +45,7 @@ SECRET_KEY_RE = re.compile(
     r"(^|_)(token|secret|password|passwd|private_key|privkey|api_key|apikey|"
     r"auth_token|access_token|refresh_token|mac_key|mgmt_mac_key|"
     r"enrollment_code|enrollment_secret|enroll_secret|bootstrap_ticket|"
-    r"frp_bootstrap_ticket|authorization|cookie|credential)(_|$)|"
+    r"frp_bootstrap_ticket|bootstrap_locator|entry_locator|locator|authorization|cookie|credential)(_|$)|"
     r"token_ciphertext|auth\.token|server_token|frp_token",
     re.IGNORECASE,
 )

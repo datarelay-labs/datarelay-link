@@ -34,11 +34,11 @@ export DRLINK_MOCK_UNTRUSTED=1
 out="$(frp_report_zero_touch_readiness)"
 [[ "$out" == *'NOT_READY (no ticket issued)'* ]] || { echo "FAIL untrusted TLS readiness: $out"; exit 1; }
 [[ "$out" == *'public TLS chain is untrusted'* ]] || { echo "FAIL missing TLS diagnosis: $out"; exit 1; }
-[[ "$out" == *'matching IP SAN'* ]] || { echo "FAIL missing private CA guidance: $out"; exit 1; }
+[[ "$out" == *'downstream TLS trust'* ]] || { echo "FAIL missing private CA guidance: $out"; exit 1; }
 unset DRLINK_MOCK_UNTRUSTED
 export DRLINK_MOCK_PINNED=1
 out="$(frp_report_zero_touch_readiness)"
-[[ "$out" == *'READY (numeric IP + pinned Private CA; read-only, no ticket issued)'* ]] || { echo "FAIL pinned-IP readiness: $out"; exit 1; }
+[[ "$out" == *'READY (read-only, no ticket issued)'* ]] || { echo "FAIL pinned-IP readiness: $out"; exit 1; }
 unset DRLINK_MOCK_PINNED
 ! grep -q 'Zero-Touch.*READY' "$T/tools/frp-create-client"
 # The status is read-only and never writes an enrollment or secret.

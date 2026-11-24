@@ -352,13 +352,13 @@ Verify:
 - `set enrollment ?` discovery;
 - `set enrollment zero-touch ?` and manual/bulk mode-specific help;
 - Zero-Touch default 1 hour / maximum 24 hour semantics without generic/manual TTL leakage;
-- Zero-Touch `ZT-P0-CONTRACT-20261026`: copy the *real default* generated launcher from an installed Server; on qualified `remote.xdr.ooo` use the benchmark Linux/macOS <=200 characters and Windows <=500 with Windows hash-before-execute, without presupposing a short hostname;
-- when trusted HTTPS and the exact `/i/invalid-qualification-probe` handler signature are missing, standard onboarding must show actionable DNS/TLS/443 guidance and issue no ticket; do not issue any ticket or legacy long-form command; obsolete encoded package inputs are not accepted;
+- Zero-Touch `ZT-P0-CONTRACT-20261026`: compare installed output to the fixed six-character root-path templates, with identical public/private certificate UX and no additional arguments; qualify actual later-stage installation and independent enrollment, not mere template matching or exit status;
+- validate entry handler reachability, expiry, retry behavior and downstream authentication; do not treat an unauthenticated initial fetch as a security PASS;
 - compare guided/public CLI versus backend mode; optional SSH login may be blank and must not block, be repeated unnecessarily, or silently default to an invented account;
 - retain exact Server/Agent installed Source HEAD, generated installer checksum, a real external copy/paste/enroll/SSH traffic receipt and restored bootstrap-hostname/installer settings before PASS; see `docs/ZERO_TOUCH_REGRESSION_CONTROL.md`;
 - when a Zero-Touch LAN service targets another IP, verify signed Network Object routing and stable public-port identity; local target reachability alone cannot certify the relay;
 - optional SSH username behavior;
-- one-time command presentation;
+- one OS-native entry command with the canonical fields; retry preserves identity; independent single-use enrollment credentials;
 - inventory/listing after issue;
 - ability to discover the identifier needed for revoke/remove;
 - safe cancellation;

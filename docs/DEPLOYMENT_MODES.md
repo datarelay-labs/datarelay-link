@@ -19,8 +19,8 @@ not move the FRP control path, frontend proxy configuration, or CA identity.
 DNS records are managed outside Data Relay Link. HTTPS Remote Services remain
 TCP passthrough.
 
-An optional **bootstrap hostname** may be configured separately for publicly
-trusted Zero-Touch short URL entry (`GET /i/<ticket>`). That name is not the
+An optional **bootstrap hostname** may be configured separately for the fixed
+six-character Zero-Touch entry target (`GET /<locator>`). That name is not the
 Remote Service alias and is not the Private CA / FRP control identity. See
 `docs/ZERO_TOUCH_SHORT_URL.md`.
 

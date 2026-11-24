@@ -560,7 +560,7 @@ maximum active unused tickets   10
 default TTL                     1 hour
 maximum TTL                     24 hours
 use count                       1
-raw ticket                      displayed only at issuance
+raw enrollment credential       confidential; separate from entry filename
 persistent credential           verifier/hash only
 ```
 

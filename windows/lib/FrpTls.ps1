@@ -78,6 +78,9 @@ function Get-FrpCaCertificate {
 
     $previousCallback = [System.Net.ServicePointManager]::ServerCertificateValidationCallback
     $bytes = $null
+    if ($env:FRP_ALLOCATOR_CA_FILE) {
+        $bytes = [IO.File]::ReadAllBytes($env:FRP_ALLOCATOR_CA_FILE)
+    } else {
     try {
         # Temporary bypass ONLY for this CA download. Restored in finally.
         [System.Net.ServicePointManager]::ServerCertificateValidationCallback = {
@@ -117,6 +120,7 @@ function Get-FrpCaCertificate {
         }
     } finally {
         [System.Net.ServicePointManager]::ServerCertificateValidationCallback = $previousCallback
+    }
     }
 
     if (-not $bytes -or $bytes.Length -lt 32) {

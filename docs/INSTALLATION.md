@@ -79,33 +79,11 @@ If installation allows a domain to be selected as the product public identity, t
 
 Changing a friendly Remote Service hostname alias must not silently change management identity.
 
-### Zero-Touch HTTPS readiness with a private CA
+### Zero-Touch entry readiness
 
-The Server install can complete even if Zero-Touch reports `NOT_READY`:
-service health and secure Agent bootstrap readiness are separate checks.
-A private Server CA is **not** automatically trusted by Agent operating systems.
-Do not disable TLS verification or make an unverified `curl | bash` pipeline
-to work around this.
+The fixed six-character entry target (not yet installed-product qualified) is `curl -kfsS https://remote.xdr.ooo/A3xK9m|sudo bash` on Linux/macOS, or `iex(curl.exe -kfsS https://remote.xdr.ooo/A3xK9m|Out-String)` in administrator PowerShell on Windows. Public/private HTTPS use the same form; no DataRelay prerequisite. The locator is not an enrollment credential. All subsequent work is handled by Bootstrap. Initial `-k` skips peer certificate authentication; see [the canonical contract](ZERO_TOUCH_REGRESSION_CONTROL.md) for the explicit risk and independent enrollment requirement.
 
-If the configured public/Bootstrap FQDN serves a publicly trusted certificate
-with the expected DNS SAN and the exact short-URL proof, the CLI uses the
-compact FQDN Zero-Touch command. Otherwise, where the Server's **configured
-numeric public IP** and the FQDN both appear in its valid private-CA-signed
-Server certificate, the CLI can use a pinned-CA numeric-IP bootstrap without
-changing the saved FQDN, enrollment identity, or TLS credentials. It checks
-the issuer-owned CA fingerprint and certificate signature/IP SAN before
-creating a ticket. The Agent verifies the same CA before fetching any
-ticket-bearing stage and continues to validate TLS against the configured
-allocator hostname.
-
-The installation summary explicitly distinguishes `READY (numeric IP +
-pinned Private CA)` from FQDN stock-trust readiness. An automatic hostname
-selection is not a promise of publicly trusted FQDN TLS. If both routes fail,
-no Zero-Touch ticket is issued; inspect `system diagnostics`, the public
-`/ca.crt` endpoint, DNS, firewall/NAT and the certificate SANs. A configured
-service range (for example `6000-6098`) is preserved across reinstall;
-the private Relay Engine backend port (often `7000`) must not overlap a
-published-service range.
+Server installation and entry handler reachability are separate. Validate the configured entry authority and exact six-character handler, then downstream installer and enrollment readiness. No public/private certificate-specific customer command or certificate registration requirement. Actual installation and independently authorized enrollment determine success.
 
 ### Internet Access listener recovery
 
@@ -190,7 +168,7 @@ maximum TTL                   24 hours
 use count                     1
 ```
 
-Raw ticket/install URL material is shown only at issuance. Server persistent state retains verifier/hash plus lifecycle metadata, not a redisplayable raw ticket.
+Enrollment credentials are separate from the six-character Bootstrap filename, remain confidential and are never included in the public entry file. Server persistent state retains verifier/hash plus lifecycle metadata.
 
 For manual enrollment, an Enrollment Code is also a one-time authorization for a fresh enrollment operation. After enrollment succeeds, do not reuse that Code for uninstall/reinstall or a later recovery; create a new Enrollment Code instead. If the original `/enroll` response is lost or the installer is interrupted, the Agent resumes from its protected local pending-enrollment state and replays only the original enrollment operation. This crash-recovery replay does not make the consumed Code valid for a new install.
 

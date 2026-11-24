@@ -234,7 +234,7 @@ ConfigurationBundle export/input generated for review
 AI-generated configuration blocks
 ```
 
-For v2.4 stable Zero-Touch, raw ticket/install URL material is returned only at issuance time. The server stores the verifier/hash required for validation, plus non-secret lifecycle metadata; it does not retain a redisplayable raw ticket.
+For the six-character entry target, the public locator is a non-secret routing index, never an enrollment credential. Keep the separate high-entropy single-use enrollment credential out of the entry file and issue it only after independent authorization; store a verifier/hash and non-secret lifecycle metadata. The requested initial `-k` fetch does not authenticate the TLS peer and is not security-qualified. See `ZERO_TOUCH_REGRESSION_CONTROL.md`; retain downstream trust, artifact and enrollment controls.
 
 An Enrollment Code is a one-time authorization credential. Once consumed, it must fail fresh-install/re-enrollment preflight and cannot be used again after uninstall/reinstall. The only exception is crash/lost-response recovery for the **same enrollment transaction**: current clients persist a random 128-bit `operation_id` in protected pending-enrollment state before `/enroll`; the Server binds the successful Enrollment record to that operation ID and permits replay only when the same operation ID, management identity, and service set are presented. A new operation ID is a new transaction and requires a new Enrollment Code. Legacy pending transactions without an operation ID retain only the older same-key/same-services replay compatibility path.
 
@@ -532,6 +532,6 @@ SECRET_SCAN=PASS
 PUBLIC_METADATA_SCAN=PASS
 ```
 
-For the v2.4 stable target, Zero-Touch bootstrap tickets are unique single-use credentials whose raw value is displayed only at issuance. Server-side persistent state stores a verifier/hash plus lifecycle metadata rather than a redisplayable raw ticket. Post-success reuse is classified as `BOOTSTRAP_TICKET_USED`, and concurrent double-use must have exactly one successful consumer.
+For the v2.4 stable target, Zero-Touch enrollment credentials are unique and single-use, separate from the six-character Bootstrap filename and never included in the public entry file. Server-side persistent state stores a verifier/hash plus lifecycle metadata rather than a redisplayable raw ticket. Post-success reuse is classified as `BOOTSTRAP_TICKET_USED`, and concurrent double-use must have exactly one successful consumer.
 
 Manual Enrollment Codes are likewise not reusable as fresh-install credentials after a successful enrollment. Current clients bind crash-safe enrollment recovery to the original per-install operation plus the established management identity and service set; a new install/reinstall operation must use a newly issued Enrollment Code. The local pending-enrollment record may replay only the original request after a lost response or interruption, preserving idempotent recovery without reopening a consumed Code as authorization.

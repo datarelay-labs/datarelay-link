@@ -270,13 +270,10 @@ def public_url_host(cfg):
 
 
 def short_url_hostname(cfg):
-    """Explicit publicly trusted hostname for Zero-Touch short URL commands.
+    """Optional entry hostname override; not evidence of TLS peer trust.
 
-    An explicit bootstrap_hostname is operator-selected public TLS intent.
-    When unset, command generators may qualify a configured public hostname
-    with a real strict-TLS /i/ probe; otherwise default enrollment fails
-    before issuing any ticket. Private-CA long commands require explicit
-    advanced opt-in and must never be an automatic fallback.
+    When absent, the issuer selects the configured allocator HTTPS authority.
+    This accessor intentionally returns only the explicit override.
     """
     return bootstrap_hostname(cfg)
 

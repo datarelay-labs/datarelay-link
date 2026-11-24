@@ -130,17 +130,17 @@ class WindowsPinnedCaCommandTests(unittest.TestCase):
             for case in ('name_mismatch','cert_missing','name_and_chain','only_private_ca_chain'):
                 self.assertIn('TLS_CASE_PASS '+case,proc.stdout)
 
-    def test_strict_launcher_is_420_and_hash_before_execute(self):
-        digest = "ab" * 32
-        command = zt.windows_strict_launcher("remote.xdr.ooo", "A" * 22, digest)
-        self.assertEqual(len(command), 420)
-        self.assertIn("curl.exe -fsSLo", command)
-        self.assertIn("Get-FileHash", command)
-        self.assertIn(digest, command)
-        self.assertIn("powershell.exe -NoProfile -ExecutionPolicy Bypass -File", command)
-        self.assertNotIn("-Command", command)
-        self.assertNotIn("Invoke-Expression", command)
-        self.assertIsNone(re.search(r'(^|[^a-z0-9])(irm|iex)([^a-z0-9]|$)', command.lower()))
+    def test_current_entry_and_downstream_hash_before_execute(self):
+        command=zt.render_entry_command("remote.xdr.ooo","A3xK9m","windows")
+        self.assertEqual(command,"iex(curl.exe -kfsS https://remote.xdr.ooo/A3xK9m|Out-String)")
+        stage=zt.render_short_url_windows_bootstrap_script(
+            "https://192.0.2.20/enroll","ab"*32,None,
+            "https://192.0.2.20/artifacts/agent/bootstrap-client.ps1",
+            entry_locator="A3xK9m",ca_pem="fixture certificate")
+        self.assertLess(stage.index("CA fingerprint mismatch"),stage.index("DownloadFile"))
+        self.assertLess(stage.index("Get-FileHash"),stage.index("-File $installer"))
+        self.assertNotIn("--insecure",stage)
+        self.assertNotIn("bt1.",stage)
 
 
 if __name__ == "__main__":

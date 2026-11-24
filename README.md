@@ -166,7 +166,7 @@ set enrollment zero-touch
 
 (or Guided menu → Managed Hosts → Connect a Managed Host)
 
-The operator-facing install command is a short HTTPS launcher that preserves private-CA fingerprint verification and one-time ticket semantics inside the maintained bootstrap artifact.
+The fixed six-character entry target is `curl -kfsS https://remote.xdr.ooo/A3xK9m|sudo bash` (Linux/macOS) or `iex(curl.exe -kfsS https://remote.xdr.ooo/A3xK9m|Out-String)` (administrator PowerShell). Public/private HTTPS use the same form; no client-side DataRelay prerequisite. The locator is not an enrollment credential. Later stages handle downloads, verification, enrollment and retry. Initial TLS peer authentication is not provided by `-k`; see [the canonical contract](docs/ZERO_TOUCH_REGRESSION_CONTROL.md). This target is pending product qualification.
 
 After a Managed Host enrolls and a Remote Service is enabled, operators connect with the reserved public endpoint:
 

@@ -1943,8 +1943,8 @@ PY
   fi
 }
 
-# A successful Server install does not imply a publicly trusted bootstrap
-# certificate. This side-effect-free preflight runs after services are healthy
+# A successful Server install does not imply the entry route or downstream
+# authenticated installer is ready. This preflight runs after services are healthy
 # and before the operator is instructed to create the first Zero-Touch ticket.
 # It never creates enrollment credentials or changes TLS/NGINX config.
 frp_report_zero_touch_readiness() {
@@ -1958,16 +1958,12 @@ frp_report_zero_touch_readiness() {
     return 0
   fi
   if result="$(timeout 16 python3 "$command_path" --preflight-zero-touch --platform linux 2>&1)"; then
-    if [[ "$result" == *'pinned Private CA at numeric IP'* ]]; then
-      echo 'Zero-Touch HTTPS readiness: READY (numeric IP + pinned Private CA; read-only, no ticket issued)'
-    else
-      echo 'Zero-Touch HTTPS readiness: READY (read-only, no ticket issued)'
-    fi
+    echo 'Zero-Touch HTTPS readiness: READY (read-only, no ticket issued)'
   else
     echo 'Zero-Touch HTTPS readiness: NOT_READY (no ticket issued)'
     printf '  %s\n' "$result"
-    echo '  Configure publicly trusted HTTPS for the bootstrap FQDN,'
-    echo '  or choose a valid numeric-IP Private-CA bootstrap with matching IP SAN.'
+    echo '  Check the configured HTTPS entry authority and root locator route.'
+    echo '  Check the allocator CA, installer reachability and downstream TLS trust.'
     echo '  Recheck before issuing a ticket: sudo drlink set enrollment zero-touch'
   fi
 }

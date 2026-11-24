@@ -64,7 +64,7 @@ SECRET_RE = re.compile(
     r'(BEGIN (?:RSA |OPENSSH |EC |DSA )?PRIVATE KEY|'
     r'auth\.token\s*=\s*\S+|'
     r'mgmt_mac_key|'
-    r'FRP_BOOTSTRAP_TICKET\s*=\s*\S+|'
+    r'FRP_BOOTSTRAP_(?:TICKET|LOCATOR)\s*=\s*\S+|'
     r'bt1\.[0-9a-f]{16}\.[0-9a-f]{32,}|'
     r'zt1\.[A-Za-z0-9_-]{16,}|'
     r'Enrollment Code:\s*\S+)',
@@ -141,6 +141,7 @@ def redact(text):
     text = str(text)
     # Preserve /i/<redacted> shape for short-URL path logs.
     text = re.sub(r'(/i/)[^/?\s#]+', r'\1<redacted>', text, flags=re.IGNORECASE)
+    text = re.sub('((?:https://[^/\\s]+|GET |HEAD )/)([A-Za-z0-9_-]{6})(?=[?\\s\\"\\\'#$|)]|$)', lambda m: m.group(1)+'<redacted>' if m.group(2).lower() not in ('enroll','zt0000') else m.group(0), text)
     text = SECRET_RE.sub('[redacted]', text)
     text = re.sub(r'auth\.token\s*=\s*".*?"', 'auth.token = "[redacted]"', text)
     return text

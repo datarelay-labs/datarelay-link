@@ -259,8 +259,7 @@ def hux_cons_007(env: ScenarioEnv) -> None:
 def hux_cons_008(env: ScenarioEnv) -> None:
     import frp_zero_touch as zt
 
-    ticket = "A" * 22
-    cmd = zt.short_url_command("remote.xdr.ooo", ticket)
-    expect_contains(cmd, "https://remote.xdr.ooo/i/")
-    expect_true("mktemp" not in cmd, "Zero-Touch regressed to giant opaque shell")
-    expect_true("--insecure" not in cmd, "short URL must not disable TLS verify")
+    for authority in ("remote.xdr.ooo","203.0.113.10:6099"):
+        cmd=zt.render_entry_command(authority,"A3xK9m","linux")
+        expect_true(cmd=="curl -kfsS https://"+authority+"/A3xK9m|sudo bash",
+                    "Zero-Touch entry fields changed", evidence=cmd)

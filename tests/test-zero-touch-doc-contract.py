@@ -2,6 +2,7 @@
 """Release blocker when Zero-Touch Master, user contract and regression oracle diverge."""
 from __future__ import annotations
 import hashlib
+import re
 import subprocess
 import sys
 import unittest
@@ -31,7 +32,7 @@ class ZeroTouchDocContract(unittest.TestCase):
         master = self.read('docs/DATA_RELAY_LINK_CLI_AI_MASTER_v2.4_FINAL.md')
         self.assertNotIn('Short URL mode is **opt-in** through `bootstrap_hostname`', short)
         self.assertNotIn('Without it, Linux/macOS and Windows Zero-Touch commands use the pinned-CA', master)
-        self.assertIn('before', short.lower())
+        self.assertIn('six-character', short.lower())
         self.assertNotIn('--long-bootstrap', short)
 
     def test_server_install_reports_read_only_public_tls_status(self):
@@ -41,8 +42,8 @@ class ZeroTouchDocContract(unittest.TestCase):
         self.assertIn('Zero-Touch HTTPS readiness: NOT_READY', install)
         self.assertIn('Zero-Touch HTTPS readiness: READY', install)
         self.assertIn('--preflight-zero-touch --platform linux', install)
-        self.assertIn('HEAD', doc)
-        self.assertIn('no ticket issued', doc)
+        self.assertIn('Readiness must verify reachability', doc)
+        self.assertIn('downstream authenticated enrollment', doc)
 
     def test_help_and_real_e2e_cannot_reassert_automatic_long_fallback(self):
         # These public surfaces previously contradicted the compact-default
@@ -58,26 +59,25 @@ class ZeroTouchDocContract(unittest.TestCase):
         self.assertIn('DEFAULT_NO_SILENT_LONG_AFTER_UNSET', real_e2e)
         self.assertNotIn('ZT1_FALLBACK_AFTER_CERT_PATH', real_e2e)
 
-    def test_ip_private_ca_is_a_documented_default_without_dns(self):
+    def test_fixed_entry_target_has_public_private_parity(self):
+        for path in ('docs/ZERO_TOUCH_REGRESSION_CONTROL.md',
+                     'docs/PRODUCT_MASTER.md', 'docs/CLI_REFERENCE.md',
+                     'docs/ZERO_TOUCH_SHORT_URL.md'):
+            text = self.read(path)
+            self.assertIn('FQDN or IP', text)
+            self.assertIn('six-character', text)
+            self.assertIn('Public and private HTTPS use the same target form', text)
         contract = self.read('docs/ZERO_TOUCH_REGRESSION_CONTROL.md')
-        master = self.read('docs/PRODUCT_MASTER.md')
-        cli = self.read('docs/CLI_REFERENCE.md')
-        short = self.read('docs/ZERO_TOUCH_SHORT_URL.md')
-        for text in (contract, master, cli, short):
-            self.assertIn('numeric IP', text)
-            self.assertIn('CA', text)
-        self.assertIn('before collecting services', contract)
-        self.assertIn('only', contract)
-        self.assertIn('--cacert', short)
-        self.assertIn('without any credential', contract)
+        self.assertIn('does not establish server identity', contract)
+        self.assertIn('independent authorization mechanism', contract)
 
-    def test_operator_and_real_user_contract_is_quantitative(self):
+    def test_operator_and_real_user_contract_is_structural(self):
         short = self.read('docs/ZERO_TOUCH_REGRESSION_CONTROL.md')
         user = self.read('docs/FULL_USER_E2E_SCENARIOS.md')
         cli = self.read('docs/CLI_EXHAUSTIVE_AUDIT.md')
-        for token in ('<= 200', '<= 500', '/i/invalid-qualification-probe',
-                      'bootstrap unavailable', 'DERIVED_BUNDLE_STALE',
-                      'signed', 'installed Source HEAD', 'no ticket'):
+        for token in ('Fixed customer entry design', 'Stage boundary and security scope',
+                      'six-character', 'DERIVED_BUNDLE_STALE',
+                      'signed', 'installed Source HEAD', 'independent enrollment'):
             with self.subTest(required=token):
                 self.assertIn(token.lower(), short.lower())
         for token in ('U-009', 'O-002', 'A-018', 'short'):
@@ -87,7 +87,44 @@ class ZeroTouchDocContract(unittest.TestCase):
         # in the new normative regression contract until next full gate revision.
         self.assertNotIn('long-bootstrap', short)
         self.assertIn(ID, cli)
-        self.assertIn('no ticket', cli.lower())
+        self.assertIn('independent enrollment', cli.lower())
+
+    def test_fixed_templates_and_no_retired_customer_design(self):
+        for path in REQUIRED:
+            text = self.read(path)
+            for forbidden in ('700 characters', '1,300 characters',
+                              '<=900 characters', '<=1500 characters',
+                              '<= 500 characters', '<= 100 characters',
+                              '<= 200 characters', 'opaque 22-character',
+                              'short-only information contract'):
+                self.assertNotIn(forbidden, text, path)
+        linux = 'curl -kfsS https://remote.xdr.ooo/A3xK9m|sudo bash'
+        windows = 'iex(curl.exe -kfsS https://remote.xdr.ooo/A3xK9m|Out-String)'
+        for path in ('docs/ZERO_TOUCH_REGRESSION_CONTROL.md',
+                     'docs/ZERO_TOUCH_SHORT_URL.md', 'README.md', 'README.ko.md'):
+            for template in (linux, windows):
+                self.assertIn(template, self.read(path), path)
+        contract = self.read('docs/ZERO_TOUCH_REGRESSION_CONTROL.md')
+        for token in ('Command fields (normative)', 'Downloader', 'Download options',
+                      'Protocol', 'Server authority', 'Bootstrap filename',
+                      'Execute downloaded Bootstrap',
+                      'not an enrollment credential', 'no arbitrary size or count cap',
+                      'No second customer command', 'security qualification failure',
+                      'independent enrollment'):
+            self.assertIn(token, contract)
+        self.assertIn('fixed six-character root-path entry target',
+                      self.read('docs/FULL_USER_E2E_SCENARIOS.md'))
+
+    def test_all_tracked_product_docs_reject_retired_entry_guidance(self):
+        paths = subprocess.check_output(['git', 'ls-files', '-z', '--', '*.md', '*.mdx'], cwd=ROOT).decode().split('\0')
+        retired = re.compile(r'/i/<(?:handle|ticket|credential)>|(?:opaque |root-path )?22-character (?:handle|locator|filename)|short launcher remains short|one-time command presentation|raw ticket/install URL|drlink-bootstrap\.exe|sudo drlink enroll |(?:command|launcher) (?:length|character) (?:limit|bound|budget)|(?:50|60|200|420|500|900|1500) (?:ASCII )?characters (?:at the reference authority|for (?:the )?(?:command|launcher))', re.I)
+        for path in filter(None, paths):
+            for no, line in enumerate(self.read(path).splitlines(), 1):
+                self.assertIsNone(retired.search(line), f'{path}:{no}: retired entry guidance')
+        for path in ('docs/CONTROL_PLANE_ARCHITECTURE.md', 'docs/RELEASE_CHECKLIST.md', 'docs/FULL_USER_E2E_SCENARIOS.md', 'docs/CLI_ONLY_E2E_SCENARIOS.md'):
+            self.assertIn('six-character', self.read(path), path)
+        for path in ('docs/FULL_USER_E2E_SCENARIOS.md', 'docs/CLI_ONLY_E2E_SCENARIOS.md'):
+            self.assertIn('OS-native downloader, download options, HTTPS protocol, Server authority', self.read(path), path)
 
     def test_cli_only_document_is_generated_from_current_full_e2e(self):
         source = self.read('docs/FULL_USER_E2E_SCENARIOS.md')
@@ -122,7 +159,7 @@ class ZeroTouchDocContract(unittest.TestCase):
             'release_gate: true',
             'ZT-P0-CONTRACT-20261026',
             'U-009, O-002, A-018',
-            'multi-kilobyte zt1',
+            'inline verification program',
             'same exact installed Source HEAD',
         ):
             self.assertIn(required, section)
