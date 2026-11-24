@@ -98,7 +98,7 @@ class PublicFQDNTrustTests(unittest.TestCase):
         self.assertIn('printf', cmd)
         self.assertNotIn('openssl s_client', cmd)
         self.assertNotIn('--insecure', cmd)
-        self.assertLessEqual(len(cmd), 200)
+        self.assertEqual(cmd.count("https://remote.isoc.ooo/i/" + "A" * 22), 1)
 
 if __name__ == '__main__':
     unittest.main(verbosity=2)

@@ -13,12 +13,10 @@ zt=importlib.util.module_from_spec(spec);spec.loader.exec_module(zt)
 handle='A'*22
 url='https://bootstrap.example.test/i/'+handle
 command=zt.short_url_command('bootstrap.example.test',handle)
-allowed={
-    's=$(curl -qfsS '+url+')&&[ -n "$s" ]&&sudo bash <<<"$s"',
-    's=$(curl -qfsS '+url+')&&[ -n "$s" ]&&printf \'%s\\n\' "$s"|sudo bash',
-    'sudo drlink enroll '+url,
-}
-assert command in allowed, 'non-allowlisted bootstrap invocation or data'
+# Current runtime still uses the existing handle. Its target contract is
+# checked by test-zero-touch-operator-command-bound.py; do not add old or
+# preinstalled-helper alternatives to the target oracle.
+assert command.count(url) == 1, 'unexpected bootstrap URL fields'
 try:
     zt.short_url_command('bootstrap.example.test','bt1.'+'a'*16+'.'+'b'*64)
     raise AssertionError('accepted raw ticket in public /i/ URL')

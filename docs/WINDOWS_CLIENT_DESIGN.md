@@ -53,7 +53,7 @@ Sensitive files: ACL for `SYSTEM` + `Administrators` only.
 
 `set enrollment zero-touch` → platform menu → Linux or Windows (RDP-first).
 
-Fixed Windows entry target: `iex(curl.exe -kfsS https://remote.xdr.ooo/A3xK9m|Out-String)` (60 characters at the reference authority). Administrator PowerShell with native curl.exe, no client-side DataRelay prerequisite. Public/private HTTPS use the same form. All subsequent artifact downloads, verification, independent enrollment and retry belong to Bootstrap. See [canonical contract](ZERO_TOUCH_REGRESSION_CONTROL.md); native acceptance pending.
+Fixed Windows entry target: `iex(curl.exe -kfsS https://remote.xdr.ooo/A3xK9m|Out-String)`. Administrator PowerShell with native curl.exe, no client-side DataRelay prerequisite. Public/private HTTPS use the same form. All subsequent artifact downloads, verification, independent enrollment and retry belong to Bootstrap. See [canonical contract](ZERO_TOUCH_REGRESSION_CONTROL.md); native acceptance pending.
 
 ## Lifecycle semantics
 

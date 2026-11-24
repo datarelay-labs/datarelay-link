@@ -99,14 +99,15 @@ class ZeroTouchDocContract(unittest.TestCase):
                 self.assertNotIn(forbidden, text, path)
         linux = 'curl -kfsS https://remote.xdr.ooo/A3xK9m|sudo bash'
         windows = 'iex(curl.exe -kfsS https://remote.xdr.ooo/A3xK9m|Out-String)'
-        self.assertEqual(len(linux), 50)
-        self.assertEqual(len(windows), 60)
         for path in ('docs/ZERO_TOUCH_REGRESSION_CONTROL.md',
                      'docs/ZERO_TOUCH_SHORT_URL.md', 'README.md', 'README.ko.md'):
             for template in (linux, windows):
                 self.assertIn(template, self.read(path), path)
         contract = self.read('docs/ZERO_TOUCH_REGRESSION_CONTROL.md')
-        for token in ('not an enrollment credential', 'no arbitrary size or count cap',
+        for token in ('Command fields (normative)', 'Downloader', 'Download options',
+                      'Protocol', 'Server authority', 'Bootstrap filename',
+                      'Execute downloaded Bootstrap',
+                      'not an enrollment credential', 'no arbitrary size or count cap',
                       'No second customer command', 'security qualification failure',
                       'independent enrollment'):
             self.assertIn(token, contract)

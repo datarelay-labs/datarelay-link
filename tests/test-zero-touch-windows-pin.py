@@ -130,10 +130,10 @@ class WindowsPinnedCaCommandTests(unittest.TestCase):
             for case in ('name_mismatch','cert_missing','name_and_chain','only_private_ca_chain'):
                 self.assertIn('TLS_CASE_PASS '+case,proc.stdout)
 
-    def test_strict_launcher_is_420_and_hash_before_execute(self):
+    def test_current_runtime_launcher_hash_before_execute(self):
         digest = "ab" * 32
         command = zt.windows_strict_launcher("remote.xdr.ooo", "A" * 22, digest)
-        self.assertEqual(len(command), 420)
+        self.assertEqual(command.count("https://remote.xdr.ooo/i/" + "A" * 22), 1)
         self.assertIn("curl.exe -fsSLo", command)
         self.assertIn("Get-FileHash", command)
         self.assertIn(digest, command)

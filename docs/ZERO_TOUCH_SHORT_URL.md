@@ -2,6 +2,10 @@
 
 **ZT-P0-CONTRACT-20261026 — fixed six-character entry target (owner revision 2026-11-24).** The customer starts with one OS-native command, one HTTPS authority (FQDN or IP), and one six-character root-path file locator. Public and private HTTPS use the same target form. No preinstalled DataRelay software, inline configuration, separate enrollment ID, fingerprint, artifact hash, or installer body in the customer command. All subsequent configuration, downloads, verification, installation, recovery and enrollment belong to the multi-stage Bootstrap; their size and count are unrestricted. The locator is not an enrollment credential. See `docs/ZERO_TOUCH_REGRESSION_CONTROL.md` for exact target templates, the independent enrollment requirement, the explicit initial-transport risk and actual acceptance status. This is a design target, not installed-product qualification.
 
+## Command fields
+
+Only the Server authority (FQDN or IP, optional configured port) and six-character root-path Bootstrap filename vary. The downloader, HTTPS protocol, download options and execution wrapper are fixed per OS by the [canonical field table](ZERO_TOUCH_REGRESSION_CONTROL.md#command-fields-normative). No other customer command information is allowed.
+
 ## Operator workflow
 
 Select OS and enrollment profile on the Server. Copy the generated one-line entry command and send it to the customer through the established communication channel.

@@ -8,6 +8,7 @@ import importlib.machinery
 import importlib.util
 import hashlib
 import base64
+import re
 import io
 import os
 import shutil
@@ -43,41 +44,35 @@ HASH = "c" * 64
 class CompactZeroTouchContract(unittest.TestCase):
     def assert_short_only(self, command, *, windows=False, authority=HOST,
                           ca=None, stage=None):
-        """Approved minimal template + one URL; no arbitrary character cap.
+        """Target fields only: fixed OS invocation, HTTPS authority, locator.
 
-        The helper invocation names are proposed target syntax until qualified.
-        Length follows the template, not an allowance for extra data.
-        Trust and actual runtime behavior require separate security/E2E gates.
+        ca/stage are inputs to the existing renderer fixtures, never allowed
+        customer command fields. A failure is a runtime migration finding.
         """
-        url = "https://" + authority + "/i/" + HANDLE
-        allowed = set()
-        if not windows and ca is None:
-            allowed.add('s=$(curl -qfsS ' + url +
-                        ')&&[ -n "$s" ]&&sudo bash <<<"$s"')
-            allowed.add('s=$(curl -qfsS ' + url +
-                        ')&&[ -n "$s" ]&&printf \'%s\\n\' "$s"|sudo bash')
-        helper = ("drlink-bootstrap.exe " if windows else
-                  "sudo drlink enroll ") + url
-        variants = {helper}
-        for flag, digest in ((" --ca-sha256 ", ca), (" --sha256 ", stage)):
-            if digest is not None:
-                encoded = base64.urlsafe_b64encode(bytes.fromhex(digest)).decode().rstrip("=")
-                variants |= {v + flag + d for v in variants for d in (digest, encoded)}
-        allowed.update(variants)
-        # Avoid printing live credentials or entire command text on failure.
-        self.assertTrue(command in allowed,
-                        "command contains non-allowlisted invocation or data")
-        self.assertEqual(command.count(HANDLE), 1)
+        url = re.escape("https://" + authority + "/") + r"[A-Za-z0-9_-]{6}"
+        if windows:
+            pattern = r"iex\(curl\.exe -kfsS " + url + r"\|Out-String\)"
+        else:
+            pattern = r"curl -kfsS " + url + r"\|sudo bash"
+        self.assertIsNotNone(re.fullmatch(pattern, command),
+                             "command does not match the required entry fields")
 
     def test_short_only_template_rejects_extra_information(self):
-        url = "https://" + HOST + "/i/" + HANDLE
-        cmd = "sudo drlink enroll " + url
-        self.assert_short_only(cmd)
-        for extra in (" --enrollment-id 123", " --name agent",
-                      " --installer-url https://example.test/a", " --sha256 " + HASH,
-                      " --platform linux", "; echo ok", "?port=22", " " + HANDLE):
-            with self.subTest(extra=extra), self.assertRaises(AssertionError):
-                self.assert_short_only(cmd + extra)
+        for authority in (HOST, "192.0.2.20:6099"):
+            for windows in (False, True):
+                url = "https://" + authority + "/A3xK9m"
+                cmd = ("iex(curl.exe -kfsS " + url + "|Out-String)" if windows else
+                       "curl -kfsS " + url + "|sudo bash")
+                self.assert_short_only(cmd, windows=windows, authority=authority)
+                for extra in (" --enrollment-id 123", " --name agent",
+                              " --installer-url https://example.test/a", " --sha256 " + HASH,
+                              " --platform linux", "; echo ok", "?port=22", " " + HANDLE):
+                    with self.subTest(extra=extra), self.assertRaises(AssertionError):
+                        self.assert_short_only(cmd + extra, windows=windows, authority=authority)
+                for bad in ("A3xK9", "A3xK9mm", "i/A3xK9m", "A3xK9?", HANDLE):
+                    with self.subTest(locator=bad), self.assertRaises(AssertionError):
+                        self.assert_short_only(cmd.replace("A3xK9m", bad), windows=windows,
+                                               authority=authority)
 
     def test_short_only_information_all_renderers(self):
         url = "https://192.0.2.20:6099/enroll"
@@ -92,7 +87,7 @@ class CompactZeroTouchContract(unittest.TestCase):
                 self.assert_short_only(command, windows=platform == "windows",
                                        authority=authority, ca=ca, stage=stage)
 
-    def test_linux_and_macos_default_install_commands_have_bounded_length(self):
+    def test_current_runtime_linux_and_macos_launcher_fields(self):
         # Operator-selected hostname alone must not bypass public trust checks.
         # Hermetic fixture injection is not a live public-trust waiver.
         # A live TLS failure must deny even an explicitly chosen hostname.
@@ -308,10 +303,9 @@ class CompactZeroTouchContract(unittest.TestCase):
                 result = cli.main(['--one-line', '--client-name', 'escare'])
             self.assertEqual(result, 0)
             lines = output.getvalue().splitlines()
-            commands = [x for x in lines if x.startswith(('bash -c ', 'sudo drlink enroll ', 's=$('))]
+            commands = [x for x in lines if x.startswith(('bash -c ', 'curl -kfsS '))]
             self.assertEqual(len(commands), 1)
             self.assert_short_only(commands[0], authority='192.0.2.20:6099', ca=issued['fingerprint'])
-            self.assertIn('/i/', commands[0])
             self.assertNotIn('zt1.', commands[0])
 
     def test_private_ca_real_https_ip_command_pins_before_stage_execution(self):
@@ -554,14 +548,13 @@ class CompactZeroTouchContract(unittest.TestCase):
                         cfg={}, short_handle=HANDLE, private_ip_plan=plan,
                     )
             lines = output.getvalue().splitlines()
-            prefixes = (('$ErrorActionPreference=', 'drlink-bootstrap.exe ') if windows else
-                        ('bash -c ', 'sudo drlink enroll ', 's=$('))
+            prefixes = (('$ErrorActionPreference=', 'iex(curl.exe ') if windows else
+                        ('bash -c ', 'curl -kfsS '))
             commands = [line for line in lines if line.startswith(prefixes)]
             self.assertEqual(len(commands), 1)
             command = commands[0]
             self.assert_short_only(command, windows=windows, authority='192.0.2.20:6099',
                                    ca='a' * 64, stage='b' * 64 if windows else None)
-            self.assertIn("/i/", command)
             self.assertNotIn("zt1.", command)
 
     def test_legacy_zero_touch_code_cannot_be_reintroduced(self):
