@@ -152,15 +152,7 @@ set mcp-tls acme-environment <production|staging>
 set mcp-tls acme-directory <URL>
 ```
 
-**Zero-Touch beginner default (`ZT-P0-CONTRACT-20261026`):**
-`set enrollment zero-touch` produces a compact launcher with either a
-qualified public HTTPS hostname or a direct numeric IP allocator whose Private
-CA fingerprint and Server certificate IP SAN are verified. DNS is optional.
-If neither path qualifies, it reports a prerequisite error **before** the
-service wizard and ticket issuance, never silently emitting a long `zt1` line. The legacy long-form Zero-Touch generator has been removed. A private-CA
-installation uses a CA-pinned numeric-IP launcher or fails before issuing a ticket. Optional SSH
-username is only a connection hint; blank is valid. See
-`docs/ZERO_TOUCH_REGRESSION_CONTROL.md` for security/length/E2E gates.
+**ZT-P0-CONTRACT-20261026 — short-only target (owner revision 2026-11-24).** One URL, one opaque one-time ticket, one immutable authenticated enrollment manifest. Single and bulk enrollment, CLI, UI and AI guidance share one launcher per OS. No inline configuration, installer body, encoded package or embedded verification program. At the reference origin `remote.xdr.ooo` with a 22-character handle, final acceptance requires Linux/macOS <= 100 characters and Windows <= 200 characters, with the same size budget for equivalent numeric-IP origins. Longer authorities may add only their literal URL length. Private CA and numeric IP remain supported through independently established trust (OS trust or a qualified, independently authenticated bootstrap verifier); never trust a fingerprint obtained solely from an unauthenticated endpoint. If no trusted short path is available, fail before collecting services and ticket issuance. Windows must verify stage-1 before execution; all platforms must preserve artifact integrity, one-time enrollment, signed destination and fail-closed behavior. This is the mandatory target, not a claim that current installed renderers meet it. No exception budget for inline trust programs. See `docs/ZERO_TOUCH_REGRESSION_CONTROL.md`.
 
 Bare named `set` enters Guided Create/Edit. A complete one-shot form skips the Wizard. Server settings remain action-first under `set server ...` / `unset server ...`; the guided menu places the same settings under System → Server Settings.
 

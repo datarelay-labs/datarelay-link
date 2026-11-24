@@ -3918,27 +3918,7 @@ Server:
 set enrollment zero-touch
 ```
 
-**ZT-P0-CONTRACT-20261026 (normative):** Zero-Touch defaults to a short,
-copyable bootstrap command, not an automatic multi-kilobyte pinned-CA dump.
-An explicit operator `bootstrap_hostname` declares the intended public
-HTTPS edge; the installed Agent still verifies the public certificate.
-When unset, the generator may qualify configured public DNS
-`public_hostname`/`public_url_host` only after a real stock-CA HTTPS probe
-against `/i/invalid-qualification-probe` and DRLink's exact invalid-handle
-`404 bootstrap unavailable` response. A generic 404, unrelated webpage,
-redirect, invalid TLS certificate or IP literal is not a trust proof.
-
-When public DNS is absent, an allocator addressed by a numeric IP can still
-produce a compact launcher if its Server TLS certificate has the IP SAN and
-its Private CA can be authenticated by the issuer's SHA256 fingerprint.
-The public CA is fetched without any bearer token; all subsequent handle-
-bearing requests require strict CA-verified HTTPS. If neither safe mode is
-available, fail before service prompts and ticket issuance, without silently
-printing a multi-kilobyte `zt1` line.
-Legacy long Zero-Touch command issuance and package decoding are removed.
-New issuances use only verified compact HTTPS/DNS or CA-pinned numeric-IP launchers. At the `remote.xdr.ooo` reference hostname, automated
-copy-paste bounds are Linux/macOS <= 200 characters and Windows <= 500
-characters (Windows checks stage-1 SHA-256 before execution).
+**ZT-P0-CONTRACT-20261026 — short-only target (owner revision 2026-11-24).** One URL, one opaque one-time ticket, one immutable authenticated enrollment manifest. Single and bulk enrollment, CLI, UI and AI guidance share one launcher per OS. No inline configuration, installer body, encoded package or embedded verification program. At the reference origin `remote.xdr.ooo` with a 22-character handle, final acceptance requires Linux/macOS <= 100 characters and Windows <= 200 characters, with the same size budget for equivalent numeric-IP origins. Longer authorities may add only their literal URL length. Private CA and numeric IP remain supported through independently established trust (OS trust or a qualified, independently authenticated bootstrap verifier); never trust a fingerprint obtained solely from an unauthenticated endpoint. If no trusted short path is available, fail before collecting services and ticket issuance. Windows must verify stage-1 before execution; all platforms must preserve artifact integrity, one-time enrollment, signed destination and fail-closed behavior. This is the mandatory target, not a claim that current installed renderers meet it. No exception budget for inline trust programs. See `docs/ZERO_TOUCH_REGRESSION_CONTROL.md`.
 
 Zero-Touch signed LAN targets must not be rewritten as `this-host`: use
 the same canonical Network Object/destination across Server and Agent.

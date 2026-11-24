@@ -230,14 +230,7 @@ A policy Rule never creates connectivity.
 
 ### Zero-Touch default and regression-prevention gate
 
-**ZT-P0-CONTRACT-20261026.** A first-time operator receives a short,
-copyable Zero-Touch command by default using either verified public HTTPS DNS
-or a direct numeric IP with the project's pinned Private CA. The latter
-verifies the fetched public CA certificate fingerprint **before** sending any
-one-time credential and uses strict TLS for subsequent requests. Neither DNS
-nor a third-party public certificate is mandatory. If neither safe path is
-configured, fail before the service wizard and ticket issuance. Never silently
-emit a multi-kilobyte `zt1` package. Long-form Zero-Touch issuance and decoding are removed. Optional SSH login metadata stays optional.
+**ZT-P0-CONTRACT-20261026 — short-only target (owner revision 2026-11-24).** One URL, one opaque one-time ticket, one immutable authenticated enrollment manifest. Single and bulk enrollment, CLI, UI and AI guidance share one launcher per OS. No inline configuration, installer body, encoded package or embedded verification program. At the reference origin `remote.xdr.ooo` with a 22-character handle, final acceptance requires Linux/macOS <= 100 characters and Windows <= 200 characters, with the same size budget for equivalent numeric-IP origins. Longer authorities may add only their literal URL length. Private CA and numeric IP remain supported through independently established trust (OS trust or a qualified, independently authenticated bootstrap verifier); never trust a fingerprint obtained solely from an unauthenticated endpoint. If no trusted short path is available, fail before collecting services and ticket issuance. Windows must verify stage-1 before execution; all platforms must preserve artifact integrity, one-time enrollment, signed destination and fail-closed behavior. This is the mandatory target, not a claim that current installed renderers meet it. No exception budget for inline trust programs. See `docs/ZERO_TOUCH_REGRESSION_CONTROL.md`.
 
 Linux/macOS and Windows must share this behavior, while Windows checks the
 downloaded stage-1 hash before running it. Signed Zero-Touch LAN destinations

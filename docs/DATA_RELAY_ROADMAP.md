@@ -28,6 +28,7 @@ canonical CLI nouns
 ConfigurationBundle + shared Change Plan
 AI-generated canonical CLI / copy-paste bundle workflow
 bounded Zero-Touch issuance (max 10/request and active unused)
+short-only Zero-Touch launcher (ZT-P0-CONTRACT-20261026, owner revision 2026-11-24)
 ```
 
 Can remain later work:
@@ -40,6 +41,13 @@ large-fleet orchestration
 SIEM/reporting
 broad vendor destination catalogs
 ```
+
+### P0 — short-only Zero-Touch convergence (OPEN, release blocker)
+
+1. Inventory and replace all command emitters, CLI/UI/AI examples, documentation, roadmaps and acceptance oracles with the single short-only contract in `ZERO_TOUCH_REGRESSION_CONTROL.md`.
+2. Move enrollment configuration and immutable artifact references into the authenticated Server manifest; move verification code into an independently trusted bootstrap verifier. Preserve ticket security, Windows pre-execution integrity and numeric IP/Private CA support. No unsafe fallback.
+3. Enforce reference Linux/macOS <= 100 characters and Windows <= 200 characters for all issuance paths, single/bulk; only literal authority length may vary. Reject over-budget output before issuing a ticket. Existing higher-budget tests cannot close this item.
+4. Regenerate derived installers/checksums and run focused negative/positive tests, exact-HEAD CI, then actual external Linux/macOS/Windows onboarding and applicable Full User E2E gates. Public docs and installed outputs must agree. No release or completion claim before evidence.
 
 ## 2. Phase DL-0 — proven relay foundation
 

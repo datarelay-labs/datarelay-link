@@ -3,27 +3,15 @@
 > **Current contract:** `ZT-P0-CONTRACT-20261026`, [regression causes and release gates](ZERO_TOUCH_REGRESSION_CONTROL.md).
 > **Status:** normative for v2.4 development; real installed-product acceptance is still required. This document specifies the only supported new Zero-Touch command generation modes. Previously issued opaque package commands are not supported; newly issued commands always use the short-handle bootstrap.
 
-## Current beginner-facing behavior
+## Short-only beginner-facing contract
 
-The standard `set enrollment zero-touch` journey **defaults to a short, copyable HTTPS launcher**. A publicly trusted `bootstrap_hostname` or independently qualified `public_hostname` / `public_url_host` uses stock OS trust and DRLink's exact invalid-handle `404 bootstrap unavailable` probe. **DNS is optional:** when no qualified public short-URL hostname exists, a numeric-IP bootstrap endpoint with the verified local Private CA and matching IP SAN is an eligible compact route. This endpoint may be derived from the Server's configured public IP even when the allocator URL remains an FQDN, but only if the local Server leaf is signed by that CA and covers **both** the FQDN and numeric IP. In that route the Agent receives only the public CA first, checks its DER SHA256 against the issuer's command, and sends its one-time handle only after strict CA-verified HTTPS succeeds. Neither a generic HTTPS 404 nor an arbitrary IP address constitutes bootstrap trust.
+**ZT-P0-CONTRACT-20261026 — short-only target (owner revision 2026-11-24).** One URL, one opaque one-time ticket, one immutable authenticated enrollment manifest. Single and bulk enrollment, CLI, UI and AI guidance share one launcher per OS. No inline configuration, installer body, encoded package or embedded verification program. At the reference origin `remote.xdr.ooo` with a 22-character handle, final acceptance requires Linux/macOS <= 100 characters and Windows <= 200 characters, with the same size budget for equivalent numeric-IP origins. Longer authorities may add only their literal URL length. Private CA and numeric IP remain supported through independently established trust (OS trust or a qualified, independently authenticated bootstrap verifier); never trust a fingerprint obtained solely from an unauthenticated endpoint. If no trusted short path is available, fail before collecting services and ticket issuance. Windows must verify stage-1 before execution; all platforms must preserve artifact integrity, one-time enrollment, signed destination and fail-closed behavior. This is the mandatory target, not a claim that current installed renderers meet it. No exception budget for inline trust programs. See `docs/ZERO_TOUCH_REGRESSION_CONTROL.md`.
 
-Example Linux/macOS command **shape** (not a real ticket; the product supplies the handle):
+The `/i/<handle>` endpoint selects the immutable authenticated enrollment manifest. The Server owns configuration and ticket state; the authenticated bootstrap implementation owns all validation and installation. Handle-bearing GET does not consume the ticket. Successful enrollment binds the first machine and consumes it atomically. Redact the handle and internal credentials from logs.
 
-```bash
-(drlink_bootstrap=$(curl -fsSL https://bootstrap.example.com/i/AAAAAAAAAAAAAAAAAAAAAA) && printf '%s\n' "$drlink_bootstrap" | sudo bash)
-```
+For a numeric IP, validate the independently trusted CA and certificate IP SAN before transmitting the handle; use strict TLS such as `--cacert` inside the trusted verifier. Windows additionally checks stage-1 SHA256 or an independently trusted signature before execution. Qualified public HTTPS remains the preferred first-install entrypoint. No inline verifier or alternative larger command is accepted by the revised target. If trust is not ready, stop before issuing a ticket. No SSH account is required for the tunnel; preserve signed LAN destination and public port.
 
-Windows downloads `/i/<handle>?platform=windows` and checks its expected stage-1 SHA-256 before PowerShell execution. For the verified `remote.xdr.ooo` benchmark with a 22-character handle, generated commands measured **192 characters Linux/macOS** and **483 characters Windows**; the regression bounds are respectively **<=200** and **<=500**. The lengths vary with DNS name; these are reference-host benchmarks, not a universal ceiling.
-
-**No silent long-command fallback:** the beginner CLI qualifies the public-DNS or Private-CA numeric IP bootstrap **before collecting services** and before issuing a ticket. If neither is safe, it reports the missing certificate/IP-SAN or public-TLS prerequisites. There is no legacy fallback or opaque package decoder. Unsafe bootstrap endpoints fail before ticket issuance.
-
-**Private-CA numeric IP threat boundary:** on Linux/macOS, a public `/ca.crt` is retrieved through an unauthenticated initial TLS socket and accepted *only* if its DER SHA256 equals the operator-pinned fingerprint. All handle-bearing requests then use `curl --cacert` and verify the certificate's IP SAN. On Windows the certificate-only GET uses `curl.exe --insecure` because the OS does not yet trust that CA; this GET contains **no handle or secret**. The pinned fingerprint must match before a separate strict `--cacert` request downloads stage-1, and stage-1 is SHA256-checked before execution. No credential-bearing download disables TLS validation. The IP reference lengths are bounded separately from the public-DNS baseline: Linux/macOS <=900 characters, Windows <=1500 characters for a typical IPv4 host with a 22-character handle.
-
-The `/i/AAAAAAAAAAAAAAAAAAAAAA` handle resolves the internal `bt1.<id>.<secret>` credential. The 256-bit bootstrap secret is hashed at rest; the server retains only the encrypted wrap necessary to emit the stage-1 script (server token, or mode-0600 `bootstrap/bt1-wrap.key` when no token is configured). GET does not bind/consume; successful enrollment consumes atomically. The handle and `bt1` are short-lived credentials: never copy them into unredacted logs.
-
-**Zero-Touch never asks for, accepts or stores an SSH login username.** The tunnel needs only its target host and port; SSH authentication belongs to the SSH client. For a routed LAN service, the Server and Agent must preserve the signed destination (for example `192.168.219.125:22`) and stable public port, instead of representing that LAN target as Agent `this-host`/127.0.0.1.
-
-See [Zero-Touch regression control](ZERO_TOUCH_REGRESSION_CONTROL.md) for the root-cause table, explicit advanced/private-CA behavior, test matrix, existing-install migration and exact-HEAD live acceptance rules. Legacy long-form command syntax is unsupported and is not part of the current CLI.
+Current installed implementations require migration and exact-HEAD qualification before they can claim this target. See [Zero-Touch regression control](ZERO_TOUCH_REGRESSION_CONTROL.md).
 
 ## Install-time TLS readiness (no ticket issued)
 
@@ -48,7 +36,7 @@ If neither the publicly trusted FQDN nor the independently verified
 numeric-IP/Private-CA route is ready, Server/FRP installation can complete,
 but **Zero-Touch issuance is blocked**. With a privately issued FQDN leaf,
 the Server can retain its existing allocator hostname and use its configured
-public IP for the first CA-pinned bootstrap stage, provided the leaf contains
+public IP for the trusted short bootstrap verifier, provided the leaf contains
 both SANs. This is not a claim that public FQDN TLS gained OS trust. Run `sudo drlink set enrollment zero-touch`
 to repeat the pre-ticket check after correcting public TLS.
 
@@ -113,7 +101,7 @@ ports, configure NAT, invoke ACME, or restart FRP services.
 2. Validate tickets without consuming them on GET
 3. Keep Enrollment Profile server-side
 4. Preserve Private CA redeem/enroll flow
-5. Prefer short URL generation by default when publicly trusted HTTPS is qualified; otherwise return an actionable no-ticket error
+5. Issue only the short launcher after independently authenticated bootstrap trust is qualified; otherwise return an actionable no-ticket error
 6. Issue short-handle commands only; reject obsolete package inputs. Preserve independent interactive Manual Enrollment.
 
 ## Minimum public proxy allowlist
