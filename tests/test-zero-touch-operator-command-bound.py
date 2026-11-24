@@ -308,7 +308,7 @@ class CompactZeroTouchContract(unittest.TestCase):
                 result = cli.main(['--one-line', '--client-name', 'escare'])
             self.assertEqual(result, 0)
             lines = output.getvalue().splitlines()
-            commands = [x for x in lines if x.startswith('bash -c ')]
+            commands = [x for x in lines if x.startswith(('bash -c ', 'sudo drlink enroll ', 's=$('))]
             self.assertEqual(len(commands), 1)
             self.assert_short_only(commands[0], authority='192.0.2.20:6099', ca=issued['fingerprint'])
             self.assertIn('/i/', commands[0])
@@ -554,8 +554,11 @@ class CompactZeroTouchContract(unittest.TestCase):
                         cfg={}, short_handle=HANDLE, private_ip_plan=plan,
                     )
             lines = output.getvalue().splitlines()
-            prefix = "$ErrorActionPreference=" if windows else "bash -c "
-            command = next(line for line in lines if line.startswith(prefix))
+            prefixes = (('$ErrorActionPreference=', 'drlink-bootstrap.exe ') if windows else
+                        ('bash -c ', 'sudo drlink enroll ', 's=$('))
+            commands = [line for line in lines if line.startswith(prefixes)]
+            self.assertEqual(len(commands), 1)
+            command = commands[0]
             self.assert_short_only(command, windows=windows, authority='192.0.2.20:6099',
                                    ca='a' * 64, stage='b' * 64 if windows else None)
             self.assertIn("/i/", command)
