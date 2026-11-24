@@ -657,7 +657,7 @@ b91c4ae6ac3ce1843b3b18a504caed375473be276c49fea1dce7ba76b0bddc65  tests/test-wor
 2f1f6ac5e6138d28fca79dd848b316c36b2c7827759b0cd1fad459d2348dd016  tests/test-zero-service-client.sh
 e942a2991faf60acb4d535fc2f26d62bd0e7e6fe67f122a41dd497f15414a54c  tests/test-zero-touch-bootstrap.sh
 18f0339de69993454c4ac9eed3ecbfaf1f09a08eb816aeb139dd4fe921c165c0  tests/test-zero-touch-command-exit.py
-b9470812b869b0b709931bc3a67f5e8f80c95a88bda6089ba997516442a5a648  tests/test-zero-touch-doc-contract.py
+a93af8116204df4fd68a3c97652dec063554a1722844aeff0ad2ac131b0b5008  tests/test-zero-touch-doc-contract.py
 ea624ce9b625b5b427222de6dc44d71e7edbe4e8d8677ec8cae89acbb31d3fe8  tests/test-zero-touch-guided-preflight.py
 90b922e79fe09610c8caf7078afec0d06a0b5d0e2c752e16937ec1193999b904  tests/test-zero-touch-installer-readiness.sh
 fca3f264b131e5cddfbdf5cac98dc55699786349d7ae42b459125691188889eb  tests/test-zero-touch-operator-command-bound.py
