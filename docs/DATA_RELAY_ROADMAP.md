@@ -46,7 +46,7 @@ broad vendor destination catalogs
 
 1. Inventory and replace all command emitters, CLI/UI/AI examples, documentation, roadmaps and acceptance oracles with the single short-only contract in `ZERO_TOUCH_REGRESSION_CONTROL.md`.
 2. Move enrollment configuration and immutable artifact references into the authenticated Server manifest; move verification code into an independently trusted bootstrap verifier. Preserve ticket security, Windows pre-execution integrity and numeric IP/Private CA support. No unsafe fallback.
-3. Enforce reference Linux/macOS <= 100 characters and Windows <= 200 characters for all issuance paths, single/bulk; only literal authority length may vary. Reject over-budget output before issuing a ticket. Existing higher-budget tests cannot close this item.
+3. Enforce the allowed command information and fixed invocation grammar in `ZERO_TOUCH_REGRESSION_CONTROL.md` for every issuance path, single/bulk. Reject extra fields or unqualified trust before issuing a ticket. Minimize the actual template; arbitrary character budgets and older length-only tests cannot close this item.
 4. Regenerate derived installers/checksums and run focused negative/positive tests, exact-HEAD CI, then actual external Linux/macOS/Windows onboarding and applicable Full User E2E gates. Public docs and installed outputs must agree. No release or completion claim before evidence.
 
 ## 2. Phase DL-0 — proven relay foundation

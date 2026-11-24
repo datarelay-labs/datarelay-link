@@ -8,13 +8,58 @@
 
 ## Normative short-only contract (2026-11-24)
 
-**ZT-P0-CONTRACT-20261026 — short-only target (owner revision 2026-11-24).** One URL, one opaque one-time ticket, one immutable authenticated enrollment manifest. Single and bulk enrollment, CLI, UI and AI guidance share one launcher per OS. No inline configuration, installer body, encoded package or embedded verification program. At the reference origin `remote.xdr.ooo` with a 22-character handle, final acceptance requires Linux/macOS <= 100 characters and Windows <= 200 characters, with the same size budget for equivalent numeric-IP origins. Longer authorities may add only their literal URL length. Private CA and numeric IP remain supported through independently established trust (OS trust or a qualified, independently authenticated bootstrap verifier); never trust a fingerprint obtained solely from an unauthenticated endpoint. If no trusted short path is available, fail before collecting services and ticket issuance. Windows must verify stage-1 before execution; all platforms must preserve artifact integrity, one-time enrollment, signed destination and fail-closed behavior. This is the mandatory target, not a claim that current installed renderers meet it. No exception budget for inline trust programs. See `docs/ZERO_TOUCH_REGRESSION_CONTROL.md`.
+**ZT-P0-CONTRACT-20261026 — short-only information contract (owner revision 2026-11-24).** Zero-Touch carries only the bootstrap invocation, one Server HTTPS URL, and one opaque 22-character one-time enrollment ticket in the URL (or ticket alone if the trusted Server is already configured). The ticket resolves the Enrollment ID; never duplicate it. An independently supplied trust anchor or artifact digest is permitted only when indispensable for first trust or pre-execution integrity and not already available to the trusted verifier. All other data belongs in the authenticated immutable Server enrollment manifest or trusted bootstrap implementation. Single/bulk, CLI/UI/AI and all OS paths obey the same field allowlist; use the shortest safe invocation, not an arbitrary character budget. Private CA/numeric IP requires independently established trust; if no safe short path qualifies, stop before collecting services and ticket issuance. Preserve Windows stage-1 verification before execution, strict TLS, artifact integrity, one-time binding and signed LAN destination. See `docs/ZERO_TOUCH_REGRESSION_CONTROL.md` for the authoritative field table, illustrative command forms and structural acceptance. This is a target, not an installed-product claim.
+
+
+### Allowed command information (normative)
+
+| Item | Requirement | Representation / length |
+|---|---|---|
+| Bootstrap invocation | Required; fixed platform-approved invocation and minimal download/execute safety syntax | No serialized configuration or inline verifier |
+| Server HTTPS URL | Required for a new machine; omit only when an authenticated Server is already configured | `https://` (8), literal DNS/IP authority (variable), `/i/` (3), ticket (22) |
+| Enrollment ticket | Required once; opaque Base64URL handle encoding 128 bits of randomness | 22 characters, maps to the server-side Enrollment ID; no separate ID or raw internal credential |
+| Independent trust anchor / digest | Conditional only; omit if independently available to the verifier. Required when security would otherwise be lost; never fetch an anchor from the same unauthenticated channel | SHA-256 64 hex or 43 unpadded Base64URL characters; only the necessary, typed CA pin and/or stage-1 digest, not arbitrary metadata |
+
+The three required logical items are invocation, Server address and ticket. The last two normally form a single URL argument. Any conditional digest is independently supplied, scoped to its purpose, and consumed by a trusted verifier. Platform is selected by the launcher (no extra user-entered platform data); URL routing syntax is fixed, not an extensible configuration query. No CLI argument for Enrollment ID, service/host settings, installer URL/version, FRP options, credentials, manifest body, certificate body or executable verification code.
+
+### Illustrative command shapes (not deployed syntax)
+
+For the example authority `remote.xdr.ooo` (14 characters) and a fictitious 22-character ticket, the URL is 47 characters. The examples are design references, not promises of installed executables or acceptance on a clean machine.
+
+- Public HTTPS, Bash/Zsh, complete nonempty fetch before execution (95 characters):
+  `s=$(curl -qfsS https://remote.xdr.ooo/i/AAAAAAAAAAAAAAAAAAAAAA)&&[ -n "$s" ]&&sudo bash <<<"$s"`
+- Public HTTPS, POSIX-shell alternative (106 characters):
+  `s=$(curl -qfsS https://remote.xdr.ooo/i/AAAAAAAAAAAAAAAAAAAAAA)&&[ -n "$s" ]&&printf '%s\n' "$s"|sudo bash`
+- Already trusted/installed verifier with Server URL (66 characters): `sudo drlink enroll https://remote.xdr.ooo/i/AAAAAAAAAAAAAAAAAAAAAA`
+- Already trusted/installed verifier and preconfigured Server (41 characters): `sudo drlink enroll AAAAAAAAAAAAAAAAAAAAAA`
+- Illustrative independently verified Windows bootstrap executable (68 characters): `drlink-bootstrap.exe https://remote.xdr.ooo/i/AAAAAAAAAAAAAAAAAAAAAA`
+
+Public shell forms require authenticated HTTPS, no redirect, a qualified stage-1, and verified subsequent installer. The Windows helper example is conditional on its independent verification/availability and preserves pre-execution stage-1 verification. Do not claim a fresh Windows/Private-CA machine can run a preinstalled-helper example. Do not make a bare download pipe or unverified remote execution an alternative. Conditional digests add only the exact typed argument syntax and digest length; no universal size ceiling or entitlement to extra bytes.
+
+### Server-side manifest information
+
+Keep these fields in authenticated immutable data bound to the ticket, not operator command text:
+
+| Group | Fields |
+|---|---|
+| Enrollment identity | Enrollment ID, ticket reference (not raw secret in logs), issuer/Server ID, expiry, first-machine binding and single-use state (transactional state maintained separately) |
+| Agent identity and metadata | Requested Agent/Managed Host name, label/group/tags, permitted platform and enrollment profile |
+| Connection and trust | Allocator/relay endpoints, transport, CA/certificate references and fingerprints, policy references |
+| Artifact integrity | Qualified installer URL, exact immutable source/version, SHA-256 digest, manifest authentication/signature and required stage-1 integrity metadata |
+| Remote Services | Service/Network Object IDs, service type, target host/port, reserved public endpoint and signed destination |
+| Runtime | Required configuration, capabilities and transport parameters; generate persistent private keys locally on Agent, never embed long-lived private credentials |
+
+### Structural regression oracle
+
+- Compare actual emitted commands against an explicit fixed platform invocation template and the exact allowlisted URL/ticket fields; reject every extra argument, assignment, query/config value, inline code or duplicated ID outside the fixed minimal invocation. Conditional digest arguments are accepted only by the independently trusted verifier and only when needed. No general-purpose shell/script escape hatch.
+- Compare rendered byte count to that exact template plus literal permitted data; do not use an arbitrary global or route-specific maximum as the pass condition. A new template requires review of every added token and proof that it is necessary for safety or compatibility.
+- Test single and bulk issuance, CLI/UI/AI presentation, all OS/trust routes, positive/negative field injection, independent trust, credential secrecy, failure exit, Windows pre-execution integrity, manifest validation and actual external enrollment. Fail before ticket issuance if a supported safe template cannot be selected. Preserve historical receipts only in Git history.
 
 - The Server keeps immutable enrollment inputs and qualified installer references/digests in an authenticated manifest, bound to the one-time handle, expiry, platform and intended Server. GET does not consume; successful enrollment consumes atomically and binds the first machine. The manifest is data, not executable code; no private key or long-lived credential is embedded.
 - Bootstrap code and validation logic are delivered by an independently authenticated distribution/trust path, not repeated in the operator command. Public HTTPS must verify stock trust and the exact `/i/invalid-qualification-probe` response `404 bootstrap unavailable`; do not follow credential-bearing redirects. Private CA: verify the independently supplied CA fingerprint without any credential, validate certificate IP SAN, then use strict TLS (e.g. `--cacert`); a pre-established trusted verifier can do these operations internally. A hash from the same unauthenticated download is not independent trust. No TLS weakening or global CA installation.
 - Download completely before executing; failed or empty downloads must fail without invoking installation. Windows must retain independent stage-1 hash/signature verification before PowerShell execution. Verify immutable installer SHA256 before execution. Do not use a bare pipeline that masks fetch errors.
 - Verify signed LAN destinations, stable service identity and reserved public endpoint. SSH account authentication is not an enrollment prerequisite.
-- **Release blocker:** current renderers and existing compatibility/security tests are not evidence of the revised length target. Replace the inline verifier with a trusted short bootstrap mechanism, then require the exact generated command length on every OS, public DNS and numeric-IP paths, single/bulk and all public surfaces. Never increase a length cap to make a test pass. Preserve immutable historical receipts in Git history rather than presenting prior command shapes as supported alternatives.
+- **Release blocker:** current renderers and existing compatibility/security tests are not evidence of the revised information contract. Replace the inline verifier with a trusted short bootstrap mechanism, then enforce the exact allowed-field and fixed-template grammar on every OS, public DNS and numeric-IP path, single/bulk and all public surfaces. No character budget can authorize an extra field. Preserve immutable historical receipts in Git history rather than presenting prior command shapes as supported alternatives.
 
 ## Historical Agent self-target recovery contract
 
@@ -48,10 +93,10 @@ real-environment acceptance requirements.
 
 | Scenario | Expected output/behavior | Actual gate |
 |---|---|---|
-| Qualified real DNS + DRLink `/i/` 404 signature | Short command within the revised reference bounds on Linux/macOS/Windows; TLS verified; real ticket installation succeeds | `tests/test-zero-touch-operator-command-bound.py`; `tests/test-zero-touch-short-url.sh`; U-009/O-002 real external E2E |
+| Qualified real DNS + DRLink `/i/` 404 signature | Short command matching the allowed-field grammar on Linux/macOS/Windows; TLS verified; real ticket installation succeeds | `tests/test-zero-touch-operator-command-bound.py`; `tests/test-zero-touch-short-url.sh`; U-009/O-002 real external E2E |
 | Explicit `bootstrap_hostname`, expired/wrong certificate | Generated command may exist, but stock client fetch MUST fail; no unsafe bypass or consumed ticket | TLS negative suite + clean external client |
 | Generic HTTPS 404 or unrelated web application | Refuse false short-URL discovery, no ticket | Qualification probe negative test |
-| DNS configured but no public trusted `/i/` route | Use CA-pinned numeric IP route when the local Server certificate and CA qualify; otherwise fail before collecting services, no default long command | IP fallback and original default-no-long tests |
+| DNS configured but no public trusted `/i/` route | Use a trusted numeric-IP verifier only when independent trust qualifies; otherwise fail before collecting services, no ticket | IP fallback and original default-no-long tests |
 | Private-CA-only / numeric IP with matching Server certificate IP SAN | Short launcher via independent trust; CA verified before credential retrieval; Windows stage-1 verified before execution; otherwise no ticket | IP/private-CA issuer + Windows PowerShell negative/positive regression |
 | Optional SSH user blank | End-to-end enrollment/tunnel functions; no misleading account inference | Guided and backend user journey |
 | LAN SSH remote 6001 | Signed target `192.168.219.125:22`, correct Network Object, preserve 6001, real external SSH banner and session | Server/Agent projection + remote actual traffic |

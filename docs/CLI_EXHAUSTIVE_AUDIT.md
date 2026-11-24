@@ -352,7 +352,7 @@ Verify:
 - `set enrollment ?` discovery;
 - `set enrollment zero-touch ?` and manual/bulk mode-specific help;
 - Zero-Touch default 1 hour / maximum 24 hour semantics without generic/manual TTL leakage;
-- Zero-Touch `ZT-P0-CONTRACT-20261026`: copy the actual generated launcher from an installed Server; require the short-only reference bounds (Linux/macOS <= 100 characters, Windows <= 200 characters) for every qualified route, with Windows hash-before-execute; do not accept any larger inline verifier;
+- Zero-Touch `ZT-P0-CONTRACT-20261026`: copy the actual generated launcher from an installed Server; require only the approved invocation, Server HTTPS URL and one ticket, with conditional independent trust/integrity digest only when indispensable. Validate the fixed grammar for every qualified route, including Windows hash-before-execute; reject extra data or inline verification code regardless of length;
 - when trusted HTTPS and the exact `/i/invalid-qualification-probe` handler signature are missing, standard onboarding must show actionable DNS/TLS/443 guidance and issue no ticket; do not issue any ticket unless a trusted short path qualifies;
 - compare guided/public CLI versus backend mode; optional SSH login may be blank and must not block, be repeated unnecessarily, or silently default to an invented account;
 - retain exact Server/Agent installed Source HEAD, generated installer checksum, a real external copy/paste/enroll/SSH traffic receipt and restored bootstrap-hostname/installer settings before PASS; see `docs/ZERO_TOUCH_REGRESSION_CONTROL.md`;
