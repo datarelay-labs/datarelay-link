@@ -75,7 +75,7 @@ class ZeroTouchDocContract(unittest.TestCase):
         short = self.read('docs/ZERO_TOUCH_REGRESSION_CONTROL.md')
         user = self.read('docs/FULL_USER_E2E_SCENARIOS.md')
         cli = self.read('docs/CLI_EXHAUSTIVE_AUDIT.md')
-        for token in ('<= 200', '<= 500', '/i/invalid-qualification-probe',
+        for token in ('<= 100', '<= 200', '/i/invalid-qualification-probe',
                       'bootstrap unavailable', 'DERIVED_BUNDLE_STALE',
                       'signed', 'installed Source HEAD', 'no ticket'):
             with self.subTest(required=token):
@@ -88,6 +88,22 @@ class ZeroTouchDocContract(unittest.TestCase):
         self.assertNotIn('long-bootstrap', short)
         self.assertIn(ID, cli)
         self.assertIn('no ticket', cli.lower())
+
+    def test_short_only_owner_contract_replaces_larger_budgets(self):
+        for path in REQUIRED:
+            text = self.read(path)
+            for forbidden in ('700 characters', '1,300 characters',
+                              '<=900 characters', '<=1500 characters',
+                              '<= 500 characters'):
+                self.assertNotIn(forbidden, text, path)
+        for path in ('docs/PRODUCT_MASTER.md', 'docs/ZERO_TOUCH_SHORT_URL.md',
+                     'docs/ZERO_TOUCH_REGRESSION_CONTROL.md',
+                     'docs/DATA_RELAY_ROADMAP.md'):
+            text = self.read(path)
+            self.assertIn('<= 100 characters', text, path)
+            self.assertIn('<= 200 characters', text, path)
+        self.assertNotIn('short URL versus pinned-CA fallback',
+                         self.read('docs/FULL_USER_E2E_SCENARIOS.md'))
 
     def test_cli_only_document_is_generated_from_current_full_e2e(self):
         source = self.read('docs/FULL_USER_E2E_SCENARIOS.md')
@@ -122,7 +138,7 @@ class ZeroTouchDocContract(unittest.TestCase):
             'release_gate: true',
             'ZT-P0-CONTRACT-20261026',
             'U-009, O-002, A-018',
-            'multi-kilobyte zt1',
+            'inline verification program',
             'same exact installed Source HEAD',
         ):
             self.assertIn(required, section)

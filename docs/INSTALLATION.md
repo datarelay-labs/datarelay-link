@@ -87,25 +87,7 @@ A private Server CA is **not** automatically trusted by Agent operating systems.
 Do not disable TLS verification or make an unverified `curl | bash` pipeline
 to work around this.
 
-If the configured public/Bootstrap FQDN serves a publicly trusted certificate
-with the expected DNS SAN and the exact short-URL proof, the CLI uses the
-compact FQDN Zero-Touch command. Otherwise, where the Server's **configured
-numeric public IP** and the FQDN both appear in its valid private-CA-signed
-Server certificate, the CLI can use a pinned-CA numeric-IP bootstrap without
-changing the saved FQDN, enrollment identity, or TLS credentials. It checks
-the issuer-owned CA fingerprint and certificate signature/IP SAN before
-creating a ticket. The Agent verifies the same CA before fetching any
-ticket-bearing stage and continues to validate TLS against the configured
-allocator hostname.
-
-The installation summary explicitly distinguishes `READY (numeric IP +
-pinned Private CA)` from FQDN stock-trust readiness. An automatic hostname
-selection is not a promise of publicly trusted FQDN TLS. If both routes fail,
-no Zero-Touch ticket is issued; inspect `system diagnostics`, the public
-`/ca.crt` endpoint, DNS, firewall/NAT and the certificate SANs. A configured
-service range (for example `6000-6098`) is preserved across reinstall;
-the private Relay Engine backend port (often `7000`) must not overlap a
-published-service range.
+The short-only target in [Zero-Touch regression control](ZERO_TOUCH_REGRESSION_CONTROL.md) requires an independently authenticated bootstrap path, whether the origin is public HTTPS or a numeric IP with matching Private CA and IP SAN. The first credential-bearing request must already have verified trust. Move verification into a trusted bootstrap verifier rather than extending the operator command. If that path cannot be established, no Zero-Touch ticket is issued; inspect `system diagnostics`, DNS, firewall/NAT, the CA and certificate SANs. Server installation and existing management identities remain independent. Current installed renderers must be migrated and qualified against the revised target.
 
 ### Internet Access listener recovery
 
