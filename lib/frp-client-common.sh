@@ -2924,7 +2924,7 @@ PYCLAIM
 
 frp_entry_approved_response() {
   local origin="$1" locator="$2" machine="$3" hostname_value="$4" request_file="$5"
-  local response parsed status challenge fingerprint shown='' attempt
+  local response parsed status challenge fingerprint attempt
   [[ "$locator" =~ ^[A-Za-z0-9_-]{6}$ ]] || return 1
   fingerprint="$(frp_identity_public_fingerprint)" || return 1
   # Server operator verifies this fingerprint through the established support
@@ -2933,7 +2933,7 @@ frp_entry_approved_response() {
   echo "Waiting for the Server operator to approve this Agent identity ..." >&2
   for ((attempt=0; attempt<60; attempt++)); do
     frp_entry_claim_payload request "$locator" "$machine" "$hostname_value" '' "$request_file" || return 1
-    response="$(frp_allocator_curl -X POST -H 'Content-Type: application/json' \
+    response="$(frp_allocator_curl --connect-timeout 5 --max-time 15 -X POST -H 'Content-Type: application/json' \
       --data-binary @"$request_file" "$origin/bootstrap/entry/request")" || return 1
     parsed="$(ENTRY_RESPONSE="$response" python3 - "$fingerprint" <<'PYRESP'
 import json, os, re, sys
@@ -2948,7 +2948,7 @@ PYRESP
     read -r status challenge <<< "$parsed"
     if [[ "$status" == approved ]]; then
       frp_entry_claim_payload redeem "$locator" "$machine" "$hostname_value" "$challenge" "$request_file" || return 1
-      frp_allocator_curl -X POST -H 'Content-Type: application/json' \
+      frp_allocator_curl --connect-timeout 5 --max-time 15 -X POST -H 'Content-Type: application/json' \
         --data-binary @"$request_file" "$origin/bootstrap/entry/redeem"
       return $?
     fi

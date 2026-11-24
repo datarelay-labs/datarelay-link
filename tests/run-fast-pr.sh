@@ -36,7 +36,13 @@ python3 tests/test-mcp-owner-default-access.py
 python3 tests/test-client-installer-url-hostname.py
 python3 tests/test-zero-touch-entry-fields.py
 python3 tests/test-zero-touch-locator-index.py
-python3 tests/test-zero-touch-entry-approval.py
+# The real Stage-1 root check and Server-local approval must also be
+# exercised on unprivileged CI runners, without mocking product privilege.
+if [[ "$(id -u)" == 0 ]]; then
+  python3 tests/test-zero-touch-entry-approval.py
+else
+  sudo -n "$(command -v python3)" tests/test-zero-touch-entry-approval.py
+fi
 python3 tests/test-zero-touch-operator-command-bound.py
 python3 tests/test-zero-touch-public-fqdn-trust.py
 python3 tests/test-zero-touch-private-ca-fqdn-ip-fallback.py

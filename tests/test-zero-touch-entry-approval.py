@@ -185,6 +185,57 @@ class EntryApproval(unittest.TestCase):
         self.assertEqual(pending["status"],"pending")
         self.assertNotIn("enrollment_code",pending)
 
+    def test_linux_agent_claim_and_retry_key(self):
+        claim_path = self.env.root / "claim.json"
+        script = """
+set -euo pipefail
+source lib/frp-common.sh
+source lib/frp-client-common.sh
+frp_client_identity_key_path() { printf '%s' "$TEST_KEY"; }
+frp_entry_claim_payload request "$TEST_LOCATOR" machine-a host-a '' "$TEST_CLAIM"
+"""
+        env = dict(os.environ, FRP_MGMT_AUTH_PY=str(ROOT/"lib/frp_mgmt_auth.py"),
+                   TEST_KEY=str(self.key), TEST_LOCATOR=self.locator, TEST_CLAIM=str(claim_path))
+        first = subprocess.run(["bash","-c",script],cwd=ROOT,env=env,capture_output=True,text=True,timeout=15)
+        self.assertEqual(first.returncode,0,first.stderr)
+        claim=json.loads(claim_path.read_text())
+        status,pending=self.a.request_entry_approval(claim)
+        self.assertEqual(status,200,pending)
+        self.assertEqual(pending["fingerprint"],self.fp)
+        self.assertEqual(claim_path.stat().st_mode & 0o777,0o600)
+        self.assertEqual(self.a.approve_entry_request(self.ticket["id"],"machine-a",self.fp)[0],200)
+        # The same on-disk key, not a newly generated identity, signs redemption.
+        redeem_script=script.replace("request", "redeem").replace("host-a ''", 'host-a "$TEST_CHALLENGE"')
+        env["TEST_CHALLENGE"]=pending["challenge"]
+        again=subprocess.run(["bash","-c",redeem_script],cwd=ROOT,env=env,capture_output=True,text=True,timeout=15)
+        self.assertEqual(again.returncode,0,again.stderr)
+        status,result=self.a.redeem_entry_approval(json.loads(claim_path.read_text()))
+        self.assertEqual(status,200,result)
+        self.assertEqual(result["enrollment_code"],self.enrollment["id"]+"."+self.enrollment["secret"])
+
+    def test_rate_limit_is_bounded_and_resets(self):
+        for _ in range(60):
+            self.assertFalse(self.a.entry_rate_limited("192.0.2.1",now=120))
+        self.assertTrue(self.a.entry_rate_limited("192.0.2.1",now=120))
+        for n in range(540):
+            self.assertFalse(self.a.entry_rate_limited("source-"+str(n),now=120))
+        self.assertTrue(self.a.entry_rate_limited("another",now=120))
+        self.assertFalse(self.a.entry_rate_limited("another",now=180))
+        self.assertEqual(len(self.a._entry_rate_sources),1)
+
+    def test_expiry_and_paired_revocation_fail_closed(self):
+        status,pending=self.request()
+        self.assertEqual(status,200)
+        record,path=self.a.load_enrollment(self.enrollment["id"])
+        record["revoked_at"]=MOD.utc_now_iso()
+        MOD.atomic_write_json(path,record,mode=0o600)
+        self.assertEqual(self.a.approve_entry_request(self.ticket["id"],"machine-a",self.fp)[0],403)
+        ticket,path=self.a.load_bootstrap(self.ticket["id"])
+        ticket["expires_at"]=int(time.time())-1
+        self.a.save_bootstrap(path,ticket)
+        self.assertEqual(self.request()[0],403)
+        self.assertEqual(self.redeem(pending["challenge"])[0],403)
+
     def test_approval_and_possession_required(self):
         code, pending = self.request()
         self.assertEqual(code, 200, pending)

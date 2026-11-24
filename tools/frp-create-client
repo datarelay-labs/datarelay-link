@@ -512,7 +512,7 @@ def validate_zero_touch_prerequisites(cfg, platform, installer, ca_fp):
             finally:
                 exc.close()
         except (OSError, ValueError):
-            fail('Bootstrap HTTPS endpoint is not reachable; no enrollment was issued')
+            fail('Bootstrap HTTPS endpoint is not reachable; no enrollment was issued. Run sudo drlink system diagnostics and, if the Server configuration needs to be reconciled, sudo drlink system synchronize.')
     preflight_installer_url(
         installer, label='Agent installer URL', strict_https=not bool(_test_root()),
         ca_file=ca_file if zt.same_https_origin(installer, allocator) and not _test_root() else None)

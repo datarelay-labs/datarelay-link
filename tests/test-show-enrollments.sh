@@ -205,50 +205,18 @@ pass "MANUAL_REVOKED_STATE"
 # --- Zero-touch visible + no duplicate ---
 python3 "$CREATE" --one-line --client-name zt-a --note 'zt note' >"$WORK/zt.out"
 ZT_ID="$(awk '/^Enrollment ID:/{print $3; exit}' "$WORK/zt.out")"
-ZT_TICKET="$(python3 - "$WORK/zt.out" <<'PY'
-import base64, json, re, sys
-t = open(sys.argv[1]).read()
-m = re.search(r"/i/([A-Za-z0-9_-]{22}|bt1\.[0-9a-f]+\.[0-9a-f]+)", t)
-if m:
-    print(m.group(1))
-    raise SystemExit(0)
-m = re.search(r"zt1\.[A-Za-z0-9_-]+", t)
-if m:
-    parts = m.group(0).split('.', 1)
-    padded = parts[1] + ('=' * (-len(parts[1]) % 4))
-    payload = json.loads(base64.urlsafe_b64decode(padded.encode('ascii')).decode('utf-8'))
-    print(payload['t'])
-    raise SystemExit(0)
-m = re.search(r"sudo bash -s -- '(zt1\.[^']+)'", t)
-if m:
-    parts = m.group(1).split('.', 1)
-    padded = parts[1] + ('=' * (-len(parts[1]) % 4))
-    payload = json.loads(base64.urlsafe_b64decode(padded.encode('ascii')).decode('utf-8'))
-    print(payload['t'])
-    raise SystemExit(0)
-m = re.search(r"FRP_BOOTSTRAP_TICKET='([^']+)'", t)
-if not m:
-    raise SystemExit('unable to extract bootstrap ticket from create output')
-print(m.group(1))
-PY
-)"
-if [[ "$ZT_TICKET" == bt1.* ]]; then
-  ZT_SECRET="${ZT_TICKET##*.}"
-else
-  ZT_SECRET="$ZT_TICKET"
-fi
+ZT_SECRET="$(sed -nE 's~^curl -kfsS https://[^/]+/([A-Za-z0-9_-]{6})\|sudo bash$~\1~p' "$WORK/zt.out")"
 [[ -n "$ZT_ID" && ${#ZT_ID} -eq 16 ]] || fail "zero-touch tracking id"
-ZT_TICKET_ID="$(python3 -c 'import hashlib,json,sys
+python3 - "$ZT_SECRET" "$ZT_ID" "$TREE/var/lib/drlink/bootstrap" <<'PYINDEX'
+import hashlib,json,sys,re
 from pathlib import Path
-t=sys.argv[1].strip(); root=Path(sys.argv[2])
-if t.lower().startswith("bt1.") and t.count(".")==2:
-    print(t.split(".")[1].lower())
-else:
-    digest=hashlib.sha256(t.encode("ascii")).hexdigest()
-    data=json.loads((root/"handles"/(digest[:16]+".json")).read_text())
-    assert data.get("handle_hash")==digest
-    print(data["ticket_id"])' "$ZT_TICKET" "$TREE/var/lib/drlink/bootstrap")"
-[[ "$ZT_ID" == "$ZT_TICKET_ID" ]] || fail "zero-touch Enrollment ID != ticket id"
+locator,tid,root=sys.argv[1:]
+assert re.fullmatch(r'[A-Za-z0-9_-]{6}',locator)
+digest=hashlib.sha256(locator.encode()).hexdigest()
+index=json.loads((Path(root)/'entry-locators'/(digest+'.json')).read_text())
+assert index['ticket_id']==tid
+assert json.loads((Path(root)/(tid+'.json')).read_text())['entry_locator_hash']==digest
+PYINDEX
 
 python3 "$ENROLL" >"$WORK/zt-list.out"
 grep -E "^${ZT_ID}[[:space:]]+zero-touch[[:space:]]+zt-a" "$WORK/zt-list.out" | grep -q 'pending' \
