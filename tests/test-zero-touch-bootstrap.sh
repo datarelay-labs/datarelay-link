@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Zero-Touch compact default plus explicit legacy pinned-package enrollment regression.
+# Fixed Zero-Touch issuance and live Agent enrollment regression.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -18,12 +18,16 @@ pass() { echo "PASS $1"; }
 fail() { echo "FAIL $1" >&2; exit 1; }
 
 bootstrap_record_id() {
-  python3 -c 'import hashlib,sys
-t=sys.argv[1].strip()
-if t.lower().startswith("bt1.") and t.count(".")==2:
-    print(t.split(".")[1].lower())
-else:
-    print(hashlib.sha256(t.encode("ascii")).hexdigest()[:16])' "$1"
+  python3 - "$1" "$TREE/var/lib/drlink/bootstrap" "${ALLOC_ROOT:-/nonexistent}/bootstrap" <<'PYID'
+import hashlib,json,sys
+from pathlib import Path
+digest=hashlib.sha256(sys.argv[1].encode()).hexdigest()
+for base in sys.argv[2:]:
+    p=Path(base)/'entry-locators'/(digest+'.json')
+    if p.is_file():
+        print(json.loads(p.read_text())['ticket_id']);break
+else:raise SystemExit('locator index missing')
+PYID
 }
 
 extract_bootstrap_ticket() {
@@ -149,12 +153,8 @@ grep -q 'frp-create-client --one-line --ssh --note client-01' "$WORKDIR/help.out
 pass "CREATE_CLIENT_HELP"
 
 "$CREATE" --one-line --client-name inventory-only >"$WORKDIR/nosvc.out" 2>"$WORKDIR/nosvc.err"
-# Default is now compact IP/Private-CA. The remainder of this suite explicitly
-# selects the legacy long mode where it inspects or redeems the embedded bt1.
-# Compact /i/ handles are lookup credentials and must never be redeemed as bt1.
-grep -q '^bash -c ' "$WORKDIR/nosvc.out" || fail "compact IP command shape"
-grep -q '/i/' "$WORKDIR/nosvc.out" || fail "compact IP handle missing"
-grep -q -- '--cacert' "$WORKDIR/nosvc.out" || fail "strict pinned CA request missing"
+# Default fixed entry, identical for numeric IP and FQDN.
+grep -Eq '^curl -kfsS https://203\.0\.113\.10:9443/[A-Za-z0-9_-]{6}\|sudo bash$' "$WORKDIR/nosvc.out" || fail "fixed IP command"
 ! grep -q 'zt1\.' "$WORKDIR/nosvc.out" || fail "default regressed to long package"
 grep -q 'no service or public port' "$WORKDIR/nosvc.out" || fail "management-only explanation"
 # Legacy env marker is no longer required; profile is server-side.
@@ -237,7 +237,7 @@ FRP_DEPLOY_TEST_ROOT="$TREE" python3 "$CREATE" --one-line --ssh --note client-01
 nontty_rc=$?
 set -e
 [[ "$nontty_rc" -eq 0 ]] || fail "non-TTY --one-line --ssh without --ssh-user should succeed"
-grep -q '/i/' "$WORKDIR/nontty.out" || fail "non-TTY missing install command"
+grep -Eq '^curl -kfsS https://[^/]+/[A-Za-z0-9_-]{6}\|sudo bash$' "$WORKDIR/nontty.out" || fail "non-TTY missing install command"
 if grep -qE 'SSH user[[:space:]]*:[[:space:]]*(ubuntu|root|stellar)\b' "$WORKDIR/nontty.out"; then
   fail "non-TTY invented an SSH username"
 fi
@@ -282,7 +282,7 @@ grep -q 'Managed Host name : seoul-groupware' "$WORKDIR/prompt.out" || fail "con
 ! grep -q 'Optional SSH login hint' "$WORKDIR/prompt.out" \
   || fail "blank username invented an SSH login hint"
 grep -qE 'Target[[:space:]]*:[[:space:]]*127.0.0.1:22' "$WORKDIR/prompt.out" || fail "confirmation target"
-grep -q '/i/' "$WORKDIR/prompt.out" || fail "generated command missing install launcher"
+grep -Eq '^curl -kfsS https://[^/]+/[A-Za-z0-9_-]{6}\|sudo bash$' "$WORKDIR/prompt.out" || fail "generated command missing install launcher"
 if grep -E 'FRP_SSH_USER=.ubuntu|Client SSH user: ubuntu|SSH user : ubuntu' \
   "$WORKDIR/prompt.out" "$WORKDIR/prompt.err"; then
   fail "prompt defaulted to ubuntu"
@@ -312,8 +312,8 @@ pass "SSH_USERNAME_NOT_SUPPORTED"
 # ---------------------------------------------------------------------------
 FRP_DEPLOY_TEST_ROOT="$TREE" python3 "$CREATE" --one-line --ssh --note customer-server \
   >"$WORKDIR/oneline.out"
-grep -q 'short-lived one-time bootstrap ticket' "$WORKDIR/oneline.out" || fail "sensitive warning"
-grep -q 'Treat the command as sensitive' "$WORKDIR/oneline.out" || fail "treat as sensitive"
+grep -q 'The locator is not an enrollment credential' "$WORKDIR/oneline.out" || fail "sensitive warning"
+grep -q 'Verify the Agent key fingerprint' "$WORKDIR/oneline.out" || fail "treat as sensitive"
 if grep -q 'Enrollment Code:' "$WORKDIR/oneline.out"; then
   fail "one-line printed Enrollment Code"
 fi
@@ -323,35 +323,23 @@ fi
 if grep -q '\\$' "$WORKDIR/oneline.out"; then
   fail "one-line used backslash continuation"
 fi
-CMD_LINE="$(grep -E '^bash -c ' "$WORKDIR/oneline.out" | head -n1)"
-[[ -n "$CMD_LINE" ]] || fail "missing compact pinned-CA install command"
-[[ "$(grep -cE '^bash -c ' "$WORKDIR/oneline.out")" == "1" ]] || fail "more than one install command"
-[[ "${#CMD_LINE}" -le 900 ]] || fail "IP installer exceeded 900 bytes"
-printf '%s' "$CMD_LINE" | grep -q "/i/" || fail "missing short handle"
-printf '%s' "$CMD_LINE" | grep -q "/ca.crt" || fail "missing CA bootstrap URL"
-printf '%s' "$CMD_LINE" | grep -q -- "--cacert" || fail "missing CA-authenticated HTTPS"
-if printf '%s' "$CMD_LINE" | grep -Eq 'zt1\.|FRP_BUNDLE_FILE=|FRP_BOOTSTRAP_TICKET=|FRP_SERVICES_JSON='; then
-  fail "legacy package, full ticket or service settings leaked into short command"
-fi
-echo "$CMD_LINE" | python3 -c 'import sys; line=sys.stdin.read(); assert "\n" not in line.strip()' || fail "command not one line"
+CMD_LINE="$(grep -E '^curl -kfsS https://[^/]+/[A-Za-z0-9_-]{6}\|sudo bash$' "$WORKDIR/oneline.out")"
+[[ -n "$CMD_LINE" ]] || fail "fixed command missing"
+[[ "$(printf '%s\n' "$CMD_LINE" | wc -l)" == 1 ]] || fail "more than one install command"
 TICKET="$(extract_bootstrap_ticket "$WORKDIR/oneline.out")"
-[[ "$TICKET" == bt1.* ]] || fail "test fixture did not recover internal ticket"
-TSECRET="${TICKET##*.}"
+TSECRET="$TICKET"
 TID="$(bootstrap_record_id "$TICKET")"
 REC="$TREE/var/lib/drlink/bootstrap/${TID}.json"
-[[ -f "$REC" ]] || fail "ticket record missing"
-python3 - "$REC" "$TSECRET" <<'PY' || fail "record hash only"
-import hashlib, json, sys
+python3 - "$REC" "$TICKET" <<'PYRECORD' || fail "locator hash only"
+import hashlib,json,sys
 from pathlib import Path
-rec = json.loads(Path(sys.argv[1]).read_text())
-secret = sys.argv[2]
-assert rec.get('secret_hash') == hashlib.sha256(secret.encode('ascii')).hexdigest()
-text = json.dumps(rec)
-assert secret not in text
-assert 'bt1.' not in text
-assert rec.get('bound_machine_id') is None
+rec=json.loads(Path(sys.argv[1]).read_text())
+assert rec['entry_locator_hash']==hashlib.sha256(sys.argv[2].encode()).hexdigest()
+assert not rec.get('bound_machine_id')
 assert rec.get('services')
-PY
+for key in ('bt1_wrapped','short_handle_hash','secret_hash'):
+    assert key not in rec
+PYRECORD
 python3 - "$TREE/var/lib/drlink/registry.json" <<'PY' || fail "create reserved ports"
 import json, sys
 from pathlib import Path
@@ -367,10 +355,10 @@ FRP_DEPLOY_TEST_ROOT="$TREE" python3 "$CREATE" --one-line --ssh --ssh-port 2222 
   >"$WORKDIR/sshport.out"
 # Only SSH port is stored in the bootstrap service profile.
 SSHPORT_TICKET="$(extract_bootstrap_ticket "$WORKDIR/sshport.out")"
-python3 - "$SSHPORT_TICKET" "$TREE/var/lib/drlink/bootstrap" <<'PY' || fail "ssh-port profile"
+python3 - "$(bootstrap_record_id "$SSHPORT_TICKET")" "$TREE/var/lib/drlink/bootstrap" <<'PY' || fail "ssh-port profile"
 import json,sys
 from pathlib import Path
-tid=sys.argv[1].split('.')[1].lower()
+tid=sys.argv[1]
 record=json.loads((Path(sys.argv[2]) / (tid+'.json')).read_text())
 services = record.get('services') or []
 if isinstance(services, dict):
@@ -400,8 +388,8 @@ from pathlib import Path
 import re,sys
 text=Path(sys.argv[1]).read_text()
 assert 'Zero-touch Agent command' in text
-cmd=next(line for line in text.splitlines() if line.startswith('bash -c '))
-assert re.search(r'/i/[A-Za-z0-9_-]{22}',cmd)
+cmd=next(line for line in text.splitlines() if line.startswith('curl -kfsS '))
+assert re.fullmatch(r'curl -kfsS https://[^/]+/[A-Za-z0-9_-]{6}\|sudo bash',cmd)
 assert ';uname' not in cmd and 'enroll;id' not in cmd
 assert 'zt1.' not in cmd and 'FRP_BOOTSTRAP_TICKET=' not in cmd
 assert 'note;rm -rf /' not in cmd
@@ -452,7 +440,7 @@ mod=importlib.util.module_from_spec(spec);loader.exec_module(mod)
 cfg=json.loads(Path(sys.argv[1]).read_text())
 assert mod.resolve_configured_installer_url(cfg)=='https://203.0.113.10:9443/artifacts/agent/bootstrap-client.sh'
 PY
-grep -q '/i/' "$WORKDIR/derived.out" || fail "derived installer lost short handle"
+grep -Eq '^curl -kfsS https://[^/]+/[A-Za-z0-9_-]{6}\|sudo bash$' "$WORKDIR/derived.out" || fail "derived installer lost short handle"
 if grep -qE 'raw\.githubusercontent\.com|github\.com/datarelay-labs|github\.com/fatedier' \
     "$WORKDIR/derived.out" "$WORKDIR/derived.err"; then
   fail "public installer fallback when deriving from allocator"
@@ -760,7 +748,7 @@ CLIENT="$WORKDIR/client"
 mkdir -p "$CLIENT/etc/frp" "$CLIENT/usr/local/bin" "$CLIENT/usr/local/lib/drlink"
 make_frpc "$CLIENT/usr/local/bin/frpc"
 
-run_zero_touch() {
+run_zero_touch() (
   local tree="$1" ticket="$2" machine="$3" out="$4"
   mkdir -p "$tree/etc/frp" "$tree/usr/local/bin" "$tree/usr/local/lib/drlink"
   make_frpc "$tree/usr/local/bin/frpc"
@@ -772,7 +760,11 @@ run_zero_touch() {
   export FRP_TEST_MACHINE_ID="$machine"
   export FRP_ALLOCATOR_URL="https://127.0.0.1:${ALLOC_PORT}/enroll"
   export FRP_ALLOCATOR_CA_SHA256="$LIVE_CA_FP"
-  export FRP_BOOTSTRAP_TICKET="$ticket"
+  export FRP_BOOTSTRAP_LOCATOR="$ticket"
+  unset FRP_BOOTSTRAP_TICKET
+  python3 "$ROOT/tests/lib/approve-isolated-entry.py" "$ALLOC_ROOT/config.json" "$tree" "$ticket" "$machine" &
+  approve_pid=$!
+  trap 'kill "$approve_pid" 2>/dev/null || true; wait "$approve_pid" 2>/dev/null || true' EXIT
   export FRP_ZERO_TOUCH=1
   export FRP_SSH_PORT="$LISTEN_PORT"
   export FRP_CLIENT_SOURCED=1
@@ -789,7 +781,7 @@ run_zero_touch() {
     fail "sourced installer changed or removed caller TMPDIR"
   fi
   return "$rc"
-}
+)
 
 if ! run_zero_touch "$CLIENT" "$LIVE_TICKET" 'aabbccddeeff00112233445566778899' "$WORKDIR/zt.out"; then
   cat "$WORKDIR/zt.out" "$WORKDIR/zt.err" >&2
@@ -861,7 +853,7 @@ SECRET_PART="${LIVE_TICKET##*.}"
 if grep -F "$SECRET_PART" "$WORKDIR/alloc.log"; then
   fail "ticket secret in allocator log"
 fi
-grep -q '/bootstrap/redeem' "$WORKDIR/alloc.log" || fail "redeem path not logged"
+grep -q '/bootstrap/entry/redeem' "$WORKDIR/alloc.log" || fail "redeem path not logged"
 pass "BOOTSTRAP_REDEEM_NOT_IN_URL"
 pass "BOOTSTRAP_TICKET_NOT_LOGGED"
 
@@ -895,7 +887,7 @@ rm -rf "$RETRY"
 if run_zero_touch "$RETRY" "$RETRY_TICKET" 'ccddeeff00112233445566778899aa' "$WORKDIR/retry2.out"; then
   fail "post-success ticket reuse should fail"
 fi
-grep -q 'BOOTSTRAP_TICKET_USED' "$WORKDIR/retry2.out" "$WORKDIR/retry2.err" \
+grep -q 'BOOTSTRAP_TICKET_INVALID' "$WORKDIR/retry2.out" "$WORKDIR/retry2.err" \
   || fail "post-success reuse class"
 PORT_AFTER="$(python3 -c 'import json; print(json.load(open("'"$ALLOC_ROOT"'/registry.json"))["clients"]["ccddeeff00112233445566778899aa"]["services"]["ssh"]["remote_port"])')"
 [[ "$PORT_BEFORE" == "$PORT_AFTER" ]] || fail "failed reuse mutated port"
@@ -907,7 +899,7 @@ OTHER="$WORKDIR/client-other"
 if run_zero_touch "$OTHER" "$RETRY_TICKET" 'ffffffffffffffffffffffffffffffff' "$WORKDIR/other.out"; then
   fail "second machine should fail"
 fi
-grep -qE 'BOOTSTRAP_TICKET_(USED|BOUND)' "$WORKDIR/other.out" "$WORKDIR/other.err" \
+grep -qE 'BOOTSTRAP_TICKET_INVALID' "$WORKDIR/other.out" "$WORKDIR/other.err" \
   || fail "second-machine reject class"
 python3 - "$ALLOC_ROOT/registry.json" <<'PY' || fail "second machine created client"
 import json, sys
@@ -920,29 +912,31 @@ pass "SECOND_MACHINE_REJECTED"
 # Bound-but-not-completed: redeem only via HTTPS, then a different machine must get BOUND.
 issue_ticket >"$WORKDIR/bound-create.out"
 BOUND_TICKET="$(extract_bootstrap_ticket "$WORKDIR/bound-create.out" "$LIVE_TREE")"
-python3 - "$ALLOC_PORT" "$LIVE_CA_FP" "$BOUND_TICKET" "$ALLOC_ROOT/pki/ca.crt" <<'PY'
-import json, ssl, sys, urllib.request
-port, fp, ticket, ca = sys.argv[1:5]
-body = json.dumps({
-    'ticket': ticket,
-    'machine_id': 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
-    'hostname': 'bound-host',
-}).encode()
-ctx = ssl.create_default_context(cafile=ca)
-req = urllib.request.Request(
-    'https://127.0.0.1:%s/bootstrap/redeem' % port,
-    data=body,
-    method='POST',
-    headers={'Content-Type': 'application/json'},
-)
-with urllib.request.urlopen(req, context=ctx, timeout=10) as resp:
-    assert resp.status == 200, resp.read()
-PY
+python3 - "$ROOT" "$ALLOC_ROOT/config.json" "$BOUND_TICKET" <<'PYBOUND'
+import importlib.util,sys,time
+from pathlib import Path
+root,cfg,locator=sys.argv[1:]
+spec=importlib.util.spec_from_file_location('fixture_allocator',Path(root)/'server/frp-port-allocator.py')
+m=importlib.util.module_from_spec(spec);spec.loader.exec_module(m)
+a=m.Allocator(cfg)
+key=Path(cfg).parent/'bound-fixture.key';pub=key.with_suffix('.pub')
+m.MGMT.generate_keypair(key,pub)
+pem=pub.read_text()
+machine='bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'
+p=dict(locator=locator,machine_id=machine,hostname='bound-host',public_key=pem,
+       nonce=m.MGMT.new_nonce(),timestamp=int(time.time()))
+p['signature']=m.MGMT.sign_message(key,m.ZT.entry_claim_message('request',p))
+status,d=a.request_entry_approval(p);assert status==200,d
+record,_=a._entry_active_ticket(locator)
+assert a.approve_entry_request(record['id'],machine,m.MGMT.pubkey_fingerprint(pem))[0]==200
+p['nonce']=d['challenge'];p['signature']=m.MGMT.sign_message(key,m.ZT.entry_claim_message('redeem',p))
+assert a.redeem_entry_approval(p)[0]==200
+PYBOUND
 BOUND_OTHER="$WORKDIR/client-bound-other"
 if run_zero_touch "$BOUND_OTHER" "$BOUND_TICKET" 'cccccccccccccccccccccccccccccccc' "$WORKDIR/bound-other.out"; then
   fail "bound second machine should fail"
 fi
-grep -q 'BOOTSTRAP_TICKET_BOUND' "$WORKDIR/bound-other.out" "$WORKDIR/bound-other.err" \
+grep -q 'BOOTSTRAP_TICKET_INVALID' "$WORKDIR/bound-other.out" "$WORKDIR/bound-other.err" \
   || fail "bound class for second machine before enroll"
 pass "SECOND_MACHINE_BOUND_BEFORE_ENROLL"
 
@@ -951,6 +945,17 @@ pass "SECOND_MACHINE_BOUND_BEFORE_ENROLL"
 ! grep -q 'SSH_USER_NOT_FOUND' "$WORKDIR/zt.out" "$WORKDIR/zt.err" \
   || fail "Zero-Touch unexpectedly requires an SSH login username"
 pass "SSH_USERNAME_NOT_AN_ENROLLMENT_PREREQUISITE"
+
+# Negative fixtures invoke the sourced installer in the parent test shell.
+# run_zero_touch uses a subshell so its approval watcher cannot replace our
+# test cleanup trap; explicitly initialize the same isolated environment here.
+export FRP_CLIENT_LIB="$ROOT/lib/frp-client-common.sh"
+export FRP_SKIP_DOWNLOAD=1 FRP_SKIP_SYSTEMD=1 FRP_CLIENT_SOURCED=1
+export FRP_TEST_HOSTNAME='zt-host'
+export FRP_ALLOCATOR_URL="https://127.0.0.1:${ALLOC_PORT}/enroll"
+export FRP_ALLOCATOR_CA_SHA256="$LIVE_CA_FP"
+unset FRP_BOOTSTRAP_TICKET
+. "$ROOT/install-client.sh"
 
 # SSH port closed fails before redeem.
 issue_ticket >"$WORKDIR/missport-create.out"
@@ -961,7 +966,7 @@ mkdir -p "$MP/etc/frp" "$MP/usr/local/bin"
 make_frpc "$MP/usr/local/bin/frpc"
 export FRP_CLIENT_TEST_ROOT="$MP"
 export FRP_TEST_MACHINE_ID='aaaabbbbccccddddeeeeffff00001111'
-export FRP_BOOTSTRAP_TICKET="$MP_TICKET"
+export FRP_BOOTSTRAP_LOCATOR="$MP_TICKET"
 export FRP_ZERO_TOUCH=1
 export FRP_SSH_PORT="$CLOSED_PORT"
 export FRP_CLIENT_HOOK_LOG="$WORKDIR/missport.hook"
@@ -985,7 +990,7 @@ mkdir -p "$BC/etc/frp" "$BC/usr/local/bin"
 make_frpc "$BC/usr/local/bin/frpc"
 export FRP_CLIENT_TEST_ROOT="$BC"
 export FRP_TEST_MACHINE_ID='badcabadcabadcabadcabadcabadca00'
-export FRP_BOOTSTRAP_TICKET="$BC_TICKET"
+export FRP_BOOTSTRAP_LOCATOR="$BC_TICKET"
 export FRP_ZERO_TOUCH=1
 export FRP_SSH_PORT="$LISTEN_PORT"
 export FRP_ALLOCATOR_CA_SHA256='ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff'
@@ -1013,7 +1018,7 @@ export FRP_ALLOCATOR_URL='http://203.0.113.10:9443/enroll'
 export FRP_ALLOCATOR_CA_SHA256="$LIVE_CA_FP"
 export FRP_CLIENT_TEST_ROOT="$WORKDIR/client-http"
 mkdir -p "$FRP_CLIENT_TEST_ROOT/etc/frp"
-export FRP_BOOTSTRAP_TICKET="$BC_TICKET"
+export FRP_BOOTSTRAP_LOCATOR="$BC_TICKET"
 export FRP_CLIENT_HOOK_LOG="$WORKDIR/http.hook"
 : >"$FRP_CLIENT_HOOK_LOG"
 set +e
@@ -1035,7 +1040,7 @@ PARTIAL="$WORKDIR/client-partial"
 mkdir -p "$PARTIAL/etc/systemd/system" "$PARTIAL/etc/frp"
 echo '[Unit]' >"$PARTIAL/etc/systemd/system/drlink-client.service"
 export FRP_CLIENT_TEST_ROOT="$PARTIAL"
-export FRP_BOOTSTRAP_TICKET="$BC_TICKET"
+export FRP_BOOTSTRAP_LOCATOR="$BC_TICKET"
 export FRP_CLIENT_HOOK_LOG="$WORKDIR/partial.hook"
 : >"$FRP_CLIENT_HOOK_LOG"
 set +e
@@ -1091,7 +1096,7 @@ if frp_client_has_existing_install; then
   fail "DP1 must not classify as complete"
 fi
 export FRP_ALLOCATOR_URL="https://127.0.0.1:${ALLOC_PORT}/enroll"
-export FRP_BOOTSTRAP_TICKET="$BC_TICKET"
+export FRP_BOOTSTRAP_LOCATOR="$BC_TICKET"
 export FRP_CLIENT_HOOK_LOG="$WORKDIR/dp1.hook"
 : >"$FRP_CLIENT_HOOK_LOG"
 set +e
@@ -1140,7 +1145,7 @@ mkdir -p "$EXP/etc/frp" "$EXP/usr/local/bin"
 make_frpc "$EXP/usr/local/bin/frpc"
 export FRP_CLIENT_TEST_ROOT="$EXP"
 export FRP_TEST_MACHINE_ID='eeeeffff000011112222333344445555'
-export FRP_BOOTSTRAP_TICKET="$EXP_TICKET"
+export FRP_BOOTSTRAP_LOCATOR="$EXP_TICKET"
 export FRP_ZERO_TOUCH=1
 export FRP_SSH_PORT="$LISTEN_PORT"
 export FRP_ALLOCATOR_CA_SHA256="$LIVE_CA_FP"
@@ -1151,7 +1156,7 @@ frp_client_main >"$WORKDIR/exp.out" 2>"$WORKDIR/exp.err" </dev/null
 exp_rc=$?
 set -e
 [[ "$exp_rc" -ne 0 ]] || fail "expired ticket should fail"
-grep -q 'BOOTSTRAP_TICKET_EXPIRED' "$WORKDIR/exp.out" "$WORKDIR/exp.err" || fail "expired class"
+grep -q 'BOOTSTRAP_TICKET_INVALID' "$WORKDIR/exp.out" "$WORKDIR/exp.err" || fail "expired class"
 pass "COMMAND_AFTER_EXPIRY"
 
 # Redeem uses verified HTTPS: source review.

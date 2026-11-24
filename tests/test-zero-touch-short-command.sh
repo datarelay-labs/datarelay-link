@@ -10,18 +10,14 @@ python3 - "$ROOT/lib/frp_zero_touch.py" <<'PYCODE'
 import importlib.util,sys
 spec=importlib.util.spec_from_file_location('zt',sys.argv[1])
 zt=importlib.util.module_from_spec(spec);spec.loader.exec_module(zt)
-handle='A'*22
-url='https://bootstrap.example.test/i/'+handle
-command=zt.short_url_command('bootstrap.example.test',handle)
-# Current runtime still uses the existing handle. Its target contract is
-# checked by test-zero-touch-operator-command-bound.py; do not add old or
-# preinstalled-helper alternatives to the target oracle.
-assert command.count(url) == 1, 'unexpected bootstrap URL fields'
-try:
-    zt.short_url_command('bootstrap.example.test','bt1.'+'a'*16+'.'+'b'*64)
-    raise AssertionError('accepted raw ticket in public /i/ URL')
-except ValueError:
-    pass
+locator='A3xK9m'
+assert zt.render_entry_command('bootstrap.example.test',locator,'linux')=='curl -kfsS https://bootstrap.example.test/A3xK9m|sudo bash'
+for bad in ('A'*22,'bt1.'+'a'*16+'.'+'b'*64):
+    try:
+        zt.render_entry_command('bootstrap.example.test',bad,'linux')
+        raise AssertionError('accepted credential as locator')
+    except ValueError:
+        pass
 PYCODE
 pass 'ZERO_TOUCH_SHORT_HANDLE_ONLY'
 WORKDIR="$(mktemp -d)"
@@ -75,7 +71,7 @@ grep -q 'unrecognized arguments: --long-bootstrap' "$WORKDIR/retired.out" \
 python3 "$ROOT/tools/frp-create-client" --one-line --client-name short-zt --note 'pkg' \
   >"$OUT" || { cat "$OUT"; fail "create one-line"; }
 grep -q 'Zero-touch Agent command' "$OUT" || fail "header"
-grep -q 'https://bootstrap.example.test/i/' "$OUT" || fail "short URL missing"
+grep -Eq '^curl -kfsS https://bootstrap\.example\.test/[A-Za-z0-9_-]{6}\|sudo bash$' "$OUT" || fail "short URL missing"
 if grep -q 'zt1\.' "$OUT"; then fail "legacy package emitted"; fi
 if grep -qiE 'curl -fsSL --insecure .*/bootstrap-client|curl -k .*/bootstrap-client' "$OUT"; then
   fail "insecure TLS on installer fetch"
@@ -91,9 +87,9 @@ source "$ROOT/lib/frp-common.sh"
 source "$ROOT/lib/frp-client-common.sh"
 FRP_ALLOCATOR_URL='https://203.0.113.10/enroll'
 FRP_ALLOCATOR_CA_SHA256="$(printf 'a%.0s' {1..64})"
-FRP_BOOTSTRAP_TICKET="bt1.$(printf 'b%.0s' {1..16}).$(printf 'c%.0s' {1..64})"
+FRP_BOOTSTRAP_LOCATOR="A3xK9m"
 FRP_ZERO_TOUCH=1
-export FRP_ALLOCATOR_URL FRP_ALLOCATOR_CA_SHA256 FRP_BOOTSTRAP_TICKET FRP_ZERO_TOUCH
+export FRP_ALLOCATOR_URL FRP_ALLOCATOR_CA_SHA256 FRP_BOOTSTRAP_LOCATOR FRP_ZERO_TOUCH
 frp_zero_touch_require_inputs || fail 'direct bootstrap environment rejected'
 pass 'ZERO_TOUCH_DIRECT_ENV'
 echo "ZERO_TOUCH_SHORT_COMMAND_TEST=PASS"

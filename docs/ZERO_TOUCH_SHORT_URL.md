@@ -15,6 +15,18 @@ Select OS and enrollment profile on the Server. Copy the generated one-line entr
 
 No client-side preinstallation, CA registration, secondary command, or user-facing configuration fields. These are target templates pending product qualification; Windows native execution is unverified.
 
+After running the entry command, the Agent displays its full SHA-256 public-key fingerprint and waits for the Server operator. Verify that fingerprint independently through the established support channel, not merely from the pending request on the Server.
+
+On the Server:
+
+```text
+sudo drlink show enrollment <ENROLLMENT>
+sudo drlink set enrollment approve <ENROLLMENT> <MACHINE-ID> <SHA256>
+```
+
+The enrollment ID is printed by the Server when the command is issued. The displayed Agent fingerprint must match the pending key and machine ID exactly. Once approved, the Agent continues automatically. If waiting times out or a pre-completion interruption occurs, the customer reruns the same entry command; the existing key and crash-safe state are reused. Do not approve unknown keys or generate a second enrollment to resume an interrupted one.
+
+
 ## Server entry endpoint
 
 Serve `GET /<six-character-locator>` on the configured HTTPS authority. Allocate collision-checked, expiring, rate-limited locators; never treat a locator as a bearer enrollment credential. Select the platform-specific bootstrap at issuance. Route only the exact six-character path pattern to the entry handler; reserve existing product routes, do not proxy every path. Use consistent redaction and avoid response caching.
@@ -29,4 +41,4 @@ Stage 1 retrieves and processes any necessary files or commands. Stage 2 perform
 
 ## Trust and release scope
 
-The initial `-k` is a deliberately unauthenticated TLS fetch in the requested target, not server authentication. Do not propagate it to management-plane TLS. The operator communication channel authenticates the command, not the network response. A six-character locator cannot authenticate an agent. Independent enrollment authorization and the initial-execution security disposition remain open; no installed-product qualification until actual evidence. See [canonical contract](ZERO_TOUCH_REGRESSION_CONTROL.md).
+The initial `-k` is a deliberately unauthenticated TLS fetch in the requested target, not server authentication. Do not propagate it to management-plane TLS. The operator communication channel authenticates the command, not the network response. A six-character locator cannot authenticate an agent. The owner explicitly accepts initial -k for this design. Independent registration authorization is implemented using the verified Agent key and a separate enrollment credential. Native installed-product qualification and release acceptance still require actual evidence. See [canonical contract](ZERO_TOUCH_REGRESSION_CONTROL.md).

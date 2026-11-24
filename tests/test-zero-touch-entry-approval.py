@@ -108,7 +108,8 @@ class EntryApproval(unittest.TestCase):
         self.assertEqual(call("/" + self.locator + "?platform=windows")[0], 404)
         status, script = call("/" + self.locator)
         self.assertEqual(status, 200, script)
-        self.assertNotIn(self.raw.encode(), script)
+        self.assertIsNone(self.raw)
+        self.assertNotIn(b"bt1.",script)
         self.assertNotIn(self.enrollment["secret"].encode(), script)
         self.assertIn(b"FRP_BOOTSTRAP_LOCATOR=", script)
         # Real Bash stage: no package install, just hash-verified inert script.
@@ -236,6 +237,167 @@ frp_entry_claim_payload request "$TEST_LOCATOR" machine-a host-a '' "$TEST_CLAIM
         self.assertEqual(self.request()[0],403)
         self.assertEqual(self.redeem(pending["challenge"])[0],403)
 
+    def test_linux_install_recovery_against_real_allocator(self):
+        """Actual installer and registry transaction, isolated filesystem and FRP stub."""
+        import frp_pki
+        pki = frp_pki.ensure_pki(self.env.root / "install-pki", "127.0.0.1")
+        http = ThreadingHTTPServer(("127.0.0.1", 0), MOD.make_handler(self.a))
+        ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        ctx.load_cert_chain(pki["server_crt"], pki["server_key"])
+        http.socket = ctx.wrap_socket(http.socket, server_side=True)
+        origin = "https://127.0.0.1:%d" % http.server_port
+        cfg = json.loads(self.env.cfg.read_text())
+        cfg.update(allocator_public_url=origin + "/enroll",
+                   tls_ca_cert=str(pki["ca_crt"]), bootstrap_dir=str(self.a.bootstrap_dir))
+        self.env.cfg.write_text(json.dumps(cfg))
+        self.a.reload_cfg_if_changed()
+        threading.Thread(target=http.serve_forever, daemon=True).start()
+        self.addCleanup(http.server_close)
+        self.addCleanup(http.shutdown)
+        _, enrollment, ticket = self.a.issue_bootstrap_ticket([], 600, entry_platform="linux")
+        client = self.env.root / "client"
+        (client/"etc/frp").mkdir(parents=True)
+        (client/"usr/local/bin").mkdir(parents=True)
+        (client/"usr/local/lib/drlink").mkdir(parents=True)
+        frpc=client/"usr/local/bin/frpc"
+        frpc.write_text("#!/bin/sh\nexit 0\n")
+        frpc.chmod(0o755)
+        machine="aabbccddeeff00112233445566778899"
+        env = dict(os.environ, FRP_CLIENT_TEST_ROOT=str(client),
+                   FRP_CLIENT_LIB=str(ROOT/"lib/frp-client-common.sh"),
+                   FRP_SKIP_DOWNLOAD="1", FRP_SKIP_SYSTEMD="1",
+                   FRP_TEST_HOSTNAME="entry-test", FRP_TEST_MACHINE_ID=machine,
+                   FRP_ALLOCATOR_URL=origin+"/enroll",
+                   FRP_ALLOCATOR_CA_SHA256=pki["fingerprint"],
+                   FRP_ALLOCATOR_CA_FILE=str(pki["ca_crt"]),
+                   FRP_BOOTSTRAP_LOCATOR=ticket["_entry_locator"], FRP_ZERO_TOUCH="1")
+        env.pop("FRP_BOOTSTRAP_TICKET",None)
+        # Inject interruption after server commit. Resume must reuse local key,
+        # cached authenticated response, and the original enrollment operation.
+        first_env=dict(env, FRP_CLIENT_HOOK_CRASH_AFTER_ENROLL="1")
+        with tempfile.TemporaryFile(mode="w+") as log:
+            proc=subprocess.Popen(["bash",str(ROOT/"install-client.sh")],cwd=ROOT,
+                                  env=first_env,stdin=subprocess.DEVNULL,stdout=log,stderr=log)
+            try:
+                deadline=time.monotonic()+25
+                approved=False
+                while proc.poll() is None and time.monotonic()<deadline:
+                    pub=client/"etc/frp/client-identity.pub"
+                    if pub.is_file():
+                        fp=MOD.MGMT.pubkey_fingerprint(pub.read_text())
+                        record,_=self.a.load_bootstrap(ticket["id"])
+                        if fp in record["entry_approval"]["candidates"]:
+                            self.assertEqual(self.a.approve_entry_request(ticket["id"],machine,fp)[0],200)
+                            approved=True
+                            break
+                    time.sleep(.1)
+                proc.wait(timeout=35)
+                log.seek(0); output=log.read()
+                self.assertTrue(approved, output)
+                self.assertIn("simulated crash after enrollment commit",output)
+                self.assertNotEqual(proc.returncode,0,output)
+            finally:
+                if proc.poll() is None:
+                    proc.kill();proc.wait()
+        stored_before=json.loads(self.env.registry.read_text())["clients"][machine]
+        key_before=(client/"etc/frp/client-identity.key").read_bytes()
+        retry=subprocess.run(["bash",str(ROOT/"install-client.sh")],cwd=ROOT,env=env,
+                             stdin=subprocess.DEVNULL,capture_output=True,text=True,timeout=40)
+        self.assertEqual(retry.returncode,0,retry.stdout+retry.stderr)
+        self.assertEqual((client/"etc/frp/client-identity.key").read_bytes(),key_before)
+        stored_after=json.loads(self.env.registry.read_text())["clients"][machine]
+        self.assertEqual(stored_after.get("mgmt_fingerprint"),stored_before.get("mgmt_fingerprint"))
+        self.assertEqual(stored_after.get("services"),stored_before.get("services"))
+        self.assertEqual(len(json.loads(self.env.registry.read_text())["clients"]),1)
+
+    @unittest.skipUnless(__import__("shutil").which("pwsh"), "PowerShell unavailable")
+    def test_windows_install_against_real_allocator(self):
+        """Actual Windows Agent modules under Linux pwsh, isolated state."""
+        import frp_pki
+        pki=frp_pki.ensure_pki(self.env.root/"win-pki","127.0.0.1")
+        http=ThreadingHTTPServer(("127.0.0.1",0),MOD.make_handler(self.a))
+        ctx=ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        ctx.load_cert_chain(pki["server_crt"],pki["server_key"])
+        http.socket=ctx.wrap_socket(http.socket,server_side=True)
+        origin="https://127.0.0.1:%d"%http.server_port
+        cfg=json.loads(self.env.cfg.read_text())
+        cfg.update(allocator_public_url=origin+"/enroll",tls_ca_cert=str(pki["ca_crt"]),
+                   bootstrap_dir=str(self.a.bootstrap_dir))
+        self.env.cfg.write_text(json.dumps(cfg))
+        self.a.reload_cfg_if_changed()
+        threading.Thread(target=http.serve_forever,daemon=True).start()
+        self.addCleanup(http.server_close)
+        self.addCleanup(http.shutdown)
+        _,_,ticket=self.a.issue_bootstrap_ticket([],600,entry_platform="windows")
+        client=self.env.root/"windows-client"
+        env=dict(os.environ, FRP_WINDOWS_ROOT=str(client), FRP_ALLOCATOR_CA_FILE=str(pki["ca_crt"]),
+                 FRP_BOOTSTRAP_LOCATOR=ticket["_entry_locator"],
+                 TEST_ALLOCATOR=origin+"/enroll",TEST_CA=pki["fingerprint"])
+        # Linux pwsh cannot exercise WinPS/Schannel. Use the existing explicit
+        # curl transport option, still with CA and hostname validation. The
+        # default .NET transport requires separate native Windows evidence.
+        if os.name!="nt":
+            import shutil
+            binary=shutil.which("curl")
+            self.assertIsNotNone(binary)
+            bin_dir=self.env.root/"win-test-bin"
+            bin_dir.mkdir()
+            (bin_dir/"curl.exe").symlink_to(binary)
+            env["PATH"]=str(bin_dir)+os.pathsep+env["PATH"]
+            env["FRP_WINDOWS_FORCE_CURL"]="1"
+            env.pop("FRP_WINDOWS_FORCE_DOTNET_HTTP",None)
+
+        ps="""$ErrorActionPreference='Stop'
+foreach($mod in @('FrpPaths.ps1','FrpLock.ps1','FrpCrypto.ps1','FrpTls.ps1','FrpState.ps1','FrpDraft.ps1','FrpConfig.ps1','FrpProcess.ps1','FrpShim.ps1','FrpAutostart.ps1','FrpBootstrap.ps1','FrpV24.ps1')) { . (Join-Path (Get-Location) ('windows/lib/'+$mod)) }
+Initialize-FrpCryptoTypes
+Initialize-FrpDirectories
+$rc=Invoke-FrpZeroTouch -AllocatorUrl $env:TEST_ALLOCATOR -CaSha256 $env:TEST_CA -BootstrapLocator $env:FRP_BOOTSTRAP_LOCATOR -SkipStart -SkipDownload
+exit $rc
+"""
+        with tempfile.TemporaryFile(mode="w+") as log:
+            proc=subprocess.Popen(["pwsh","-NoProfile","-NonInteractive","-Command",ps],cwd=ROOT,
+                                  env=env,stdin=subprocess.DEVNULL,stdout=log,stderr=log)
+            try:
+                deadline=time.monotonic()+30
+                approved=False
+                while proc.poll() is None and time.monotonic()<deadline:
+                    pub=client/"state/client-identity.pub"
+                    mid=client/"state/client-id"
+                    if pub.is_file() and mid.is_file():
+                        fp=MOD.MGMT.pubkey_fingerprint(pub.read_text())
+                        machine=mid.read_text().strip()
+                        record,_=self.a.load_bootstrap(ticket["id"])
+                        if fp in record["entry_approval"]["candidates"]:
+                            self.assertEqual(self.a.approve_entry_request(ticket["id"],machine,fp)[0],200)
+                            approved=True
+                            break
+                    time.sleep(.1)
+                proc.wait(timeout=40)
+                log.seek(0);output=log.read()
+                self.assertTrue(approved,output)
+                self.assertEqual(proc.returncode,0,output)
+            finally:
+                if proc.poll() is None:
+                    proc.kill();proc.wait()
+        state=json.loads((client/"state/client-state.json").read_text())
+        self.assertEqual(state["machine_id"],machine)
+        registry=json.loads(self.env.registry.read_text())["clients"]
+        self.assertEqual(len(registry),1)
+        self.assertEqual(registry[machine]["mgmt_fingerprint"],fp)
+
+    def test_locator_redacted_in_audit_doctor_support_receipts(self):
+        import frp_audit,frp_doctor,frp_support_bundle
+        for raw in ("GET /"+self.locator+" HTTP/1.1",
+                    "https://remote.example/"+self.locator,
+                    "FRP_BOOTSTRAP_LOCATOR="+self.locator):
+            for redact in (MOD.ZT.redact_text,frp_doctor.redact,frp_support_bundle.redact_text,
+                           lambda x:frp_audit._redact({"message":x})["message"]):
+                self.assertNotIn(self.locator,redact(raw))
+        for redacted in (frp_audit._redact({"locator":self.locator}),
+                         frp_support_bundle.sanitize_json_value({"locator":self.locator})):
+            self.assertNotIn(self.locator,json.dumps(redacted))
+        self.assertIn("/enroll",frp_doctor.redact("https://remote.example/enroll"))
+
     def test_approval_and_possession_required(self):
         code, pending = self.request()
         self.assertEqual(code, 200, pending)
@@ -254,11 +416,17 @@ frp_entry_claim_payload request "$TEST_LOCATOR" machine-a host-a '' "$TEST_CLAIM
         self.assertEqual(self.redeem(again["challenge"])[0], 200)
 
     def test_locator_and_retired_handle_cannot_redeem(self):
-        self.assertFalse(self.a.short_url_bootstrap_available(self.ticket["_short_handle"]))
-        self.assertIsNone(self.a._credential_for_stage1(self.ticket["_short_handle"]))
-        for credential in (self.raw, self.locator):
-            body = json.dumps({"ticket":credential,"machine_id":"machine-a","hostname":"host-a"}).encode()
-            self.assertEqual(self.a.redeem_bootstrap(body)[0], 403)
+        self.assertIsNone(self.raw)
+        stored,_=self.a.load_bootstrap(self.ticket["id"])
+        for name in ("_short_handle","short_handle_hash","bt1_wrapped","secret_hash","windows_renderer"):
+            self.assertNotIn(name,stored)
+        self.assertFalse((Path(self.a.bootstrap_dir)/"handles").exists())
+        handle="A"*22
+        self.assertFalse(self.a.short_url_bootstrap_available(handle))
+        self.assertIsNone(self.a._credential_for_stage1(handle))
+        for credential in ("bt1."+self.ticket["id"]+"."+"a"*64,handle,self.locator):
+            body=json.dumps({"ticket":credential,"machine_id":"machine-a","hostname":"host-a"}).encode()
+            self.assertEqual(self.a.redeem_bootstrap(body)[0],403)
 
     def test_approval_is_exact_key_and_machine(self):
         self.assertEqual(self.request()[0], 200)

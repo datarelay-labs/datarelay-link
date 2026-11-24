@@ -107,12 +107,13 @@ show ai-access-log permission <PERMISSION>
 per batch and 10 active unused codes. UTF-8 CSV uses the header
 `label,note`; for example `agent-a,lab`. Label and note may be
 blank; bulk creates management-only enrollments. The default lifetime
-is 1 hour and the maximum is 24 hours. Keep issued one-time codes private.
+is 1 hour and the maximum is 24 hours. The entry locator is not an enrollment credential. For Zero-Touch, verify the full Agent key fingerprint through the established support channel before approving the matching pending machine/key. See [Zero-Touch Bootstrap](ZERO_TOUCH_SHORT_URL.md).
 
 ```text
 set enrollment zero-touch
 set enrollment manual
 set enrollment bulk
+set enrollment approve <ENROLLMENT> <MACHINE-ID> <SHA256>
 
 set server public-hostname <FQDN>
 set server bootstrap-hostname <FQDN>

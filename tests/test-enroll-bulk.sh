@@ -155,11 +155,16 @@ python3 - "$TREE/var/lib/drlink/bootstrap" <<'PY' || { echo "FAIL orphan handle 
 import json
 from pathlib import Path
 root = Path(__import__('sys').argv[1])
-indexes = list((root / 'handles').glob('*.json')) if (root / 'handles').is_dir() else []
-live = {json.loads(p.read_text()).get('short_handle_hash', '')[:16] for p in root.glob('*.json')}
-for index in indexes:
-    if index.stem not in live:
-        raise SystemExit('orphan %s' % index.name)
+assert not list((root/'handles').glob('*.json'))
+live={json.loads(p.read_text())['entry_locator_hash'] for p in root.glob('*.json')}
+# Rolled-back issued locators may remain reserved as tombstones; no live
+# lookup may resolve a missing ticket.
+for index in (root/'entry-locators').glob('*.json'):
+    record=json.loads(index.read_text())
+    target=root/(record['ticket_id']+'.json')
+    if target.exists():
+        assert index.stem in live
+        assert json.loads(target.read_text())['entry_locator_hash']==index.stem
 print('ok')
 PY
 echo "PASS BULK_MID_FAILURE_ROLLBACK"

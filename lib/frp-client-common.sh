@@ -2938,6 +2938,12 @@ frp_entry_approved_response() {
     parsed="$(ENTRY_RESPONSE="$response" python3 - "$fingerprint" <<'PYRESP'
 import json, os, re, sys
 d=json.loads(os.environ['ENTRY_RESPONSE'])
+if d.get('error'):
+    cls=d.get('error_class')
+    if cls not in ('BOOTSTRAP_TICKET_INVALID','BOOTSTRAP_APPROVAL_CAPACITY','SERVER_MUTATION_FAILED'):
+        cls='BOOTSTRAP_REDEEM_FAILED'
+    print('ERROR: Bootstrap approval rejected (%s). Verify the active locator and Agent approval on the Server.' % cls,file=sys.stderr)
+    raise SystemExit(1)
 if d.get('fingerprint') != sys.argv[1] or d.get('status') not in ('pending','approved'):
     raise SystemExit(1)
 if not re.fullmatch('[0-9a-f]{64}', str(d.get('challenge',''))):

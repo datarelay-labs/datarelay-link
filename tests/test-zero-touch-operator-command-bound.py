@@ -111,13 +111,6 @@ class CompactZeroTouchContract(unittest.TestCase):
             self.assertNotEqual(missing.returncode, 0)
             self.assertIn('SHA256 verifier unavailable', missing.stderr)
 
-    def test_windows_hash_first_within_single_copy_command(self):
-        line = zt.windows_strict_launcher(HOST, HANDLE, HASH)
-        self.assertIn("Get-FileHash", line)
-        self.assertIn(HASH, line)
-        self.assertIn("powershell.exe -NoProfile", line)
-        self.assertNotIn(" -k", line)
-        self.assertNotIn("--insecure", line)
 
 
 
@@ -125,165 +118,10 @@ class CompactZeroTouchContract(unittest.TestCase):
 
 
 
-    def test_private_ca_real_https_ip_command_pins_before_stage_execution(self):
-        # Real local TLS, real curl/openssl, simulated sudo only. A typical
-        # Python HTTPS listener omits close_notify on close. The unauthenticated
-        # public CA read must not fail merely on TLS shutdown; the strict
-        # verified handle request and SHA pin must remain mandatory.
-        import frp_pki
-        with tempfile.TemporaryDirectory(prefix='drlink-ip-real-tls-') as td:
-            root = Path(td)
-            pki = frp_pki.ensure_pki(root / 'pki', '127.0.0.1')
-            marker = root / 'executed'
-            paths = []
-            handle = HANDLE
 
-            class TestEndpoint(BaseHTTPRequestHandler):
-                def log_message(self, *_args):
-                    return
 
-                def do_GET(self):
-                    paths.append(self.path)
-                    if self.path == '/ca.crt':
-                        data = Path(pki['ca_crt']).read_bytes()
-                    elif self.path == '/i/' + handle:
-                        data = ('#!/bin/sh\nprintf PASS > ' + str(marker) + '\n').encode()
-                    else:
-                        self.send_error(404)
-                        return
-                    self.send_response(200)
-                    self.send_header('Content-Length', str(len(data)))
-                    self.end_headers()
-                    self.wfile.write(data)
 
-            endpoint = HTTPServer(('127.0.0.1', 0), TestEndpoint)
-            ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
-            ctx.load_cert_chain(pki['server_crt'], pki['server_key'])
-            endpoint.socket = ctx.wrap_socket(endpoint.socket, server_side=True)
-            thread = threading.Thread(target=endpoint.serve_forever, daemon=True)
-            thread.start()
-            stub = root / 'sudo'
-            stub.write_text('#!/bin/sh\nexec "$@"\n')
-            stub.chmod(0o755)
-            env = dict(os.environ, PATH=td + os.pathsep + os.environ['PATH'])
-            origin = 'https://127.0.0.1:%s/enroll' % endpoint.server_port
-            try:
-                for name, pin, should_execute in (
-                    ('good', pki['fingerprint'], True),
-                    ('wrong-pin', '0' * 64, False),
-                ):
-                    with self.subTest(name=name):
-                        marker.unlink(missing_ok=True)
-                        paths.clear()
-                        cmd = zt.private_ca_ip_linux_command(origin, pin, handle)
-                        result = subprocess.run(['bash', '-c', cmd], capture_output=True,
-                                                text=True, env=env, timeout=12)
-                        self.assertEqual(marker.exists(), should_execute, result.stderr)
-                        self.assertEqual(result.returncode, 0 if should_execute else 1)
-                        self.assertIn('/ca.crt', paths)
-                        self.assertEqual('/i/' + handle in paths, should_execute)
-            finally:
-                endpoint.shutdown()
-                endpoint.server_close()
-                thread.join(timeout=3)
 
-    def test_private_ca_windows_does_not_send_handle_before_ca_pin(self):
-        fp, digest = 'a' * 64, 'b' * 64
-        command = zt.private_ca_ip_windows_command(
-            'https://192.0.2.20:6099/enroll', fp, digest, HANDLE
-        )
-        self.assertIn('--insecure -o $ca', command)  # public cert only
-        self.assertIn('--cacert $ca --ssl-revoke-best-effort -o $st', command)  # credential protected
-        self.assertEqual(command.count('--insecure'), 1)
-        self.assertLess(command.index("CA fingerprint mismatch"), command.index('/i/'))
-        self.assertLess(command.index('--cacert'), command.index('Get-FileHash'))
-        self.assertLess(command.index('Get-FileHash'), command.index('& powershell.exe'))
-        self.assertIn('stage-1 hash mismatch', command)
-        self.assertIn('WriteAllText', command)  # only one normalized public CA
-        self.assertIn('--max-redirs 0', command)  # no credential redirects
-        self.assertIn('finally{Remove-Item', command)
-
-    def test_private_ca_windows_stage1_tolerates_unreachable_revocation_endpoint(self):
-        # BUG-05: Schannel cannot reach CRL/OCSP for the private pinned CA, so
-        # curl.exe exits 60 (CERT_TRUST_REVOCATION_STATUS_UNKNOWN). Only the
-        # pinned --cacert stage-1 fetch may use best-effort revocation; global
-        # --ssl-no-revoke and any widening of the --insecure CA fetch are
-        # forbidden, and every other verification step must remain.
-        command = zt.private_ca_ip_windows_command(
-            'https://192.0.2.20:6099/enroll', 'a' * 64, 'b' * 64, HANDLE
-        )
-        self.assertEqual(command.count('--ssl-revoke-best-effort'), 1)
-        self.assertNotIn('--ssl-no-revoke', command)
-        self.assertEqual(command.count('--insecure'), 1)
-        self.assertLess(command.index('--insecure -o $ca'), command.index('--ssl-revoke-best-effort'))
-        self.assertLess(command.index('--cacert $ca'), command.index('--ssl-revoke-best-effort'))
-        self.assertLess(command.index('--ssl-revoke-best-effort'), command.index('-o $st'))
-        self.assertIn("--proto '=https'", command)
-        self.assertLess(command.index('CA fingerprint mismatch'), command.index('--ssl-revoke-best-effort'))
-        self.assertLess(command.index('--ssl-revoke-best-effort'), command.index('stage-1 hash mismatch'))
-
-    @unittest.skipUnless(shutil.which('pwsh'), 'PowerShell parser unavailable')
-    def test_private_ca_windows_stage_never_executes_before_both_pins(self):
-        import frp_pki
-        with tempfile.TemporaryDirectory(prefix='drlink-pwsh-ip-') as td:
-            root = Path(td)
-            ca_data = frp_pki.ensure_pki(root / 'pki', '192.0.2.20')
-            ca = Path(ca_data['ca_crt'])
-            stage = root / 'stage.ps1'
-            stage.write_text('Write-Output verified-stage\n')
-            digest = hashlib.sha256(stage.read_bytes()).hexdigest()
-            (root / 'curl.exe').write_text(
-                '#!/bin/sh\n'
-                'dest=;kind=\n'
-                'for a in "$@"; do\n'
-                ' case "$a" in /ca.crt|*/ca.crt) kind=ca;; *"/i/"*) kind=stage;; esac\n'
-                'done\n'
-                'while [ "$#" -gt 0 ];do if [ "$1" = -o ];then shift;dest="$1";fi;shift;done\n'
-                '[ -n "$dest" ] || exit 11\n'
-                'if [ "$kind" = ca ];then cp "$CASE_ROOT/pki/ca.crt" "$dest";exit 0;fi\n'
-                'if [ "$kind" = stage ];then cp "$CASE_ROOT/stage.ps1" "$dest";exit 0;fi\n'
-                'exit 12\n'
-            )
-            (root / 'powershell.exe').write_text(
-                '#!/bin/sh\n: > "$CASE_ROOT/stage-executed"\nexit 0\n'
-            )
-            for tool in ('curl.exe', 'powershell.exe'):
-                (root / tool).chmod(0o755)
-            env = dict(os.environ, TEMP=td, CASE_ROOT=td,
-                       PATH=td + os.pathsep + os.environ['PATH'])
-            for label, ca_pin, stage_pin, should_run in (
-                ('ok', ca_data['fingerprint'], digest, True),
-                ('bad-ca', '0' * 64, digest, False),
-                ('bad-stage', ca_data['fingerprint'], '0' * 64, False),
-            ):
-                with self.subTest(label=label):
-                    marker = root / 'stage-executed'
-                    marker.unlink(missing_ok=True)
-                    command = zt.private_ca_ip_windows_command(
-                        'https://192.0.2.20:6099/enroll', ca_pin, stage_pin, HANDLE
-                    )
-                    result = subprocess.run(
-                        ['pwsh', '-NoProfile', '-NonInteractive', '-Command', command],
-                        env=env, capture_output=True, text=True, timeout=18,
-                    )
-                    self.assertEqual(marker.exists(), should_run, result.stderr[-250:])
-                    if should_run:
-                        self.assertEqual(result.returncode, 0, result.stderr[-250:])
-                    else:
-                        self.assertNotEqual(result.returncode, 0)
-
-    def test_ip_bootstrap_rejects_dns_and_invalid_url_authority(self):
-        for u in (
-            "https://example.test/enroll", "http://192.0.2.20/enroll",
-            "https://user:pass@192.0.2.20/enroll", "https://192.0.2.20:99999/enroll",
-            "https://192.0.2.20/enroll?token=leak",
-        ):
-            with self.subTest(url=u):
-                self.assertIsNone(zt.private_ca_ip_endpoint(u))
-        self.assertEqual(
-            zt.private_ca_ip_endpoint("https://[2001:db8::1]:6099/enroll"),
-            ("[2001:db8::1]:6099", "[2001:db8::1]", 6099),
-        )
 
 
 
@@ -350,6 +188,9 @@ class CompactZeroTouchContract(unittest.TestCase):
                 "def encode_zero_touch_package(", "def decode_zero_touch_package(",
                 "def pinned_ca_linux_command(", "def pinned_ca_windows_command(",
                 "def pinned_ca_windows_inner(", "def short_url_windows_command(",
+                "def short_url_command(", "def short_url_for_ticket(",
+                "def private_ca_ip_linux_command(", "def private_ca_ip_windows_command(",
+                "def windows_strict_launcher(", "def private_ca_ip_endpoint(",
             ),
             "install-client.sh": ("zt1.*)", "frp_zero_touch_apply_package"),
             "lib/frp-client-common.sh": ("frp_zero_touch_apply_package() {",),

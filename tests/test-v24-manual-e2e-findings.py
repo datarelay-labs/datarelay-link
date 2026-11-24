@@ -85,25 +85,14 @@ class WizardWrongInputTests(unittest.TestCase):
 
 
 class ZeroTouchCommandSecurityTests(unittest.TestCase):
-    def test_short_url_preserves_ticket_and_https(self):
-        ticket = "A" * 22
-        cmd = zt.short_url_command("remote.xdr.ooo", ticket)
-        self.assertEqual(
-            cmd,
-            "(drlink_bootstrap=$(curl -fsSL https://remote.xdr.ooo/i/%s) && "
-            "printf '%%s\\n' \"$drlink_bootstrap\" | sudo bash)" % ticket,
-        )
-        self.assertNotIn("mktemp", cmd)
-        self.assertNotIn("--insecure", cmd)
-
-    def test_ip_short_command_verifies_fingerprint(self):
-        cmd = zt.private_ca_ip_linux_command(
-            "https://203.0.113.10:6099/enroll", "a" * 64, "B" * 22
-        )
-        self.assertIn("--cacert", cmd)
-        self.assertIn("a" * 64, cmd)
-        self.assertIn("/i/" + "B" * 22, cmd)
-        self.assertNotIn("zt1.", cmd)
+    def test_entry_command_public_and_private_share_fields(self):
+        for host in ("remote.xdr.ooo","203.0.113.10:6099"):
+            self.assertEqual(zt.render_entry_command(host,"A3xK9m","linux"),
+                             "curl -kfsS https://"+host+"/A3xK9m|sudo bash")
+            self.assertEqual(zt.render_entry_command(host,"A3xK9m","windows"),
+                             "iex(curl.exe -kfsS https://"+host+"/A3xK9m|Out-String)")
+        with self.assertRaises(ValueError):
+            zt.render_entry_command("remote.xdr.ooo","A"*22,"linux")
 
     def test_manual_install_pins_ca_before_installer_fetch(self):
         installer = "https://203.0.113.10:6099/artifacts/agent/bootstrap-client.sh"

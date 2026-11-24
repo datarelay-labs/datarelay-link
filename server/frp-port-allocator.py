@@ -1187,7 +1187,7 @@ def enrollment_state_dir(enrollments_dir, cfg=None):
 
 
 def _prepare_bootstrap_ticket_pair(
-    services, ttl, note='', label='', batch_id='', windows_inputs=None, wrap_secret=''
+    services, ttl, note='', label='', batch_id='', windows_inputs=None, wrap_secret='', entry_platform=None
 ):
     """Build enrollment+ticket records, bt1 secret, and display-once short handle.
 
@@ -1202,11 +1202,22 @@ def _prepare_bootstrap_ticket_pair(
     enrollment_id = secrets.token_hex(8)
     enroll_secret = secrets.token_hex(32)
     ticket_id = secrets.token_hex(8)
-    ticket_secret = secrets.token_hex(32)
-    raw_ticket = '%s.%s.%s' % (BOOTSTRAP_TICKET_PREFIX, ticket_id, ticket_secret)
-    short_handle = generate_compact_bootstrap_credential()
-    if not str(wrap_secret or '').strip():
-        raise RuntimeError('bootstrap ticket wrap secret is unavailable')
+    raw_ticket = None
+    legacy_fields = {}
+    if entry_platform is None:
+        # Historical compatibility fixtures and existing lifecycle readers.
+        # New public issuance never creates a legacy credential or handle.
+        ticket_secret = secrets.token_hex(32)
+        raw_ticket = '%s.%s.%s' % (BOOTSTRAP_TICKET_PREFIX, ticket_id, ticket_secret)
+        short_handle = generate_compact_bootstrap_credential()
+        if not str(wrap_secret or '').strip():
+            raise RuntimeError('bootstrap ticket wrap secret is unavailable')
+        legacy_fields = {
+            'secret_hash': hash_bootstrap_secret(ticket_secret),
+            'short_handle_hash': hash_bootstrap_secret(short_handle),
+            'bt1_wrapped': wrap_bootstrap_ticket(raw_ticket, wrap_secret),
+            '_short_handle': short_handle,
+        }
     now = int(time.time())
     expires_at = now + ttl
     enroll_record = {
@@ -1226,10 +1237,7 @@ def _prepare_bootstrap_ticket_pair(
     ticket_record = {
         'schema': 1,
         'id': ticket_id,
-        'secret_hash': hash_bootstrap_secret(ticket_secret),
-        'short_handle_hash': hash_bootstrap_secret(short_handle),
-        'bt1_wrapped': wrap_bootstrap_ticket(raw_ticket, wrap_secret),
-        '_short_handle': short_handle,
+        **legacy_fields,
         'enrollment_id': enrollment_id,
         'created_at': utc_now_iso(),
         'expires_at': expires_at,
@@ -1242,7 +1250,7 @@ def _prepare_bootstrap_ticket_pair(
     }
     if batch_id:
         ticket_record['batch_id'] = batch_id
-    if windows_inputs and ZT is not None:
+    if entry_platform is None and windows_inputs and ZT is not None:
         script = ZT.render_short_url_windows_bootstrap_script(
             windows_inputs['allocator_url'],
             windows_inputs['allocator_ca_sha256'],
@@ -1272,15 +1280,17 @@ def _persist_bootstrap_ticket_pair(enrollments_dir, bootstrap_dir, enroll_record
     index_path = None
     if HEX_RE.fullmatch(handle_hash) and len(handle_hash) == 64:
         index_path = short_handle_index_path(bootstrap_dir, handle_hash[:BOOTSTRAP_ID_HEX_LEN])
-    if enroll_path is None or ticket_path is None or index_path is None:
+    if enroll_path is None or ticket_path is None or (
+            index_path is None and 'entry_approval' not in public_ticket):
         raise RuntimeError('failed to allocate bootstrap ticket paths')
-    if enroll_path.exists() or ticket_path.exists() or index_path.exists():
+    if enroll_path.exists() or ticket_path.exists() or (index_path is not None and index_path.exists()):
         raise BootstrapPathExists('bootstrap ticket path already exists')
-    index_path.parent.mkdir(parents=True, exist_ok=True)
-    try:
-        os.chmod(str(index_path.parent), 0o700)
-    except OSError:
-        pass
+    if index_path is not None:
+        index_path.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            os.chmod(str(index_path.parent), 0o700)
+        except OSError:
+            pass
     try:
         atomic_write_json(enroll_path, enroll_record, mode=0o600)
         try:
@@ -1293,13 +1303,15 @@ def _persist_bootstrap_ticket_pair(enrollments_dir, bootstrap_dir, enroll_record
             os.chmod(str(ticket_path), 0o600)
         except OSError:
             pass
-        atomic_write_json(
-            index_path,
-            {'ticket_id': public_ticket['id'], 'handle_hash': handle_hash},
-            mode=0o600,
-        )
+        if index_path is not None:
+            atomic_write_json(
+                index_path,
+                {'ticket_id': public_ticket['id'], 'handle_hash': handle_hash},
+                mode=0o600,
+            )
     except Exception:
-        unlink_quiet(index_path)
+        if index_path is not None:
+            unlink_quiet(index_path)
         unlink_quiet(ticket_path)
         unlink_quiet(enroll_path)
         raise
@@ -1329,11 +1341,11 @@ def _allocate_and_persist_bootstrap_ticket_pair(
             batch_id=batch_id,
             windows_inputs=windows_inputs,
             wrap_secret=wrap_secret,
+            entry_platform=entry_platform,
         )
         locator_path = None
         if entry_platform is not None:
-            # The legacy secret/handle are retained only for the existing
-            # record lifecycle. Neither may authorize a new entry pair.
+            # Only the root locator and independent approval are created.
             locator = claim_entry_locator(bootstrap_dir, ticket_record['id'],
                                           entry_platform, ticket_record['expires_at'])
             locator_path = entry_locator_index_path(bootstrap_dir, locator)
@@ -1410,8 +1422,8 @@ def issue_bootstrap_ticket(
         or CLOCKS.DEFAULT_TIMEOUT_SEC
     )
     now = int(time.time())
-    windows_inputs = windows_renderer_inputs_from_cfg(cfg)
-    wrap_secret = bootstrap_wrap_secret(cfg, bootstrap_dir, create=True)
+    windows_inputs = windows_renderer_inputs_from_cfg(cfg) if entry_platform is None else None
+    wrap_secret = bootstrap_wrap_secret(cfg, bootstrap_dir, create=True) if entry_platform is None else ''
     with CLOCKS.acquire_state_dir_control_locks(state_dir, timeout=lock_timeout):
         cleanup_expired_bootstrap_tickets(
             bootstrap_dir, now, cfg=cleanup_cfg, force=True, already_locked=True
@@ -1471,8 +1483,8 @@ def issue_bootstrap_ticket_batch(
         or CLOCKS.DEFAULT_TIMEOUT_SEC
     )
     now = int(time.time())
-    windows_inputs = windows_renderer_inputs_from_cfg(cfg)
-    wrap_secret = bootstrap_wrap_secret(cfg, bootstrap_dir, create=True)
+    windows_inputs = windows_renderer_inputs_from_cfg(cfg) if entry_platform is None else None
+    wrap_secret = bootstrap_wrap_secret(cfg, bootstrap_dir, create=True) if entry_platform is None else ''
     issued = []
     created_paths = []
     with CLOCKS.acquire_state_dir_control_locks(state_dir, timeout=lock_timeout):
@@ -1509,7 +1521,8 @@ def issue_bootstrap_ticket_batch(
             for enroll_path, ticket_path, index_path, locator_path in created_paths:
                 if locator_path is not None:
                     unlink_quiet(locator_path)
-                unlink_quiet(index_path)
+                if index_path is not None:
+                    unlink_quiet(index_path)
                 unlink_quiet(ticket_path)
                 unlink_quiet(enroll_path)
             raise
