@@ -629,6 +629,23 @@ def validate_zero_touch_prerequisites(cfg, platform, installer, ca_fp):
                  'use a numeric-IP allocator with a valid pinned Private CA and '
                  'matching IP SAN. DNS alone does not establish trust. '
                  'No enrollment ticket was issued.')
+    if compact_host:
+        # The real short handle and Windows hash have fixed widths. Render a
+        # placeholder command before allocating a ticket, so a qualified but
+        # very long FQDN cannot leave an unusable enrollment pending.
+        zt = _zt()
+        limit = 500 if platform == 'windows' else 200
+        try:
+            if zt is None:
+                raise ValueError('compact bootstrap renderer unavailable')
+            if platform == 'windows':
+                probe_command = zt.windows_strict_launcher(compact_host, 'A' * 22, '0' * 64)
+            else:
+                probe_command = zt.short_url_command(compact_host, 'A' * 22)
+        except (AttributeError, ValueError):
+            fail('Compact Zero-Touch renderer unavailable. No enrollment ticket was issued.')
+        if not probe_command or len(probe_command) > limit:
+            fail('Zero-Touch command exceeds %d characters; configure a shorter publicly trusted bootstrap hostname. No enrollment ticket was issued.' % limit)
     label = 'Windows Agent installer URL' if platform == 'windows' else 'Agent installer URL'
     issuer_ca_file = None
     if private_ip_plan:

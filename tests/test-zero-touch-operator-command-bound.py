@@ -40,6 +40,24 @@ HASH = "c" * 64
 
 
 class CompactZeroTouchContract(unittest.TestCase):
+    def test_overlong_qualified_fqdn_rejected_before_ticket_issuance(self):
+        hostname = ".".join(("a" * 63, "b" * 63, "c" * 63, "test"))
+        cfg = {"bootstrap_hostname": hostname,
+               "allocator_public_url": "https://" + hostname + "/enroll"}
+        for platform in ("linux", "macos", "windows"):
+            with self.subTest(platform=platform), \
+                 mock.patch.object(cli, "short_url_host_for_cfg", return_value=hostname), \
+                 mock.patch.object(cli, "preflight_installer_url") as preflight, \
+                 mock.patch.object(cli, "load_allocator") as allocator, \
+                 mock.patch("sys.stderr", new_callable=io.StringIO) as stderr:
+                with self.assertRaises(SystemExit):
+                    cli.validate_zero_touch_prerequisites(
+                        cfg, platform, "https://example.test/installer", HASH)
+                self.assertIn("No enrollment ticket was issued", stderr.getvalue())
+                self.assertIn("characters", stderr.getvalue())
+                preflight.assert_not_called()
+                allocator.assert_not_called()
+
     def test_linux_and_macos_default_install_commands_have_bounded_length(self):
         # Operator-selected hostname alone must not bypass public trust checks.
         # Hermetic fixture injection is not a live public-trust waiver.
