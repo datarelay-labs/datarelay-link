@@ -6,81 +6,29 @@
 > **Scope:** single and bulk compact bootstrap commands, interactive guided CLI, TLS trust, token issuance, Server/Agent target projection, generated installers, actual external-user E2E.
 > **Tracking:** [P0 Draft PR #222](https://github.com/datarelay-labs/datarelay-link/pull/222), [Issue #165](https://github.com/datarelay-labs/datarelay-link/issues/165). A Draft PR or machine-only PASS is not installed-product acceptance.
 
-## Latest owner direction — fixed minimal entry UX (2026-11-24)
+## Fixed customer entry design (2026-11-24)
 
-Owner-selected Stage 0 evaluation target: `curl -kfsS https://remote.xdr.ooo/A3xK9m|sudo bash` (50 ASCII characters at the reference origin). Six-character root-path file locator, same form for public/private certificates, clean customer OS, no DataRelay prerequisite, and all subsequent verification, downloads and enrollment in later stages. Subsequent size/count is unrestricted; re-execution must be idempotent. The six-character locator is not an enrollment credential. Enrollment authority must be established separately. The command is a **tested evaluation target, NOT a qualified production launcher**; the independent first-trust requirement below has not been satisfied.
+**ZT-P0-CONTRACT-20261026 — fixed six-character entry target (owner revision 2026-11-24).** The customer starts with one OS-native command, one HTTPS authority (FQDN or IP), and one six-character root-path file locator. Public and private HTTPS use the same target form. No preinstalled DataRelay software, inline configuration, separate enrollment ID, fingerprint, artifact hash, or installer body in the customer command. All subsequent configuration, downloads, verification, installation, recovery and enrollment belong to the multi-stage Bootstrap; their size and count are unrestricted. The locator is not an enrollment credential. See `docs/ZERO_TOUCH_REGRESSION_CONTROL.md` for exact target templates, the independent enrollment requirement, the explicit initial-transport risk and actual acceptance status. This is a design target, not installed-product qualification.
 
-### Local isolated Linux experiment
+| Platform | Exact target template at reference authority | ASCII characters |
+|---|---|---:|
+| Linux / macOS | `curl -kfsS https://remote.xdr.ooo/A3xK9m|sudo bash` | 50 |
+| Windows (administrator PowerShell, native curl.exe) | `iex(curl.exe -kfsS https://remote.xdr.ooo/A3xK9m|Out-String)` | 60 |
 
-Executed Bash with curl 8.10.1/OpenSSL, two independently generated localhost self-signed certificates, one configured as trusted for the test client, and a harmless mock sudo. No real installation, customer system or enrollment credential was used.
+The Windows form is the equivalent proposed template, not a tested native-Windows result. The Server selects the OS-specific response at issuance; do not require a platform argument from the customer. The example authority and locator are illustrative only. Permit exactly `[A-Za-z0-9_-]{6}` in the root-path locator, collision-check atomically, reserve existing routes, expire and rate-limit lookups. No second customer command, arbitrary query string, inline trust program, or legacy long-command fallback. Internal package formats and enrollment protocol are not customer command alternatives.
 
-| Case | Observed exit/result | Disposition |
-|---|---|---|
-| Trusted and untrusted TLS certificates | 0 / benign marker for both | Functional PASS |
-| Repeat same benign download twice | 0 / marker each time | Repeat execution PASS; actual idempotency NOT_RUN |
-| Truncated ordinary script | 0 / early marker, curl error | FAIL |
-| Truncated before closing compound command | 2 / no marker | Partial-script mitigation PASS for this case |
-| Complete compound command, transport reports incomplete body | 0 / marker, curl error | Cannot guarantee successful transport before execution |
-| Empty body / HTTP 404 | 0 / no marker | FAIL: pipeline masks downloader failure |
-| HTTP 302 with shell body | 0 / body executed | FAIL |
-| Different untrusted certificate and replacement response | 0 / replacement marker | FAIL: first-stage server authentication and integrity absent |
+### Stage boundary and security scope
 
-An incomplete compound command can prevent early execution of an honest truncated script; it cannot authenticate a replaced response. An external observer able to alter the initial connection may substitute code that would execute with customer administrative privileges. A trusted messaging channel authenticates the delivered URL, not the downloaded response. No ARP detection or control of external customer networks is required. These observed failures are not resolved by later-stage verification, and cannot be labeled PASS. Keep the minimal UX as the design target; resolve the first-stage execution boundary and failure reporting before production qualification, rather than silently weakening the release gates. macOS/Windows native execution, actual enrollment/retry and service E2E remain NOT_RUN.
+1. Stage 0: fixed native fetch/execute template, identical for public/private certificates. The operator sends the command through the established customer communication channel. `-k` explicitly disables TLS peer certificate authentication for this initial download. It does not establish server identity or protect against an active replacement response. Later checks cannot retroactively authenticate executed code. This risk and the existing failed local tests must remain visible; do not present the template as security-qualified or silently mark the existing security gate PASS.
+2. Stage 1: small, platform-specific entry file; handle ordinary truncated-script cases, clear failure/success output, subsequent artifact retrieval, temporary file cleanup, and retry without destructive side effects. Subsequent files, manifests, scripts and installer payloads have no arbitrary size or count cap. Do not embed long-lived keys or raw enrollment secrets in the publicly retrievable entry file.
+3. Stage 2: validate downstream artifacts and use authenticated connections. Establish actual downstream trust independently where required; a CA learned solely from an unauthenticated response is not independently verified. Keep TLS exceptions local to Stage 0; do not change OS trust or disable management-plane TLS validation.
+4. Stage 3: redeem a separate high-entropy, expiring, one-time enrollment credential after authorization; bind the authorized identity and destination, consume atomically, preserve existing identity/ports on retries. The six-character locator is only a routing index: knowing it must not grant enrollment. An independent authorization mechanism (e.g. operator approval bound to an agent key, or existing authenticated enrollment context) must be designed and tested; do not claim fully autonomous secure enrollment from the locator alone.
 
-## Normative short-only contract (2026-11-24)
+### Acceptance
 
-**ZT-P0-CONTRACT-20261026 — short-only information contract (owner revision 2026-11-24).** Zero-Touch carries only the bootstrap invocation, one Server HTTPS URL, and one opaque 22-character one-time enrollment ticket in the URL (or ticket alone if the trusted Server is already configured). The ticket resolves the Enrollment ID; never duplicate it. An independently supplied trust anchor or artifact digest is permitted only when indispensable for first trust or pre-execution integrity and not already available to the trusted verifier. All other data belongs in the authenticated immutable Server enrollment manifest or trusted bootstrap implementation. Single/bulk, CLI/UI/AI and all OS paths obey the same field allowlist; use the shortest safe invocation, not an arbitrary character budget. Private CA/numeric IP requires independently established trust; if no safe short path qualifies, stop before collecting services and ticket issuance. Preserve Windows stage-1 verification before execution, strict TLS, artifact integrity, one-time binding and signed LAN destination. See `docs/ZERO_TOUCH_REGRESSION_CONTROL.md` for the authoritative field table, illustrative command forms and structural acceptance. This is a target, not an installed-product claim.
-
-
-### Allowed command information (normative)
-
-| Item | Requirement | Representation / length |
-|---|---|---|
-| Bootstrap invocation | Required; fixed platform-approved invocation and minimal download/execute safety syntax | No serialized configuration or inline verifier |
-| Server HTTPS URL | Required for a new machine; omit only when an authenticated Server is already configured | `https://` (8), literal DNS/IP authority (variable), `/i/` (3), ticket (22) |
-| Enrollment ticket | Required once; opaque Base64URL handle encoding 128 bits of randomness | 22 characters, maps to the server-side Enrollment ID; no separate ID or raw internal credential |
-| Independent trust anchor / digest | Conditional only; omit if independently available to the verifier. Required when security would otherwise be lost; never fetch an anchor from the same unauthenticated channel | SHA-256 64 hex or 43 unpadded Base64URL characters; only the necessary, typed CA pin and/or stage-1 digest, not arbitrary metadata |
-
-The three required logical items are invocation, Server address and ticket. The last two normally form a single URL argument. Any conditional digest is independently supplied, scoped to its purpose, and consumed by a trusted verifier. Platform is selected by the launcher (no extra user-entered platform data); URL routing syntax is fixed, not an extensible configuration query. No CLI argument for Enrollment ID, service/host settings, installer URL/version, FRP options, credentials, manifest body, certificate body or executable verification code.
-
-### Illustrative command shapes (not deployed syntax)
-
-For the example authority `remote.xdr.ooo` (14 characters) and a fictitious 22-character ticket, the URL is 47 characters. The examples are design references, not promises of installed executables or acceptance on a clean machine.
-
-- Public HTTPS, Bash/Zsh, complete nonempty fetch before execution (95 characters):
-  `s=$(curl -qfsS https://remote.xdr.ooo/i/AAAAAAAAAAAAAAAAAAAAAA)&&[ -n "$s" ]&&sudo bash <<<"$s"`
-- Public HTTPS, POSIX-shell alternative (106 characters):
-  `s=$(curl -qfsS https://remote.xdr.ooo/i/AAAAAAAAAAAAAAAAAAAAAA)&&[ -n "$s" ]&&printf '%s\n' "$s"|sudo bash`
-- Already trusted/installed verifier with Server URL (66 characters): `sudo drlink enroll https://remote.xdr.ooo/i/AAAAAAAAAAAAAAAAAAAAAA`
-- Already trusted/installed verifier and preconfigured Server (41 characters): `sudo drlink enroll AAAAAAAAAAAAAAAAAAAAAA`
-- Illustrative independently verified Windows bootstrap executable (68 characters): `drlink-bootstrap.exe https://remote.xdr.ooo/i/AAAAAAAAAAAAAAAAAAAAAA`
-
-Public shell forms are length illustrations only: the final qualified invocation must enforce an authenticated HTTP 200 response, reject redirects (including a 3xx response with a nonempty body), require a qualified stage-1 and verify the subsequent installer. Curl's `-f` and a nonempty-body check alone do not reject every 3xx response. The final fixed template may therefore differ; qualification must prove all negative cases, not merely match an illustrative string. The Windows helper example is conditional on its independent verification/availability and preserves pre-execution stage-1 verification. Do not claim a fresh Windows/Private-CA machine can run a preinstalled-helper example. Do not make a bare download pipe or unverified remote execution an alternative. Conditional digests add only the exact typed argument syntax and digest length; no universal size ceiling or entitlement to extra bytes.
-
-### Server-side manifest information
-
-Keep these fields in authenticated immutable data bound to the ticket, not operator command text:
-
-| Group | Fields |
-|---|---|
-| Enrollment identity | Enrollment ID, ticket reference (not raw secret in logs), issuer/Server ID, expiry, first-machine binding and single-use state (transactional state maintained separately) |
-| Agent identity and metadata | Requested Agent/Managed Host name, label/group/tags, permitted platform and enrollment profile |
-| Connection and trust | Allocator/relay endpoints, transport, CA/certificate references and fingerprints, policy references |
-| Artifact integrity | Qualified installer URL, exact immutable source/version, SHA-256 digest, manifest authentication/signature and required stage-1 integrity metadata |
-| Remote Services | Service/Network Object IDs, service type, target host/port, reserved public endpoint and signed destination |
-| Runtime | Required configuration, capabilities and transport parameters; generate persistent private keys locally on Agent, never embed long-lived private credentials |
-
-### Structural regression oracle
-
-- Compare actual emitted commands against an explicit fixed platform invocation template and the exact allowlisted URL/ticket fields; reject every extra argument, assignment, query/config value, inline code or duplicated ID outside the fixed minimal invocation. Conditional digest arguments are accepted only by the independently trusted verifier and only when needed. No general-purpose shell/script escape hatch.
-- Compare rendered byte count to that exact template plus literal permitted data; do not use an arbitrary global or route-specific maximum as the pass condition. A new template requires review of every added token and proof that it is necessary for safety or compatibility.
-- Test single and bulk issuance, CLI/UI/AI presentation, all OS/trust routes, positive/negative field injection, independent trust, credential secrecy, failure exit, Windows pre-execution integrity, manifest validation and actual external enrollment. Fail before ticket issuance if a supported safe template cannot be selected. Preserve historical receipts only in Git history.
-
-- The Server keeps immutable enrollment inputs and qualified installer references/digests in an authenticated manifest, bound to the one-time handle, expiry, platform and intended Server. GET does not consume; successful enrollment consumes atomically and binds the first machine. The manifest is data, not executable code; no private key or long-lived credential is embedded.
-- Bootstrap code and validation logic are delivered by an independently authenticated distribution/trust path, not repeated in the operator command. Public HTTPS must verify stock trust and the exact `/i/invalid-qualification-probe` response `404 bootstrap unavailable`; do not follow credential-bearing redirects. Private CA: verify the independently supplied CA fingerprint without any credential, validate certificate IP SAN, then use strict TLS (e.g. `--cacert`); a pre-established trusted verifier can do these operations internally. A hash from the same unauthenticated download is not independent trust. No TLS weakening or global CA installation.
-- Download completely before executing; failed or empty downloads must fail without invoking installation. Windows must retain independent stage-1 hash/signature verification before PowerShell execution. Verify immutable installer SHA256 before execution. Do not use a bare pipeline that masks fetch errors.
-- Verify signed LAN destinations, stable service identity and reserved public endpoint. SSH account authentication is not an enrollment prerequisite.
-- **Release blocker:** current renderers and existing compatibility/security tests are not evidence of the revised information contract. Replace the inline verifier with a trusted short bootstrap mechanism, then enforce the exact allowed-field and fixed-template grammar on every OS, public DNS and numeric-IP path, single/bulk and all public surfaces. No character budget can authorize an extra field. Preserve immutable historical receipts in Git history rather than presenting prior command shapes as supported alternatives.
+- Clean Linux, macOS, Windows: one exact OS template, same for public/private HTTPS, no extra customer-supplied arguments. Numeric IP or FQDN; only literal authority length varies.
+- Same entry command can be retried after interruption; success requires actual installed identity, authenticated enrollment and working service, not a shell exit code alone. Server-side lookup, capacity, collisions, expiry and concurrent redemption are tested.
+- Actual OS runs, installer integrity, independent enrollment authorization, signed service routing and external E2E remain required. The initial unverified execution risk remains a security qualification failure unless separately dispositioned under the applicable release authority. No network attack detection feature is in scope.
 
 ## Historical Agent self-target recovery contract
 
@@ -114,11 +62,9 @@ real-environment acceptance requirements.
 
 | Scenario | Expected output/behavior | Actual gate |
 |---|---|---|
-| Qualified real DNS + DRLink `/i/` 404 signature | Short command matching the allowed-field grammar on Linux/macOS/Windows; TLS verified; real ticket installation succeeds | `tests/test-zero-touch-operator-command-bound.py`; `tests/test-zero-touch-short-url.sh`; U-009/O-002 real external E2E |
-| Explicit `bootstrap_hostname`, expired/wrong certificate | Generated command may exist, but stock client fetch MUST fail; no unsafe bypass or consumed ticket | TLS negative suite + clean external client |
-| Generic HTTPS 404 or unrelated web application | Refuse false short-URL discovery, no ticket | Qualification probe negative test |
-| DNS configured but no public trusted `/i/` route | Use a trusted numeric-IP verifier only when independent trust qualifies; otherwise fail before collecting services, no ticket | IP fallback and original default-no-long tests |
-| Private-CA-only / numeric IP with matching Server certificate IP SAN | Short launcher via independent trust; CA verified before credential retrieval; Windows stage-1 verified before execution; otherwise no ticket | IP/private-CA issuer + Windows PowerShell negative/positive regression |
+| FQDN/IP, public/private HTTPS | Exact fixed six-character entry template; actual installation and separately authenticated enrollment | Native OS E2E |
+| Invalid/expired locator or unavailable endpoint | No enrollment; clear failure or retry guidance; do not infer success from pipeline exit | Server lookup + retry tests |
+| Replacement initial response | Unverified Stage 0 is a recorded security risk; not an authenticated-download PASS | Security qualification |
 | Optional SSH user blank | End-to-end enrollment/tunnel functions; no misleading account inference | Guided and backend user journey |
 | LAN SSH remote 6001 | Signed target `192.168.219.125:22`, correct Network Object, preserve 6001, real external SSH banner and session | Server/Agent projection + remote actual traffic |
 | LAN HTTPS remote 6002 with target 443 intentionally down | Configuration references consistent, do not fabricate HTTPS PASS; DEGRADED is truthful until listener starts | Server/Agent state inspection |
@@ -132,7 +78,7 @@ real-environment acceptance requirements.
 - **Local focused checks:** `python3 tests/test-zero-touch-operator-command-bound.py`, `python3 tests/test-zero-touch-guided-preflight.py` (real public `drlink` preflight-before-identity across Linux/Windows/macOS), `bash tests/test-zero-touch-short-url.sh`, `python3 tests/test-enrolled-routed-target-parity.py`, `python3 tests/test-cli-inventory-selection-journey.py` and `python3 tests/test-zero-touch-doc-contract.py` (the documentation consistency check).
 - **Artifact closure:** `bash tests/test-change-closure-artifacts.sh` at the exact product source HEAD; reject `DERIVED_BUNDLE_STALE` or checksum/manifest drift.
 - **Installed candidate:** record `drlink system version` Source HEAD for Server and Agent and exact bundle SHA256; external new-user command generated from the actual installed Server, not a copied example or source runner.
-- **Real negative/positive:** trusted public TLS, real `/i/<handle>` redemption, one-time binding, service lifecycle, 6000 preservation and 6001 real external SSH. HTTPS :443 behind 6002 may remain legitimately down and must be recorded honestly.
+- **Real negative/positive:** public/private entry flow, six-character locator lookup, independent enrollment authorization, one-time binding, service lifecycle, 6000 preservation and 6001 real external SSH. HTTPS :443 behind 6002 may remain legitimately down and must be recorded honestly.
 - **User gate:** execute U-009, O-002, A-018 and relevant CLI-008/FCS-002 as actual personas. No silently skipped prerequisite or preexisting config reset. For v2.4 release, both complete 116-ID Full User E2E PASS runs must be on one frozen, installed, verified HEAD.
 - **Observability:** redact all raw `bt1`, short handles, OAuth codes and private keys; retain lengths, mode, endpoint/status, exit codes and provenance. Do not retain a readable one-time credential in evidence.
 
