@@ -2,6 +2,7 @@
 """Release blocker when Zero-Touch Master, user contract and regression oracle diverge."""
 from __future__ import annotations
 import hashlib
+import re
 import subprocess
 import sys
 import unittest
@@ -113,6 +114,17 @@ class ZeroTouchDocContract(unittest.TestCase):
             self.assertIn(token, contract)
         self.assertIn('fixed six-character root-path entry target',
                       self.read('docs/FULL_USER_E2E_SCENARIOS.md'))
+
+    def test_all_tracked_product_docs_reject_retired_entry_guidance(self):
+        paths = subprocess.check_output(['git', 'ls-files', '-z', '--', '*.md', '*.mdx'], cwd=ROOT).decode().split('\0')
+        retired = re.compile(r'/i/<(?:handle|ticket|credential)>|(?:opaque |root-path )?22-character (?:handle|locator|filename)|short launcher remains short|one-time command presentation|raw ticket/install URL|drlink-bootstrap\.exe|sudo drlink enroll |(?:command|launcher) (?:length|character) (?:limit|bound|budget)|(?:50|60|200|420|500|900|1500) (?:ASCII )?characters (?:at the reference authority|for (?:the )?(?:command|launcher))', re.I)
+        for path in filter(None, paths):
+            for no, line in enumerate(self.read(path).splitlines(), 1):
+                self.assertIsNone(retired.search(line), f'{path}:{no}: retired entry guidance')
+        for path in ('docs/CONTROL_PLANE_ARCHITECTURE.md', 'docs/RELEASE_CHECKLIST.md', 'docs/FULL_USER_E2E_SCENARIOS.md', 'docs/CLI_ONLY_E2E_SCENARIOS.md'):
+            self.assertIn('six-character', self.read(path), path)
+        for path in ('docs/FULL_USER_E2E_SCENARIOS.md', 'docs/CLI_ONLY_E2E_SCENARIOS.md'):
+            self.assertIn('OS-native downloader, download options, HTTPS protocol, Server authority', self.read(path), path)
 
     def test_cli_only_document_is_generated_from_current_full_e2e(self):
         source = self.read('docs/FULL_USER_E2E_SCENARIOS.md')

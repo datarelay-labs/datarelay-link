@@ -1771,12 +1771,12 @@ When a public DNS hostname is configured, verify entirely through the public CLI
 
 - Enrollment HTTPS output uses the configured public hostname;
 - Zero-Touch bootstrap output uses the configured public hostname;
-- the short launcher remains short and usable through the documented Zero-Touch workflow;
+- the generated command contains only the canonical OS-native downloader, download options, HTTPS protocol, Server authority, six-character root-path Bootstrap filename and OS execution wrapper; public/private HTTPS use the same fields, with no client-side prerequisite or extra argument;
 - public IP is shown only as the supported fallback/alternative, not as an unexplained replacement for the configured hostname;
 - Remote Service endpoint presentation uses the configured public hostname where the current product contract says it should;
 - clearing an optional hostname returns to the documented default/fallback behavior.
 
-Execute the generated bootstrap path from a real external test host and verify DNS, TLS, enrollment, and final Remote Service usability end to end.
+Execute the generated command on clean native Linux, macOS and Windows targets for FQDN/IP and public/private HTTPS. Interrupt and retry the same command; require stable identity, no duplicate enrollment, authenticated downstream connections and actual Remote Service usability. Record initial transport security disposition independently; no network attack detection is required.
 
 ## U-010 — Guided CLI user journey parity — MANDATORY
 

@@ -1,7 +1,5 @@
 # Windows Client design
 
-Base: current architecture at `origin/feature/macos-client-current-main` (`afc446c`)
-Branch: `feature/windows-client-current-main`
 FRP pin: **0.71.0** (Windows amd64 zip SHA256 pinned in `lib/frp-common.sh`)
 
 ## Reusable server protocol
@@ -79,3 +77,4 @@ Autostart (Service / Task Scheduler) is **optional**, not MVP-blocking.
 - Local FRP TCP forwarding E2E on `windows-latest`
 - Mock allocator HTTPS where feasible
 - Linux `./tests/run-all.sh` must remain PASS
+- Native Windows generated entry must match the canonical command fields, with public/private HTTPS and FQDN/IP parity, retry, and independent enrollment verified.

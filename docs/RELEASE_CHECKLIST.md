@@ -281,7 +281,8 @@ CHATGPT_OWNER_UI_ALLOW_DENY=
 - [ ] active unused Zero-Touch tickets max = 10.
 - [ ] each ticket is unique/single-use and consumed atomically.
 - [ ] default TTL = 1 hour; max TTL = 24 hours.
-- [ ] raw ticket/install URL displayed once; server retains verifier/hash, not raw ticket.
+- [ ] Linux/macOS/Windows generated entry follows the canonical command fields and public/private HTTPS parity; retry preserves the enrolled identity.
+- [ ] six-character Bootstrap filename is distinct from confidential enrollment credentials; server retains verifier/hash and lifecycle metadata.
 - [ ] expired/revoked tickets release capacity without disconnecting enrolled clients.
 - [ ] YAML/CLI/API cannot override server ticket ceilings.
 

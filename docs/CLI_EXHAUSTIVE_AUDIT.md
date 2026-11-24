@@ -358,7 +358,7 @@ Verify:
 - retain exact Server/Agent installed Source HEAD, generated installer checksum, a real external copy/paste/enroll/SSH traffic receipt and restored bootstrap-hostname/installer settings before PASS; see `docs/ZERO_TOUCH_REGRESSION_CONTROL.md`;
 - when a Zero-Touch LAN service targets another IP, verify signed Network Object routing and stable public-port identity; local target reachability alone cannot certify the relay;
 - optional SSH username behavior;
-- one-time command presentation;
+- one OS-native entry command with the canonical fields; retry preserves identity; independent single-use enrollment credentials;
 - inventory/listing after issue;
 - ability to discover the identifier needed for revoke/remove;
 - safe cancellation;

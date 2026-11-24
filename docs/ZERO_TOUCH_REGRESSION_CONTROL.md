@@ -21,7 +21,7 @@
 | Bootstrap filename | `/` followed by one six-character locator | Same |
 | Execute downloaded Bootstrap | `\|sudo bash` | `iex(...\|Out-String)` |
 
-The only variable fields are Server authority and Bootstrap filename. Select the OS at Server issuance; all other syntax is fixed by the platform template. Public and private HTTPS use identical fields. No enrollment credential, hash, certificate, installer URL, configuration or other argument in the entry command. Acceptance compares these fields and exact template, not total command length.
+The only variable fields are Server authority and Bootstrap filename. Select the OS at Server issuance; all other syntax is fixed by the platform template. Public and private HTTPS use identical fields. No enrollment credential, hash, certificate, installer URL, configuration or other argument in the entry command. Acceptance compares these fields and exact template.
 
 Linux/macOS:
 
@@ -104,4 +104,4 @@ real-environment acceptance requirements.
 
 ## Disposition / known remaining work
 
-PR #222 contains isolated source and targeted tests, but live Server/Agent upgrades and public :6001 end-to-end acceptance remain separate. The connected DRLink MCP exposes Managed Hosts and, only when AI Access separately authorizes it, the Server itself (Server-self target, PR #237). Whether it can mutate Server-only Network Objects or perform Server deployment depends on that authorization and the execution profile in effect; record the actual capability from receipts, not from this document. A service intentionally not listening on LAN :443 must not be marked an HTTPS relay regression. Mark these outcomes `NOT_RUN`, `BLOCKED_TOOLING`, or `FAIL` from actual receipts; never PASS from a code review.
+The current candidate is PR #305. Source tests and live Server/Agent upgrades and public :6001 end-to-end acceptance remain separate. The connected DRLink MCP exposes Managed Hosts and, only when AI Access separately authorizes it, the Server itself (Server-self target, PR #237). Whether it can mutate Server-only Network Objects or perform Server deployment depends on that authorization and the execution profile in effect; record the actual capability from receipts, not from this document. A service intentionally not listening on LAN :443 must not be marked an HTTPS relay regression. Mark these outcomes `NOT_RUN`, `BLOCKED_TOOLING`, or `FAIL` from actual receipts; never PASS from a code review.

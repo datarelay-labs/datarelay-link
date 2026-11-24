@@ -168,7 +168,7 @@ maximum TTL                   24 hours
 use count                     1
 ```
 
-Raw ticket/install URL material is shown only at issuance. Server persistent state retains verifier/hash plus lifecycle metadata, not a redisplayable raw ticket.
+Enrollment credentials are separate from the six-character Bootstrap filename, remain confidential and are never included in the public entry file. Server persistent state retains verifier/hash plus lifecycle metadata.
 
 For manual enrollment, an Enrollment Code is also a one-time authorization for a fresh enrollment operation. After enrollment succeeds, do not reuse that Code for uninstall/reinstall or a later recovery; create a new Enrollment Code instead. If the original `/enroll` response is lost or the installer is interrupted, the Agent resumes from its protected local pending-enrollment state and replays only the original enrollment operation. This crash-recovery replay does not make the consumed Code valid for a new install.
 

@@ -4,7 +4,7 @@
 > **Source:** `docs/FULL_USER_E2E_SCENARIOS.md` (all 116 original IDs and headings preserved in its canonical document).
 > **Product baseline:** v2.4.0 **includes** AI Access and MCP Bridge; they are excluded **only from this test profile**, not removed from the product.
 > **Executor:** current owner-selected runtime (default `CHATGPT_CHAT`); current explicit instruction overrides historical Codex-only text.
-> **Canonical Full User E2E SHA256:** `68c5c55bbc2fbd256960fe48e8d31173e43b9c69a5f67256514cbdd12dde6637`
+> **Canonical Full User E2E SHA256:** `91b455a60bd88d47c93a9e629a447bb6f99cf4c79072ae8614da0a9ed8ee036d`
 > **Generation:** `python3 tools/generate_cli_only_e2e_contract.py --write`; `--check` verifies no source drift.
 > **Safety:** preserve current authorization, exact live platform/tool refusals, other actors, host ownership and management access; never reroute a denied effect.
 > **Candidate:** do not infer installed Source HEAD from a Git checkout; record each installed Server/Agent's provenance.
@@ -455,12 +455,12 @@ When a public DNS hostname is configured, verify entirely through the public CLI
 
 - Enrollment HTTPS output uses the configured public hostname;
 - Zero-Touch bootstrap output uses the configured public hostname;
-- the short launcher remains short and usable through the documented Zero-Touch workflow;
+- the generated command contains only the canonical OS-native downloader, download options, HTTPS protocol, Server authority, six-character root-path Bootstrap filename and OS execution wrapper; public/private HTTPS use the same fields, with no client-side prerequisite or extra argument;
 - public IP is shown only as the supported fallback/alternative, not as an unexplained replacement for the configured hostname;
 - Remote Service endpoint presentation uses the configured public hostname where the current product contract says it should;
 - clearing an optional hostname returns to the documented default/fallback behavior.
 
-Execute the generated bootstrap path from a real external test host and verify DNS, TLS, enrollment, and final Remote Service usability end to end.
+Execute the generated command on clean native Linux, macOS and Windows targets for FQDN/IP and public/private HTTPS. Interrupt and retry the same command; require stable identity, no duplicate enrollment, authenticated downstream connections and actual Remote Service usability. Record initial transport security disposition independently; no network attack detection is required.
 
 
 ## U-010 — Guided CLI user journey parity — MANDATORY
