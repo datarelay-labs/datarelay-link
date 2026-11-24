@@ -6,6 +6,27 @@
 > **Scope:** single and bulk compact bootstrap commands, interactive guided CLI, TLS trust, token issuance, Server/Agent target projection, generated installers, actual external-user E2E.
 > **Tracking:** [P0 Draft PR #222](https://github.com/datarelay-labs/datarelay-link/pull/222), [Issue #165](https://github.com/datarelay-labs/datarelay-link/issues/165). A Draft PR or machine-only PASS is not installed-product acceptance.
 
+## Latest owner direction — fixed minimal entry UX (2026-11-24)
+
+Owner-selected Stage 0 evaluation target: `curl -kfsS https://remote.xdr.ooo/A3xK9m|sudo bash` (50 ASCII characters at the reference origin). Six-character root-path file locator, same form for public/private certificates, clean customer OS, no DataRelay prerequisite, and all subsequent verification, downloads and enrollment in later stages. Subsequent size/count is unrestricted; re-execution must be idempotent. The six-character locator is not an enrollment credential. Enrollment authority must be established separately. The command is a **tested evaluation target, NOT a qualified production launcher**; the independent first-trust requirement below has not been satisfied.
+
+### Local isolated Linux experiment
+
+Executed Bash with curl 8.10.1/OpenSSL, two independently generated localhost self-signed certificates, one configured as trusted for the test client, and a harmless mock sudo. No real installation, customer system or enrollment credential was used.
+
+| Case | Observed exit/result | Disposition |
+|---|---|---|
+| Trusted and untrusted TLS certificates | 0 / benign marker for both | Functional PASS |
+| Repeat same benign download twice | 0 / marker each time | Repeat execution PASS; actual idempotency NOT_RUN |
+| Truncated ordinary script | 0 / early marker, curl error | FAIL |
+| Truncated before closing compound command | 2 / no marker | Partial-script mitigation PASS for this case |
+| Complete compound command, transport reports incomplete body | 0 / marker, curl error | Cannot guarantee successful transport before execution |
+| Empty body / HTTP 404 | 0 / no marker | FAIL: pipeline masks downloader failure |
+| HTTP 302 with shell body | 0 / body executed | FAIL |
+| Different untrusted certificate and replacement response | 0 / replacement marker | FAIL: first-stage server authentication and integrity absent |
+
+An incomplete compound command can prevent early execution of an honest truncated script; it cannot authenticate a replaced response. An external observer able to alter the initial connection may substitute code that would execute with customer administrative privileges. A trusted messaging channel authenticates the delivered URL, not the downloaded response. No ARP detection or control of external customer networks is required. These observed failures are not resolved by later-stage verification, and cannot be labeled PASS. Keep the minimal UX as the design target; resolve the first-stage execution boundary and failure reporting before production qualification, rather than silently weakening the release gates. macOS/Windows native execution, actual enrollment/retry and service E2E remain NOT_RUN.
+
 ## Normative short-only contract (2026-11-24)
 
 **ZT-P0-CONTRACT-20261026 — short-only information contract (owner revision 2026-11-24).** Zero-Touch carries only the bootstrap invocation, one Server HTTPS URL, and one opaque 22-character one-time enrollment ticket in the URL (or ticket alone if the trusted Server is already configured). The ticket resolves the Enrollment ID; never duplicate it. An independently supplied trust anchor or artifact digest is permitted only when indispensable for first trust or pre-execution integrity and not already available to the trusted verifier. All other data belongs in the authenticated immutable Server enrollment manifest or trusted bootstrap implementation. Single/bulk, CLI/UI/AI and all OS paths obey the same field allowlist; use the shortest safe invocation, not an arbitrary character budget. Private CA/numeric IP requires independently established trust; if no safe short path qualifies, stop before collecting services and ticket issuance. Preserve Windows stage-1 verification before execution, strict TLS, artifact integrity, one-time binding and signed LAN destination. See `docs/ZERO_TOUCH_REGRESSION_CONTROL.md` for the authoritative field table, illustrative command forms and structural acceptance. This is a target, not an installed-product claim.

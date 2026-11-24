@@ -44,6 +44,8 @@ broad vendor destination catalogs
 
 ### P0 — short-only Zero-Touch convergence (OPEN, release blocker)
 
+Latest owner-selected UX target: six-character root-path locator and one short command, identical public/private HTTPS flow, no customer preinstallation, unlimited later-stage processing and safe retry. See the isolated Linux evidence in `ZERO_TOUCH_REGRESSION_CONTROL.md`: the exact 50-character insecure streaming form executes a replacement response and masks some download failures; not production-qualified. Keep this target distinct from the unresolved security and functional acceptance requirements.
+
 1. Inventory and replace all command emitters, CLI/UI/AI examples, documentation, roadmaps and acceptance oracles with the single short-only contract in `ZERO_TOUCH_REGRESSION_CONTROL.md`.
 2. Move enrollment configuration and immutable artifact references into the authenticated Server manifest; move verification code into an independently trusted bootstrap verifier. Preserve ticket security, Windows pre-execution integrity and numeric IP/Private CA support. No unsafe fallback.
 3. Enforce the allowed command information and fixed invocation grammar in `ZERO_TOUCH_REGRESSION_CONTROL.md` for every issuance path, single/bulk. Reject extra fields or unqualified trust before issuing a ticket. Minimize the actual template; arbitrary character budgets and older length-only tests cannot close this item.
