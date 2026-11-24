@@ -11,7 +11,14 @@ import importlib.util,sys
 spec=importlib.util.spec_from_file_location('zt',sys.argv[1])
 zt=importlib.util.module_from_spec(spec);spec.loader.exec_module(zt)
 handle='A'*22
-assert len(zt.short_url_command('bootstrap.example.test',handle).encode('utf-8'))<=100+max(0,len('bootstrap.example.test')-len('remote.xdr.ooo'))
+url='https://bootstrap.example.test/i/'+handle
+command=zt.short_url_command('bootstrap.example.test',handle)
+allowed={
+    's=$(curl -qfsS '+url+')&&[ -n "$s" ]&&sudo bash <<<"$s"',
+    's=$(curl -qfsS '+url+')&&[ -n "$s" ]&&printf \'%s\\n\' "$s"|sudo bash',
+    'sudo drlink enroll '+url,
+}
+assert command in allowed, 'non-allowlisted bootstrap invocation or data'
 try:
     zt.short_url_command('bootstrap.example.test','bt1.'+'a'*16+'.'+'b'*64)
     raise AssertionError('accepted raw ticket in public /i/ URL')

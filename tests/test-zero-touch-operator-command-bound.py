@@ -7,6 +7,7 @@ from __future__ import annotations
 import importlib.machinery
 import importlib.util
 import hashlib
+import base64
 import io
 import os
 import shutil
@@ -40,27 +41,56 @@ HASH = "c" * 64
 
 
 class CompactZeroTouchContract(unittest.TestCase):
-    def assert_short_only(self, command, *, windows=False, authority=HOST):
-        # Owner revision 2026-11-24: one bound across all trust routes.
-        # Only the literal authority length may add to the reference budget.
-        limit = (200 if windows else 100) + max(0, len(authority) - len(HOST))
-        self.assertLessEqual(len(command.encode("utf-8")), limit,
-                             (len(command.encode("utf-8")), limit))
-        self.assertNotIn("\n", command)
-        self.assertNotIn("\r", command)
+    def assert_short_only(self, command, *, windows=False, authority=HOST,
+                          ca=None, stage=None):
+        """Approved minimal template + one URL; no arbitrary character cap.
 
-    def test_short_only_budget_all_renderers(self):
+        The helper invocation names are proposed target syntax until qualified.
+        Length follows the template, not an allowance for extra data.
+        Trust and actual runtime behavior require separate security/E2E gates.
+        """
+        url = "https://" + authority + "/i/" + HANDLE
+        allowed = set()
+        if not windows and ca is None:
+            allowed.add('s=$(curl -qfsS ' + url +
+                        ')&&[ -n "$s" ]&&sudo bash <<<"$s"')
+            allowed.add('s=$(curl -qfsS ' + url +
+                        ')&&[ -n "$s" ]&&printf \'%s\\n\' "$s"|sudo bash')
+        helper = ("drlink-bootstrap.exe " if windows else
+                  "sudo drlink enroll ") + url
+        variants = {helper}
+        for flag, digest in ((" --ca-sha256 ", ca), (" --sha256 ", stage)):
+            if digest is not None:
+                encoded = base64.urlsafe_b64encode(bytes.fromhex(digest)).decode().rstrip("=")
+                variants |= {v + flag + d for v in variants for d in (digest, encoded)}
+        allowed.update(variants)
+        # Avoid printing live credentials or entire command text on failure.
+        self.assertTrue(command in allowed,
+                        "command contains non-allowlisted invocation or data")
+        self.assertEqual(command.count(HANDLE), 1)
+
+    def test_short_only_template_rejects_extra_information(self):
+        url = "https://" + HOST + "/i/" + HANDLE
+        cmd = "sudo drlink enroll " + url
+        self.assert_short_only(cmd)
+        for extra in (" --enrollment-id 123", " --name agent",
+                      " --installer-url https://example.test/a", " --sha256 " + HASH,
+                      " --platform linux", "; echo ok", "?port=22", " " + HANDLE):
+            with self.subTest(extra=extra), self.assertRaises(AssertionError):
+                self.assert_short_only(cmd + extra)
+
+    def test_short_only_information_all_renderers(self):
         url = "https://192.0.2.20:6099/enroll"
-        for platform, authority, command in (
-            ("linux", HOST, zt.short_url_command(HOST, HANDLE)),
-            ("macos", HOST, zt.short_url_command(HOST, HANDLE)),
-            ("windows", HOST, zt.windows_strict_launcher(HOST, HANDLE, HASH)),
-            ("linux", "192.0.2.20:6099", zt.private_ca_ip_linux_command(url, HASH, HANDLE)),
-            ("windows", "192.0.2.20:6099", zt.private_ca_ip_windows_command(url, HASH, HASH, HANDLE)),
+        for platform, authority, ca, stage, command in (
+            ("linux", HOST, None, None, zt.short_url_command(HOST, HANDLE)),
+            ("macos", HOST, None, None, zt.short_url_command(HOST, HANDLE)),
+            ("windows", HOST, None, HASH, zt.windows_strict_launcher(HOST, HANDLE, HASH)),
+            ("linux", "192.0.2.20:6099", HASH, None, zt.private_ca_ip_linux_command(url, HASH, HANDLE)),
+            ("windows", "192.0.2.20:6099", HASH, HASH, zt.private_ca_ip_windows_command(url, HASH, HASH, HANDLE)),
         ):
             with self.subTest(platform=platform, authority=authority):
                 self.assert_short_only(command, windows=platform == "windows",
-                                       authority=authority)
+                                       authority=authority, ca=ca, stage=stage)
 
     def test_linux_and_macos_default_install_commands_have_bounded_length(self):
         # Operator-selected hostname alone must not bypass public trust checks.
@@ -280,7 +310,7 @@ class CompactZeroTouchContract(unittest.TestCase):
             lines = output.getvalue().splitlines()
             commands = [x for x in lines if x.startswith('bash -c ')]
             self.assertEqual(len(commands), 1)
-            self.assert_short_only(commands[0], authority='192.0.2.20:6099')
+            self.assert_short_only(commands[0], authority='192.0.2.20:6099', ca=issued['fingerprint'])
             self.assertIn('/i/', commands[0])
             self.assertNotIn('zt1.', commands[0])
 
@@ -503,8 +533,8 @@ class CompactZeroTouchContract(unittest.TestCase):
         self.assertNotIn("FRP_BOOTSTRAP_TICKET=", output.getvalue())
         self.assertNotIn("Zero-touch Agent command", output.getvalue())
 
-    def test_private_ca_renderers_obey_same_short_only_budget(self):
-        # No separate larger budget for the numeric-IP trust route.
+    def test_private_ca_renderers_obey_same_short_only_information_contract(self):
+        # No extra data for the numeric-IP trust route.
         url = "https://192.0.2.20:6099/enroll"
         plan = {"mode": "private_ca_ip", "allocator": url}
         for windows in (False, True):
@@ -526,7 +556,8 @@ class CompactZeroTouchContract(unittest.TestCase):
             lines = output.getvalue().splitlines()
             prefix = "$ErrorActionPreference=" if windows else "bash -c "
             command = next(line for line in lines if line.startswith(prefix))
-            self.assert_short_only(command, windows=windows, authority='192.0.2.20:6099')
+            self.assert_short_only(command, windows=windows, authority='192.0.2.20:6099',
+                                   ca='a' * 64, stage='b' * 64 if windows else None)
             self.assertIn("/i/", command)
             self.assertNotIn("zt1.", command)
 

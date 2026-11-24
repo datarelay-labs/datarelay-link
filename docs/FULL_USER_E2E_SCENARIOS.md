@@ -2626,7 +2626,7 @@ After each relevant change, regenerate or inspect:
 - Remote Service endpoint presentation where applicable;
 - diagnostics/version/support evidence.
 
-Verify no change to an optional friendly hostname silently changes control/allocator identity unless the current product contract explicitly says so. Verify Linux and Windows onboarding receive the intended platform-specific installer URL and that clearing optional overrides returns to the supported default. After cleanup, verify the actual restored Zero-Touch launcher meets the short-only contract (ZT-P0-CONTRACT-20261026, owner revision 2026-11-24) regardless of trust route. If no independently trusted short path qualifies, fail before ticket issuance; a longer inline verifier never passes.
+Verify no change to an optional friendly hostname silently changes control/allocator identity unless the current product contract explicitly says so. Verify Linux and Windows onboarding receive the intended platform-specific installer URL and that clearing optional overrides returns to the supported default. After cleanup, verify the actual restored Zero-Touch launcher matches the short-only information contract (ZT-P0-CONTRACT-20261026, owner revision 2026-11-24) regardless of trust route: fixed invocation, Server HTTPS URL and one ticket; independent digest only if indispensable. Reject every extra field or inline verifier regardless of length. If no independently trusted short path qualifies, fail before ticket issuance.
 
 ## A-019 — Prior-stable upgrade to candidate — MANDATORY when an upgrade path is claimed
 

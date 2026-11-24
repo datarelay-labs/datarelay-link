@@ -71,11 +71,11 @@ class ZeroTouchDocContract(unittest.TestCase):
         self.assertIn('--cacert', short)
         self.assertIn('without any credential', contract)
 
-    def test_operator_and_real_user_contract_is_quantitative(self):
+    def test_operator_and_real_user_contract_is_structural(self):
         short = self.read('docs/ZERO_TOUCH_REGRESSION_CONTROL.md')
         user = self.read('docs/FULL_USER_E2E_SCENARIOS.md')
         cli = self.read('docs/CLI_EXHAUSTIVE_AUDIT.md')
-        for token in ('<= 100', '<= 200', '/i/invalid-qualification-probe',
+        for token in ('Allowed command information', 'Structural regression oracle', '/i/invalid-qualification-probe',
                       'bootstrap unavailable', 'DERIVED_BUNDLE_STALE',
                       'signed', 'installed Source HEAD', 'no ticket'):
             with self.subTest(required=token):
@@ -89,19 +89,24 @@ class ZeroTouchDocContract(unittest.TestCase):
         self.assertIn(ID, cli)
         self.assertIn('no ticket', cli.lower())
 
-    def test_short_only_owner_contract_replaces_larger_budgets(self):
+    def test_short_only_owner_contract_defines_information_not_budgets(self):
         for path in REQUIRED:
             text = self.read(path)
             for forbidden in ('700 characters', '1,300 characters',
                               '<=900 characters', '<=1500 characters',
-                              '<= 500 characters'):
+                              '<= 500 characters', '<= 100 characters', '<= 200 characters'):
                 self.assertNotIn(forbidden, text, path)
         for path in ('docs/PRODUCT_MASTER.md', 'docs/ZERO_TOUCH_SHORT_URL.md',
                      'docs/ZERO_TOUCH_REGRESSION_CONTROL.md',
                      'docs/DATA_RELAY_ROADMAP.md'):
             text = self.read(path)
-            self.assertIn('<= 100 characters', text, path)
-            self.assertIn('<= 200 characters', text, path)
+            self.assertIn('information', text.lower(), path)
+            self.assertIn('ticket', text.lower(), path)
+        contract = self.read('docs/ZERO_TOUCH_REGRESSION_CONTROL.md')
+        for token in ('Bootstrap invocation', 'Server HTTPS URL', 'Enrollment ticket',
+                      'Independent trust anchor / digest', 'Server-side manifest information',
+                      'no separate ID', 'reject every extra argument'):
+            self.assertIn(token, contract)
         self.assertNotIn('short URL versus pinned-CA fallback',
                          self.read('docs/FULL_USER_E2E_SCENARIOS.md'))
 
