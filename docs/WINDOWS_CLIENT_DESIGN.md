@@ -10,7 +10,7 @@ Windows does **not** fork enrollment. It reuses:
 
 | Area | Contract |
 | --- | --- |
-| Bootstrap | `POST /bootstrap/redeem` accepts internal `bt1.<id>.<secret>` only. The 22-character handle is `/i/` lookup; served stage-1 carries the internal `bt1` |
+| Bootstrap | `POST /bootstrap/redeem` accepts internal `bt1.<id>.<secret>` only. The six-character root-path locator selects entry code only; independent authorization must precede credential issuance |
 | Enroll | `POST /enroll` — enrollment HMAC or mgmt ECDSA |
 | CA | `GET /ca.crt` — DER SHA-256 pin via `FRP_ALLOCATOR_CA_SHA256` |
 | Token | OpenSSL `Salted__` + PBKDF2-HMAC-SHA256 (200000) + AES-256-CBC |
@@ -53,24 +53,20 @@ Sensitive files: ACL for `SYSTEM` + `Administrators` only.
 
 `set enrollment zero-touch` → platform menu → Linux or Windows (RDP-first).
 
-Windows one-line (no `irm | iex`):
-
-1. Download `bootstrap-client.ps1` to a unique temp path
-2. Verify SHA256 against release `SHA256SUMS`
-3. Execute with `-File` and env-equivalent parameters
+Fixed Windows entry target: `iex(curl.exe -kfsS https://remote.xdr.ooo/A3xK9m|Out-String)` (60 characters at the reference authority). Administrator PowerShell with native curl.exe, no client-side DataRelay prerequisite. Public/private HTTPS use the same form. All subsequent artifact downloads, verification, independent enrollment and retry belong to Bootstrap. See [canonical contract](ZERO_TOUCH_REGRESSION_CONTROL.md); native acceptance pending.
 
 ## Lifecycle semantics
 
 **ENROLL ONCE / RUN MANY TIMES**
 
 - First run: redeem + enroll + write state/config + start drlink-client
-- Later: `drlink system resume` uses existing identity/config/ports — no ticket, no re-enroll
+- Later: repeating the same entry command resumes existing identity/config/ports without new enrollment; implementation and native verification pending
 
 Autostart (Service / Task Scheduler) is **optional**, not MVP-blocking.
 
 ## Security invariants
 
-- No global TLS bypass
+- No global TLS bypass; fixed entry target has an initial request-local `-k` exception, which does not authenticate the peer. This is a recorded security qualification issue.
 - `/ca.crt` may use one-shot unauthenticated TLS; fingerprint must match
 - All later calls use pinned CA
 - No ticket/token/private key in logs

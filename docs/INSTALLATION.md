@@ -79,15 +79,11 @@ If installation allows a domain to be selected as the product public identity, t
 
 Changing a friendly Remote Service hostname alias must not silently change management identity.
 
-### Zero-Touch HTTPS readiness with a private CA
+### Zero-Touch entry readiness
 
-The Server install can complete even if Zero-Touch reports `NOT_READY`:
-service health and secure Agent bootstrap readiness are separate checks.
-A private Server CA is **not** automatically trusted by Agent operating systems.
-Do not disable TLS verification or make an unverified `curl | bash` pipeline
-to work around this.
+The fixed six-character entry target (not yet installed-product qualified) is `curl -kfsS https://remote.xdr.ooo/A3xK9m|sudo bash` on Linux/macOS, or `iex(curl.exe -kfsS https://remote.xdr.ooo/A3xK9m|Out-String)` in administrator PowerShell on Windows. Public/private HTTPS use the same form; no DataRelay prerequisite. The locator is not an enrollment credential. All subsequent work is handled by Bootstrap. Initial `-k` skips peer certificate authentication; see [the canonical contract](ZERO_TOUCH_REGRESSION_CONTROL.md) for the explicit risk and independent enrollment requirement.
 
-The short-only target in [Zero-Touch regression control](ZERO_TOUCH_REGRESSION_CONTROL.md) requires an independently authenticated bootstrap path, whether the origin is public HTTPS or a numeric IP with matching Private CA and IP SAN. The first credential-bearing request must already have verified trust. Move verification into a trusted bootstrap verifier rather than extending the operator command. If that path cannot be established, no Zero-Touch ticket is issued; inspect `system diagnostics`, DNS, firewall/NAT, the CA and certificate SANs. Server installation and existing management identities remain independent. Current installed renderers must be migrated and qualified against the revised target.
+Server installation and entry handler reachability are separate. Validate the configured entry authority and exact six-character handler, then downstream installer and enrollment readiness. No public/private certificate-specific customer command or certificate registration requirement. Actual installation and independently authorized enrollment determine success.
 
 ### Internet Access listener recovery
 
