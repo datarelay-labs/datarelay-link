@@ -37,7 +37,7 @@ BOOTSTRAP_ENV_RE = re.compile(r'(FRP_BOOTSTRAP_TICKET\s*=\s*)\S+', re.IGNORECASE
 BOOTSTRAP_LOCATOR_ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-'
 BOOTSTRAP_LOCATOR_RE = re.compile(r'[A-Za-z0-9_-]{6}')
 # /enroll is an existing allocator endpoint (POST).
-BOOTSTRAP_RESERVED_LOCATORS = frozenset({'enroll'})
+BOOTSTRAP_RESERVED_LOCATORS = frozenset({'enroll', 'zt0000'})
 
 
 def is_bootstrap_locator(value):
@@ -94,6 +94,25 @@ def render_entry_command(authority, locator, platform):
     if platform == 'windows':
         return 'iex(curl.exe -kfsS %s|Out-String)' % url
     raise ValueError('unsupported bootstrap platform')
+
+
+def entry_claim_message(action, payload):
+    """Domain-separated signed claim; never includes a credential."""
+    if action not in ('request', 'redeem'):
+        raise ValueError('invalid entry action')
+    fields = {name: payload[name] for name in (
+        'locator', 'machine_id', 'hostname', 'public_key', 'nonce', 'timestamp')}
+    fields.update(domain='drlink-entry-v1', action=action)
+    return json.dumps(fields, sort_keys=True, separators=(',', ':'),
+                      ensure_ascii=False).encode('utf-8')
+
+
+def entry_enroll_message(enrollment_id, timestamp, body):
+    """Prove possession of the approved key for the exact enrollment body."""
+    if isinstance(body, str):
+        body = body.encode('utf-8')
+    return ('drlink-entry-enroll-v1\n%s\n%s\n%s' % (
+        enrollment_id, timestamp, hashlib.sha256(body).hexdigest())).encode('ascii')
 
 
 def accepted_bootstrap_credential(ticket):
@@ -493,7 +512,7 @@ def _pinned_or_stock_curl_line(url_var, dest_var, pin_private_ca):
 
 
 def render_short_url_bootstrap_script(allocator_url, ca_sha256, ticket, installer_url,
-                                     qualified_provenance=None):
+                                     qualified_provenance=None, *, entry_locator=None, ca_pem=None):
     """Return the short-URL bootstrap using direct, validated installer env.
 
     Downloads installer + SHA256SUMS, verifies the exact expected hash, then
@@ -503,7 +522,11 @@ def render_short_url_bootstrap_script(allocator_url, ca_sha256, ticket, installe
     ca = str(ca_sha256 or '').strip().lower()
     if not allocator.startswith('https://') or not re.fullmatch(r'[0-9a-f]{64}', ca):
         raise ValueError('allocator URL and pinned CA fingerprint are required')
-    if not BOOTSTRAP_TICKET_RE.fullmatch(str(ticket or '')):
+    entry = entry_locator is not None
+    if entry:
+        if ticket or not is_bootstrap_locator(entry_locator) or not ca_pem:
+            raise ValueError('secret-free entry locator and public CA required')
+    elif not BOOTSTRAP_TICKET_RE.fullmatch(str(ticket or '')):
         raise ValueError('internal bootstrap ticket required for stage-1')
     installer = str(installer_url or '').strip()
     if not installer.lower().startswith('https://'):
@@ -543,7 +566,7 @@ def render_short_url_bootstrap_script(allocator_url, ca_sha256, ticket, installe
         '# Not a cryptographic signature — same-origin HTTPS checksum only.',
         'set -euo pipefail',
         'if [[ "${EUID:-$(id -u)}" -ne 0 ]]; then',
-        '  echo "ERROR: re-run as: curl -fsSL <bootstrap-url>|sudo bash" >&2',
+        '  echo "ERROR: re-run the Server-issued Zero-Touch command as root" >&2',
         '  exit 1',
         'fi',
         'INSTALLER_URL=%s' % shell_quote(installer),
@@ -551,13 +574,23 @@ def render_short_url_bootstrap_script(allocator_url, ca_sha256, ticket, installe
         'EXPECTED_NAMES=%s' % shell_quote(names_csv),
         'FRP_ALLOCATOR_URL=%s' % shell_quote(allocator),
         'FRP_ALLOCATOR_CA_SHA256=%s' % shell_quote(ca),
-        'FRP_BOOTSTRAP_TICKET=%s' % shell_quote(ticket),
-        'export FRP_ALLOCATOR_URL FRP_ALLOCATOR_CA_SHA256 FRP_BOOTSTRAP_TICKET',
+        ('FRP_BOOTSTRAP_LOCATOR=%s' % shell_quote(entry_locator) if entry else
+         'FRP_BOOTSTRAP_TICKET=%s' % shell_quote(ticket)),
+        ('unset FRP_BOOTSTRAP_TICKET; export FRP_ALLOCATOR_URL FRP_ALLOCATOR_CA_SHA256 FRP_BOOTSTRAP_LOCATOR'
+         if entry else 'export FRP_ALLOCATOR_URL FRP_ALLOCATOR_CA_SHA256 FRP_BOOTSTRAP_TICKET'),
         'export FRP_ZERO_TOUCH=1',
         'WORKDIR="$(mktemp -d /tmp/drlink-bootstrap.XXXXXX)"',
         'cleanup() { rm -rf "$WORKDIR"; }',
         'trap cleanup EXIT',
         'umask 077',
+        *([
+            'FRP_ALLOCATOR_CA_FILE="$WORKDIR/allocator-ca.crt"',
+            'printf %s %s > "$FRP_ALLOCATOR_CA_FILE"' % ('%s', shell_quote(ca_pem)),
+            'openssl x509 -in "$FRP_ALLOCATOR_CA_FILE" -outform DER -out "$WORKDIR/ca.der"',
+            '''CA_GOT="$(openssl dgst -sha256 "$WORKDIR/ca.der" | awk '{print tolower($NF)}')"''',
+            '[[ "$CA_GOT" == "$FRP_ALLOCATOR_CA_SHA256" ]] || { echo "ERROR: CA fingerprint mismatch" >&2; exit 1; }',
+            'export FRP_ALLOCATOR_CA_FILE',
+        ] if entry else []),
         'SUMS_FILE="$WORKDIR/SHA256SUMS"',
         'INSTALLER_FILE="$WORKDIR/bootstrap-client.sh"',
         _pinned_or_stock_curl_line('SUMS_URL', 'SUMS_FILE', same_https_origin(sums_url, allocator_url)),
@@ -586,11 +619,15 @@ def render_short_url_bootstrap_script(allocator_url, ca_sha256, ticket, installe
         'FRP_INSTALLER_URL="$INSTALLER_URL" FRP_BUNDLE_FILE="$INSTALLER_FILE" bash "$INSTALLER_FILE"',
         '',
     ]
+    if entry:
+        # Bash reads the complete compound command before executing it.
+        # An incomplete HTTP response cannot run an otherwise valid prefix.
+        return '#!/bin/bash\n{\n' + '\n'.join(lines[1:]) + '\n}\n'
     return '\n'.join(lines)
 
 
 def render_short_url_windows_bootstrap_script(
-    allocator_url, ca_sha256, ticket, installer_url
+    allocator_url, ca_sha256, ticket, installer_url, *, entry_locator=None, ca_pem=None
 ):
     """Return a PowerShell bootstrap that verifies the installer before -File."""
     allocator = str(allocator_url or '').strip()
@@ -601,7 +638,11 @@ def render_short_url_windows_bootstrap_script(
         raise ValueError('allocator URL must be HTTPS')
     if len(ca) != 64 or any(ch not in '0123456789abcdef' for ch in ca):
         raise ValueError('invalid CA fingerprint')
-    if not accepted_bootstrap_credential(ticket):
+    entry = entry_locator is not None
+    if entry:
+        if ticket or not is_bootstrap_locator(entry_locator) or not ca_pem:
+            raise ValueError('secret-free entry locator and public CA required')
+    elif not accepted_bootstrap_credential(ticket):
         raise ValueError('invalid bootstrap ticket')
     if not installer.lower().startswith('https://'):
         raise ValueError('installer URL must be HTTPS')
@@ -622,18 +663,28 @@ def render_short_url_windows_bootstrap_script(
         "  $sums = Join-Path $dir 'SHA256SUMS'",
         "  $installer = Join-Path $dir 'bootstrap-client.ps1'",
     ]
-    if private_ca_origin:
-        installer_host = (urlparse(installer).hostname or '').lower()
+    if entry or private_ca_origin:
+        lines.extend(["  $ca = Join-Path $dir 'ca.crt'"])
+        if entry:
+            lines.append('  [IO.File]::WriteAllText($ca,%s)' % powershell_quote(ca_pem))
+        else:
+            lines.extend([
+                "  $curl = Get-Command curl.exe -ErrorAction Stop",
+                '  & $curl.Source --fail --silent --show-error --max-time 30 --proto =https --insecure -o $ca %s'
+                % powershell_quote(ca_crt_url(allocator)),
+                '  if ($LASTEXITCODE -ne 0) { throw "ca.crt download failed" }',
+            ])
         lines.extend([
-            "  $ca = Join-Path $dir 'ca.crt'",
-            "  $curl = Get-Command curl.exe -ErrorAction Stop",
-            '  & $curl.Source --fail --silent --show-error --max-time 30 --proto =https --insecure -o $ca %s'
-            % powershell_quote(ca_crt_url(allocator)),
-            '  if ($LASTEXITCODE -ne 0) { throw "ca.crt download failed" }',
             '  $caCert = New-Object System.Security.Cryptography.X509Certificates.X509Certificate2($ca)',
             '  $fp = [BitConverter]::ToString([Security.Cryptography.SHA256]::Create().ComputeHash($caCert.RawData)) -replace \'-\',\'\'',
             '  if ($fp.ToLowerInvariant() -ne %s) { throw "CA fingerprint mismatch" }'
             % powershell_quote(ca),
+        ])
+        if entry:
+            lines.append('  $env:FRP_ALLOCATOR_CA_FILE = $ca')
+    if private_ca_origin:
+        installer_host = (urlparse(installer).hostname or '').lower()
+        lines.extend([
             '  $script:drlinkCaCert = $caCert',
             '  $script:drlinkCaThumb = $caCert.Thumbprint',
             '  $script:drlinkPinHost = %s' % powershell_quote(installer_host),
@@ -671,7 +722,9 @@ def render_short_url_windows_bootstrap_script(
         _qualified_windows_shell(installer, allocator, '$got', '$want'),
         '  $env:FRP_ALLOCATOR_URL = %s' % powershell_quote(allocator),
         '  $env:FRP_ALLOCATOR_CA_SHA256 = %s' % powershell_quote(ca),
-        '  $env:FRP_BOOTSTRAP_TICKET = %s' % powershell_quote(ticket),
+        ('  $env:FRP_BOOTSTRAP_LOCATOR = %s' % powershell_quote(entry_locator) if entry else
+         '  $env:FRP_BOOTSTRAP_TICKET = %s' % powershell_quote(ticket)),
+        *(['  Remove-Item Env:FRP_BOOTSTRAP_TICKET -ErrorAction SilentlyContinue'] if entry else []),
         "  $env:FRP_ZERO_TOUCH = '1'",
         "  $env:FRP_PLATFORM = 'windows'",
         '  & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $installer -ZeroTouch',
@@ -685,10 +738,13 @@ def render_short_url_windows_bootstrap_script(
             '  [Net.ServicePointManager]::ServerCertificateValidationCallback = $oldCertCallback'
         )
     lines.extend([
+        *(['  Remove-Item Env:FRP_BOOTSTRAP_LOCATOR,Env:FRP_ALLOCATOR_CA_FILE -ErrorAction SilentlyContinue'] if entry else []),
         '  Remove-Item -LiteralPath $dir -Recurse -Force -ErrorAction SilentlyContinue',
         '}',
         '',
     ])
+    if entry:
+        return '& {\n' + '\n'.join(lines[1:]) + '\n}\n'
     return '\n'.join(lines)
 
 def redact_text(text):
@@ -697,6 +753,9 @@ def redact_text(text):
         return ''
     out = str(text)
     out = SHORT_URL_PATH_RE.sub(r'\1<redacted>', out)
+    out = re.sub(r'(?P<lead>(?:https://[^/\s]+|GET |HEAD ))/(?P<locator>[A-Za-z0-9_-]{6})(?=[?\s\"\'#$]|$)',
+                 lambda m: m.group('lead') + '/<redacted>' if is_bootstrap_locator(m.group('locator')) else m.group(0),
+                 out)
     out = BOOTSTRAP_ENV_RE.sub(r'\1<redacted>', out)
     out = BT1_TOKEN_RE.sub('bt1.<redacted>', out)
     return out

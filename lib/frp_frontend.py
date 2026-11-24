@@ -401,7 +401,7 @@ http {
     )
 
 
-def _allocator_https_proxy_location(directive, allocator_listen_port, ca_cert):
+def _allocator_https_proxy_location(directive, allocator_listen_port, ca_cert, *, redact_access=False):
     """Loopback HTTPS proxy with the same TLS and trusted-source headers.
 
     directive is a full nginx location matcher, for example
@@ -411,6 +411,7 @@ def _allocator_https_proxy_location(directive, allocator_listen_port, ca_cert):
     """
     return '''
         %s {
+            %s
             proxy_pass https://127.0.0.1:%s;
             proxy_http_version 1.1;
             proxy_ssl_trusted_certificate %s;
@@ -431,6 +432,7 @@ def _allocator_https_proxy_location(directive, allocator_listen_port, ca_cert):
             proxy_request_buffering off;
         }''' % (
         directive,
+        'access_log off;' if redact_access else '',
         allocator_listen_port,
         ca_cert,
         ALLOCATOR_BACKEND_TLS_NAME,
@@ -447,6 +449,10 @@ def allocator_proxy_locations(allocator_listen_port, ca_cert):
     )
     return (
         _allocator_https_proxy_location(
+            'location ~ "^/(?:[A-Za-z0-9_-]{6}|bootstrap/entry/(?:request|redeem))$"',
+            allocator_listen_port, ca_cert, redact_access=True,
+        )
+        + _allocator_https_proxy_location(
             'location ~ ^/(ca\\.crt|healthz|enroll(?:/preflight)?|bootstrap/redeem|i/[^/?#]+|artifacts(?:/.*)?)$',
             allocator_listen_port,
             ca_cert,

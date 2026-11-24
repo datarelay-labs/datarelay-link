@@ -198,6 +198,54 @@ No changes were applied.
     }
 }
 
+function New-FrpEntryClaim {
+    param([string]$Action,[string]$Locator,[string]$MachineId,[string]$Hostname,
+          [string]$PrivatePem,[string]$PublicPem,[string]$Nonce)
+    if (-not $Nonce) { $Nonce = New-FrpNonce }
+    $payload = @{
+        locator = $Locator; machine_id = $MachineId; hostname = $Hostname
+        public_key = $PublicPem; nonce = $Nonce
+        timestamp = [int64]([DateTimeOffset]::UtcNow.ToUnixTimeSeconds())
+    }
+    $message = @{} + $payload
+    $message['domain'] = 'drlink-entry-v1'
+    $message['action'] = $Action
+    $payload['signature'] = Protect-FrpSignMessage -PrivatePem $PrivatePem -Message (Get-FrpCanonicalJson -Object $message)
+    return (Get-FrpCanonicalJson -Object $payload)
+}
+
+function Invoke-FrpEntryApproval {
+    param([string]$AllocatorUrl,[string]$Locator,[string]$MachineId,
+          [string]$Hostname,[string]$PrivatePem,[string]$PublicPem)
+    if ($Locator -cnotmatch '^[A-Za-z0-9_-]{6}$') { throw 'ERROR: invalid Bootstrap locator' }
+    $der = [Convert]::FromBase64String(($PublicPem -replace '-----[^-]+-----','' -replace '\s',''))
+    $fingerprint = Get-FrpSha256Hex -Bytes $der
+    Write-Host "Agent identity SHA256: $fingerprint"
+    Write-Host 'Waiting for the Server operator to approve this Agent identity ...'
+    $origin = Get-FrpAllocatorOrigin -AllocatorUrl $AllocatorUrl
+    for ($attempt = 0; $attempt -lt 60; $attempt++) {
+        $body = New-FrpEntryClaim -Action request -Locator $Locator -MachineId $MachineId -Hostname $Hostname -PrivatePem $PrivatePem -PublicPem $PublicPem
+        $data = ConvertFrom-FrpJson -Json (Invoke-FrpHttpsJson -Method POST -Url "$origin/bootstrap/entry/request" -Body $body)
+        if ($data.error -or $data.fingerprint -cne $fingerprint -or
+            $data.status -cnotin @('pending','approved') -or $data.challenge -cnotmatch '^[0-9a-f]{64}$') {
+            throw 'ERROR: invalid approval response'
+        }
+        if ($data.status -ceq 'approved') {
+            $body = New-FrpEntryClaim -Action redeem -Locator $Locator -MachineId $MachineId -Hostname $Hostname -PrivatePem $PrivatePem -PublicPem $PublicPem -Nonce $data.challenge
+            $result = ConvertFrom-FrpJson -Json (Invoke-FrpHttpsJson -Method POST -Url "$origin/bootstrap/entry/redeem" -Body $body)
+            $code = [string]$result.enrollment_code
+            if ($result.error -or $code -cnotmatch '^[0-9a-f]{16}\.[0-9a-f]{64}$' -or
+                -not (Test-FrpObjectHasProperty -Object $result -Name 'services') -or $null -eq $result.services) {
+                throw 'ERROR: invalid approved enrollment response'
+            }
+            $parts = $code.Split('.', 2)
+            return @{EnrollmentId=$parts[0]; EnrollmentSecret=$parts[1]; Services=@($result.services)}
+        }
+        Start-Sleep -Seconds 5
+    }
+    throw 'Approval is still pending. After approval, rerun the same setup command.'
+}
+
 function Invoke-FrpBootstrapRedeem {
     param(
         [Parameter(Mandatory = $true)][string]$AllocatorUrl,
@@ -269,6 +317,12 @@ function Invoke-FrpEnroll {
         'X-Enrollment-ID' = $EnrollmentId
         'X-Timestamp'     = [string]$ts
         'X-Signature'     = $sig
+    }
+    if ($PublicPem -and (Test-Path -LiteralPath (Get-FrpIdentityKeyPath))) {
+        $privatePem = Read-FrpIdentityKey
+        $digest = Get-FrpSha256Hex -Bytes ([Text.Encoding]::UTF8.GetBytes($body))
+        $message = "drlink-entry-enroll-v1`n$EnrollmentId`n$ts`n$digest"
+        $headers['X-Entry-Key-Proof'] = Protect-FrpSignMessage -PrivatePem $privatePem -Message $message
     }
     $respText = Invoke-FrpHttpsJson -Method POST -Url $AllocatorUrl -Body $body -Headers $headers
     $data = ConvertFrom-FrpJson -Json $respText
@@ -1285,6 +1339,7 @@ function Invoke-FrpZeroTouch {
         [string]$AllocatorUrl,
         [string]$CaSha256,
         [string]$BootstrapTicket,
+        [string]$BootstrapLocator = $env:FRP_BOOTSTRAP_LOCATOR,
         [string]$Platform = 'windows',
         [string]$ServicesJson,
         [string]$Hostname,
@@ -1346,8 +1401,8 @@ function Invoke-FrpZeroTouch {
             if ([string]::IsNullOrWhiteSpace($CaSha256)) {
                 throw 'ERROR: zero-touch setup requires FRP_ALLOCATOR_CA_SHA256 / -CaSha256'
             }
-            if ([string]::IsNullOrWhiteSpace($BootstrapTicket)) {
-                throw 'ERROR: bootstrap ticket is missing'
+            if ([string]::IsNullOrWhiteSpace($BootstrapTicket) -and [string]::IsNullOrWhiteSpace($BootstrapLocator)) {
+                throw 'ERROR: Bootstrap locator is missing'
             }
         }
 
@@ -1387,9 +1442,23 @@ function Invoke-FrpZeroTouch {
             }
             $publicPem = [System.IO.File]::ReadAllText((Get-FrpIdentityPubPath))
         } else {
-            Write-Host 'Redeeming bootstrap ticket...'
-            $redeem = Invoke-FrpBootstrapRedeem -AllocatorUrl $AllocatorUrl -Ticket $BootstrapTicket `
-                -MachineId $machineId -Hostname $Hostname
+            if ($BootstrapLocator) {
+                if (Test-Path -LiteralPath (Get-FrpIdentityKeyPath)) {
+                    $privatePem = Read-FrpIdentityKey
+                    $publicPem = Get-FrpPublicKeyPem -PrivatePem $privatePem
+                } else {
+                    $id = New-FrpEcdsaIdentity
+                    $privatePem = $id.PrivatePem
+                    $publicPem = $id.PublicPem
+                    Save-FrpIdentityKey -PrivatePem $privatePem | Out-Null
+                }
+                Save-FrpIdentityPublic -PublicPem $publicPem | Out-Null
+                $redeem = Invoke-FrpEntryApproval -AllocatorUrl $AllocatorUrl -Locator $BootstrapLocator -MachineId $machineId -Hostname $Hostname -PrivatePem $privatePem -PublicPem $publicPem
+            } else {
+                Write-Host 'Redeeming bootstrap ticket...'
+                $redeem = Invoke-FrpBootstrapRedeem -AllocatorUrl $AllocatorUrl -Ticket $BootstrapTicket `
+                    -MachineId $machineId -Hostname $Hostname
+            }
 
             # Ticket redeem is authoritative and the allocator enforces that
             # scope at /enroll. Local input (-ServicesJson / FRP_SERVICES_JSON)
@@ -1401,11 +1470,13 @@ function Invoke-FrpZeroTouch {
                 Write-Host 'NOTE: local service input is ignored; the setup command defines the authorized services.'
             }
 
-            Write-Host 'Generating management identity...'
-            $id = New-FrpEcdsaIdentity
-            Save-FrpIdentityKey -PrivatePem $id.PrivatePem | Out-Null
-            Save-FrpIdentityPublic -PublicPem $id.PublicPem | Out-Null
-            $publicPem = $id.PublicPem
+            if (-not $BootstrapLocator) {
+                Write-Host 'Generating management identity...'
+                $id = New-FrpEcdsaIdentity
+                Save-FrpIdentityKey -PrivatePem $id.PrivatePem | Out-Null
+                Save-FrpIdentityPublic -PublicPem $id.PublicPem | Out-Null
+                $publicPem = $id.PublicPem
+            }
 
             $enrollmentId = $redeem.EnrollmentId
             $enrollmentSecret = $redeem.EnrollmentSecret

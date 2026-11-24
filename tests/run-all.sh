@@ -77,6 +77,7 @@ python3 tests/test-zero-touch-guided-preflight.py
 python3 tests/test-operator-input-validation.py
 python3 tests/test-zero-touch-entry-fields.py
 python3 tests/test-zero-touch-locator-index.py
+python3 tests/test-zero-touch-entry-approval.py
 python3 tests/test-zero-touch-operator-command-bound.py
 python3 tests/test-zero-touch-public-fqdn-trust.py
 python3 tests/test-zero-touch-private-ca-fqdn-ip-fallback.py

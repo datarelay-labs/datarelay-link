@@ -759,7 +759,7 @@ frp_client_main() {
   chmod 600 "$SERVICES_FILE" "$ALLOCATED_FILE" "$ENROLL_META_FILE"
   _frp_client_enroll_tmp_cleanup() {
     rm -rf "$_FRP_CLIENT_ENROLL_TMPDIR" "$SERVICES_FILE" "$ALLOCATED_FILE" "$ENROLL_META_FILE"
-    unset FRP_TOKEN ENROLL_SECRET FRP_ENROLLMENT_CODE TOKEN_CIPHERTEXT FRP_BOOTSTRAP_TICKET FRP_CLIENT_OPERATION_ID
+    unset FRP_TOKEN ENROLL_SECRET FRP_ENROLLMENT_CODE TOKEN_CIPHERTEXT FRP_BOOTSTRAP_TICKET FRP_BOOTSTRAP_LOCATOR FRP_CLIENT_OPERATION_ID
   }
   # Sourced callers (tests, frpctl wrappers) already own EXIT. Replacing or
   # chaining that trap leaks test allocators or SIGSEGVs bash on restore.

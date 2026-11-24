@@ -245,6 +245,13 @@ frp_bootstrap_allocator_ca() {
       echo "ERROR: pre-provisioned allocator CA file is missing" >&2
       return 1
     }
+    if [[ -f "$dest" && -n "${FRP_BOOTSTRAP_LOCATOR:-}" ]]; then
+      actual="$(frp_ca_fingerprint_file "$dest")" || return 1
+      if [[ "$actual" != "$(frp_normalize_ca_fingerprint "$expected")" ]]; then
+        echo "ERROR: existing allocator CA fingerprint mismatch" >&2
+        return 1
+      fi
+    fi
     frp_atomic_install_allocator_ca "$FRP_ALLOCATOR_CA_FILE" "$expected" || return 1
     return 0
   fi
@@ -2579,12 +2586,12 @@ wait_for_proxies() {
 }
 
 frp_zero_touch_active() {
-  [[ "${FRP_ZERO_TOUCH:-}" == "1" ]] || [[ -n "${FRP_BOOTSTRAP_TICKET:-}" ]]
+  [[ "${FRP_ZERO_TOUCH:-}" == "1" ]] || [[ -n "${FRP_BOOTSTRAP_LOCATOR:-}${FRP_BOOTSTRAP_TICKET:-}" ]]
 }
 
 frp_zero_touch_require_inputs() {
-  if [[ -z "${FRP_BOOTSTRAP_TICKET:-}" ]]; then
-    echo "ERROR: zero-touch setup requires FRP_BOOTSTRAP_TICKET." >&2
+  if [[ -z "${FRP_BOOTSTRAP_LOCATOR:-}${FRP_BOOTSTRAP_TICKET:-}" ]]; then
+    echo "ERROR: zero-touch setup requires a Bootstrap locator." >&2
     echo "Paste the full one-line command from the Data Relay Link server." >&2
     echo "Setup could not continue because required bootstrap data is missing." >&2
     frp_emit_failure_class ZERO_TOUCH_INPUT_INVALID
@@ -2892,6 +2899,65 @@ frp_pending_enroll_clear() {
   rm -f "$path" 2>/dev/null || true
 }
 
+frp_entry_claim_payload() {
+  local action="$1" locator="$2" machine="$3" hostname_value="$4" challenge="$5" out="$6"
+  local py key
+  py="$(frp_mgmt_auth_py)" || return 1
+  key="$(frp_client_identity_key_path)"
+  python3 - "$py" "$key" "$action" "$locator" "$machine" "$hostname_value" "$challenge" "$out" <<'PYCLAIM'
+import importlib.util, json, sys, time
+from pathlib import Path
+modfile, key, action, locator, machine, hostname, nonce, out = sys.argv[1:]
+spec = importlib.util.spec_from_file_location('frp_mgmt_auth', modfile)
+mod = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(mod)
+payload = dict(locator=locator, machine_id=machine, hostname=hostname,
+               public_key=mod.canonicalize_pubkey_from_private(key),
+               nonce=nonce or mod.new_nonce(), timestamp=int(time.time()))
+msg = dict(payload, domain='drlink-entry-v1', action=action)
+payload['signature'] = mod.sign_message(key, mod.canonical_json(msg))
+p = Path(out)
+p.write_text(json.dumps(payload, separators=(',', ':')), encoding='utf-8')
+p.chmod(0o600)
+PYCLAIM
+}
+
+frp_entry_approved_response() {
+  local origin="$1" locator="$2" machine="$3" hostname_value="$4" request_file="$5"
+  local response parsed status challenge fingerprint shown='' attempt
+  [[ "$locator" =~ ^[A-Za-z0-9_-]{6}$ ]] || return 1
+  fingerprint="$(frp_identity_public_fingerprint)" || return 1
+  # Server operator verifies this fingerprint through the established support
+  # channel. The customer never enters a second command or enrollment code.
+  echo "Agent identity SHA256: $fingerprint" >&2
+  echo "Waiting for the Server operator to approve this Agent identity ..." >&2
+  for ((attempt=0; attempt<60; attempt++)); do
+    frp_entry_claim_payload request "$locator" "$machine" "$hostname_value" '' "$request_file" || return 1
+    response="$(frp_allocator_curl -X POST -H 'Content-Type: application/json' \
+      --data-binary @"$request_file" "$origin/bootstrap/entry/request")" || return 1
+    parsed="$(ENTRY_RESPONSE="$response" python3 - "$fingerprint" <<'PYRESP'
+import json, os, re, sys
+d=json.loads(os.environ['ENTRY_RESPONSE'])
+if d.get('fingerprint') != sys.argv[1] or d.get('status') not in ('pending','approved'):
+    raise SystemExit(1)
+if not re.fullmatch('[0-9a-f]{64}', str(d.get('challenge',''))):
+    raise SystemExit(1)
+print(d['status']+' '+d['challenge'])
+PYRESP
+)" || return 1
+    read -r status challenge <<< "$parsed"
+    if [[ "$status" == approved ]]; then
+      frp_entry_claim_payload redeem "$locator" "$machine" "$hostname_value" "$challenge" "$request_file" || return 1
+      frp_allocator_curl -X POST -H 'Content-Type: application/json' \
+        --data-binary @"$request_file" "$origin/bootstrap/entry/redeem"
+      return $?
+    fi
+    sleep 5
+  done
+  echo "Approval is still pending. After approval, rerun the same setup command." >&2
+  return 1
+}
+
 frp_redeem_bootstrap_ticket() {
   local allocator_url="$1" machine_id="$2" hostname_value="$3"
   local services_file="$4" enroll_id_var="$5" enroll_secret_var="$6"
@@ -2899,8 +2965,8 @@ frp_redeem_bootstrap_ticket() {
   local parsed_id parsed_secret error_class error_msg
 
   frp_client_hook_log bootstrap_redeem
-  if [[ -z "${FRP_BOOTSTRAP_TICKET:-}" ]]; then
-    echo "ERROR: bootstrap ticket is missing." >&2
+  if [[ -z "${FRP_BOOTSTRAP_LOCATOR:-}${FRP_BOOTSTRAP_TICKET:-}" ]]; then
+    echo "ERROR: bootstrap locator is missing." >&2
     frp_emit_failure_class ZERO_TOUCH_INPUT_INVALID
     return 1
   fi
@@ -2916,6 +2982,13 @@ frp_redeem_bootstrap_ticket() {
   curl_err="${req_dir}/curl.err"
   chmod 700 "$req_dir"
 
+  if [[ -n "${FRP_BOOTSTRAP_LOCATOR:-}" ]]; then
+    if ! response="$(frp_entry_approved_response "$origin" "$FRP_BOOTSTRAP_LOCATOR" "$machine_id" "$hostname_value" "$req_file")"; then
+      rm -rf "$req_dir"
+      frp_emit_failure_class BOOTSTRAP_REDEEM_FAILED
+      return 1
+    fi
+  else
   MACHINE_ID="$machine_id" HOSTNAME_VALUE="$hostname_value" \
     FRP_BOOTSTRAP_TICKET="${FRP_BOOTSTRAP_TICKET}" python3 - "$req_file" <<'PY'
 import json, os, sys
@@ -2943,6 +3016,7 @@ PY
     return 1
   fi
   unset FRP_BOOTSTRAP_TICKET
+  fi
   rm -f "$req_file"
   printf '%s\n' "$response" >"$resp_file"
   chmod 600 "$resp_file"
@@ -3746,9 +3820,25 @@ message=(os.environ['TS']+'\n'+os.environ['BODY']).encode()
 print(hmac.new(secret,message,hashlib.sha256).hexdigest())
 PY
 )"
+  local entry_proof=()
+  if [[ -n "$pubkey_pem" ]]; then
+    key_path="$(frp_client_identity_key_path)"
+    local proof
+    proof="$(BODY="$request" python3 - "$py" "$key_path" "$enroll_id" "$timestamp" <<'PYPROOF'
+import importlib.util, os, sys
+spec = importlib.util.spec_from_file_location('frp_mgmt_auth', sys.argv[1])
+mod = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(mod)
+msg = 'drlink-entry-enroll-v1\n%s\n%s\n%s' % (sys.argv[3], sys.argv[4], mod.sha256_hex(os.environ['BODY']))
+print(mod.sign_message(sys.argv[2], msg))
+PYPROOF
+)" || { rm -f "$curl_err"; return 1; }
+    entry_proof=(-H "X-Entry-Key-Proof: $proof")
+  fi
   if ! response="$(frp_allocator_curl \
     -X POST \
     -H 'Content-Type: application/json' \
+    "${entry_proof[@]}" \
     -H "X-Enrollment-ID: ${enroll_id}" \
     -H "X-Timestamp: ${timestamp}" \
     -H "X-Signature: ${signature}" \
