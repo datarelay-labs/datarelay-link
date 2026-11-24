@@ -146,6 +146,49 @@ class MgmtIdentityFirstGenAtomicity(unittest.TestCase):
             for public, message, signature, expected in cases:
                 self.assertEqual(MGMT.verify_signature(public, message, signature), expected)
 
+    def test_management_signer_revalidates_permissions_and_rotated_key_each_request(self):
+        from unittest import mock
+        if getattr(MGMT, "_NATIVE_EC", None) is None:
+            self.skipTest("optional cryptography package unavailable")
+
+        MGMT.generate_keypair(self.key, self.pub)
+        original_pem = self.pub.read_text(encoding="utf-8")
+        first = MGMT.management_request_signer(self.key)("first")
+        self.assertTrue(MGMT.verify_signature(original_pem, "first", first))
+        self.key.chmod(0o644)
+        with self.assertRaises(ValueError):
+            MGMT.management_request_signer(self.key)
+        self.key.chmod(0o600)
+
+        rotated_key = self.dir / "rotated.key"
+        rotated_pub = self.dir / "rotated.pub"
+        MGMT.generate_keypair(rotated_key, rotated_pub)
+        os.replace(rotated_key, self.key)
+        second = MGMT.management_request_signer(self.key)("second")
+        self.assertFalse(MGMT.verify_signature(original_pem, "second", second))
+        self.assertTrue(MGMT.verify_signature(rotated_pub.read_text(), "second", second))
+        # Portable fallback keeps the same permission validation and wire format.
+        with mock.patch.object(MGMT, "_NATIVE_EC", None):
+            portable = MGMT.management_request_signer(self.key)("portable")
+            self.assertTrue(MGMT.verify_signature(rotated_pub.read_text(), "portable", portable))
+            self.key.chmod(0o644)
+            with self.assertRaises(ValueError):
+                MGMT.management_request_signer(self.key)
+        self.key.chmod(0o600)
+        p384 = self.dir / "p384-sign.key"
+        MGMT._run_openssl(["ecparam", "-name", "secp384r1", "-genkey",
+                          "-noout", "-out", str(p384)])
+        p384.chmod(0o600)
+        with self.assertRaises(ValueError):
+            MGMT.management_request_signer(p384)
+        malformed = self.dir / "malformed.key"
+        malformed.write_text("not a private key")
+        malformed.chmod(0o600)
+        with self.assertRaises(ValueError):
+            MGMT.management_request_signer(malformed)
+        with self.assertRaises((OSError, ValueError)):
+            MGMT.management_request_signer(self.dir / "missing.key")
+
     def test_verification_cache_rejects_invalid_and_non_p256_keys(self):
         from unittest import mock
 

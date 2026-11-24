@@ -234,6 +234,28 @@ class MgmtApiAuthTests(unittest.TestCase):
         ):
             os.environ.pop(k, None)
 
+    def test_native_management_signing_has_no_per_request_openssl_subprocess(self):
+        from unittest import mock
+        if getattr(MGMT, "_NATIVE_EC", None) is None:
+            self.skipTest("optional cryptography package unavailable")
+        path = "/v1/ai-jobs/claim"
+        body = b'{"limit":1}'
+        with mock.patch.object(MGMT.subprocess, "run", wraps=MGMT.subprocess.run) as proc:
+            headers = mgmt._sign_request_headers("POST", self.base + path, body,
+                                                root=self.agent_tmp)
+            self.assertEqual(proc.call_count, 0,
+                             "native management signing must not spawn OpenSSL")
+        # Wire compatibility with the legacy portable verifier is mandatory.
+        with mock.patch.object(MGMT, "_NATIVE_EC", None):
+            error, _, _ = MGMT.verify_signed_mgmt_request(
+                self.pub_a, MACHINE_A, headers, body, op=MGMT.MGMT_OP_AI_JOB_CLAIM,
+                method="POST", path=path)
+            self.assertIsNone(error)
+            error, _, _ = MGMT.verify_signed_mgmt_request(
+                self.pub_a, MACHINE_A, headers, b'{"limit":2}',
+                op=MGMT.MGMT_OP_AI_JOB_CLAIM, method="POST", path=path)
+            self.assertIsNotNone(error)
+
     def test_concurrent_signed_lifecycle_requests_use_distinct_db_connections(self):
         from concurrent.futures import ThreadPoolExecutor
         from threading import Barrier

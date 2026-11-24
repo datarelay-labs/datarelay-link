@@ -551,7 +551,7 @@ def _sign_request_headers(method: str, url: str, body: bytes, root: Optional[str
         raise MgmtSyncError(AUTH_REJECTED)
     key_path = _identity_key_path(root)
     try:
-        MGMT.validate_private_key(key_path)
+        signer = MGMT.management_request_signer(key_path)
     except Exception:
         raise MgmtSyncError(AUTH_REJECTED) from None
     parsed = urlparse(url)
@@ -567,7 +567,7 @@ def _sign_request_headers(method: str, url: str, body: bytes, root: Optional[str
     message = MGMT.signed_message(
         machine_id, body, ts, nonce, op=op, method=method, path=canonical_path
     )
-    signature = MGMT.sign_message(key_path, message)
+    signature = signer(message)
     headers = {
         "Accept": "application/json",
         "Content-Type": "application/json",

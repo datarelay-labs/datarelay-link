@@ -12,7 +12,7 @@ from OpenSSL 1.0.2 through 3.x, matching the existing OpenSSL dependency.
 
 This module does not implement original cryptography. OpenSSL CLI remains the
 portable implementation. Where the existing optional cryptography dependency
-is available, verification uses its in-process ECDSA backend with identical
+is available, management signing and verification use its in-process ECDSA backend with identical
 P-256/SHA-256/DER wire semantics.
 
 Canonical signed object (mgmt schema 1)
@@ -54,6 +54,7 @@ import json
 import os
 import re
 import secrets
+import stat
 import subprocess
 import sys
 import tempfile
@@ -67,6 +68,7 @@ try:
     from cryptography.hazmat.primitives import hashes as _NATIVE_HASHES
     from cryptography.hazmat.primitives.asymmetric import ec as _NATIVE_EC
     from cryptography.hazmat.primitives.serialization import load_pem_public_key as _native_load_public_key
+    from cryptography.hazmat.primitives.serialization import load_pem_private_key as _native_load_private_key
 except ImportError:
     # Older/minimal Linux, macOS and Agent installations keep the CLI path.
     _NATIVE_EC = None
@@ -448,6 +450,43 @@ def sign_message(key_path, message):
             os.unlink(tmp_sig)
         except OSError:
             pass
+
+
+def management_request_signer(key_path):
+    """Validate the current private key and return a request-local signer.
+
+    No private key material, signing result, or file validation is cached.
+    Native signing checks permissions on the same opened regular file whose
+    PEM is parsed, and uses P-256/SHA-256/DER exactly like the portable CLI.
+    """
+    if _NATIVE_EC is None:
+        validate_private_key(key_path)
+        return lambda message: sign_message(key_path, message)
+
+    # A single descriptor binds permissions and contents. Nonblocking open
+    # avoids hanging on a path replaced with a FIFO before fstat.
+    fd = os.open(str(key_path), os.O_RDONLY | getattr(os, "O_NONBLOCK", 0))
+    with os.fdopen(fd, "rb") as stream:
+        info = os.fstat(stream.fileno())
+        if not stat.S_ISREG(info.st_mode):
+            raise ValueError("management identity is not a regular file")
+        if info.st_mode & 0o077:
+            raise ValueError("management identity key permissions are too open (expected 0600)")
+        key = _native_load_private_key(
+            stream.read(), password=None, backend=_native_default_backend())
+    if (not isinstance(key, _NATIVE_EC.EllipticCurvePrivateKey)
+            or not isinstance(key.curve, _NATIVE_EC.SECP256R1)):
+        raise ValueError("management private key must be ECDSA P-256")
+
+    def sign(message):
+        if isinstance(message, str):
+            message = message.encode("utf-8")
+        sig = key.sign(message, _NATIVE_EC.ECDSA(_NATIVE_HASHES.SHA256()))
+        if not sig:
+            raise RuntimeError("empty signature")
+        return base64.b64encode(sig).decode("ascii")
+
+    return sign
 
 
 @lru_cache(maxsize=256)
