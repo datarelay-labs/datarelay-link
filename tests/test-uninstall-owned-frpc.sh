@@ -3,7 +3,8 @@
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 WORKDIR="$(mktemp -d)"
-trap 'kill "$UNRELATED_PID" 2>/dev/null || true; rm -rf "$WORKDIR"' EXIT
+UNRELATED_PID=
+trap 'if [[ -n "$UNRELATED_PID" ]]; then kill "$UNRELATED_PID" 2>/dev/null || true; fi; rm -rf "$WORKDIR"' EXIT
 
 if grep -E 'pkill[[:space:]]+-x[[:space:]]+frpc' "$ROOT/uninstall-client.sh"; then
   echo "FAIL: uninstall-client.sh still uses blanket pkill -x frpc" >&2
@@ -11,9 +12,14 @@ if grep -E 'pkill[[:space:]]+-x[[:space:]]+frpc' "$ROOT/uninstall-client.sh"; th
 fi
 
 mkdir -p "$WORKDIR/unrelated" "$WORKDIR/tree/usr/local/bin"
-cp /bin/sleep "$WORKDIR/unrelated/frpc"
-chmod +x "$WORKDIR/unrelated/frpc"
-"$WORKDIR/unrelated/frpc" 60 &
+# coreutils may be a multicall executable that dispatches using argv[0].
+# Use a real standalone binary named frpc, independent of coreutils packaging.
+cat >"$WORKDIR/frpc.c" <<'EOF'
+#include <unistd.h>
+int main(void) { sleep(60); return 0; }
+EOF
+"${CC:-cc}" "$WORKDIR/frpc.c" -o "$WORKDIR/unrelated/frpc"
+"$WORKDIR/unrelated/frpc" &
 UNRELATED_PID=$!
 sleep 0.2
 kill -0 "$UNRELATED_PID"

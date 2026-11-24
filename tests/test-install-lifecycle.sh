@@ -20,6 +20,22 @@ trap 'rm -rf "$WORKDIR"' EXIT
 pass() { echo "PASS $1"; }
 fail() { echo "FAIL $1" >&2; exit 1; }
 
+run_test_uninstaller() {
+  local role="$1" target="${FRP_UNINSTALL_TEST_ROOT:-}" canonical
+  shift
+  [[ "$role" == server || "$role" == client ]] || return 2
+  if [[ -z "$target" || ! -d "$target" ]]; then
+    echo "TEST_UNINSTALL_ROOT_REFUSED" >&2
+    return 2
+  fi
+  canonical="$(cd "$target" && pwd -P)" || return 2
+  if [[ "$canonical" != "$(cd "$WORKDIR" && pwd -P)/"* ]]; then
+    echo "TEST_UNINSTALL_ROOT_REFUSED" >&2
+    return 2
+  fi
+  FRP_UNINSTALL_TEST_ROOT="$canonical" "$ROOT/uninstall-$role.sh" "$@"
+}
+
 assert_mode() {
   local path="$1" expected="$2" mode
   mode="$(python3 - "$path" <<'PY'
@@ -195,10 +211,12 @@ grep -q 'FAILURE_CLASS=PATH_DELETION_REFUSED' "$WORKDIR/root.err" || fail "/ cla
 if frp_safe_rm_rf "." 2>"$WORKDIR/dot.err"; then
   fail ". should be refused"
 fi
-if FRP_UNINSTALL_TEST_ROOT= "$ROOT/uninstall-server.sh" --purge --yes 2>"$WORKDIR/empty-root.err"; then
-  # empty test root still uses real paths; skip by using invalid explicit helper
-  true
+# Verify the test harness refuses an empty root without invoking a real uninstall.
+if FRP_UNINSTALL_TEST_ROOT= run_test_uninstaller server --purge --yes 2>"$WORKDIR/empty-root.err"; then
+  fail "empty test root must be refused"
 fi
+grep -q 'TEST_UNINSTALL_ROOT_REFUSED' "$WORKDIR/empty-root.err" || fail "test root guard"
+pass "TEST_UNINSTALL_ROOT_GUARD"
 pass "PATH_DELETION_SAFETY"
 
 SYMLINK_TREE="$WORKDIR/symlink-target"
@@ -782,7 +800,7 @@ pass "SINGLE443_FRONTEND_PROXY_FAIL_ROLLBACK"
 
 # Single-443 uninstall removes the project unit/config and does not purge nginx.
 export FRP_UNINSTALL_TEST_ROOT="$SWITCH"
-if ! "$ROOT/uninstall-server.sh" >"$WORKDIR/s443-un.out" 2>"$WORKDIR/s443-un.err"; then
+if ! run_test_uninstaller server >"$WORKDIR/s443-un.out" 2>"$WORKDIR/s443-un.err"; then
   cat "$WORKDIR/s443-un.out" "$WORKDIR/s443-un.err" >&2
   fail "single443 uninstall"
 fi
@@ -909,7 +927,7 @@ pass "INTERRUPTED_INSTALL_RECOVERY"
 # Server uninstall / purge / reinstall
 # ---------------------------------------------------------------------------
 export FRP_UNINSTALL_TEST_ROOT="$SRV"
-if ! "$ROOT/uninstall-server.sh" >"$WORKDIR/suninst.out" 2>"$WORKDIR/suninst.err"; then
+if ! run_test_uninstaller server >"$WORKDIR/suninst.out" 2>"$WORKDIR/suninst.err"; then
   cat "$WORKDIR/suninst.out" "$WORKDIR/suninst.err" >&2
   fail "default server uninstall"
 fi
@@ -928,7 +946,7 @@ fi
 pass "SERVER_UNINSTALL_REMOVES_STATE"
 
 # idempotent second uninstall must not recreate product directories
-"$ROOT/uninstall-server.sh" >"$WORKDIR/suninst2.out" 2>"$WORKDIR/suninst2.err" || fail "second server uninstall"
+run_test_uninstaller server >"$WORKDIR/suninst2.out" 2>"$WORKDIR/suninst2.err" || fail "second server uninstall"
 [[ ! -e "$SRV/usr/local/lib/drlink" ]] || fail "second uninstall recreated libdir"
 [[ ! -e "$SRV/var/lib/drlink" ]] || fail "second uninstall recreated var/lib"
 pass "SERVER_UNINSTALL_IDEMPOTENT"
@@ -963,7 +981,7 @@ echo cfg >"$PURGE_ALIAS/etc/drlink/config.json"
 cp "$ROOT/lib/frp_project_files.py" "$PURGE_ALIAS/usr/local/lib/drlink/"
 cp "$ROOT/lib/server-project-files.manifest" "$PURGE_ALIAS/usr/local/lib/drlink/"
 export FRP_UNINSTALL_TEST_ROOT="$PURGE_ALIAS"
-if ! "$ROOT/uninstall-server.sh" --purge >"$WORKDIR/purge-no.out" 2>"$WORKDIR/purge-no.err"; then
+if ! run_test_uninstaller server --purge >"$WORKDIR/purge-no.out" 2>"$WORKDIR/purge-no.err"; then
   cat "$WORKDIR/purge-no.out" "$WORKDIR/purge-no.err" >&2
   fail "purge alias without --yes should succeed"
 fi
@@ -981,7 +999,7 @@ echo cfg >"$PURGE_TREE/etc/drlink/config.json"
 cp "$ROOT/lib/frp_project_files.py" "$PURGE_TREE/usr/local/lib/drlink/"
 cp "$ROOT/lib/server-project-files.manifest" "$PURGE_TREE/usr/local/lib/drlink/"
 export FRP_UNINSTALL_TEST_ROOT="$PURGE_TREE"
-if ! "$ROOT/uninstall-server.sh" --purge --yes >"$WORKDIR/purge.out" 2>"$WORKDIR/purge.err"; then
+if ! run_test_uninstaller server --purge --yes >"$WORKDIR/purge.out" 2>"$WORKDIR/purge.err"; then
   cat "$WORKDIR/purge.out" "$WORKDIR/purge.err" >&2
   fail "explicit purge"
 fi
@@ -1002,7 +1020,7 @@ cp "$ROOT/lib/frp_project_files.py" "$PARTIAL/usr/local/lib/drlink/"
 cp "$ROOT/lib/server-project-files.manifest" "$PARTIAL/usr/local/lib/drlink/"
 export FRP_UNINSTALL_TEST_ROOT="$PARTIAL"
 export FRP_UNINSTALL_HOOK_PURGE_FAIL_PATH="$PARTIAL/var/lib/drlink/registry.json"
-if "$ROOT/uninstall-server.sh" --purge --yes >"$WORKDIR/purge-part.out" 2>"$WORKDIR/purge-part.err"; then
+if run_test_uninstaller server --purge --yes >"$WORKDIR/purge-part.out" 2>"$WORKDIR/purge-part.err"; then
   fail "partial purge should fail"
 fi
 unset FRP_UNINSTALL_HOOK_PURGE_FAIL_PATH
@@ -1018,7 +1036,7 @@ mkdir -p "$SYUN/real" "$SYUN/usr/local/bin" "$SYUN/etc"
 echo keep >"$SYUN/real/secret"
 ln -s "$SYUN/real" "$SYUN/etc/frp"
 export FRP_UNINSTALL_TEST_ROOT="$SYUN"
-if "$ROOT/uninstall-client.sh" >"$WORKDIR/cu-sym.out" 2>"$WORKDIR/cu-sym.err"; then
+if run_test_uninstaller client >"$WORKDIR/cu-sym.out" 2>"$WORKDIR/cu-sym.err"; then
   fail "client uninstall should refuse /etc/frp symlink"
 fi
 [[ -f "$SYUN/real/secret" ]] || fail "client uninstall followed symlink"
@@ -1054,7 +1072,7 @@ touch "$CL/etc/systemd/system/drlink-client.service"
 # mock release API detector
 : >"$WORKDIR/curl-wrap.log"
 export FRP_UNINSTALL_TEST_ROOT="$CL"
-if ! "$ROOT/uninstall-client.sh" >"$WORKDIR/cu.out" 2>"$WORKDIR/cu.err"; then
+if ! run_test_uninstaller client >"$WORKDIR/cu.out" 2>"$WORKDIR/cu.err"; then
   cat "$WORKDIR/cu.out" "$WORKDIR/cu.err" >&2
   fail "client uninstall"
 fi
@@ -1074,7 +1092,7 @@ if grep -E 'curl|https://' "$WORKDIR/cu.out" "$WORKDIR/cu.err" | grep -v 'intent
 fi
 pass "CLIENT_UNINSTALL_NO_SERVER_RELEASE"
 
-"$ROOT/uninstall-client.sh" >"$WORKDIR/cu2.out" 2>"$WORKDIR/cu2.err" || fail "client uninstall twice"
+run_test_uninstaller client >"$WORKDIR/cu2.out" 2>"$WORKDIR/cu2.err" || fail "client uninstall twice"
 [[ ! -e "$CL/usr/local/lib/drlink" ]] || fail "second client uninstall recreated libdir"
 [[ ! -e "$CL/var/lib/drlink" ]] || fail "second client uninstall recreated var/lib"
 pass "CLIENT_UNINSTALL_IDEMPOTENT"
@@ -1117,7 +1135,7 @@ echo 'shared' >"$DUAL/usr/local/lib/drlink/frp_doctor.py"
 echo 'shared' >"$DUAL/usr/local/lib/drlink/frp_support_bundle.py"
 echo 'client-only' >"$DUAL/usr/local/lib/drlink/frp-client-common.sh"
 export FRP_UNINSTALL_TEST_ROOT="$DUAL"
-"$ROOT/uninstall-client.sh" >"$WORKDIR/dual.out" 2>"$WORKDIR/dual.err" || fail "dual-role client uninstall"
+run_test_uninstaller client >"$WORKDIR/dual.out" 2>"$WORKDIR/dual.err" || fail "dual-role client uninstall"
 [[ -f "$DUAL/etc/frp/server_token" ]] || fail "dual-role deleted server token"
 [[ -f "$DUAL/etc/drlink/config.json" ]] || fail "dual-role deleted server config"
 [[ ! -f "$DUAL/etc/frp/client-state.json" ]] || fail "dual-role left client state"
@@ -1160,7 +1178,7 @@ chmod 0755 "$DUAL2/usr/local/bin/frpc"
 echo 'client-only' >"$DUAL2/usr/local/lib/drlink/frp-client-common.sh"
 echo 'shared' >"$DUAL2/usr/local/lib/drlink/frp_doctor.py"
 export FRP_UNINSTALL_TEST_ROOT="$DUAL2"
-"$ROOT/uninstall-server.sh" >"$WORKDIR/dual2.out" 2>"$WORKDIR/dual2.err" || fail "dual-role server uninstall"
+run_test_uninstaller server >"$WORKDIR/dual2.out" 2>"$WORKDIR/dual2.err" || fail "dual-role server uninstall"
 [[ -f "$DUAL2/etc/frp/client-state.json" ]] || fail "dual-role server uninstall removed client state"
 [[ -x "$DUAL2/usr/local/bin/drlink" ]] || fail "dual-role server uninstall removed client drlink"
 [[ -x "$DUAL2/usr/local/bin/frpc" ]] || fail "dual-role server uninstall removed frpc"
