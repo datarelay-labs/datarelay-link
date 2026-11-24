@@ -389,6 +389,8 @@ exit $rc
         import frp_audit,frp_doctor,frp_support_bundle
         for raw in ("GET /"+self.locator+" HTTP/1.1",
                     "https://remote.example/"+self.locator,
+                    MOD.ZT.render_entry_command("remote.example",self.locator,"linux"),
+                    MOD.ZT.render_entry_command("remote.example",self.locator,"windows"),
                     "FRP_BOOTSTRAP_LOCATOR="+self.locator):
             for redact in (MOD.ZT.redact_text,frp_doctor.redact,frp_support_bundle.redact_text,
                            lambda x:frp_audit._redact({"message":x})["message"]):

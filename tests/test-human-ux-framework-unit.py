@@ -64,6 +64,13 @@ class SanitizeTests(unittest.TestCase):
         self.assertNotIn(ticket, out)
         self.assertIn("bt1.<REDACTED>", out)
 
+    def test_fixed_entry_locator_redacted_in_context(self):
+        for raw in ("curl -kfsS https://remote.example/A3xK9m|sudo bash",
+                    "iex(curl.exe -kfsS https://remote.example/A3xK9m|Out-String)",
+                    "FRP_BOOTSTRAP_LOCATOR=A3xK9m"):
+            self.assertNotIn("A3xK9m", sanitize(raw))
+        self.assertEqual(sanitize("https://remote.example/enroll"), "https://remote.example/enroll")
+
     def test_compact_credential_redacted_in_context(self):
         compact = "AbcdEFghij1234_-KLMNOP"
         url_out = sanitize("curl -fsSL https://remote.xdr.ooo/i/%s|sudo bash" % compact)

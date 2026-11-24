@@ -625,7 +625,7 @@ def redact_text(text):
         return ''
     out = str(text)
     out = SHORT_URL_PATH_RE.sub(r'\1<redacted>', out)
-    out = re.sub(r'(?P<lead>(?:https://[^/\s]+|GET |HEAD ))/(?P<locator>[A-Za-z0-9_-]{6})(?=[?\s\"\'#$]|$)',
+    out = re.sub(r'(?P<lead>(?:https://[^/\s]+|GET |HEAD ))/(?P<locator>[A-Za-z0-9_-]{6})(?=[?\s\"\'#$|)]|$)',
                  lambda m: m.group('lead') + '/<redacted>' if is_bootstrap_locator(m.group('locator')) else m.group(0),
                  out)
     out = BOOTSTRAP_ENV_RE.sub(r'\1<redacted>', out)

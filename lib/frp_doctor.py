@@ -141,7 +141,7 @@ def redact(text):
     text = str(text)
     # Preserve /i/<redacted> shape for short-URL path logs.
     text = re.sub(r'(/i/)[^/?\s#]+', r'\1<redacted>', text, flags=re.IGNORECASE)
-    text = re.sub('((?:https://[^/\\s]+|GET |HEAD )/)([A-Za-z0-9_-]{6})(?=[?\\s\\"\\\'#$]|$)', lambda m: m.group(1)+'<redacted>' if m.group(2).lower() not in ('enroll','zt0000') else m.group(0), text)
+    text = re.sub('((?:https://[^/\\s]+|GET |HEAD )/)([A-Za-z0-9_-]{6})(?=[?\\s\\"\\\'#$|)]|$)', lambda m: m.group(1)+'<redacted>' if m.group(2).lower() not in ('enroll','zt0000') else m.group(0), text)
     text = SECRET_RE.sub('[redacted]', text)
     text = re.sub(r'auth\.token\s*=\s*".*?"', 'auth.token = "[redacted]"', text)
     return text
