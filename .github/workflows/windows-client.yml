@@ -25,6 +25,7 @@ jobs:
       - name: Build Windows bootstrap artifact
         shell: bash
         run: |
+          python3 tests/test-zero-touch-entry-fields.py
           python3 scripts/build-bundles.py
           test -f dist/bootstrap-client.ps1
       - name: Run Windows client test suite
@@ -57,6 +58,7 @@ jobs:
       - name: Build Windows bootstrap artifact
         shell: bash
         run: |
+          python3 tests/test-zero-touch-entry-fields.py
           python3 scripts/build-bundles.py
           test -f dist/bootstrap-client.ps1
       - name: Run Windows client test suite

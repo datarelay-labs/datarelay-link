@@ -75,6 +75,7 @@ python3 tests/test-remote-service-upsert-no-churn.py
 python3 tests/test-zero-touch-doc-contract.py
 python3 tests/test-zero-touch-guided-preflight.py
 python3 tests/test-operator-input-validation.py
+python3 tests/test-zero-touch-entry-fields.py
 python3 tests/test-zero-touch-operator-command-bound.py
 python3 tests/test-zero-touch-public-fqdn-trust.py
 python3 tests/test-zero-touch-private-ca-fqdn-ip-fallback.py

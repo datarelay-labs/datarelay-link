@@ -10,6 +10,7 @@ import hashlib
 import ipaddress
 import json
 import re
+import secrets
 import shlex
 from urllib.parse import urlparse
 
@@ -28,6 +29,71 @@ SHELL_UNSAFE_URL_RE = re.compile(r'[^A-Za-z0-9:/._-]')
 SHORT_URL_PATH_RE = re.compile(r'(/i/)([^/?\s#]+)', re.IGNORECASE)
 BT1_TOKEN_RE = re.compile(r'bt1\.[0-9a-f]{16}\.[0-9a-f]{32,}', re.IGNORECASE)
 BOOTSTRAP_ENV_RE = re.compile(r'(FRP_BOOTSTRAP_TICKET\s*=\s*)\S+', re.IGNORECASE)
+
+
+# Entry locators are routing indices, never accepted by the existing
+# high-entropy enrollment credential parser.  Do not connect these helpers
+# to the old /i/ handler, which returns a redeemable credential.
+BOOTSTRAP_LOCATOR_ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-'
+BOOTSTRAP_LOCATOR_RE = re.compile(r'[A-Za-z0-9_-]{6}')
+# /enroll is an existing allocator endpoint (POST).
+BOOTSTRAP_RESERVED_LOCATORS = frozenset({'enroll'})
+
+
+def is_bootstrap_locator(value):
+    return (isinstance(value, str)
+            and BOOTSTRAP_LOCATOR_RE.fullmatch(value) is not None
+            and value.lower() not in BOOTSTRAP_RESERVED_LOCATORS)
+
+
+def new_bootstrap_locator():
+    """Generate a candidate only; caller must claim it atomically in storage."""
+    while True:
+        value = ''.join(secrets.choice(BOOTSTRAP_LOCATOR_ALPHABET) for _ in range(6))
+        if is_bootstrap_locator(value):
+            return value
+
+
+def entry_authority(value):
+    """Validate a canonical HTTPS authority, never a URL or shell expression."""
+    if not isinstance(value, str):
+        raise ValueError('invalid bootstrap authority')
+    match = re.fullmatch(r'(\[[0-9A-Fa-f:.]+\]|[A-Za-z0-9.-]+)(?::([1-9][0-9]{0,4}))?', value)
+    if not match:
+        raise ValueError('invalid bootstrap authority')
+    host, port = match.groups()
+    if port is not None and int(port) > 65535:
+        raise ValueError('invalid bootstrap port')
+    if host.startswith('['):
+        try:
+            ipaddress.IPv6Address(host[1:-1])
+        except ValueError as exc:
+            raise ValueError('invalid bootstrap IPv6 address') from exc
+    elif re.fullmatch(r'[0-9.]+', host):
+        try:
+            ipaddress.IPv4Address(host)
+        except ValueError as exc:
+            raise ValueError('invalid bootstrap IPv4 address') from exc
+    elif not DNS_HOSTNAME_RE.fullmatch(host):
+        raise ValueError('invalid bootstrap hostname')
+    return value
+
+
+def render_entry_command(authority, locator, platform):
+    """Render the owner-approved entry fields only; no enrollment credential.
+
+    This is a pure renderer, not installed-product or security qualification.
+    In particular the initial fetch deliberately does not authenticate TLS.
+    """
+    authority = entry_authority(authority)
+    if not is_bootstrap_locator(locator):
+        raise ValueError('invalid bootstrap locator')
+    url = 'https://%s/%s' % (authority, locator)
+    if platform in ('linux', 'macos'):
+        return 'curl -kfsS %s|sudo bash' % url
+    if platform == 'windows':
+        return 'iex(curl.exe -kfsS %s|Out-String)' % url
+    raise ValueError('unsupported bootstrap platform')
 
 
 def accepted_bootstrap_credential(ticket):

@@ -37,6 +37,7 @@ jobs:
           /bin/bash tests/test-frpctl-pty-completion.sh
           # Verify the real macOS bash/curl/OpenSSL execution path, not only
           # Linux-based Darwin mocks in the portable compatibility job.
+          python3 tests/test-zero-touch-entry-fields.py
           python3 tests/test-zero-touch-operator-command-bound.py
           # The Guided Server CLI is Linux Server-only; native macOS tests
           # verify Agent bootstrap and must not impersonate Server role.
