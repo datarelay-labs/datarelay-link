@@ -40,6 +40,28 @@ HASH = "c" * 64
 
 
 class CompactZeroTouchContract(unittest.TestCase):
+    def assert_short_only(self, command, *, windows=False, authority=HOST):
+        # Owner revision 2026-11-24: one bound across all trust routes.
+        # Only the literal authority length may add to the reference budget.
+        limit = (200 if windows else 100) + max(0, len(authority) - len(HOST))
+        self.assertLessEqual(len(command.encode("utf-8")), limit,
+                             (len(command.encode("utf-8")), limit))
+        self.assertNotIn("\n", command)
+        self.assertNotIn("\r", command)
+
+    def test_short_only_budget_all_renderers(self):
+        url = "https://192.0.2.20:6099/enroll"
+        for platform, authority, command in (
+            ("linux", HOST, zt.short_url_command(HOST, HANDLE)),
+            ("macos", HOST, zt.short_url_command(HOST, HANDLE)),
+            ("windows", HOST, zt.windows_strict_launcher(HOST, HANDLE, HASH)),
+            ("linux", "192.0.2.20:6099", zt.private_ca_ip_linux_command(url, HASH, HANDLE)),
+            ("windows", "192.0.2.20:6099", zt.private_ca_ip_windows_command(url, HASH, HASH, HANDLE)),
+        ):
+            with self.subTest(platform=platform, authority=authority):
+                self.assert_short_only(command, windows=platform == "windows",
+                                       authority=authority)
+
     def test_linux_and_macos_default_install_commands_have_bounded_length(self):
         # Operator-selected hostname alone must not bypass public trust checks.
         # Hermetic fixture injection is not a live public-trust waiver.
@@ -56,7 +78,6 @@ class CompactZeroTouchContract(unittest.TestCase):
                 platform,
             )
             line = zt.short_url_command(HOST, HANDLE)
-            self.assertLessEqual(len(line), 200, (platform, len(line)))
             self.assertIn("/i/", line)
             self.assertIn("curl -fsSL https://", line)
             self.assertNotIn("--insecure", line)
@@ -100,7 +121,6 @@ class CompactZeroTouchContract(unittest.TestCase):
 
     def test_windows_hash_first_within_single_copy_command(self):
         line = zt.windows_strict_launcher(HOST, HANDLE, HASH)
-        self.assertLessEqual(len(line), 500, len(line))
         self.assertIn("Get-FileHash", line)
         self.assertIn(HASH, line)
         self.assertIn("powershell.exe -NoProfile", line)
@@ -208,7 +228,6 @@ class CompactZeroTouchContract(unittest.TestCase):
             command = zt.private_ca_ip_linux_command(
                 cfg["allocator_public_url"], data["fingerprint"], HANDLE
             )
-            self.assertLessEqual(len(command), 700, len(command))
             # Generated installation commands must remain exactly one line.
             self.assertNotIn("\n", command)
             self.assertNotIn("\r", command)
@@ -261,7 +280,7 @@ class CompactZeroTouchContract(unittest.TestCase):
             lines = output.getvalue().splitlines()
             commands = [x for x in lines if x.startswith('bash -c ')]
             self.assertEqual(len(commands), 1)
-            self.assertLessEqual(len(commands[0]), 700)
+            self.assert_short_only(commands[0], authority='192.0.2.20:6099')
             self.assertIn('/i/', commands[0])
             self.assertNotIn('zt1.', commands[0])
 
@@ -332,7 +351,6 @@ class CompactZeroTouchContract(unittest.TestCase):
         command = zt.private_ca_ip_windows_command(
             'https://192.0.2.20:6099/enroll', fp, digest, HANDLE
         )
-        self.assertLessEqual(len(command), 1300)
         self.assertIn('--insecure -o $ca', command)  # public cert only
         self.assertIn('--cacert $ca --ssl-revoke-best-effort -o $st', command)  # credential protected
         self.assertEqual(command.count('--insecure'), 1)
@@ -362,7 +380,6 @@ class CompactZeroTouchContract(unittest.TestCase):
         self.assertIn("--proto '=https'", command)
         self.assertLess(command.index('CA fingerprint mismatch'), command.index('--ssl-revoke-best-effort'))
         self.assertLess(command.index('--ssl-revoke-best-effort'), command.index('stage-1 hash mismatch'))
-        self.assertLessEqual(len(command), 1300)
 
     @unittest.skipUnless(shutil.which('pwsh'), 'PowerShell parser unavailable')
     def test_private_ca_windows_stage_never_executes_before_both_pins(self):
@@ -486,9 +503,8 @@ class CompactZeroTouchContract(unittest.TestCase):
         self.assertNotIn("FRP_BOOTSTRAP_TICKET=", output.getvalue())
         self.assertNotIn("Zero-touch Agent command", output.getvalue())
 
-    def test_private_ca_renderers_keep_compact_guards_without_dns_only_limits(self):
-        # The merged PR226 guards must not reintroduce the FQDN-only failure
-        # by applying 200/500 to the deliberately longer CA-pinned IP route.
+    def test_private_ca_renderers_obey_same_short_only_budget(self):
+        # No separate larger budget for the numeric-IP trust route.
         url = "https://192.0.2.20:6099/enroll"
         plan = {"mode": "private_ca_ip", "allocator": url}
         for windows in (False, True):
@@ -510,7 +526,7 @@ class CompactZeroTouchContract(unittest.TestCase):
             lines = output.getvalue().splitlines()
             prefix = "$ErrorActionPreference=" if windows else "bash -c "
             command = next(line for line in lines if line.startswith(prefix))
-            self.assertLessEqual(len(command), 1300 if windows else 700)
+            self.assert_short_only(command, windows=windows, authority='192.0.2.20:6099')
             self.assertIn("/i/", command)
             self.assertNotIn("zt1.", command)
 
