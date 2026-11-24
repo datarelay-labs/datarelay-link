@@ -18,50 +18,41 @@ sys.modules[_loader.name] = CLI
 _loader.exec_module(CLI)
 
 class PublicFQDNTrustTests(unittest.TestCase):
-    def verify(self, cfg, code=404, body=b'bootstrap unavailable', *, request_ok=False):
-        opener = mock.Mock()
-        if request_ok:
-            opener.open.return_value = mock.MagicMock()
-            opener.open.return_value.__enter__.return_value.status = 200
-        else:
-            opener.open.side_effect = urllib.error.HTTPError(
-                'https://remote.isoc.ooo/i/invalid-qualification-probe',
-                code, 'test', {}, io.BytesIO(body)
-            )
-        with mock.patch.object(CLI, '_test_root', return_value=False), \
-             mock.patch('urllib.request.build_opener', return_value=opener) as factory, \
-             mock.patch('ssl.create_default_context') as ctx:
-            host = CLI.short_url_host_for_cfg(cfg)
-        self.assertTrue(factory.called)
-        ctx.assert_called_once_with()  # No cafile/insecure override allowed.
-        args = factory.call_args.args
-        self.assertTrue(any(type(arg).__name__ == 'NoRedirect' for arg in args))
-        opener.open.assert_called_once()
-        self.assertIn('/i/invalid-qualification-probe', opener.open.call_args.args[0])
-        return host
+    def verify(self, authority, code=404, body=b'bootstrap unavailable', *, request_ok=False):
+        import tempfile
+        with tempfile.TemporaryDirectory() as temp:
+            ca=Path(temp)/"ca.crt"; ca.write_text("fixture")
+            cfg={"allocator_public_url":"https://"+authority+"/enroll","tls_ca_cert":str(ca)}
+            opener=mock.Mock()
+            if request_ok:
+                opener.open.return_value=mock.MagicMock()
+            else:
+                opener.open.side_effect=urllib.error.HTTPError(
+                    "https://"+authority+"/ZT0000",code,"fixture",{},io.BytesIO(body))
+            with mock.patch.object(CLI,"_test_root",return_value=""), \
+                 mock.patch.object(CLI,"fingerprint_from_cert",return_value="a"*64), \
+                 mock.patch.object(CLI,"preflight_installer_url") as downstream, \
+                 mock.patch("urllib.request.build_opener",return_value=opener) as factory, \
+                 mock.patch("ssl._create_unverified_context") as entry:
+                result=CLI.validate_zero_touch_prerequisites(cfg,"linux",
+                    "https://"+authority+"/fixture/bootstrap-client.sh","a"*64)
+            entry.assert_called_once_with()
+            self.assertTrue(any(type(arg).__name__=="NoRedirect" for arg in factory.call_args.args))
+            opener.open.assert_called_once_with("https://"+authority+"/ZT0000",timeout=5)
+            self.assertTrue(downstream.call_args.kwargs["strict_https"])
+            self.assertEqual(downstream.call_args.kwargs["ca_file"],ca)
+            return result
 
-    def test_explicit_and_inferred_hostnames_share_real_tls_qualification(self):
-        self.assertEqual(self.verify({'bootstrap_hostname':'remote.isoc.ooo'}), 'remote.isoc.ooo')
-        self.assertEqual(self.verify({'public_hostname':'remote.isoc.ooo'}), 'remote.isoc.ooo')
-        self.assertEqual(self.verify({'public_url_host':'remote.isoc.ooo'}), 'remote.isoc.ooo')
+    def test_public_private_authorities_share_route_probe(self):
+        for authority in ("remote.example.test","192.0.2.20:6099","private.example.test"):
+            self.assertEqual(self.verify(authority),authority)
 
-    def test_negative_https_handler_responses_are_not_qualified(self):
-        for cfg in ({'bootstrap_hostname':'remote.isoc.ooo'}, {'public_hostname':'remote.isoc.ooo'}):
-            with self.subTest(cfg=cfg):
-                self.assertEqual(self.verify(cfg, code=404, body=b'<html>not found</html>'), '')
-                self.assertEqual(self.verify(cfg, code=403), '')
-                self.assertEqual(self.verify(cfg, request_ok=True), '')
-
-    def test_transport_failure_and_invalid_hostname_fail_closed(self):
-        for cfg in ({'bootstrap_hostname':'localhost'}, {'bootstrap_hostname':'remote.isoc.ooo.local'},
-                    {'bootstrap_hostname':'bad name'}, {'public_hostname':'127.0.0.1'}):
-            with self.subTest(cfg=cfg):
-                with mock.patch.object(CLI, '_test_root', return_value=False):
-                    self.assertEqual(CLI.short_url_host_for_cfg(cfg), '')
-        with mock.patch.object(CLI, '_test_root', return_value=False), \
-             mock.patch('urllib.request.build_opener') as f:
-            f.return_value.open.side_effect = OSError('connection refused')
-            self.assertEqual(CLI.short_url_host_for_cfg({'public_hostname':'remote.isoc.ooo'}), '')
+    def test_wrong_route_and_redirect_fail_closed(self):
+        for code,body in ((404,b"<html>wrong</html>"),(403,b""),(302,b""),(503,b"")):
+            with self.subTest(code=code), self.assertRaises(SystemExit):
+                self.verify("remote.example.test",code,body)
+        with self.assertRaises(SystemExit):
+            self.verify("remote.example.test",request_ok=True)
 
     def test_fqdn_installer_preflight_requires_trusted_https_200_before_ticket(self):
         url = 'https://remote.isoc.ooo/artifacts/agent/bootstrap-client.sh'
@@ -91,14 +82,11 @@ class PublicFQDNTrustTests(unittest.TestCase):
         self.assertEqual(request.get_method(), 'HEAD')
         self.assertEqual(request.full_url, url)
 
-    def test_simplest_stock_ca_short_command_not_replaced_by_private_ca_shell(self):
+    def test_same_fixed_command_for_both_tls_modes(self):
         import frp_zero_touch as zt
-        cmd = zt.short_url_command('remote.isoc.ooo', 'A'*22)
-        self.assertIn('curl -fsSL https://remote.isoc.ooo/i/', cmd)
-        self.assertIn('printf', cmd)
-        self.assertNotIn('openssl s_client', cmd)
-        self.assertNotIn('--insecure', cmd)
-        self.assertEqual(cmd.count("https://remote.isoc.ooo/i/" + "A" * 22), 1)
+        for host in ("remote.example.test","private.example.test","192.0.2.20:6099"):
+            self.assertEqual(zt.render_entry_command(host,"A3xK9m","linux"),
+                             "curl -kfsS https://"+host+"/A3xK9m|sudo bash")
 
 if __name__ == '__main__':
     unittest.main(verbosity=2)

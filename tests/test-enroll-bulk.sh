@@ -21,7 +21,7 @@ r=Path(sys.argv[1])
 PY
 export FRP_DEPLOY_TEST_ROOT="$TREE"
 python3 "$ROOT/tools/frp-enroll-bulk" --count 3 --label-prefix node >"$WORK/count.csv" 2>"$WORK/count.err"
-grep -q 'redirected output contains sensitive' "$WORK/count.err"
+grep -q 'redirected output contains pending Bootstrap locators' "$WORK/count.err"
 cat >"$WORK/input.csv" <<'CSV'
 label,note
 ssh-node,remote shell
@@ -29,7 +29,7 @@ inventory-only,no service
 CSV
 python3 "$ROOT/tools/frp-enroll-bulk" --csv "$WORK/input.csv" >"$WORK/input.out" 2>"$WORK/input.err"
 python3 - "$WORK/count.csv" "$WORK/input.out" "$TREE/var/lib/drlink/bootstrap" <<'PY'
-import csv,json,re,sys
+import csv,json,re,sys,hashlib
 from pathlib import Path
 rows=[]
 for name in sys.argv[1:3]:
@@ -44,7 +44,7 @@ for name in sys.argv[1:3]:
 assert len(rows)==5
 tickets=[]
 for row in rows:
-    m=re.search(r"/i/([A-Za-z0-9_-]{22}|bt1\.[0-9a-f]+\.[0-9a-f]+)", row['bootstrap_command'])
+    m=re.fullmatch(r"curl -kfsS https://bootstrap\.example\.test/([A-Za-z0-9_-]{6})\|sudo bash", row['bootstrap_command'])
     if m:
         tickets.append(m.group(1))
         continue
@@ -60,7 +60,13 @@ public_ids = {row['enrollment_id'] for row in rows}
 persisted_ids = {rec['id'] for rec in records}
 assert public_ids == persisted_ids, (public_ids, persisted_ids)
 assert {rec['enrollment_id'] for rec in records}.isdisjoint(public_ids)
-for ticket,record in zip(sorted(tickets), sorted(records,key=lambda r:r['id'])):
+for ticket,row in zip(tickets,rows):
+    digest=hashlib.sha256(ticket.encode()).hexdigest()
+    index=json.loads((Path(sys.argv[3])/'entry-locators'/(digest+'.json')).read_text())
+    assert index['ticket_id']==row['enrollment_id']
+    record=next(r for r in records if r['id']==index['ticket_id'])
+    assert record['entry_locator_hash']==digest
+    assert record['entry_approval']['platform']=='linux'
     assert ticket not in json.dumps(record)
 assert any(r.get('services')==[] for r in records)
 assert all(r.get('services') == [] for r in records)
@@ -78,7 +84,7 @@ cfg['client_installer_url']='https://raw.githubusercontent.com/datarelay-labs/da
 path.write_text(json.dumps(cfg)+'\n')
 PY
 python3 "$ROOT/tools/frp-enroll-bulk" --count 1 --label-prefix stale-source >"$WORK/stale-source.csv" 2>"$WORK/stale-source.err"
-grep -Fq 'https://bootstrap.example.test/i/' "$WORK/stale-source.csv"
+grep -Fq 'https://bootstrap.example.test/' "$WORK/stale-source.csv"
 ! grep -Fq 'raw.githubusercontent.com' "$WORK/stale-source.csv"
 ! grep -Fq '1111111111111111111111111111111111111111' "$WORK/stale-source.csv"
 echo "PASS BULK_QUALIFIED_INSTALLER_SOURCE"

@@ -173,6 +173,18 @@ class EntryApproval(unittest.TestCase):
         self.assertNotIn(b"bt1.", script)
         self.assertIn(b"Get-FileHash", script)
 
+    @unittest.skipUnless(__import__("shutil").which("pwsh"), "PowerShell unavailable")
+    def test_windows_agent_claim_verified_by_python_allocator(self):
+        ps = "$ErrorActionPreference='Stop'; . ./windows/lib/FrpCrypto.ps1; . ./windows/lib/FrpBootstrap.ps1; $id=New-FrpEcdsaIdentity; New-FrpEntryClaim -Action request -Locator " + self.locator + " -MachineId machine-win -Hostname host-win -PrivatePem $id.PrivatePem -PublicPem $id.PublicPem"
+        result = subprocess.run(["pwsh","-NoProfile","-Command",ps], cwd=ROOT,
+                                capture_output=True,text=True,timeout=30)
+        self.assertEqual(result.returncode,0,result.stderr)
+        claim=json.loads(result.stdout)
+        status,pending=self.a.request_entry_approval(claim)
+        self.assertEqual(status,200,pending)
+        self.assertEqual(pending["status"],"pending")
+        self.assertNotIn("enrollment_code",pending)
+
     def test_approval_and_possession_required(self):
         code, pending = self.request()
         self.assertEqual(code, 200, pending)
