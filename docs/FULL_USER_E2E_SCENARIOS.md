@@ -264,7 +264,9 @@ Execution rules:
 The legacy S-* identifiers below are retained only for functional failure/recovery traceability.
 ### 1.2.3 Mandatory parallel-start gate
 
-After host discovery, start every independent lane the available topology permits. Do not finish one platform end-to-end before beginning the others unless shared state makes serialization technically necessary.
+**Owner directive (2026-11-25): No separate connection preflight.** Use the owner-configured SSH aliases and existing SSH settings as-is. Do not run standalone SSH login/reachability probes, ping, TCP/port scans, SSH host-key checks, readiness scripts, or preliminary TLS/DNS checks merely to decide whether to start E2E. Read local inventory/config without network probes and execute the first actual scenario action directly. Record connection errors from that action only, classify the affected criterion, and continue independent scenarios; do not stop for repeated preflight or operator reconfirmation. Preserve normal SSH/security enforcement and genuine product DNS/TLS/OAuth, lifecycle and access-control assertions within their actual scenarios.
+
+From the configured host inventory, start every independent lane the available topology permits. Do not finish one platform end-to-end before beginning the others unless shared state makes serialization technically necessary.
 
 At minimum, attempt these lanes in parallel when applicable:
 
@@ -281,11 +283,11 @@ At minimum, attempt these lanes in parallel when applicable:
 
 "Parallel" means concurrent real execution on separate hosts/resources, not merely planning multiple scenarios or running them sequentially under one wrapper.
 
-Execution starts by reading the development server's `~/.ssh/config` and probing the configured hosts. Do not require the operator to restate hostnames already present there.
+Execution starts by reading the development server's `~/.ssh/config` and owner-private inventory, then directly performing actual scenario actions. Do not require the operator to restate hostnames already present there.
 
 Host assignment is dynamic. The currently configured/reachable test estate is the hard resource budget: FULL_USER_E2E must not require provisioning a new VM, cloud instance, physical host, or external load generator to become executable or PASS-eligible. Additional isolated processes/services on existing hosts may increase pressure only when they remain faithful to the product behavior being measured; logical clients must never be reported as distinct physical hosts.
 
-1. classify reachable SSH-config hosts by OS, installed DRLink role, network reachability, available target services, and whether destructive testing is safe;
+1. assign configured SSH hosts provisionally by owner role and local inventory; establish OS, installed role and available services from actual scenario actions, not separate reachability probes;
 2. assign **two suitable hosts to server-side roles** when two usable server hosts exist: one primary control/server candidate and one secondary server-side target/recovery/upgrade/failover test host according to the scenario;
 3. assign all remaining suitable hosts to Agent, Relay Agent, protected client, external user, load generator, target-service, and cross-platform roles;
 4. use Linux, macOS, Windows, Rocky/Amazon Linux or other configured hosts wherever their platform makes a scenario applicable;
@@ -797,7 +799,7 @@ Use disposable or explicitly designated test systems for destructive scenarios.
 Where the owner assigns **two distinct DRLink Server environments**, record their actual addresses in the **private per-RUN_ID lab host inventory** and follow this simple test routing rule:
 
 - **FUNCTION_PERFORMANCE_SERVER — functional and public hostname/DNS tests:** The owner-assigned SSH alias is `frp-e2e-server`. Use this Server for all non-MCP features, installation, native Agents, enrollment, CLI, Remote/Internet Access, security policy, recovery, concurrency, performance, warmup/steady state/Soak and F001/F007. Use the owner's real public FQDN for DNS resolution, public/bootstrap hostname propagation, IP/FQDN variants, hostname fallback and the non-MCP hostname criteria in U-009, A-018 and S-017. Resolve the public FQDN from the private owner host map, not the SSH HostName IP. Test actual DNS and appropriate public/private TLS behavior; SSH connectivity is not DNS or TLS evidence.
-- **MCP_SERVER — MCP tests only:** The owner-designated candidate SSH alias is `mcp-link`; use its separate public FQDN and actual trusted HTTPS `/mcp`, OAuth and real ChatGPT consent, MCP-specific AI Identity/Access, authorization/denial, MCP concurrency/performance and applicable Plugin cases. This includes U-007, U-011, A-006, C-006, P-011 and applicable X criteria. Before executing those criteria, verify management SSH host-key trust, exact installed candidate, public DNS, single443 HTTPS ingress, publicly trusted certificate with matching SAN/full chain, MCP diagnostics and actual OAuth/AI Access readiness. The assignment is prospective, not a readiness PASS. Do not route functional or general hostname tests here; do not reset or reconfigure an existing service without confirmed test-only ownership and applicable authority.
+- **MCP_SERVER — MCP tests only:** The owner-designated candidate SSH alias is `mcp-link`; use its separate public FQDN and actual trusted HTTPS `/mcp`, OAuth and real ChatGPT consent, MCP-specific AI Identity/Access, authorization/denial, MCP concurrency/performance and applicable Plugin cases. This includes U-007, U-011, A-006, C-006, P-011 and applicable X criteria. Exercise exact installed candidate, public DNS, single443 HTTPS ingress, publicly trusted certificate with matching SAN/full chain, MCP diagnostics and actual OAuth/AI Access within their actual MCP scenarios, not as a separate connection preflight. The assignment is prospective, not a readiness PASS. Do not route functional or general hostname tests here; do not reset or reconfigure an existing service without confirmed test-only ownership and applicable authority.
 - **Mixed-scope scenarios:** Where one canonical scenario contains both kinds of checks (for example U-009, U-013, A-016, A-018, S-001 or S-017), route **each specific check** to its matching Server. Do not treat a mixed scenario as a requirement to repeat all its checks on both Servers, or as an automatic cross-Server integration prerequisite. Retain the original scenario ID and combine its actual evidence without changing coverage.
 - This assignment **does not create a new VM-detection, VM-provisioning, snapshot or snapshot-restore gate**. Use the already assigned existing test hosts. Continue to respect any pre-existing authorization/security restriction that is genuinely required for an individual destructive operation; do not apply a missing MCP certificate to unrelated functionality/Soak checks.
 - Record the independently observed Source HEAD for each Server and the actual evidence for its assigned checks. Keep lab-specific addresses and management routes in the owner-private test map, not this portable canonical contract. Preserve all 116 scenarios, the real Direct+AI actor method and the two same-HEAD release qualification passes; no preparation-only check is an E2E PASS.
@@ -885,7 +887,7 @@ Resolve hosts and SSH routes in this order:
 
 1. development host `~/.ssh/config` Host entries (HostName, User, Port, ProxyJump/ProxyCommand, IdentityFile);
 2. optional untracked local inventory/evidence input for the current run (for example under the run evidence directory or an operator-local config path outside the repository);
-3. live probe results recorded into the current RUN_ID evidence.
+3. observed results of actual scenario actions recorded into the current RUN_ID evidence.
 
 Operational rules:
 
@@ -983,7 +985,7 @@ The owner’s current two-Server split routes only MCP-specific criteria to MCP_
 
 Before a host begins its dependent FULL_USER_E2E product workflow, prepare that participating host so results cannot be contaminated by a previous run. **Historical product state, stale test services, cached endpoints, prior enrollment state, leftover load generators, or old temporary artifacts must never be accepted as the starting state of a new Full User E2E.**
 
-The cleanup step happens after host reachability discovery but before fresh Server/Agent installation, enrollment, command-discovery personas, baseline traffic, or performance measurement.
+The cleanup step is the first actual lifecycle action where required, without separate host reachability discovery, before fresh Server/Agent installation, enrollment, command-discovery personas, baseline traffic, or performance measurement.
 
 For each reachable assigned host:
 
@@ -1082,9 +1084,9 @@ Rules:
 
 A final FULL_USER_E2E PASS requires `PROCESS_CLEANUP=PASS` for executor-owned product-path helpers on assigned hosts.
 
-## 6. Common preflight
+## 6. Common product CLI observations (actual scenario steps, not connection preflight)
 
-### 6.1 Server preflight
+### 6.1 Server product observations
 
 Run through the public Server CLI:
 
@@ -1109,7 +1111,7 @@ Expected:
 - diagnostics are read-only;
 
 
-### 6.2 Agent Host preflight
+### 6.2 Agent Host product observations
 
 Run locally on each Agent Host:
 
@@ -4280,9 +4282,9 @@ USER_E2E_REQUEST
 -> Current owner-selected runtime executes independent Direct + AI-assisted roles and final audit; the current owner-selected implementer fixes verified defects after evidence is frozen; Cursor remains disabled.
 -> locate this canonical document at docs/FULL_USER_E2E_SCENARIOS.md
 -> capture candidate/build identity only; do not perform a pre-run code review
--> probe all configured test hosts, remove previous-run DRLink state/test services/load processes/temp artifacts, preserve only explicit management access infrastructure, and require the section 5.3 clean-room gate before fresh product activity
+-> use the configured host map without separate connection probes; perform the actual section 5.3 cleanup/lifecycle actions on authorized hosts, preserve management access and record their results
 -> execute as a human black-box operator; do not reinterpret the request as release qualification
--> discover ~/.ssh/config hosts and untracked local inventory, resolve SSH routes per section 5.1, probe availability/roles, assign topology, and start independent lanes immediately
+-> read ~/.ssh/config and untracked local inventory, assign roles, and start actual independent scenario actions immediately; infer availability from their results only
 -> use automated harnesses only as supplemental evidence, never as the User E2E executor
 -> execute this document's FULL_USER_E2E profile unless explicitly scoped
 -> use real public CLI and real traffic
