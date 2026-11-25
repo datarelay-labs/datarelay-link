@@ -222,6 +222,21 @@ function Clear-FrpStalePid {
     }
 }
 
+function Start-FrpDetachedProcess {
+    param([string]$CommandLine, [string]$WorkingDirectory)
+    # Keep WMI launch outside the SSH/WinRM job object. CREATE_NO_WINDOW
+    # prevents a console allocation even in an interactive desktop session.
+    $startup = New-CimInstance -ClassName Win32_ProcessStartup -ClientOnly -Property @{
+        CreateFlags = [uint32]0x08000000
+        ShowWindow  = [uint16]0
+    }
+    return (Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{
+        CommandLine               = $CommandLine
+        CurrentDirectory          = $WorkingDirectory
+        ProcessStartupInformation = $startup
+    } -ErrorAction Stop)
+}
+
 function Start-FrpClient {
     <#
     .SYNOPSIS
@@ -280,10 +295,7 @@ function Start-FrpClient {
     # frpc keeps running after the install/start session disconnects.
     # Start-Process from an SSH session is killed with that session.
     $cmd = '"{0}" -c "{1}"' -f $frpc, $toml
-    $created = Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{
-        CommandLine      = $cmd
-        CurrentDirectory = [System.IO.Path]::GetDirectoryName($frpc)
-    }
+    $created = Start-FrpDetachedProcess -CommandLine $cmd -WorkingDirectory ([System.IO.Path]::GetDirectoryName($frpc))
     if ($null -eq $created -or [int]$created.ReturnValue -ne 0 -or [int]$created.ProcessId -le 0) {
         throw ('ERROR: failed to start drlink-client (Win32_Process.Create rc={0})' -f $(if ($created) { $created.ReturnValue } else { 'null' }))
     }

@@ -12,6 +12,7 @@ dist=root/'dist'
 dist.mkdir(exist_ok=True)
 sys.path.insert(0, str(root / 'lib'))
 from drlink_agent_payload import agent_source_rels
+from frp_zero_touch import windows_current_path_refresh
 
 def bundle_payload(rel):
     data = (root / rel).read_bytes()
@@ -322,7 +323,11 @@ for rel in win_files:
 ps_lines.extend([
     "  $installer = Join-Path $tmp 'windows/install-client.ps1'",
     '  & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $installer @args',
-    '  exit $LASTEXITCODE',
+    '  $rc = $LASTEXITCODE',
+    '  if ($rc -eq 0) {',
+    windows_current_path_refresh(),
+    '  }',
+    '  exit $rc',
     '} finally {',
     '  Remove-Item Env:FRP_WINDOWS_BOOTSTRAP_PATH -ErrorAction SilentlyContinue',
     '  Remove-Item -LiteralPath $tmp -Recurse -Force -ErrorAction SilentlyContinue',

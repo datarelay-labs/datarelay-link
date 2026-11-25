@@ -25,14 +25,28 @@ try {
         Stop-FrpClient | Out-Null
         Write-FrpTestPass 'test-process-control (fake)'
     } else {
-        if (-not (Test-Path -LiteralPath (Get-FrpFrpcPath))) {
-            Write-Host 'SKIP test-process-control (no frpc.exe)'
-            return
+        $probe = Join-Path $env:FRP_WINDOWS_ROOT 'console-probe.ps1'
+        $result = Join-Path $env:FRP_WINDOWS_ROOT 'console-probe.txt'
+        @'
+param([string]$Result)
+Add-Type -Name ConsoleProbe -Namespace DRLinkTest -MemberDefinition '[System.Runtime.InteropServices.DllImport("kernel32.dll")] public static extern System.IntPtr GetConsoleWindow();'
+[IO.File]::WriteAllText($Result, [string]([DRLinkTest.ConsoleProbe]::GetConsoleWindow() -eq [IntPtr]::Zero))
+'@ | Set-Content -LiteralPath $probe -Encoding ASCII
+        $exe = Join-Path $env:SystemRoot 'System32/WindowsPowerShell/v1.0/powershell.exe'
+        $command = '"{0}" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "{1}" -Result "{2}"' -f $exe, $probe, $result
+        $created = Start-FrpDetachedProcess -CommandLine $command -WorkingDirectory $env:FRP_WINDOWS_ROOT
+        Assert-FrpEqual 0 ([int]$created.ReturnValue) 'native detached process created'
+        $deadline = [DateTime]::UtcNow.AddSeconds(30)
+        while (-not (Test-Path -LiteralPath $result) -and [DateTime]::UtcNow -lt $deadline) {
+            Start-Sleep -Milliseconds 200
         }
-        Write-FrpTestPass 'test-process-control (windows path present)'
+        Assert-FrpTrue (Test-Path -LiteralPath $result) 'native console probe ran'
+        Assert-FrpEqual 'True' ([IO.File]::ReadAllText($result)) 'no console allocated'
+        Write-FrpTestPass 'test-process-control (native no console)'
     }
 
     $procSrc = Get-Content -LiteralPath (Join-Path $script:WindowsLib 'FrpProcess.ps1') -Raw
+    Assert-FrpTrue ($procSrc -match 'ProcessStartupInformation' -and $procSrc -match '0x08000000') 'CIM startup prevents console creation'
     Assert-FrpTrue ($procSrc -match 'Win32_Process') 'starts frpc via Win32_Process.Create so SSH sessions do not reap it'
     Assert-FrpTrue ($procSrc -notmatch 'RedirectStandardOutput') 'does not redirect frpc stdio through Start-Process'
 } finally {
