@@ -96,6 +96,12 @@ def _verify_orphan_allocator_ca_recovery(tmp, origin, installer_url, installer, 
     scenarios = (
         ("orphan", None, {}, True),
         ("corrupt-orphan", None, {}, True),
+        ("old-ca-and-scratch", None, {}, True),
+        ("scratch-only", None, {}, True),
+        ("same-ca-and-scratch", None, {}, True),
+        ("scratch-with-invalid-pin", None, {"FRP_ALLOCATOR_CA_SHA256": "a" * 64}, False),
+        ("scratch-symlink", None, {}, False),
+        ("scratch-unknown-name", "etc/drlink/allocator-ca.crt.manual", {}, False),
         ("committed", "etc/frp/client-state.json", {}, False),
         ("pending", "etc/frp/enroll-pending.json", {}, False),
         ("identity", "etc/frp/client-identity.key", {}, False),
@@ -113,7 +119,20 @@ def _verify_orphan_allocator_ca_recovery(tmp, origin, installer_url, installer, 
         machine_id = root / "etc/frp/client-id"
         machine_id.parent.mkdir(parents=True)
         machine_id.write_text("test-machine-id\n")
-        if name == "symlink":
+        if name in ("old-ca-and-scratch", "scratch-only", "same-ca-and-scratch",
+                    "scratch-with-invalid-pin", "scratch-symlink"):
+            scratch = ca.parent / "allocator-ca.crt.Abc123"
+            if name == "scratch-symlink":
+                scratch.symlink_to(old_ca)
+            else:
+                scratch.write_bytes(old_ca.read_bytes())
+        else:
+            scratch = None
+        if name == "scratch-only":
+            pass
+        elif name == "same-ca-and-scratch":
+            ca.write_bytes(new_ca.read_bytes())
+        elif name == "symlink":
             ca.symlink_to(old_ca)
         elif name == "corrupt-orphan":
             ca.write_text("invalid old CA residue\n")
@@ -123,7 +142,8 @@ def _verify_orphan_allocator_ca_recovery(tmp, origin, installer_url, installer, 
             target = root / marker
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_text("preserve even incomplete or corrupt evidence\n")
-        before = ca.read_bytes()
+        before = ca.read_bytes() if ca.exists() else None
+        scratch_before = scratch.read_bytes() if scratch is not None else None
         env = {
             **os.environ,
             "FRP_CLIENT_TEST_ROOT": str(root),
@@ -154,6 +174,13 @@ def _verify_orphan_allocator_ca_recovery(tmp, origin, installer_url, installer, 
             raise AssertionError(f"{name}: unexpected result {ran.returncode}\n{ran.stdout}\n{ran.stderr}")
         if ca.read_bytes() != (new_ca.read_bytes() if success else before):
             raise AssertionError(f"{name}: allocator CA preservation/replacement failed")
+        if scratch is not None:
+            if success and (scratch.exists() or scratch.is_symlink()):
+                raise AssertionError(f"{name}: staging residue remains")
+            if not success and scratch.read_bytes() != scratch_before:
+                raise AssertionError(f"{name}: protected staging residue changed")
+            if name == "scratch-symlink" and not scratch.is_symlink():
+                raise AssertionError("scratch symlink was replaced")
         if marker and not (root / marker).exists():
             raise AssertionError(f"{name}: protected state was removed")
         if name == "symlink" and not ca.is_symlink():
