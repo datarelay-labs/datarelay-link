@@ -714,6 +714,9 @@ frp_client_main() {
   if frp_zero_touch_active; then
     frp_zero_touch_require_inputs || return 1
   fi
+  if [[ "$FRP_RESUME_PENDING" != "1" && "$FRP_REPLACE_PENDING" != "1" ]]; then
+    frp_client_recover_orphan_allocator_ca "$ALLOCATOR_URL" || return 1
+  fi
   frp_bootstrap_allocator_ca "$ALLOCATOR_URL" || return 1
   frp_client_verify_fresh_source_provenance || return 1
   frp_detect_os >/dev/null || exit 1
