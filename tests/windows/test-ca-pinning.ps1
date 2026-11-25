@@ -43,14 +43,29 @@ try {
         $script:QualificationCalls++
         if ($script:RejectQualification) { throw 'fixture provenance rejected' }
     }
+    # This fixture owns a temporary filesystem root, not the machine-global
+    # scheduler. Earlier native tests may leave real product task names present.
+    # Model the scheduler query at its boundary; never delete or ignore a live
+    # task in production. test-autostart.ps1 exercises the real scheduler.
+    $script:FixtureExistingTask = ''
+    function Test-FrpAutostartTaskExists {
+        param([string]$TaskName = (Get-FrpAutostartTaskName))
+        return ($TaskName -eq $script:FixtureExistingTask)
+    }
     Assert-FrpTrue (Enter-FrpClientLock) 'lifecycle lock held'
     try {
         $ca = Get-FrpAllocatorCaPath
         $scratch = Join-Path (Get-FrpCertsDir) ('allocator-ca.crt.' + ('a' * 32) + '.tmp')
-        foreach ($case in @('corrupt-orphan','scratch-only','protected-state','protected-identity','protected-unknown','invalid-pin','invalid-provenance')) {
+        foreach ($case in @('corrupt-orphan','scratch-only','protected-state','protected-identity','protected-unknown','protected-autostart','protected-lifecycle','protected-legacy-task','invalid-pin','invalid-provenance')) {
             if (Test-Path -LiteralPath $ca) { Remove-Item -LiteralPath $ca -Force }
             if (Test-Path -LiteralPath $scratch) { Remove-Item -LiteralPath $scratch -Force }
             $marker = $null
+            $script:FixtureExistingTask = switch ($case) {
+                'protected-autostart' { Get-FrpAutostartTaskName }
+                'protected-lifecycle' { Get-FrpLifecycleTaskName }
+                'protected-legacy-task' { Get-FrpAutostartLegacyTaskName }
+                default { '' }
+            }
             $script:RejectQualification = ($case -eq 'invalid-provenance')
             $beforeCalls = $script:QualificationCalls
             $casePin = if ($case -eq 'invalid-pin') { 'a' * 64 } else { $pin }
@@ -90,12 +105,15 @@ try {
                     Assert-FrpEqual 'preserve' ([IO.File]::ReadAllText($marker)) "$case protected"
                     Remove-Item -LiteralPath $marker -Force
                     Assert-FrpEqual $beforeCalls $script:QualificationCalls "$case no qualification"
+                } elseif ($script:FixtureExistingTask) {
+                    Assert-FrpTrue (-not $failed) "$case left untouched"
+                    Assert-FrpEqual $beforeCalls $script:QualificationCalls "$case no qualification"
                 } else {
                     Assert-FrpTrue $failed "$case rejected"
                 }
             }
         }
-        Write-FrpTestPass 'windows-orphan-ca-residue (7 cases)'
+        Write-FrpTestPass 'windows-orphan-ca-residue (10 cases)'
     } finally {
         Exit-FrpClientLock
         Remove-Item -LiteralPath $incoming -Force
