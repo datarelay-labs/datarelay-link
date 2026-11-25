@@ -84,26 +84,29 @@ function Confirm-FrpWindowsSourceProvenance {
 # state, runtime, tasks or unknown files, are classified as an unclaimed
 # Windows trust residue. This runs under the existing lifecycle lock.
 function Get-FrpUnclaimedWindowsCaResidue {
-    if ($script:FrpClientLockDepth -lt 1) { return }
+    [CmdletBinding()]
+    param()
+    if ($script:FrpClientLockDepth -lt 1 -or [string]$script:FrpClientLockOwner -ne [string]$PID) { Write-Verbose "Residue protected: lifecycle lock not owned"; return }
     $root = Get-FrpWindowsRoot
     $dirs = @('bin','config','state','certs','logs','tools','lib','backups')
     $residue = @()
     try {
         $rootItem = Get-Item -LiteralPath $root -Force -ErrorAction Stop
-        if (-not $rootItem.PSIsContainer -or ($rootItem.Attributes -band [IO.FileAttributes]::ReparsePoint)) { return }
+        if (-not $rootItem.PSIsContainer -or ($rootItem.Attributes -band [IO.FileAttributes]::ReparsePoint)) { Write-Verbose "Residue protected: unsafe product root"; return }
         foreach ($dir in (Get-ChildItem -LiteralPath $root -Force -ErrorAction Stop)) {
-            if (-not $dir.PSIsContainer -or $dir.Name -notin $dirs -or ($dir.Attributes -band [IO.FileAttributes]::ReparsePoint)) { return }
+            if (-not $dir.PSIsContainer -or $dir.Name -notin $dirs -or ($dir.Attributes -band [IO.FileAttributes]::ReparsePoint)) { Write-Verbose "Residue protected: unexpected product-root entry $($dir.Name)"; return }
             foreach ($entry in (Get-ChildItem -LiteralPath $dir.FullName -Force -ErrorAction Stop)) {
-                if ($entry.Attributes -band [IO.FileAttributes]::ReparsePoint) { return }
+                if ($entry.Attributes -band [IO.FileAttributes]::ReparsePoint) { Write-Verbose "Residue protected: reparse point $($entry.Name)"; return }
                 if ($dir.Name -eq 'state') {
                     if ($entry.Name -eq 'client-id' -and -not $entry.PSIsContainer) { continue }
-                    if ($entry.FullName -eq (Get-FrpClientLockPath) -and $entry.PSIsContainer) {
+                    if ($entry.Name -eq 'client-manage.lock' -and $entry.PSIsContainer) {
                         $children = @(Get-ChildItem -LiteralPath $entry.FullName -Force -ErrorAction Stop)
                         if ($children.Count -eq 1 -and $children[0].Name -eq 'pid' -and
                             -not $children[0].PSIsContainer -and
                             -not ($children[0].Attributes -band [IO.FileAttributes]::ReparsePoint) -and
-                            ([IO.File]::ReadAllText($children[0].FullName)).Trim() -eq [string]$PID) { continue }
+                            ([string](Get-Content -LiteralPath $children[0].FullName -Raw -ErrorAction Stop)).Trim() -eq [string]$PID) { continue }
                     }
+                    Write-Verbose "Residue protected: unexpected state entry $($entry.Name)"
                     return
                 }
                 if ($dir.Name -eq 'certs' -and -not $entry.PSIsContainer -and
@@ -111,14 +114,16 @@ function Get-FrpUnclaimedWindowsCaResidue {
                     $residue += $entry.FullName
                     continue
                 }
+                Write-Verbose "Residue protected: unexpected entry in $($dir.Name): $($entry.Name)"
                 return
             }
         }
         foreach ($task in @((Get-FrpAutostartTaskName), (Get-FrpLifecycleTaskName)) + @(Get-FrpAutostartLegacyTaskNames)) {
-            if (Test-FrpAutostartTaskExists -TaskName $task) { return }
+            if (Test-FrpAutostartTaskExists -TaskName $task) { Write-Verbose "Residue protected: existing product task $task"; return }
         }
         return $residue
     } catch {
+        Write-Verbose ("Residue protected: classification failed: " + $_.Exception.Message)
         return
     }
 }

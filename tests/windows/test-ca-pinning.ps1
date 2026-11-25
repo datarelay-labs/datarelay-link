@@ -62,6 +62,12 @@ try {
                 'protected-unknown' { $marker = Join-Path (Get-FrpCertsDir) 'manual-backup.crt' }
             }
             if ($marker) { [IO.File]::WriteAllText($marker,'preserve') }
+            if ($case -in @('corrupt-orphan','scratch-only')) {
+                # Observe the native classifier itself before asking for repair;
+                # the verbose refusal reason is retained if a Windows runner differs.
+                $classified = @(Get-FrpUnclaimedWindowsCaResidue -Verbose)
+                Assert-FrpEqual $(if ($case -eq 'scratch-only') {1} else {2}) $classified.Count "$case unclaimed classification"
+            }
             $failed = $false
             try { Repair-FrpUnclaimedWindowsCaResidue -AllocatorUrl 'https://example.test/enroll' -CaSha256 $casePin -BootstrapLocator 'fixture' }
             catch {

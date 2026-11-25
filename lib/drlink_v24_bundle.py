@@ -2352,6 +2352,11 @@ def export_configuration_v24(plane: ControlPlane) -> str:
         for obj in plane.list_objects():
             if obj.get("origin") == "managed" or obj["type"] == "managed_endpoint":
                 continue
+            if obj["name"].casefold() == v24.SERVER_SELF_TARGET.casefold():
+                _bundle_error(
+                    "Cannot serialize a legacy Network Object using the reserved Server "
+                    "target name 'server:self'. Resolve that legacy object before export."
+                )
             values = obj.get("values") or []
             if obj["type"] not in type_map or len(values) != 1:
                 _bundle_error(

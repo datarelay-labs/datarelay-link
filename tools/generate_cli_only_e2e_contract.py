@@ -129,8 +129,6 @@ def patch_section(sid: str, text: str) -> str:
         text = text.replace("If ChatGPT must guess hidden syntax", "If an operator must guess hidden syntax")
         text = text.replace("and AI-assisted", "and direct-user")
         text = text.replace("AI-assisted", "direct CLI")
-    elif sid == "U-012":
-        text += "\n**Scope clarification:** Fixed TCP Egress is a claimed distinct outbound listener path (CONTROLLED_EGRESS.md section 17), not a Fixed TCP Remote Service or HTTP CONNECT. If the installed public CLI cannot configure/discover the claimed listener, capture the actual help and outcome and record the missing public surface as a product finding; do not require a hidden command or mark it N/A. Continue the other application paths.\n\n"
     elif sid == "A-004":
         text = text.replace("Internet Access and AI Access reset", "Internet Access reset")
     elif sid == "A-007":

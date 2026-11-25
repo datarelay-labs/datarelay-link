@@ -163,9 +163,9 @@ HTTP CONNECT on this proxy is the HTTPS path: after connection establishment,
 the application must send TLS with the destination identity required by
 section 8. A `200 Connection Established` response is not authorization to send
 arbitrary non-TLS application bytes; an unbound stream is denied. The separate
-Fixed TCP listener described in section 17 uses TCP relay semantics, not HTTP
-CONNECT. A Fixed TCP Remote Service is also a distinct Remote Access endpoint;
-its successful traffic does not qualify the outbound Internet Access listener.
+Fixed TCP listener target described in section 17 would use TCP relay semantics,
+not HTTP CONNECT. A Fixed TCP Remote Service is a current Remote Access endpoint;
+its successful traffic does not qualify a future outbound Internet Access listener.
 
 ## 8. SNI / host binding
 
@@ -274,9 +274,13 @@ Acceptable concept:
 
 Unsafe broad forms such as generic public-suffix-wide authorization are rejected.
 
-## 17. Fixed TCP
+## 17. Fixed TCP outbound listener — unqualified architecture target
 
-Fixed TCP supports approved applications that cannot use HTTP/HTTPS proxy semantics.
+The controlling public product contract (PRODUCT_MASTER.md sections 13 and 28, CLI/AI Master section 9) defines Fixed TCP as a Service Object subtype and allocates its external endpoint when a Remote Service uses that subtype. The public Internet Access surface is the TCP/HTTP/HTTPS CONNECT policy and proxy path. A separately provisioned outbound listener for proxy-unaware applications is an architecture target, not a currently qualified or advertised independent public resource. Internal runtime/legacy CRUD is not a supported provisioning surface. This does not remove or weaken any existing runtime security checks.
+
+If a candidate advertises such an outbound listener or exposes a supported public provisioning journey, U-012 must exercise its actual allowed and denied traffic; absence or failure of a claimed path is a finding. Otherwise record its applicability based on the current public catalog and the governing contract, and exercise the other U-012 paths. Do not use obsolete commands, fabricate listener configuration, or substitute inbound Remote Access traffic.
+
+The intended outbound listener would support approved applications that cannot use HTTP/HTTPS proxy semantics.
 
 It must reuse the same Internet Access authorization authority and may not maintain an independent permissive destination list.
 
@@ -500,4 +504,4 @@ protected host configured with standard proxy settings pointing to Data Relay Li
 
 For APT specifically, qualify a real repository/update workflow using explicitly allowed repository FQDNs. Do not use broad wildcard authorization merely to obtain PASS. Use strict update failure semantics such as `apt-get -o APT::Update::Error-Mode=any update`; if that option is unavailable, explicitly detect any failed required index and count it as FAIL even when APT exits 0. Remove at least one destination actually required by that update path, correlate the failed required index with the Data Relay Link proxy DENY audit, then restore that destination and prove recovery.
 
-Fixed TCP remains the separate solution for proxy-unaware applications and is not a substitute for the HTTP/HTTPS proxy-aware application qualification above.
+The distinct outbound Fixed TCP listener remains an unqualified architecture target for proxy-unaware applications (section 17); it is not an alternative to the mandatory HTTP/HTTPS proxy-aware application qualification above.

@@ -4,7 +4,7 @@
 > **Source:** `docs/FULL_USER_E2E_SCENARIOS.md` (all 116 original IDs and headings preserved in its canonical document).
 > **Product baseline:** v2.4.0 **includes** AI Access and MCP Bridge; they are excluded **only from this test profile**, not removed from the product.
 > **Executor:** current owner-selected runtime (default `CHATGPT_CHAT`); current explicit instruction overrides historical Codex-only text.
-> **Canonical Full User E2E SHA256:** `03377874d008f51422ba4dcee519715707baa1cc2b222fa9e388ae6ac0b8a5bd`
+> **Canonical Full User E2E SHA256:** `331930f40ea4d90d9b98770e47584560b09ac3d2af9229d0232bb566a692ef72`
 > **Generation:** `python3 tools/generate_cli_only_e2e_contract.py --write`; `--check` verifies no source drift.
 > **Safety:** preserve current authorization, exact live platform/tool refusals, other actors, host ownership and management access; never reroute a denied effect.
 > **Candidate:** do not infer installed Source HEAD from a Git checkout; record each installed Server/Agent's provenance.
@@ -510,12 +510,9 @@ In addition to U-006, explicitly exercise every currently supported Internet Acc
 
 For each allowed path include a paired denied path using wrong source, destination, or service. Discover and use the public policy/explain helper (`test internet-access source <SOURCE> destination <DESTINATION> service <SERVICE>`) and then prove the same outcome with the real application client; a passing explain result alone is not traffic evidence.
 
-U-012 inherits the U-006 protected-host proxy hard gate. HTTP/HTTPS coverage must use the protected host's configured proxy path, not only per-command `-x/--proxy` overrides. `curl` coverage does not substitute for applicable `wget`, `git`, or `apt` coverage. Fixed TCP is a separate path for proxy-unaware applications and does not satisfy the HTTP/HTTPS proxy-aware application matrix.
+U-012 inherits the U-006 protected-host proxy hard gate. HTTP/HTTPS coverage must use the protected host's configured proxy path, not only per-command `-x/--proxy` overrides. `curl` coverage does not substitute for applicable `wget`, `git`, or `apt` coverage. A distinct outbound Fixed TCP listener is conditional on an actually supported public journey, as specified by the controlling Product Master and CONTROLLED_EGRESS.md section 17. Capture current public help/catalog evidence and record the applicability disposition. If claimed or supported, real paired traffic is mandatory and a missing public provisioning path is a finding. An unqualified architecture target without a current public claim does not require a hidden command. Neither outbound Fixed TCP nor an inbound Fixed TCP Remote Service substitutes for the HTTP/HTTPS proxy-aware application matrix.
 
 For the package/update workflow, retain evidence of the exact repository FQDNs used, the effective proxy configuration, successful update through Data Relay Link, policy-caused failure after removing a required destination, and successful recovery after restoring it. The final result must include `PROXY_CONFIGURATION_VERIFIED=PASS` and `PROXY_APPLICATION_PATH=PASS`; do not require disabling the host's direct Internet path.
-
-
-**Scope clarification:** Fixed TCP Egress is a claimed distinct outbound listener path (CONTROLLED_EGRESS.md section 17), not a Fixed TCP Remote Service or HTTP CONNECT. If the installed public CLI cannot configure/discover the claimed listener, capture the actual help and outcome and record the missing public surface as a product finding; do not require a hidden command or mark it N/A. Continue the other application paths.
 
 
 ## U-013 — Cross-surface terminology, clarity, and operator-guidance consistency — MANDATORY

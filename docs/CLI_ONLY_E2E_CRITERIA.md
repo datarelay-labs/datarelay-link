@@ -37,7 +37,7 @@ Use the owner-configured test host inventory and actual product actions; no stan
 | U-010.03 | invalid input draft recovery |
 | U-012.01 | HTTP HTTPS and Host CIDR |
 | U-012.02 | vendor API and package workflow |
-| U-012.03 | distinct outbound Fixed TCP |
+| U-012.03 | outbound Fixed TCP public-claim applicability and real paired traffic if applicable |
 | U-012.04 | paired real denial and recovery |
 | U-013.01 | terminology and role surfaces |
 | U-013.02 | navigation and help |
