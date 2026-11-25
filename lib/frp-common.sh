@@ -1769,6 +1769,16 @@ frp_select_compatible_python() {
   # before installer dependency setup. Selection is process-local: no shim or
   # distribution interpreter is changed. Units pin the same durable binary.
   local candidate bin
+  if frp_is_darwin && declare -F frp_macos_managed_python >/dev/null 2>&1 &&
+    { bin="$(frp_macos_managed_python)" || bin="$(frp_macos_existing_python)"; }; then
+    _FRP_COMPAT_PYTHON_BIN="$bin"
+    case ":$PATH:" in
+      *":${bin%/*}:"*) ;;
+      *) export PATH="${bin%/*}:$PATH" ;;
+    esac
+    hash -r 2>/dev/null || true
+    return 0
+  fi
   bin="$(type -P python3 2>/dev/null || true)"
   if [[ -n "$bin" ]] && "$bin" -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 7) else 1)' >/dev/null 2>&1; then
     # PATH may select /usr/local/bin/python3 while systemd's fixed

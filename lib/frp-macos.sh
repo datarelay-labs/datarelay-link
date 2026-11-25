@@ -230,6 +230,33 @@ tmp.chmod(0o644); tmp.replace(out)
 PY
 }
 
+# The Zero-Touch Bootstrap installs this verified relocatable runtime only
+# when no compatible interpreter is available. Use it for every installed
+# execution surface without changing the system Python or shell startup files.
+frp_macos_managed_python() {
+  local root runtime bin marker dir meta owner mode expected_uid=0
+  root="$(frp_macos_fs /etc/frp)"
+  runtime="$root/runtime/python"
+  bin="$runtime/bin/python3"
+  marker="$runtime/.drlink-runtime-sha256"
+  if [[ -n "${FRP_CLIENT_TEST_ROOT:-}${FRP_CTL_TEST_ROOT:-}${FRP_UNINSTALL_TEST_ROOT:-}${FRP_DEPLOY_TEST_ROOT:-}" ]]; then
+    expected_uid="$(id -u)"
+  fi
+  [[ -f "$marker" && -x "$bin" && -L "$bin" ]] || return 1
+  [[ "$(readlink "$bin")" == python3.11 ]] || return 1
+  for dir in "$root" "$root/runtime" "$runtime" "$runtime/bin" "$runtime/bin/python3.11" "$marker"; do
+    [[ -e "$dir" && ! -L "$dir" ]] || return 1
+    meta="$(stat -c '%u %a' "$dir" 2>/dev/null)" ||
+      meta="$(stat -f '%u %Lp' "$dir" 2>/dev/null)" || return 1
+    read -r owner mode <<< "$meta"
+    [[ "$owner" == "$expected_uid" && "$mode" =~ ^[0-7]{3,4}$ ]] || return 1
+    (( (8#$mode & 022) == 0 )) || return 1
+  done
+  [[ "$(cat "$marker")" == e1b27b6f634cf9c01722ebae87be0b08c98a21e5b123edbdf3a0e7bf4b57e0ee ]] || return 1
+  "$bin" -I -c 'import sys,ssl,sqlite3,hashlib; sys.exit(0 if sys.version_info[:3] == (3,11,18) else 1)' >/dev/null 2>&1 || return 1
+  printf '%s' "$bin"
+}
+
 frp_macos_lifecycle_python() {
   local candidate
   if [[ -n "${FRP_MACOS_PYTHON:-}" ]]; then
@@ -241,11 +268,24 @@ frp_macos_lifecycle_python() {
     printf '%s' "$candidate"
     return 0
   fi
+  if candidate="$(frp_macos_managed_python)"; then
+    printf '%s' "$candidate"
+    return 0
+  fi
+  frp_macos_existing_python
+}
+
+frp_macos_existing_python() {
+  local candidate
   # LaunchDaemons must not persist a shell-local virtualenv/pyenv shim. Prefer
   # durable system/Homebrew locations that remain valid after the installer
   # process and its PATH disappear.
   for candidate in /usr/bin/python3 /opt/homebrew/bin/python3 /usr/local/bin/python3; do
-    if [[ -x "$candidate" ]]; then
+    if [[ "$candidate" == /usr/bin/python3 && "$(uname -s)" == Darwin ]] &&
+      ! xcode-select -p >/dev/null 2>&1; then
+      continue
+    fi
+    if [[ -x "$candidate" ]] && "$candidate" -c 'import sys; sys.exit(0 if sys.version_info >= (3,7) else 1)' >/dev/null 2>&1; then
       printf '%s' "$candidate"
       return 0
     fi

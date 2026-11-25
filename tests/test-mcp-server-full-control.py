@@ -292,8 +292,10 @@ class FullControlRuntimeTests(unittest.TestCase):
             state = Path("/proc") / str(child_pid) / "stat"
             try:
                 text = state.read_text()
-            except FileNotFoundError:
-                # Already reaped by init between spawn and read: not running.
+            except (FileNotFoundError, ProcessLookupError):
+                # procfs can return ENOENT at open or ESRCH at read when init
+                # reaps the terminated child concurrently. Both mean the
+                # process is gone; any readable live process still fails.
                 text = None
             if text is not None:
                 self.assertEqual(text.split(") ", 1)[1][0], "Z",

@@ -165,8 +165,11 @@ class CompactZeroTouchContract(unittest.TestCase):
             else:
                 script = zt.render_short_url_bootstrap_script(origin+"/enroll", HASH, None,
                     origin+"/fixture/bootstrap-client.sh", entry_locator="A3xK9m", ca_pem=ca)
-                self.assertLess(script.index("CA fingerprint mismatch"),script.index("curl -fsSL"))
-                self.assertLess(script.index("installer SHA256 mismatch"),script.index('bash "$INSTALLER_FILE"'))
+                # A helper definition is not a download. Check the actual
+                # artifact retrieval and runtime preparation invocation order.
+                self.assertLess(script.index("CA fingerprint mismatch"),script.index('curl -fsSL --proto "=https"'))
+                self.assertLess(script.index("installer SHA256 mismatch"),script.index('\nentry_ensure_python\n'))
+                self.assertLess(script.index('\nentry_ensure_python\n'),script.index('bash "$INSTALLER_FILE"'))
             self.assertIn("FRP_BOOTSTRAP_LOCATOR",script)
             self.assertNotIn("bt1.",script)
             self.assertNotIn(HANDLE,script)
