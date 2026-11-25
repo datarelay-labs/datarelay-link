@@ -81,9 +81,9 @@ Changing a friendly Remote Service hostname alias must not silently change manag
 
 ### Zero-Touch entry readiness
 
-The fixed six-character entry target (not yet installed-product qualified) is `curl -kfsS https://remote.xdr.ooo/A3xK9m|sudo bash` on Linux/macOS, or `iex(curl.exe -kfsS https://remote.xdr.ooo/A3xK9m|Out-String)` in administrator PowerShell on Windows. Public/private HTTPS use the same form; no DataRelay prerequisite. The locator is not an enrollment credential. All subsequent work is handled by Bootstrap. Initial `-k` skips peer certificate authentication; see [the canonical contract](ZERO_TOUCH_REGRESSION_CONTROL.md) for the explicit risk and independent enrollment requirement.
+The fixed eight-character entry target (not yet installed-product qualified) is `curl -kfsS https://remote.xdr.ooo/A3xK9mP2|sudo bash` on Linux/macOS, or `iex(curl.exe -kfsS https://remote.xdr.ooo/A3xK9mP2|Out-String)` in administrator PowerShell on Windows. Public/private HTTPS use the same form; no DataRelay prerequisite. Issuance grants one automatic first-claim registration; share the short command privately. All subsequent work is handled by Bootstrap. Initial `-k` skips peer certificate authentication; see [the canonical contract](ZERO_TOUCH_REGRESSION_CONTROL.md) for the explicit risk and automatic first-claim policy.
 
-Server installation and entry handler reachability are separate. Validate the configured entry authority and exact six-character handler, then downstream installer and enrollment readiness. No public/private certificate-specific customer command or certificate registration requirement. Actual installation and independently authorized enrollment determine success.
+Server installation and entry handler reachability are separate. Validate the configured entry authority and exact eight-character handler, then downstream installer and enrollment readiness. No public/private certificate-specific customer command or certificate registration requirement. Actual installation and automatic first-claim enrollment determine success.
 
 ### Internet Access listener recovery
 
@@ -168,7 +168,7 @@ maximum TTL                   24 hours
 use count                     1
 ```
 
-Enrollment credentials are separate from the six-character Bootstrap filename, remain confidential and are never included in the public entry file. Server persistent state retains verifier/hash plus lifecycle metadata.
+Enrollment credentials are separate from the eight-character Bootstrap filename, remain confidential and are never included in the public entry file. Server persistent state retains verifier/hash plus lifecycle metadata.
 
 For manual enrollment, an Enrollment Code is also a one-time authorization for a fresh enrollment operation. After enrollment succeeds, do not reuse that Code for uninstall/reinstall or a later recovery; create a new Enrollment Code instead. If the original `/enroll` response is lost or the installer is interrupted, the Agent resumes from its protected local pending-enrollment state and replays only the original enrollment operation. This crash-recovery replay does not make the consumed Code valid for a new install.
 

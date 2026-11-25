@@ -4715,11 +4715,6 @@ frpctl_dispatch_canonical() {
       frpctl_system_uninstall
       ;;
     create_zero_touch) frpctl_require_server || return 1; frpctl_guided_zero_touch ;;
-    approve_entry_enrollment)
-      frpctl_require_server || return 1
-      frpctl_invoke frp-enrollments "$(frpctl_json_get "$result" id)" --approve \
-        "$(frpctl_json_get "$result" machine_id)" "$(frpctl_json_get "$result" fingerprint)"
-      ;;
     create_enrollment)
       frpctl_require_server || return 1
       frpctl_load_passthrough "$result"

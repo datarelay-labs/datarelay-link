@@ -7,7 +7,7 @@ if len(sys.argv)!=3:
 output,root=map(Path,sys.argv[1:])
 if root.name not in ("server-tree","live-server") or not (root/"etc/drlink/config.json").is_file():
     raise SystemExit("isolated test Server required")
-match=re.search(r"^curl -kfsS https://[^/\s]+/([A-Za-z0-9_-]{6})\|sudo bash$",output.read_text(),re.M)
+match=re.search(r"^curl -kfsS https://[^/\s]+/([A-Za-z0-9_-]{8})\|sudo bash$",output.read_text(),re.M)
 if not match:
     raise SystemExit("fixed entry missing")
 locator=match.group(1)

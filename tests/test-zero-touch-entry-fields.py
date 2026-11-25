@@ -20,11 +20,11 @@ class EntryFields(unittest.TestCase):
     def test_templates(self):
         for authority in ("remote.xdr.ooo", "192.0.2.20", "192.0.2.20:6099",
                           "private.example:8443"):
-            url = "https://" + authority + "/A3xK9m"
+            url = "https://" + authority + "/A3xK9mP2"
             for os_name in ("linux", "macos"):
-                self.assertEqual(zt.render_entry_command(authority, "A3xK9m", os_name),
+                self.assertEqual(zt.render_entry_command(authority, "A3xK9mP2", os_name),
                                  "curl -kfsS " + url + "|sudo bash")
-            self.assertEqual(zt.render_entry_command(authority, "A3xK9m", "windows"),
+            self.assertEqual(zt.render_entry_command(authority, "A3xK9mP2", "windows"),
                              "iex(curl.exe -kfsS " + url + "|Out-String)")
 
     def test_ipv6_authority_syntax_only(self):
@@ -38,10 +38,10 @@ class EntryFields(unittest.TestCase):
                 zt.entry_authority(value)
 
     def test_locator_not_credential(self):
-        self.assertTrue(zt.is_bootstrap_locator("A3xK9m"))
-        self.assertFalse(zt.accepted_bootstrap_credential("A3xK9m"))
-        self.assertEqual(zt.bootstrap_record_id("A3xK9m"), "")
-        for value in ("", "abcde", "abcdefg", "enroll", "ENROLL", "a/bcde",
+        self.assertTrue(zt.is_bootstrap_locator("A3xK9mP2"))
+        self.assertFalse(zt.accepted_bootstrap_credential("A3xK9mP2"))
+        self.assertEqual(zt.bootstrap_record_id("A3xK9mP2"), "")
+        for value in ("", "abcde", "A3xK9m", "abcdefg", "abcdefghi", "ZT000000", "enroll", "ENROLL", "a/bcde",
                       "abcde?", "x" * 22, " abcde", "abcde\n"):
             with self.subTest(value=value):
                 self.assertFalse(zt.is_bootstrap_locator(value))
@@ -56,12 +56,12 @@ class EntryFields(unittest.TestCase):
                           "host.test|id", "host.test$HOME", "1.2.3.999",
                           "host.test:0443", "host.test.", "-host.test"):
             with self.subTest(authority=authority), self.assertRaises(ValueError):
-                zt.render_entry_command(authority, "A3xK9m", "linux")
+                zt.render_entry_command(authority, "A3xK9mP2", "linux")
 
     def test_platform_selected_at_issuance(self):
         for platform in ("", "auto", "powershell", "LINUX"):
             with self.subTest(platform=platform), self.assertRaises(ValueError):
-                zt.render_entry_command("remote.xdr.ooo", "A3xK9m", platform)
+                zt.render_entry_command("remote.xdr.ooo", "A3xK9mP2", platform)
 
     @unittest.skipUnless(os.name == 'posix' and all(shutil.which(x) for x in
                          ('curl', 'bash', 'openssl')), 'local TLS shell tools unavailable')
@@ -82,8 +82,8 @@ class EntryFields(unittest.TestCase):
                 def do_GET(self):
                     paths.append(self.path)
                     payloads = {
-                        '/A3xK9m': b"printf 'ENTRY_BASH_OK\n'\n",
-                        '/W3xK9m': b"Write-Output 'ENTRY_PWSH_OK'\n",
+                        '/A3xK9mP2': b"printf 'ENTRY_BASH_OK\n'\n",
+                        '/W3xK9mP2': b"Write-Output 'ENTRY_PWSH_OK'\n",
                     }
                     body = payloads.get(self.path)
                     if body is None:
@@ -107,26 +107,26 @@ class EntryFields(unittest.TestCase):
             authority = '127.0.0.1:%d' % server.server_port
             try:
                 for os_name in ('linux', 'macos'):
-                    cmd = zt.render_entry_command(authority, 'A3xK9m', os_name)
+                    cmd = zt.render_entry_command(authority, 'A3xK9mP2', os_name)
                     result = subprocess.run(['bash', '-c', cmd], env=env,
                                             capture_output=True, text=True, timeout=10)
                     self.assertEqual(result.returncode, 0, result.stderr)
                     self.assertEqual(result.stdout.strip(), 'ENTRY_BASH_OK')
-                self.assertEqual(paths, ['/A3xK9m', '/A3xK9m'])
-                cmd = zt.render_entry_command(authority, 'BAD999', 'linux')
+                self.assertEqual(paths, ['/A3xK9mP2', '/A3xK9mP2'])
+                cmd = zt.render_entry_command(authority, 'BAD99999', 'linux')
                 result = subprocess.run(['bash', '-c', cmd], env=env,
                                         capture_output=True, text=True, timeout=10)
                 self.assertNotIn('ENTRY_BASH_OK', result.stdout)
                 self.assertIn('404', result.stderr)
                 # Pipeline exit alone is not evidence of installation.
                 if shutil.which('pwsh'):
-                    cmd = zt.render_entry_command(authority, 'W3xK9m', 'windows')
+                    cmd = zt.render_entry_command(authority, 'W3xK9mP2', 'windows')
                     result = subprocess.run(['pwsh', '-NoProfile', '-NonInteractive',
                                              '-Command', cmd], env=env,
                                             capture_output=True, text=True, timeout=15)
                     self.assertEqual(result.returncode, 0, result.stderr)
                     self.assertEqual(result.stdout.strip(), 'ENTRY_PWSH_OK')
-                    self.assertEqual(paths[-1], '/W3xK9m')
+                    self.assertEqual(paths[-1], '/W3xK9mP2')
                     print('LOOPBACK_LINUX_PWSH=PASS')
                 else:
                     print('LOOPBACK_LINUX_PWSH=NOT_RUN')
@@ -220,8 +220,8 @@ echo MACOS_MANAGED_RUNTIME_NATIVE=PASS
             print(run.stdout.strip())
 
     def test_candidate_generation_skips_reserved(self):
-        with patch.object(zt.secrets, "choice", side_effect=list("enrollA3xK9m")):
-            self.assertEqual(zt.new_bootstrap_locator(), "A3xK9m")
+        with patch.object(zt.secrets, "choice", side_effect=list("zt000000A3xK9mP2")):
+            self.assertEqual(zt.new_bootstrap_locator(), "A3xK9mP2")
         self.assertTrue(all(zt.is_bootstrap_locator(zt.new_bootstrap_locator())
                             for _ in range(100)))
 

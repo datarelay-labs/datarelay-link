@@ -25,13 +25,13 @@ root=Path(sys.argv[1])
 PY
 export FRP_DEPLOY_TEST_ROOT="$TREE"
 python3 "$ROOT/tools/frp-create-client" --one-line --client-name pending-a >"$WORK/create.out"
-TICKET="$(sed -nE 's~^curl -kfsS https://[^/]+/([A-Za-z0-9_-]{6})\|sudo bash$~\1~p' "$WORK/create.out")"
+TICKET="$(sed -nE 's~^curl -kfsS https://[^/]+/([A-Za-z0-9_-]{8})\|sudo bash$~\1~p' "$WORK/create.out")"
 ID="$(awk '/^Enrollment ID:/{print $3;exit}' "$WORK/create.out")"
 python3 - "$TICKET" "$ID" "$TREE/var/lib/drlink/bootstrap" <<'PYINDEX'
 import hashlib,json,sys,re
 from pathlib import Path
 locator,tid,root=sys.argv[1:]
-assert re.fullmatch(r'[A-Za-z0-9_-]{6}',locator)
+assert re.fullmatch(r'[A-Za-z0-9_-]{8}',locator)
 digest=hashlib.sha256(locator.encode()).hexdigest()
 index=json.loads((Path(root)/'entry-locators'/(digest+'.json')).read_text())
 assert index['ticket_id']==tid

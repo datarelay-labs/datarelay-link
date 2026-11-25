@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Independent entry authorization: isolated allocator, real P-256 signatures."""
+"""Automatic first-claim enrollment: isolated allocator, real P-256 signatures."""
 import importlib.util
 import json
 import hashlib
@@ -50,7 +50,7 @@ class EntryApproval(unittest.TestCase):
                    "timestamp": int(time.time())}
         payload["signature"] = MOD.MGMT.sign_message(
             key, MOD.ZT.entry_claim_message("request", payload))
-        return self.a.request_entry_approval(payload)
+        return self.a.request_entry_registration(payload)
 
     def redeem(self, challenge, key=None, pub=None, machine="machine-a"):
         key = key or self.key
@@ -60,9 +60,9 @@ class EntryApproval(unittest.TestCase):
                    "timestamp": int(time.time())}
         payload["signature"] = MOD.MGMT.sign_message(
             key, MOD.ZT.entry_claim_message("redeem", payload))
-        return self.a.redeem_entry_approval(payload)
+        return self.a.redeem_entry_registration(payload)
 
-    def test_real_https_route_cli_approval_and_verified_stage(self):
+    def test_real_https_route_automatic_registration_and_verified_stage(self):
         import frp_pki
         pki = frp_pki.ensure_pki(self.env.root / "pki", "127.0.0.1")
         # The real allocator serves entry + authorization. A harmless fixture
@@ -104,7 +104,7 @@ class EntryApproval(unittest.TestCase):
                     return resp.status, resp.read()
             except urllib.error.HTTPError as exc:
                 return exc.code, exc.read()
-        self.assertEqual(call("/ZT0000")[0], 404)
+        self.assertEqual(call("/ZT000000")[0], 404)
         self.assertEqual(call("/" + self.locator + "?platform=windows")[0], 404)
         status, script = call("/" + self.locator)
         self.assertEqual(status, 200, script)
@@ -126,7 +126,7 @@ class EntryApproval(unittest.TestCase):
         status, response = call("/bootstrap/entry/request", claim)
         self.assertEqual(status, 200, response)
         pending = json.loads(response)
-        self.assertEqual(pending["status"], "pending")
+        self.assertEqual(pending["status"], "approved")
         config_path = self.env.root / "etc/drlink/config.json"
         config_path.parent.mkdir(parents=True)
         config_path.write_text(json.dumps(cfg))
@@ -135,9 +135,6 @@ class EntryApproval(unittest.TestCase):
         detail = subprocess.run(args, env=env, capture_output=True, text=True, timeout=10)
         self.assertEqual(detail.returncode, 0, detail.stderr)
         self.assertIn(self.fp, detail.stdout)
-        approved = subprocess.run(args + ["--approve","machine-a",self.fp],
-                                  env=env, capture_output=True, text=True, timeout=10)
-        self.assertEqual(approved.returncode, 0, approved.stderr)
         claim["nonce"] = pending["challenge"]
         claim["signature"] = MOD.MGMT.sign_message(self.key, MOD.ZT.entry_claim_message("redeem", claim))
         status, response = call("/bootstrap/entry/redeem", claim)
@@ -156,16 +153,15 @@ class EntryApproval(unittest.TestCase):
                 env=env, capture_output=True, text=True, timeout=15)
             self.assertEqual(result.returncode, 0, result.stderr)
             pattern = (r"iex\(curl\.exe -kfsS https://" + re.escape(host) +
-                       r"/([A-Za-z0-9_-]{6})\|Out-String\)" if platform == "windows" else
+                       r"/([A-Za-z0-9_-]{8})\|Out-String\)" if platform == "windows" else
                        r"curl -kfsS https://" + re.escape(host) +
-                       r"/([A-Za-z0-9_-]{6})\|sudo bash")
+                       r"/([A-Za-z0-9_-]{8})\|sudo bash")
             commands = [line for line in result.stdout.splitlines() if re.fullmatch(pattern,line)]
             self.assertEqual(len(commands), 1, result.stdout)
             self.assertNotIn("bt1.", result.stdout)
             self.assertNotIn("/i/", result.stdout)
             locator = re.fullmatch(pattern,commands[0]).group(1)
             self.assertEqual(self.a._entry_active_ticket(locator)[0]["entry_approval"]["platform"],platform)
-        self.assertIn("enrollment.entry.approved", (self.env.root/"audit.jsonl").read_text())
         # Windows entry is selected by issuance rather than query/user agent.
         _, _, win = self.a.issue_bootstrap_ticket(self.env.ssh_services(), 600, entry_platform="windows")
         status, script = call("/" + win["_entry_locator"])
@@ -181,9 +177,9 @@ class EntryApproval(unittest.TestCase):
                                 capture_output=True,text=True,timeout=30)
         self.assertEqual(result.returncode,0,result.stderr)
         claim=json.loads(result.stdout)
-        status,pending=self.a.request_entry_approval(claim)
+        status,pending=self.a.request_entry_registration(claim)
         self.assertEqual(status,200,pending)
-        self.assertEqual(pending["status"],"pending")
+        self.assertEqual(pending["status"],"approved")
         self.assertNotIn("enrollment_code",pending)
 
     def test_linux_agent_claim_and_retry_key(self):
@@ -200,17 +196,17 @@ frp_entry_claim_payload request "$TEST_LOCATOR" machine-a host-a '' "$TEST_CLAIM
         first = subprocess.run(["bash","-c",script],cwd=ROOT,env=env,capture_output=True,text=True,timeout=15)
         self.assertEqual(first.returncode,0,first.stderr)
         claim=json.loads(claim_path.read_text())
-        status,pending=self.a.request_entry_approval(claim)
+        status,pending=self.a.request_entry_registration(claim)
         self.assertEqual(status,200,pending)
         self.assertEqual(pending["fingerprint"],self.fp)
         self.assertEqual(claim_path.stat().st_mode & 0o777,0o600)
-        self.assertEqual(self.a.approve_entry_request(self.ticket["id"],"machine-a",self.fp)[0],200)
+        self.assertEqual(pending["status"], "approved")
         # The same on-disk key, not a newly generated identity, signs redemption.
         redeem_script=script.replace("request", "redeem").replace("host-a ''", 'host-a "$TEST_CHALLENGE"')
         env["TEST_CHALLENGE"]=pending["challenge"]
         again=subprocess.run(["bash","-c",redeem_script],cwd=ROOT,env=env,capture_output=True,text=True,timeout=15)
         self.assertEqual(again.returncode,0,again.stderr)
-        status,result=self.a.redeem_entry_approval(json.loads(claim_path.read_text()))
+        status,result=self.a.redeem_entry_registration(json.loads(claim_path.read_text()))
         self.assertEqual(status,200,result)
         self.assertEqual(result["enrollment_code"],self.enrollment["id"]+"."+self.enrollment["secret"])
 
@@ -230,7 +226,7 @@ frp_entry_claim_payload request "$TEST_LOCATOR" machine-a host-a '' "$TEST_CLAIM
         record,path=self.a.load_enrollment(self.enrollment["id"])
         record["revoked_at"]=MOD.utc_now_iso()
         MOD.atomic_write_json(path,record,mode=0o600)
-        self.assertEqual(self.a.approve_entry_request(self.ticket["id"],"machine-a",self.fp)[0],403)
+        self.assertEqual(self.request()[0],403)
         ticket,path=self.a.load_bootstrap(self.ticket["id"])
         ticket["expires_at"]=int(time.time())-1
         self.a.save_bootstrap(path,ticket)
@@ -279,21 +275,9 @@ frp_entry_claim_payload request "$TEST_LOCATOR" machine-a host-a '' "$TEST_CLAIM
             proc=subprocess.Popen(["bash",str(ROOT/"install-client.sh")],cwd=ROOT,
                                   env=first_env,stdin=subprocess.DEVNULL,stdout=log,stderr=log)
             try:
-                deadline=time.monotonic()+25
-                approved=False
-                while proc.poll() is None and time.monotonic()<deadline:
-                    pub=client/"etc/frp/client-identity.pub"
-                    if pub.is_file():
-                        fp=MOD.MGMT.pubkey_fingerprint(pub.read_text())
-                        record,_=self.a.load_bootstrap(ticket["id"])
-                        if fp in record["entry_approval"]["candidates"]:
-                            self.assertEqual(self.a.approve_entry_request(ticket["id"],machine,fp)[0],200)
-                            approved=True
-                            break
-                    time.sleep(.1)
                 proc.wait(timeout=35)
                 log.seek(0); output=log.read()
-                self.assertTrue(approved, output)
+                self.assertNotIn("Waiting for the Server operator", output)
                 self.assertIn("simulated crash after enrollment commit",output)
                 self.assertNotEqual(proc.returncode,0,output)
             finally:
@@ -358,23 +342,11 @@ exit $rc
             proc=subprocess.Popen(["pwsh","-NoProfile","-NonInteractive","-Command",ps],cwd=ROOT,
                                   env=env,stdin=subprocess.DEVNULL,stdout=log,stderr=log)
             try:
-                deadline=time.monotonic()+30
-                approved=False
-                while proc.poll() is None and time.monotonic()<deadline:
-                    pub=client/"state/client-identity.pub"
-                    mid=client/"state/client-id"
-                    if pub.is_file() and mid.is_file():
-                        fp=MOD.MGMT.pubkey_fingerprint(pub.read_text())
-                        machine=mid.read_text().strip()
-                        record,_=self.a.load_bootstrap(ticket["id"])
-                        if fp in record["entry_approval"]["candidates"]:
-                            self.assertEqual(self.a.approve_entry_request(ticket["id"],machine,fp)[0],200)
-                            approved=True
-                            break
-                    time.sleep(.1)
                 proc.wait(timeout=40)
-                log.seek(0);output=log.read()
-                self.assertTrue(approved,output)
+                log.seek(0); output=log.read()
+                self.assertNotIn("Waiting for the Server operator", output)
+                machine=(client/"state/client-id").read_text().strip()
+                fp=MOD.MGMT.pubkey_fingerprint((client/"state/client-identity.pub").read_text())
                 self.assertEqual(proc.returncode,0,output)
             finally:
                 if proc.poll() is None:
@@ -400,22 +372,55 @@ exit $rc
             self.assertNotIn(self.locator,json.dumps(redacted))
         self.assertIn("/enroll",frp_doctor.redact("https://remote.example/enroll"))
 
-    def test_approval_and_possession_required(self):
-        code, pending = self.request()
-        self.assertEqual(code, 200, pending)
-        self.assertEqual(pending["status"], "pending")
-        self.assertNotIn("enrollment_code", pending)
-        self.assertEqual(self.redeem(pending["challenge"])[0], 403)
-        self.assertEqual(self.a.approve_entry_request(self.ticket["id"], "machine-a", self.fp)[0], 200)
-        self.assertEqual(self.redeem(pending["challenge"], key=self.other_key)[0], 403)
-        code, result = self.redeem(pending["challenge"])
-        self.assertEqual(code, 200, result)
-        self.assertEqual(result["enrollment_code"], self.enrollment["id"] + "." + self.enrollment["secret"])
-        self.assertEqual(self.redeem(pending["challenge"])[0], 403)
-        code, again = self.request()
-        self.assertEqual(code, 200)
-        self.assertEqual(again["status"], "approved")
-        self.assertEqual(self.redeem(again["challenge"])[0], 200)
+    def make_legacy(self):
+        record, path = self.a.load_bootstrap(self.ticket["id"])
+        record["entry_approval"].pop("authorization", None)
+        self.a.save_bootstrap(path, record)
+
+    def test_legacy_ticket_not_automatically_promoted(self):
+        self.make_legacy()
+        self.assertEqual(self.request()[0], 403)
+
+    def test_automatic_first_claim_no_operator(self):
+        status, first = self.request()
+        self.assertEqual(status, 200, first)
+        self.assertEqual(first["status"], "approved")
+        self.assertNotIn("enrollment_code", first)
+        self.assertEqual(self.request(self.other_key, self.other_pub, "machine-b")[0], 403)
+        self.assertEqual(self.redeem(first["challenge"], self.other_key, self.other_pub, "machine-b")[0], 403)
+        status, redeemed = self.redeem(first["challenge"])
+        self.assertEqual(status, 200, redeemed)
+        self.assertEqual(redeemed["enrollment_code"], self.enrollment["id"] + "." + self.enrollment["secret"])
+        self.assertEqual(self.redeem(first["challenge"])[0], 403)
+        status, retry = self.request()
+        self.assertEqual(status, 200, retry)
+        self.assertEqual(self.redeem(retry["challenge"])[0], 200)
+
+    def test_existing_machine_key_cannot_be_replaced(self):
+        # Establish an existing enrolled identity through the actual protocol.
+        status, first = self.request(self.other_key, self.other_pub, "machine-a")
+        self.assertEqual(status, 200)
+        self.assertEqual(self.redeem(first["challenge"], self.other_key, self.other_pub, "machine-a")[0], 200)
+        eid, secret = self.enrollment["id"], self.enrollment["secret"]
+        payload = {"machine_id":"machine-a","hostname":"host-a","services":self.env.ssh_services(),
+                   "mgmt_pubkey":self.other_pub,"mgmt_alg":MOD.MGMT.MGMT_ALG,
+                   "operation_id":"b"*32}
+        raw = json.dumps(payload, separators=(",",":")).encode()
+        ts = str(int(time.time()))
+        headers = {"X-Entry-Key-Proof": MOD.MGMT.sign_message(self.other_key, MOD.ZT.entry_enroll_message(eid, ts, raw))}
+        status, result = self.a.enroll(eid, ts, MOD.hmac_hex(secret, ts + "\n" + raw.decode()), raw, headers=headers)
+        self.assertEqual(status, 200, result)
+        _, _, ticket = self.a.issue_bootstrap_ticket([], 600, entry_platform="linux")
+        self.locator = ticket["_entry_locator"]
+        self.assertEqual(self.request()[0], 403)
+        self.assertEqual(self.request(self.other_key, self.other_pub, "machine-a")[0], 200)
+
+    def test_concurrent_claim_has_one_winner(self):
+        from concurrent.futures import ThreadPoolExecutor
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            a = pool.submit(self.request)
+            b = pool.submit(self.request, self.other_key, self.other_pub, "machine-b")
+            self.assertEqual(sorted([a.result()[0], b.result()[0]]), [200, 403])
 
     def test_locator_and_retired_handle_cannot_redeem(self):
         self.assertIsNone(self.raw)
@@ -430,18 +435,10 @@ exit $rc
             body=json.dumps({"ticket":credential,"machine_id":"machine-a","hostname":"host-a"}).encode()
             self.assertEqual(self.a.redeem_bootstrap(body)[0],403)
 
-    def test_approval_is_exact_key_and_machine(self):
-        self.assertEqual(self.request()[0], 200)
-        self.assertEqual(self.request(self.other_key, self.other_pub, "machine-b")[0], 200)
-        self.assertEqual(self.a.approve_entry_request(self.ticket["id"], "machine-a", self.other_fp)[0], 403)
-        self.assertEqual(self.a.approve_entry_request(self.ticket["id"], "machine-a", self.fp)[0], 200)
-        self.assertEqual(self.a.approve_entry_request(self.ticket["id"], "machine-b", self.other_fp)[0], 403)
-        self.assertEqual(self.request(self.other_key, self.other_pub, "machine-b")[0], 403)
-
     def test_enroll_requires_approved_key_and_signed_body(self):
         code, pending = self.request()
         self.assertEqual(code, 200)
-        self.assertEqual(self.a.approve_entry_request(self.ticket["id"], "machine-a", self.fp)[0], 200)
+        self.assertEqual(pending["status"], "approved")
         self.assertEqual(self.redeem(pending["challenge"])[0], 200)
         eid, secret = self.enrollment["id"], self.enrollment["secret"]
         payload = {"machine_id":"machine-a","hostname":"host-a","services":self.env.ssh_services(),
@@ -470,7 +467,7 @@ exit $rc
         record, path = self.a.load_bootstrap(self.ticket["id"])
         record["revoked_at"] = MOD.utc_now_iso()
         self.a.save_bootstrap(path, record)
-        self.assertEqual(self.a.approve_entry_request(self.ticket["id"], "machine-a", self.fp)[0], 403)
+        self.assertEqual(self.request()[0],403)
         self.assertEqual(self.redeem(pending["challenge"])[0], 403)
 
 

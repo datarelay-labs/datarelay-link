@@ -482,7 +482,7 @@ import re, sys
 text = open(sys.argv[1], encoding="utf-8").read()
 # Only the fixed owner-approved entry fields.
 commands = [line for line in text.splitlines()
-            if re.fullmatch(r"curl -kfsS https://[^/\s]+/[A-Za-z0-9_-]{6}\|sudo bash",line)]
+            if re.fullmatch(r"curl -kfsS https://[^/\s]+/[A-Za-z0-9_-]{8}\|sudo bash",line)]
 if len(commands) != 1:
     raise SystemExit("missing or ambiguous current Zero-Touch command")
 open(sys.argv[2], "w", encoding="utf-8").write(commands[0] + "\n")

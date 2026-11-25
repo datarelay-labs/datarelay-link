@@ -1345,11 +1345,11 @@ def _allocate_and_persist_bootstrap_ticket_pair(
         )
         locator_path = None
         if entry_platform is not None:
-            # Only the root locator and independent approval are created.
+            # Issuance authorizes one first-claim Agent for the scoped enrollment.
             locator = claim_entry_locator(bootstrap_dir, ticket_record['id'],
                                           entry_platform, ticket_record['expires_at'])
             locator_path = entry_locator_index_path(bootstrap_dir, locator)
-            ticket_record['entry_approval'] = {'platform': entry_platform, 'candidates': {}}
+            ticket_record['entry_approval'] = {'platform': entry_platform, 'authorization': 'first-claim', 'candidates': {}}
             ticket_record['entry_locator_hash'] = hashlib.sha256(locator.encode('ascii')).hexdigest()
             ticket_record['_entry_locator'] = locator
             enroll_record['entry_ticket_id'] = ticket_record['id']
@@ -2452,7 +2452,8 @@ class Allocator:
                 type(record.get('expires_at')) is not int or record['expires_at'] <= int(time.time())):
             return None, None
         approval = record.get('entry_approval')
-        if (not isinstance(approval, dict) or approval.get('platform') != idx['platform'] or
+        if (not isinstance(approval, dict) or approval.get('authorization') != 'first-claim' or
+                approval.get('platform') != idx['platform'] or
                 record.get('expires_at') != idx['expires_at'] or
                 record.get('entry_locator_hash') != hashlib.sha256(locator.encode('ascii')).hexdigest()):
             return None, None
@@ -2483,8 +2484,8 @@ class Allocator:
             raise ValueError('invalid claim proof')
         return machine, hostname, pem, MGMT.pubkey_fingerprint(pem)
 
-    def request_entry_approval(self, payload):
-        """Queue a proof-of-possession candidate, not a registration credential."""
+    def request_entry_registration(self, payload):
+        """Bind an issued one-time enrollment to the first signed Agent claim."""
         try:
             machine, hostname, pem, fingerprint = self._entry_claim_identity('request', payload)
             with LOCK:
@@ -2495,6 +2496,15 @@ class Allocator:
                     approval = record['entry_approval']
                     candidates = approval.get('candidates')
                     if not isinstance(candidates, dict):
+                        return self._invalid_ticket_response()
+                    enrollment, _ = self.load_enrollment(record.get('enrollment_id'))
+                    if (not isinstance(enrollment, dict) or enrollment.get('entry_ticket_id') != record.get('id') or
+                            enrollment.get('revoked_at') or enrollment.get('used_at') or
+                            type(enrollment.get('expires_at')) is not int or enrollment['expires_at'] <= int(time.time())):
+                        return self._invalid_ticket_response()
+                    registered = self.load_registry().get('clients', {}).get(machine)
+                    if registered and (registered.get('mgmt_status') == 'revoked' or
+                                       registered.get('mgmt_fingerprint') != fingerprint):
                         return self._invalid_ticket_response()
                     approved = approval.get('approved')
                     if approved is not None and (not isinstance(approved, dict) or
@@ -2507,62 +2517,27 @@ class Allocator:
                                 existing.get('public_key') != pem):
                             return self._invalid_ticket_response()
                     else:
-                        if len(candidates) >= 4:
-                            return 429, api_error('pending approval capacity reached', 'BOOTSTRAP_APPROVAL_CAPACITY')
+                        if candidates:
+                            return self._invalid_ticket_response()
                         existing = {'machine_id': machine, 'hostname': hostname, 'public_key': pem,
                                     'challenge': secrets.token_hex(32)}
                         candidates[fingerprint] = existing
-                        self.save_bootstrap(path, record)
                     challenge = existing.get('challenge')
                     if not isinstance(challenge, str) or not NONCE_RE.fullmatch(challenge):
                         return self._invalid_ticket_response()
-                    return 200, {'status': 'approved' if approved else 'pending',
+                    if approved is None:
+                        approved = {'machine_id': machine, 'fingerprint': fingerprint}
+                        approval['approved'] = approved
+                        approval['candidates'] = {fingerprint: existing}
+                    self.save_bootstrap(path, record)
+                    return 200, {'status': 'approved',
                                  'fingerprint': fingerprint, 'challenge': challenge}
         except (ValueError, TypeError, KeyError, RuntimeError):
             return self._invalid_ticket_response()
         except OSError:
-            return 500, api_error('approval state unavailable', 'SERVER_MUTATION_FAILED')
+            return 500, api_error('registration state unavailable', 'SERVER_MUTATION_FAILED')
 
-    def approve_entry_request(self, ticket_id, machine_id, fingerprint):
-        """Trusted local operator boundary: approve one independently verified key."""
-        if not isinstance(fingerprint, str) or not re.fullmatch(r'[0-9a-f]{64}', fingerprint):
-            return self._invalid_ticket_response()
-        with LOCK:
-            with self.registry_lock():
-                record, path = self.load_bootstrap(ticket_id)
-                if (not isinstance(record, dict) or record.get('revoked_at') or record.get('completed_at') or
-                        type(record.get('expires_at')) is not int or record['expires_at'] <= int(time.time())):
-                    return self._invalid_ticket_response()
-                enrollment, _ = self.load_enrollment(record.get('enrollment_id'))
-                if (not isinstance(enrollment, dict) or enrollment.get('entry_ticket_id') != record.get('id') or
-                        enrollment.get('revoked_at') or enrollment.get('used_at') or
-                        type(enrollment.get('expires_at')) is not int or enrollment['expires_at'] <= int(time.time())):
-                    return self._invalid_ticket_response()
-                approval = record.get('entry_approval')
-                if not isinstance(approval, dict) or not isinstance(approval.get('candidates'), dict):
-                    return self._invalid_ticket_response()
-                candidate = approval['candidates'].get(fingerprint)
-                if not isinstance(candidate, dict) or candidate.get('machine_id') != machine_id:
-                    return self._invalid_ticket_response()
-                try:
-                    if MGMT.pubkey_fingerprint(candidate['public_key']) != fingerprint:
-                        return self._invalid_ticket_response()
-                except Exception:
-                    return self._invalid_ticket_response()
-                selected = {'machine_id': machine_id, 'fingerprint': fingerprint}
-                if approval.get('approved') is not None and approval['approved'] != selected:
-                    return self._invalid_ticket_response()
-                # A new locator cannot replace a previously registered key.
-                existing = self.load_registry().get('clients', {}).get(machine_id)
-                if existing:
-                    if existing.get('mgmt_status') == 'revoked' or existing.get('mgmt_fingerprint') != fingerprint:
-                        return self._invalid_ticket_response()
-                approval['approved'] = selected
-                approval['candidates'] = {fingerprint: candidate}
-                self.save_bootstrap(path, record)
-                return 200, {'status': 'approved', 'fingerprint': fingerprint}
-
-    def redeem_entry_approval(self, payload):
+    def redeem_entry_registration(self, payload):
         """Release the scoped Enrollment Code only after approval + fresh proof."""
         try:
             machine, _hostname, pem, fingerprint = self._entry_claim_identity('redeem', payload)
@@ -2597,7 +2572,7 @@ class Allocator:
         except (ValueError, TypeError, KeyError, RuntimeError, AttributeError):
             return self._invalid_ticket_response()
         except OSError:
-            return 500, api_error('approval state unavailable', 'SERVER_MUTATION_FAILED')
+            return 500, api_error('registration state unavailable', 'SERVER_MUTATION_FAILED')
 
     def _entry_enrollment_proof(self, record, payload, timestamp, body, headers):
         if 'entry_ticket_id' not in record:
@@ -4208,11 +4183,11 @@ def make_handler(allocator):
                         source = CREG.request_source_ip(self.client_address[0], self.headers)
                         if self.path != path or allocator.entry_rate_limited(source):
                             self._send_bootstrap_headers(429, 'application/json',
-                                json.dumps(api_error('bootstrap unavailable', 'BOOTSTRAP_APPROVAL_CAPACITY')))
+                                json.dumps(api_error('bootstrap unavailable', 'BOOTSTRAP_RATE_LIMIT')))
                             return
                         payload = json.loads(body.decode('utf-8'))
-                        handler = (allocator.request_entry_approval if path.endswith('/request')
-                                   else allocator.redeem_entry_approval)
+                        handler = (allocator.request_entry_registration if path.endswith('/request')
+                                   else allocator.redeem_entry_registration)
                         code, result = handler(payload)
                         self._send_bootstrap_headers(code, 'application/json', json.dumps(result))
                         return

@@ -282,7 +282,7 @@ CHATGPT_OWNER_UI_ALLOW_DENY=
 - [ ] each ticket is unique/single-use and consumed atomically.
 - [ ] default TTL = 1 hour; max TTL = 24 hours.
 - [ ] Linux/macOS/Windows generated entry follows the canonical command fields and public/private HTTPS parity; retry preserves the enrolled identity.
-- [ ] six-character Bootstrap filename is distinct from confidential enrollment credentials; server retains verifier/hash and lifecycle metadata.
+- [ ] eight-character Bootstrap filename is distinct from confidential enrollment credentials; server retains verifier/hash and lifecycle metadata.
 - [ ] expired/revoked tickets release capacity without disconnecting enrolled clients.
 - [ ] YAML/CLI/API cannot override server ticket ceilings.
 

@@ -66,7 +66,7 @@ for line in payloads:
     assert "'22'" in line, line
     assert '$TUNNEL_SSH_USER' not in line, line
 assert 'commands = [line for line in text.splitlines()' in text
-assert 're.fullmatch(r"curl -kfsS https://[^/\\s]+/[A-Za-z0-9_-]{6}\\|sudo bash",line)' in text
+assert 're.fullmatch(r"curl -kfsS https://[^/\\s]+/[A-Za-z0-9_-]{8}\\|sudo bash",line)' in text
 assert "line.startswith('(drlink_bootstrap=$(curl -fsSL https://')" not in text
 PYUNIT
 pass "CANONICAL_INSTALLER_AND_ZERO_TOUCH"
@@ -159,8 +159,8 @@ pass "SERVER_INSTALLER_URL_SINGLE_CANONICAL_PATH"
 drift=0
 drift_fail() { echo "FAIL drift: $1" >&2; drift=1; }
 
-# 1) IP and FQDN use the same fixed six-character entry; no legacy fallback.
-grep -qF 'curl -kfsS https://[^/\s]+/[A-Za-z0-9_-]{6}\|sudo bash' "$E2E" \
+# 1) IP and FQDN use the same fixed eight-character entry; no legacy fallback.
+grep -qF 'curl -kfsS https://[^/\s]+/[A-Za-z0-9_-]{8}\|sudo bash' "$E2E" \
   || drift_fail "zero-touch command matcher rejects the fixed entry"
 
 # 2) The Agent keys the Remote Service as rs-ssh in client-state.json.

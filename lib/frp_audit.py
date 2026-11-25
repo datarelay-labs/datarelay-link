@@ -35,7 +35,7 @@ SECRET_VALUE_RE = re.compile(
 
 def _redact_short_url_paths(text):
     text = re.sub(r'(/i/)[^/?\s#]+', r'\1<redacted>', str(text), flags=re.IGNORECASE)
-    text = re.sub('((?:https://[^/\\s]+|GET |HEAD )/)([A-Za-z0-9_-]{6})(?=[?\\s\\"\\\'#$|)]|$)', lambda m: m.group(1)+'<redacted>' if m.group(2).lower() not in ('enroll','zt0000') else m.group(0), text)
+    text = re.sub('((?:https://[^/\\s]+|GET |HEAD )/)([A-Za-z0-9_-]{6,8})(?=[?\\s\\"\\\'#$|)]|$)', lambda m: m.group(1)+'<redacted>' if m.group(2).lower() not in ('enroll','zt0000','zt000000','healthz') else m.group(0), text)
     return re.sub(
         r'(FRP_BOOTSTRAP_(?:TICKET|LOCATOR)\s*=\s*)\S+',
         r'\1<redacted>',

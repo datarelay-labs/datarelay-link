@@ -154,7 +154,7 @@ pass "CREATE_CLIENT_HELP"
 
 "$CREATE" --one-line --client-name inventory-only >"$WORKDIR/nosvc.out" 2>"$WORKDIR/nosvc.err"
 # Default fixed entry, identical for numeric IP and FQDN.
-grep -Eq '^curl -kfsS https://203\.0\.113\.10:9443/[A-Za-z0-9_-]{6}\|sudo bash$' "$WORKDIR/nosvc.out" || fail "fixed IP command"
+grep -Eq '^curl -kfsS https://203\.0\.113\.10:9443/[A-Za-z0-9_-]{8}\|sudo bash$' "$WORKDIR/nosvc.out" || fail "fixed IP command"
 ! grep -q 'zt1\.' "$WORKDIR/nosvc.out" || fail "default regressed to long package"
 grep -q 'no service or public port' "$WORKDIR/nosvc.out" || fail "management-only explanation"
 # Legacy env marker is no longer required; profile is server-side.
@@ -237,7 +237,7 @@ FRP_DEPLOY_TEST_ROOT="$TREE" python3 "$CREATE" --one-line --ssh --note client-01
 nontty_rc=$?
 set -e
 [[ "$nontty_rc" -eq 0 ]] || fail "non-TTY --one-line --ssh without --ssh-user should succeed"
-grep -Eq '^curl -kfsS https://[^/]+/[A-Za-z0-9_-]{6}\|sudo bash$' "$WORKDIR/nontty.out" || fail "non-TTY missing install command"
+grep -Eq '^curl -kfsS https://[^/]+/[A-Za-z0-9_-]{8}\|sudo bash$' "$WORKDIR/nontty.out" || fail "non-TTY missing install command"
 if grep -qE 'SSH user[[:space:]]*:[[:space:]]*(ubuntu|root|stellar)\b' "$WORKDIR/nontty.out"; then
   fail "non-TTY invented an SSH username"
 fi
@@ -282,7 +282,7 @@ grep -q 'Managed Host name : seoul-groupware' "$WORKDIR/prompt.out" || fail "con
 ! grep -q 'Optional SSH login hint' "$WORKDIR/prompt.out" \
   || fail "blank username invented an SSH login hint"
 grep -qE 'Target[[:space:]]*:[[:space:]]*127.0.0.1:22' "$WORKDIR/prompt.out" || fail "confirmation target"
-grep -Eq '^curl -kfsS https://[^/]+/[A-Za-z0-9_-]{6}\|sudo bash$' "$WORKDIR/prompt.out" || fail "generated command missing install launcher"
+grep -Eq '^curl -kfsS https://[^/]+/[A-Za-z0-9_-]{8}\|sudo bash$' "$WORKDIR/prompt.out" || fail "generated command missing install launcher"
 if grep -E 'FRP_SSH_USER=.ubuntu|Client SSH user: ubuntu|SSH user : ubuntu' \
   "$WORKDIR/prompt.out" "$WORKDIR/prompt.err"; then
   fail "prompt defaulted to ubuntu"
@@ -312,8 +312,8 @@ pass "SSH_USERNAME_NOT_SUPPORTED"
 # ---------------------------------------------------------------------------
 FRP_DEPLOY_TEST_ROOT="$TREE" python3 "$CREATE" --one-line --ssh --note customer-server \
   >"$WORKDIR/oneline.out"
-grep -q 'The locator is not an enrollment credential' "$WORKDIR/oneline.out" || fail "sensitive warning"
-grep -q 'Verify the Agent key fingerprint' "$WORKDIR/oneline.out" || fail "treat as sensitive"
+grep -q 'automatic registration' "$WORKDIR/oneline.out" || fail "sensitive warning"
+grep -q 'Share it privately' "$WORKDIR/oneline.out" || fail "treat as sensitive"
 if grep -q 'Enrollment Code:' "$WORKDIR/oneline.out"; then
   fail "one-line printed Enrollment Code"
 fi
@@ -323,7 +323,7 @@ fi
 if grep -q '\\$' "$WORKDIR/oneline.out"; then
   fail "one-line used backslash continuation"
 fi
-CMD_LINE="$(grep -E '^curl -kfsS https://[^/]+/[A-Za-z0-9_-]{6}\|sudo bash$' "$WORKDIR/oneline.out")"
+CMD_LINE="$(grep -E '^curl -kfsS https://[^/]+/[A-Za-z0-9_-]{8}\|sudo bash$' "$WORKDIR/oneline.out")"
 [[ -n "$CMD_LINE" ]] || fail "fixed command missing"
 [[ "$(printf '%s\n' "$CMD_LINE" | wc -l)" == 1 ]] || fail "more than one install command"
 TICKET="$(extract_bootstrap_ticket "$WORKDIR/oneline.out")"
@@ -389,7 +389,7 @@ import re,sys
 text=Path(sys.argv[1]).read_text()
 assert 'Zero-touch Agent command' in text
 cmd=next(line for line in text.splitlines() if line.startswith('curl -kfsS '))
-assert re.fullmatch(r'curl -kfsS https://[^/]+/[A-Za-z0-9_-]{6}\|sudo bash',cmd)
+assert re.fullmatch(r'curl -kfsS https://[^/]+/[A-Za-z0-9_-]{8}\|sudo bash',cmd)
 assert ';uname' not in cmd and 'enroll;id' not in cmd
 assert 'zt1.' not in cmd and 'FRP_BOOTSTRAP_TICKET=' not in cmd
 assert 'note;rm -rf /' not in cmd
@@ -440,7 +440,7 @@ mod=importlib.util.module_from_spec(spec);loader.exec_module(mod)
 cfg=json.loads(Path(sys.argv[1]).read_text())
 assert mod.resolve_configured_installer_url(cfg)=='https://203.0.113.10:9443/artifacts/agent/bootstrap-client.sh'
 PY
-grep -Eq '^curl -kfsS https://[^/]+/[A-Za-z0-9_-]{6}\|sudo bash$' "$WORKDIR/derived.out" || fail "derived installer lost short handle"
+grep -Eq '^curl -kfsS https://[^/]+/[A-Za-z0-9_-]{8}\|sudo bash$' "$WORKDIR/derived.out" || fail "derived installer lost short handle"
 if grep -qE 'raw\.githubusercontent\.com|github\.com/datarelay-labs|github\.com/fatedier' \
     "$WORKDIR/derived.out" "$WORKDIR/derived.err"; then
   fail "public installer fallback when deriving from allocator"
@@ -762,9 +762,6 @@ run_zero_touch() (
   export FRP_ALLOCATOR_CA_SHA256="$LIVE_CA_FP"
   export FRP_BOOTSTRAP_LOCATOR="$ticket"
   unset FRP_BOOTSTRAP_TICKET
-  python3 "$ROOT/tests/lib/approve-isolated-entry.py" "$ALLOC_ROOT/config.json" "$tree" "$ticket" "$machine" &
-  approve_pid=$!
-  trap 'kill "$approve_pid" 2>/dev/null || true; wait "$approve_pid" 2>/dev/null || true' EXIT
   export FRP_ZERO_TOUCH=1
   export FRP_SSH_PORT="$LISTEN_PORT"
   export FRP_CLIENT_SOURCED=1
@@ -926,11 +923,11 @@ machine='bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'
 p=dict(locator=locator,machine_id=machine,hostname='bound-host',public_key=pem,
        nonce=m.MGMT.new_nonce(),timestamp=int(time.time()))
 p['signature']=m.MGMT.sign_message(key,m.ZT.entry_claim_message('request',p))
-status,d=a.request_entry_approval(p);assert status==200,d
+status,d=a.request_entry_registration(p);assert status==200,d
 record,_=a._entry_active_ticket(locator)
-assert a.approve_entry_request(record['id'],machine,m.MGMT.pubkey_fingerprint(pem))[0]==200
+assert d['status']=='approved' and record['entry_approval']['approved']['fingerprint']==m.MGMT.pubkey_fingerprint(pem)
 p['nonce']=d['challenge'];p['signature']=m.MGMT.sign_message(key,m.ZT.entry_claim_message('redeem',p))
-assert a.redeem_entry_approval(p)[0]==200
+assert a.redeem_entry_registration(p)[0]==200
 PYBOUND
 BOUND_OTHER="$WORKDIR/client-bound-other"
 if run_zero_touch "$BOUND_OTHER" "$BOUND_TICKET" 'cccccccccccccccccccccccccccccccc' "$WORKDIR/bound-other.out"; then

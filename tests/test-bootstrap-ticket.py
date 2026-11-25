@@ -965,9 +965,9 @@ def test_compact_redaction_and_command_length():
     if len(compact) != 22:
         fail('fixture length', len(compact))
         return
-    locator='A3xK9m'
+    locator='A3xK9mP2'
     cmd=zt.render_entry_command('remote.xdr.ooo',locator,'linux')
-    if cmd!='curl -kfsS https://remote.xdr.ooo/A3xK9m|sudo bash':
+    if cmd!='curl -kfsS https://remote.xdr.ooo/A3xK9mP2|sudo bash':
         fail('fixed entry fields',cmd)
         return
     try:
@@ -1068,7 +1068,7 @@ def test_shell_safety_floor():
     spec.loader.exec_module(zt)
     for _ in range(100):
         locator=zt.new_bootstrap_locator()
-        if len(locator)!=6 or set(locator)-alphabet:
+        if len(locator)!=8 or set(locator)-alphabet:
             fail('locator alphabet',locator)
             return
         url='https://remote.xdr.ooo/'+locator
@@ -1123,8 +1123,8 @@ def test_windows_renderer_frozen_and_launcher():
         )
         zt = importlib.util.module_from_spec(zt_spec)
         zt_spec.loader.exec_module(zt)
-        command = zt.render_entry_command('remote.xdr.ooo','A3xK9m','windows')
-        if command!='iex(curl.exe -kfsS https://remote.xdr.ooo/A3xK9m|Out-String)':
+        command = zt.render_entry_command('remote.xdr.ooo','A3xK9mP2','windows')
+        if command!='iex(curl.exe -kfsS https://remote.xdr.ooo/A3xK9mP2|Out-String)':
             fail('Windows entry fields',command)
             return
         if handle in script or ticket not in script:

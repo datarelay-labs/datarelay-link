@@ -26,10 +26,10 @@ For non-Windows test hosts (pwsh on Linux CI), set `FRP_WINDOWS_ROOT` (default `
 On the Server, select Windows and the enrollment profile. Send only the generated one-line command; the fixed target for administrator PowerShell is:
 
 ```powershell
-iex(curl.exe -kfsS https://remote.xdr.ooo/A3xK9m|Out-String)
+iex(curl.exe -kfsS https://remote.xdr.ooo/A3xK9mP2|Out-String)
 ```
 
-The six-character locator is not a credential. No separate certificate registration, installer filename, hash, enrollment ID or DataRelay prerequisite. Public/private HTTPS use the same form. This target requires native Windows qualification. `-k` disables initial peer certificate authentication; the later stages must retain artifact integrity, actual authenticated connections and independent enrollment authorization. See [canonical contract](ZERO_TOUCH_REGRESSION_CONTROL.md).
+Issuance grants one automatic first-claim registration; share the short command privately. No separate certificate registration, installer filename, hash, enrollment ID or DataRelay prerequisite. Public/private HTTPS use the same form. This target requires native Windows qualification. `-k` disables initial peer certificate authentication; the later stages must retain artifact integrity, actual authenticated connections and automatic first-claim enrollment. See [canonical contract](ZERO_TOUCH_REGRESSION_CONTROL.md).
 
 ### What zero-touch does
 

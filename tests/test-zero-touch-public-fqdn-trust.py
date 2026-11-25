@@ -28,7 +28,7 @@ class PublicFQDNTrustTests(unittest.TestCase):
                 opener.open.return_value=mock.MagicMock()
             else:
                 opener.open.side_effect=urllib.error.HTTPError(
-                    "https://"+authority+"/ZT0000",code,"fixture",{},io.BytesIO(body))
+                    "https://"+authority+"/ZT000000",code,"fixture",{},io.BytesIO(body))
             with mock.patch.object(CLI,"_test_root",return_value=""), \
                  mock.patch.object(CLI,"fingerprint_from_cert",return_value="a"*64), \
                  mock.patch.object(CLI,"preflight_installer_url") as downstream, \
@@ -38,7 +38,7 @@ class PublicFQDNTrustTests(unittest.TestCase):
                     "https://"+authority+"/fixture/bootstrap-client.sh","a"*64)
             entry.assert_called_once_with()
             self.assertTrue(any(type(arg).__name__=="NoRedirect" for arg in factory.call_args.args))
-            opener.open.assert_called_once_with("https://"+authority+"/ZT0000",timeout=5)
+            opener.open.assert_called_once_with("https://"+authority+"/ZT000000",timeout=5)
             self.assertTrue(downstream.call_args.kwargs["strict_https"])
             self.assertEqual(downstream.call_args.kwargs["ca_file"],ca)
             return result
@@ -85,8 +85,8 @@ class PublicFQDNTrustTests(unittest.TestCase):
     def test_same_fixed_command_for_both_tls_modes(self):
         import frp_zero_touch as zt
         for host in ("remote.example.test","private.example.test","192.0.2.20:6099"):
-            self.assertEqual(zt.render_entry_command(host,"A3xK9m","linux"),
-                             "curl -kfsS https://"+host+"/A3xK9m|sudo bash")
+            self.assertEqual(zt.render_entry_command(host,"A3xK9mP2","linux"),
+                             "curl -kfsS https://"+host+"/A3xK9mP2|sudo bash")
 
 if __name__ == '__main__':
     unittest.main(verbosity=2)

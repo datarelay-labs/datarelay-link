@@ -860,7 +860,7 @@ successful consume          = atomic
 
 If 3 active unused tickets remain, the next issuance can create at most 7. Expired/revoked tickets leave the active-unused count; consuming/expiring an enrollment ticket never disconnects an already enrolled Managed Host.
 
-Neither configuration fields nor hidden/public CLI flags may raise these server-side ceilings. The customer entry is a separate six-character root-path Bootstrap filename, not a credential. Its only variable fields are Server authority and filename; use the OS-specific fixed invocation in `ZERO_TOUCH_REGRESSION_CONTROL.md`. Bootstrap handles later downloads, authorization, installation and idempotent retry.
+Neither configuration fields nor hidden/public CLI flags may raise these server-side ceilings. The customer entry is a separate eight-character root-path Bootstrap filename, a sensitive first-claim capability distinct from the internal enrollment code. Its only variable fields are Server authority and filename; use the OS-specific fixed invocation in `ZERO_TOUCH_REGRESSION_CONTROL.md`. Bootstrap handles later downloads, authorization, installation and idempotent retry.
 
 ## 32. Migration framework
 

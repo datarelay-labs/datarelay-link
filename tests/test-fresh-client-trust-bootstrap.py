@@ -25,7 +25,7 @@ sys.path.insert(0, str(ROOT / "lib"))
 
 import frp_zero_touch as zt  # noqa: E402
 
-TICKET = "A3xK9m"
+TICKET = "A3xK9mP2"
 
 
 def _openssl(args, **kwargs):

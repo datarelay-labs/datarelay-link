@@ -24,7 +24,7 @@ outside this integration's scope.
 
 - Server and Agent share the canonical enrollment target naming function and
   the existing 24-hex suffix. Existing IPv6 destination-object semantics remain.
-- Customer entry design is governed solely by `ZERO_TOUCH_REGRESSION_CONTROL.md`: six-character root-path locator and fixed OS-specific command, same public/private HTTPS form, all later-stage processing in Bootstrap. Prior integration evidence does not qualify the new design.
+- Customer entry design is governed solely by `ZERO_TOUCH_REGRESSION_CONTROL.md`: eight-character root-path locator and fixed OS-specific command, same public/private HTTPS form, all later-stage processing in Bootstrap. Prior integration evidence does not qualify the new design.
 - Signed per-service recovery only changes untouched enrollment seeds whose
   endpoint, Service Object and Network Object agree with authenticated Server
   data. Operator changes and concurrent edits remain protected.

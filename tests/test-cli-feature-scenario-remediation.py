@@ -739,11 +739,11 @@ frpctl_nav_prompt_id 'Name: '
                 "https://203.0.113.10/artifacts/agent/bootstrap-client.sh",
             )
             for platform in ("linux","windows"):
-                enrollment.print_entry_command("bootstrap.example.test","A3xK9m",platform,600,"a"*16)
+                enrollment.print_entry_command("bootstrap.example.test","A3xK9mP2",platform,600,"a"*16)
         rendered = output.getvalue()
         self.assertIn("Agent install:", rendered)
         self.assertIn("Zero-touch Agent command", rendered)
-        self.assertIn("iex(curl.exe -kfsS https://bootstrap.example.test/A3xK9m|Out-String)", rendered)
+        self.assertIn("iex(curl.exe -kfsS https://bootstrap.example.test/A3xK9mP2|Out-String)", rendered)
         self.assertNotRegex(rendered, r"(?i)\bclient (install|command|after enrollment)")
         errors = io.StringIO()
         with redirect_stderr(errors), self.assertRaises(SystemExit):

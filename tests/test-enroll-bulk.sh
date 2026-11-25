@@ -44,7 +44,7 @@ for name in sys.argv[1:3]:
 assert len(rows)==5
 tickets=[]
 for row in rows:
-    m=re.fullmatch(r"curl -kfsS https://bootstrap\.example\.test/([A-Za-z0-9_-]{6})\|sudo bash", row['bootstrap_command'])
+    m=re.fullmatch(r"curl -kfsS https://bootstrap\.example\.test/([A-Za-z0-9_-]{8})\|sudo bash", row['bootstrap_command'])
     if m:
         tickets.append(m.group(1))
         continue

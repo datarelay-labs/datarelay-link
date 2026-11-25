@@ -8,7 +8,7 @@
 
 ## Fixed customer entry design (2026-11-24)
 
-**ZT-P0-CONTRACT-20261026 — fixed six-character entry target (owner revision 2026-11-24).** The customer starts with one OS-native command, one HTTPS authority (FQDN or IP), and one six-character root-path file locator. Public and private HTTPS use the same target form. No preinstalled DataRelay software, inline configuration, separate enrollment ID, fingerprint, artifact hash, or installer body in the customer command. All subsequent configuration, downloads, verification, installation, recovery and enrollment belong to the multi-stage Bootstrap; their size and count are unrestricted. The locator is not an enrollment credential. See `docs/ZERO_TOUCH_REGRESSION_CONTROL.md` for exact target templates, the independent enrollment requirement, the explicit initial-transport risk and actual acceptance status. This is a design target, not installed-product qualification.
+**ZT-P0-CONTRACT-20261026 — fixed eight-character entry target (owner revision 2026-11-25).** The customer starts with one OS-native command, one HTTPS authority (FQDN or IP), and one eight-character root-path file locator. Public and private HTTPS use the same target form. No preinstalled DataRelay software, inline configuration, separate enrollment ID, fingerprint, artifact hash, or installer body in the customer command. All subsequent configuration, downloads, verification, installation, recovery and enrollment belong to the multi-stage Bootstrap; their size and count are unrestricted. Issuing the command authorizes one automatic registration by the first valid signed Agent claim. Treat the short locator as a sensitive, expiring bearer capability; it is not the downstream enrollment code. See `docs/ZERO_TOUCH_REGRESSION_CONTROL.md` for exact target templates, the automatic first-claim policy, the explicit initial-transport risk and actual acceptance status. This is a design target, not installed-product qualification.
 
 ### Command fields (normative)
 
@@ -18,7 +18,7 @@
 | Download options | `-kfsS` | `-kfsS` |
 | Protocol | `https://` | `https://` |
 | Server authority | FQDN or IP, with configured port if required | Same |
-| Bootstrap filename | `/` followed by one six-character locator | Same |
+| Bootstrap filename | `/` followed by one eight-character locator | Same |
 | Execute downloaded Bootstrap | `\|sudo bash` | `iex(...\|Out-String)` |
 
 The only variable fields are Server authority and Bootstrap filename. Select the OS at Server issuance; all other syntax is fixed by the platform template. Public and private HTTPS use identical fields. No enrollment credential, hash, certificate, installer URL, configuration or other argument in the entry command. Acceptance compares these fields and exact template.
@@ -26,29 +26,29 @@ The only variable fields are Server authority and Bootstrap filename. Select the
 Linux/macOS:
 
 ```bash
-curl -kfsS https://remote.xdr.ooo/A3xK9m|sudo bash
+curl -kfsS https://remote.xdr.ooo/A3xK9mP2|sudo bash
 ```
 
 Windows (administrator PowerShell):
 
 ```powershell
-iex(curl.exe -kfsS https://remote.xdr.ooo/A3xK9m|Out-String)
+iex(curl.exe -kfsS https://remote.xdr.ooo/A3xK9mP2|Out-String)
 ```
 
-The examples use a fictitious locator and are not installed-product qualification. The Server selects the OS-specific response at issuance. Permit exactly `[A-Za-z0-9_-]{6}` in the root-path locator, collision-check atomically, reserve existing routes, expire and rate-limit lookups. No second customer command or extra customer-supplied argument. Internal enrollment protocol remains separate.
+The examples use a fictitious locator and are not installed-product qualification. The Server selects the OS-specific response at issuance. Permit exactly `[A-Za-z0-9_-]{8}` in the root-path locator, collision-check atomically, reserve existing routes, expire and rate-limit lookups. No second customer command or extra customer-supplied argument. Internal enrollment protocol remains separate.
 
 ### Stage boundary and security scope
 
 1. Stage 0: fixed native fetch/execute template, identical for public/private certificates. The operator sends the command through the established customer communication channel. `-k` explicitly disables TLS peer certificate authentication for this initial download. It does not establish server identity or protect against an active replacement response. Later checks cannot retroactively authenticate executed code. This risk must remain visible; do not present the template as security-qualified or silently mark the existing security gate PASS.
 2. Stage 1: small, platform-specific entry file; handle ordinary truncated-script cases, clear failure/success output, subsequent artifact retrieval, temporary file cleanup, and retry without destructive side effects. Subsequent files, manifests, scripts and installer payloads have no arbitrary size or count cap. Do not embed long-lived keys or raw enrollment secrets in the publicly retrievable entry file.
 3. Stage 2: validate downstream artifacts and use authenticated connections. Establish actual downstream trust independently where required; a CA learned solely from an unauthenticated response is not independently verified. Keep TLS exceptions local to Stage 0; do not change OS trust or disable management-plane TLS validation.
-4. Stage 3: redeem a separate high-entropy, expiring, one-time enrollment credential after authorization; bind the authorized identity and destination, consume atomically, preserve existing identity/ports on retries. The six-character locator is only a routing index: knowing it must not grant enrollment. An independent authorization mechanism (e.g. operator approval bound to an agent key, or existing authenticated enrollment context) must be designed and tested; do not claim fully autonomous secure enrollment from the locator alone.
+4. Stage 3: redeem a separate high-entropy, expiring, one-time enrollment credential after authorization; bind the authorized identity and destination, consume atomically, preserve existing identity/ports on retries. Issuance authorizes the first valid signed Agent claim; bind its machine ID and key atomically, reject other claims, and require fresh signed challenge redemption and signed enrollment. No manual approval for new commands. Existing six-character tickets are not accepted after upgrade; revoke and reissue them. Already enrolled Agents are unaffected. Possession of the short locator is sufficient to attempt first claim; no independent verification of the intended Agent exists. Eight random characters provide at most 48 bits of entropy. Expiry, bounded lookup rate and one-time binding reduce but do not eliminate guessing, interception or first-claim theft. Do not present these controls as independent identity authentication.
 
 ### Acceptance
 
 - Clean Linux, macOS, Windows: one exact OS template, same for public/private HTTPS, no extra customer-supplied arguments. Numeric IP or FQDN; validate the allowed fields and exact invocation.
 - Same entry command can be retried after interruption; success requires actual installed identity, authenticated enrollment and working service, not a shell exit code alone. Server-side lookup, capacity, collisions, expiry and concurrent redemption are tested.
-- Actual OS runs, installer integrity, independent enrollment authorization, signed service routing and external E2E remain required. The initial unverified execution risk remains a security qualification failure unless separately dispositioned under the applicable release authority. No network attack detection feature is in scope.
+- Actual OS runs, installer integrity, automatic first-claim enrollment, signed service routing and external E2E remain required. The initial unverified execution risk remains a security qualification failure unless separately dispositioned under the applicable release authority. No network attack detection feature is in scope.
 
 ## Historical Agent self-target recovery contract
 
@@ -82,7 +82,7 @@ real-environment acceptance requirements.
 
 | Scenario | Expected output/behavior | Actual gate |
 |---|---|---|
-| FQDN/IP, public/private HTTPS | Exact fixed six-character entry template; actual installation and separately authenticated enrollment | Native OS E2E |
+| FQDN/IP, public/private HTTPS | Exact fixed eight-character entry template; actual installation and automatic first-claim enrollment | Native OS E2E |
 | Invalid/expired locator or unavailable endpoint | No enrollment; clear failure or retry guidance; do not infer success from pipeline exit | Server lookup + retry tests |
 | Replacement initial response | Unverified Stage 0 is a recorded security risk; not an authenticated-download PASS | Security qualification |
 | Optional SSH user blank | End-to-end enrollment/tunnel functions; no misleading account inference | Guided and backend user journey |
@@ -98,7 +98,7 @@ real-environment acceptance requirements.
 - **Local focused checks:** `python3 tests/test-zero-touch-operator-command-bound.py`, `python3 tests/test-zero-touch-guided-preflight.py` (real public `drlink` preflight-before-identity across Linux/Windows/macOS), `bash tests/test-zero-touch-short-url.sh`, `python3 tests/test-enrolled-routed-target-parity.py`, `python3 tests/test-cli-inventory-selection-journey.py` and `python3 tests/test-zero-touch-doc-contract.py` (the documentation consistency check).
 - **Artifact closure:** `bash tests/test-change-closure-artifacts.sh` at the exact product source HEAD; reject `DERIVED_BUNDLE_STALE` or checksum/manifest drift.
 - **Installed candidate:** record `drlink system version` Source HEAD for Server and Agent and exact bundle SHA256; external new-user command generated from the actual installed Server, not a copied example or source runner.
-- **Real negative/positive:** public/private entry flow, six-character locator lookup, independent enrollment authorization, one-time binding, service lifecycle, 6000 preservation and 6001 real external SSH. HTTPS :443 behind 6002 may remain legitimately down and must be recorded honestly.
+- **Real negative/positive:** public/private entry flow, eight-character locator lookup, automatic first-claim enrollment, one-time binding, service lifecycle, 6000 preservation and 6001 real external SSH. HTTPS :443 behind 6002 may remain legitimately down and must be recorded honestly.
 - **User gate:** execute U-009, O-002, A-018 and relevant CLI-008/FCS-002 as actual personas. No silently skipped prerequisite or preexisting config reset. For v2.4 release, both complete 116-ID Full User E2E PASS runs must be on one frozen, installed, verified HEAD.
 - **Observability:** redact all raw `bt1`, short handles, OAuth codes and private keys; retain mode, endpoint/status, exit codes and provenance. Do not retain a readable one-time credential in evidence.
 
