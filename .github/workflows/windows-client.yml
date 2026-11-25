@@ -12,7 +12,7 @@ permissions:
 
 jobs:
   windows-powershell51:
-    if: github.event_name != 'pull_request' || github.base_ref == 'feature/v2.4.0-final-product-closure'
+    if: github.event_name != 'pull_request' || github.base_ref == 'feature/v2.4.0-final-product-closure' || (github.base_ref == 'main' && startsWith(github.head_ref, 'qualification/'))
     name: Windows PowerShell 5.1
     runs-on: windows-latest
     steps:
@@ -28,6 +28,16 @@ jobs:
           python3 tests/test-zero-touch-entry-fields.py
           python3 scripts/build-bundles.py
           test -f dist/bootstrap-client.ps1
+      - name: Verify actual Zero-Touch entry HTTPS transport
+        shell: powershell
+        env:
+          DRLINK_STAGE_TEST_POWERSHELL: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          python -m pip install 'cryptography>=42,<47'
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python tests/test-zero-touch-windows-pin.py WindowsPinnedCaCommandTests.test_rendered_entry_private_tls
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Run Windows client test suite
         shell: powershell
         run: |
@@ -40,12 +50,10 @@ jobs:
           $ErrorActionPreference = 'Stop'
           # cryptography builds a real CA→leaf chain for the product pin path
           # (OpenSSL CLI is not present on windows-latest by default).
-          python -m pip install --upgrade pip
-          python -m pip install 'cryptography>=42,<47'
           & .\tests\windows\frp-binary-smoke.ps1
 
   windows-pwsh7:
-    if: github.event_name != 'pull_request' || github.base_ref == 'feature/v2.4.0-final-product-closure'
+    if: github.event_name != 'pull_request' || github.base_ref == 'feature/v2.4.0-final-product-closure' || (github.base_ref == 'main' && startsWith(github.head_ref, 'qualification/'))
     name: Windows PowerShell 7
     runs-on: windows-latest
     steps:
@@ -61,6 +69,16 @@ jobs:
           python3 tests/test-zero-touch-entry-fields.py
           python3 scripts/build-bundles.py
           test -f dist/bootstrap-client.ps1
+      - name: Verify actual Zero-Touch entry HTTPS transport
+        shell: pwsh
+        env:
+          DRLINK_STAGE_TEST_POWERSHELL: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          python -m pip install 'cryptography>=42,<47'
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python tests/test-zero-touch-windows-pin.py WindowsPinnedCaCommandTests.test_rendered_entry_private_tls
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Run Windows client test suite
         shell: pwsh
         run: |

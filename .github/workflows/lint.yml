@@ -68,10 +68,11 @@ jobs:
           python3 ./scripts/generate-sbom.py -o dist/sbom.spdx.json
           ./scripts/verify-sbom.sh
 
-  # Full functional PR CI for the active v2.4 integration target. This is
+  # Full functional PR CI for the v2.4 integration target or explicitly
+  # requested qualification/ branches targeting main. This is
   # deterministic code/portability CI, NOT ChatGPT persona-led Full User E2E.
   full-functional-v24:
-    if: github.event_name == 'pull_request' && github.base_ref == 'feature/v2.4.0-final-product-closure'
+    if: github.event_name == 'pull_request' && (github.base_ref == 'feature/v2.4.0-final-product-closure' || (github.base_ref == 'main' && startsWith(github.head_ref, 'qualification/')))
     name: v2.4 complete non-Docker functionality
     runs-on: ubuntu-latest
     timeout-minutes: 90
@@ -100,7 +101,7 @@ jobs:
           bash scripts/secret-scan.sh
 
   portability-containers:
-    if: github.event_name != 'pull_request' || github.base_ref == 'feature/v2.4.0-final-product-closure'
+    if: github.event_name != 'pull_request' || github.base_ref == 'feature/v2.4.0-final-product-closure' || (github.base_ref == 'main' && startsWith(github.head_ref, 'qualification/'))
     name: distro ${{ matrix.image }}
     runs-on: ubuntu-latest
     permissions:
