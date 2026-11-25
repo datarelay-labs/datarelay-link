@@ -2,8 +2,40 @@
 set -euo pipefail
 echo "Downloading qualified Data Relay Link installer..."
 TMP="$(mktemp -d)"
-trap 'rm -rf "$TMP"' EXIT
-echo "Reading and restoring installer payload (download may still be running)..."
+_drlink_original_umask=$(umask)
+umask 077
+_drlink_started=0
+_drlink_progress_pid=""
+_drlink_stop_progress() {
+  if [[ -n "$_drlink_progress_pid" ]]; then
+    kill "$_drlink_progress_pid" 2>/dev/null || true
+    wait "$_drlink_progress_pid" 2>/dev/null || true
+    _drlink_progress_pid=""
+  fi
+}
+_drlink_cleanup() {
+  local rc=$?
+  trap - EXIT
+  _drlink_stop_progress
+  rm -rf -- "$TMP"
+  if [[ "$_drlink_started" != 1 ]]; then
+    echo "ERROR: Installer payload reception or preparation did not finish. Installation has not started. Retry the same command." >&2
+    if [[ "$rc" == 0 ]]; then rc=1; fi
+  fi
+  exit "$rc"
+}
+trap _drlink_cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+echo "Receiving and restoring installer files (download may still be running)..."
+_drlink_parent="$BASHPID"
+(
+  while sleep 5; do
+    kill -0 "$_drlink_parent" 2>/dev/null || exit 0
+    echo "  Still receiving/restoring installer files; please keep this session open." >&2
+  done
+) </dev/null &
+_drlink_progress_pid=$!
 base64 -d >"$TMP/VERSION" <<'B64'
 UFJPSkVDVF9WRVJTSU9OPTIuNC4wCkZSUF9WRVJTSU9OPTAuNzEuMApSRUxFQVNFX0NIQU5ORUw9
 ZGV2ZWxvcG1lbnQK
@@ -11,7 +43,7 @@ B64
 base64 -d >"$TMP/release-manifest.json" <<'B64'
 ewogICJzY2hlbWFfdmVyc2lvbiI6IDEsCiAgInByb2plY3RfdmVyc2lvbiI6ICIyLjQuMCIsCiAg
 ImZycF92ZXJzaW9uIjogIjAuNzEuMCIsCiAgImNoYW5uZWwiOiAiZGV2ZWxvcG1lbnQiLAogICJn
-aXRfcmVmIjogImU1NDUyYzM3NDdkNDRkODljYmI3ODVhYmU0MDZiMDQwY2I5ZjllYzkiLAogICJv
+aXRfcmVmIjogIjljNWJhZmUxZTJjNTczNmJjMTVkMDRjZWU1NWJlNjZhNTNjNzUwZmIiLAogICJv
 d25lciI6ICJkYXRhcmVsYXktbGFicyIsCiAgInJlcG8iOiAiZGF0YXJlbGF5LWxpbmsiLAogICJo
 dHRwc19yYXdfYmFzZSI6ICJodHRwczovL3Jhdy5naXRodWJ1c2VyY29udGVudC5jb20vZGF0YXJl
 bGF5LWxhYnMvZGF0YXJlbGF5LWxpbmsiLAogICJzaWduaW5nIjogZmFsc2UsCiAgImludGVncml0
@@ -99,9 +131,9 @@ ICAgICAgInVybF9wYXRoIjogImRpc3QvYm9vdHN0cmFwLXNlcnZlci1vbmxpbmUuc2giCiAgICB9
 LAogICAgImJvb3RzdHJhcC1zZXJ2ZXItY29yZS50YXIuZ3oiOiB7CiAgICAgICJwYXRoIjogImRp
 c3QvYm9vdHN0cmFwLXNlcnZlci1jb3JlLnRhci5neiIsCiAgICAgICJ1cmxfcGF0aCI6ICJkaXN0
 L2Jvb3RzdHJhcC1zZXJ2ZXItY29yZS50YXIuZ3oiCiAgICB9CiAgfSwKICAic291cmNlX2hlYWQi
-OiAiZTU0NTJjMzc0N2Q0NGQ4OWNiYjc4NWFiZTQwNmIwNDBjYjlmOWVjOSIsCiAgImZlYXR1cmVz
+OiAiOWM1YmFmZTFlMmM1NzM2YmMxNWQwNGNlZTU1YmU2NmE1M2M3NTBmYiIsCiAgImZlYXR1cmVz
 IjogewogICAgIm1jcF9pbmNsdWRlZCI6IHRydWUKICB9LAogICJpbW11dGFibGVfc291cmNlX3Jl
-ZiI6ICJlNTQ1MmMzNzQ3ZDQ0ZDg5Y2JiNzg1YWJlNDA2YjA0MGNiOWY5ZWM5Igp9Cg==
+ZiI6ICI5YzViYWZlMWUyYzU3MzZiYzE1ZDA0Y2VlNTViZTY2YTUzYzc1MGZiIgp9Cg==
 B64
 base64 -d >"$TMP/install-server.sh" <<'B64'
 IyEvdXNyL2Jpbi9lbnYgYmFzaApzZXQgLWV1byBwaXBlZmFpbAoKQkFTRV9ESVI9IiQoY2QgIiQo
@@ -1019247,8 +1019279,8 @@ R1YyWld4dmNHMWxiblFLCkI2NApfZnJwX2I2NGQgPiIkVE1QL3JlbGVhc2UtbWFuaWZlc3QuanNv
 biIgPDwnQjY0Jwpld29nSUNKelkyaGxiV0ZmZG1WeWMybHZiaUk2SURFc0NpQWdJbkJ5YjJwbFkz
 UmZkbVZ5YzJsdmJpSTZJQ0l5TGpRdU1DSXNDaUFnCkltWnljRjkyWlhKemFXOXVJam9nSWpBdU56
 RXVNQ0lzQ2lBZ0ltTm9ZVzV1Wld3aU9pQWlaR1YyWld4dmNHMWxiblFpTEFvZ0lDSm4KYVhSZmNt
-Vm1Jam9nSW1VMU5EVXlZek0zTkRka05EUmtPRGxqWW1JM09EVmhZbVUwTURaaU1EUXdZMkk1Wmps
-bFl6a2lMQW9nSUNKdgpkMjVsY2lJNklDSmtZWFJoY21Wc1lYa3RiR0ZpY3lJc0NpQWdJbkpsY0c4
+Vm1Jam9nSWpsak5XSmhabVV4WlRKak5UY3pObUpqTVRWa01EUmpaV1UxTldKbE5qWmhOVE5qTnpV
+d1ptSWlMQW9nSUNKdgpkMjVsY2lJNklDSmtZWFJoY21Wc1lYa3RiR0ZpY3lJc0NpQWdJbkpsY0c4
 aU9pQWlaR0YwWVhKbGJHRjVMV3hwYm1zaUxBb2dJQ0pvCmRIUndjMTl5WVhkZlltRnpaU0k2SUNK
 b2RIUndjem92TDNKaGR5NW5hWFJvZFdKMWMyVnlZMjl1ZEdWdWRDNWpiMjB2WkdGMFlYSmwKYkdG
 NUxXeGhZbk12WkdGMFlYSmxiR0Y1TFd4cGJtc2lMQW9nSUNKemFXZHVhVzVuSWpvZ1ptRnNjMlVz
@@ -1019365,11 +1019397,11 @@ ZEhOMGNtRndMWE5sY25abGNpMXZibXhwYm1VdWMyZ2lDaUFnSUNCOQpMQW9nSUNBZ0ltSnZiM1J6
 ZEhKaGNDMXpaWEoyWlhJdFkyOXlaUzUwWVhJdVozb2lPaUI3Q2lBZ0lDQWdJQ0p3WVhSb0lqb2dJ
 bVJwCmMzUXZZbTl2ZEhOMGNtRndMWE5sY25abGNpMWpiM0psTG5SaGNpNW5laUlzQ2lBZ0lDQWdJ
 Q0oxY214ZmNHRjBhQ0k2SUNKa2FYTjAKTDJKdmIzUnpkSEpoY0MxelpYSjJaWEl0WTI5eVpTNTBZ
-WEl1WjNvaUNpQWdJQ0I5Q2lBZ2ZTd0tJQ0FpYzI5MWNtTmxYMmhsWVdRaQpPaUFpWlRVME5USmpN
-emMwTjJRME5HUTRPV05pWWpjNE5XRmlaVFF3Tm1Jd05EQmpZamxtT1dWak9TSXNDaUFnSW1abFlY
+WEl1WjNvaUNpQWdJQ0I5Q2lBZ2ZTd0tJQ0FpYzI5MWNtTmxYMmhsWVdRaQpPaUFpT1dNMVltRm1a
+VEZsTW1NMU56TTJZbU14TldRd05HTmxaVFUxWW1VMk5tRTFNMk0zTlRCbVlpSXNDaUFnSW1abFlY
 UjFjbVZ6Cklqb2dld29nSUNBZ0ltMWpjRjlwYm1Oc2RXUmxaQ0k2SUhSeWRXVUtJQ0I5TEFvZ0lD
-SnBiVzExZEdGaWJHVmZjMjkxY21ObFgzSmwKWmlJNklDSmxOVFExTW1Nek56UTNaRFEwWkRnNVky
-SmlOemcxWVdKbE5EQTJZakEwTUdOaU9XWTVaV001SWdwOUNnPT0KQjY0Cl9mcnBfYjY0ZCA+IiRU
+SnBiVzExZEdGaWJHVmZjMjkxY21ObFgzSmwKWmlJNklDSTVZelZpWVdabE1XVXlZelUzTXpaaVl6
+RTFaREEwWTJWbE5UVmlaVFkyWVRVell6YzFNR1ppSWdwOUNnPT0KQjY0Cl9mcnBfYjY0ZCA+IiRU
 TVAvaW5zdGFsbC1jbGllbnQuc2giIDw8J0I2NCcKSXlFdmRYTnlMMkpwYmk5bGJuWWdZbUZ6YUFw
 elpYUWdMV1YxYnlCd2FYQmxabUZwYkFvS1gwWlNVRjlKVGxOVVFVeE1YME5NU1VWTwpWRjlFU1ZJ
 OUlpUW9ZMlFnSWlRb1pHbHlibUZ0WlNBaUpIdENRVk5JWDFOUFZWSkRSVnN3WFgwaUtTSWdKaVln
@@ -1100699,8 +1100731,8 @@ b3JjZSAtUGF0aCAkZGlyIHwgT3V0LU51bGwKICAkb3V0ID0gSm9pbi1QYXRoICR0bXAgJ3JlbGVh
 c2UtbWFuaWZlc3QuanNvbicKICAkYjY0ID0gQCcKZXdvZ0lDSnpZMmhsYldGZmRtVnljMmx2YmlJ
 NklERXNDaUFnSW5CeWIycGxZM1JmZG1WeWMybHZiaUk2SUNJeUxqUXVNQ0lzQ2lBZ0ltWnljRjky
 WlhKemFXOXVJam9nSWpBdU56RXVNQ0lzQ2lBZ0ltTm9ZVzV1ClpXd2lPaUFpWkdWMlpXeHZjRzFs
-Ym5RaUxBb2dJQ0puYVhSZmNtVm1Jam9nSW1VMU5EVXlZek0zTkRka05EUmtPRGxqWW1JM09EVmhZ
-bVUwTURaaU1EUXdZMkk1WmpsbFl6a2lMQW9nSUNKdmQyNWxjaUk2SUNKawpZWFJoY21Wc1lYa3Ri
+Ym5RaUxBb2dJQ0puYVhSZmNtVm1Jam9nSWpsak5XSmhabVV4WlRKak5UY3pObUpqTVRWa01EUmpa
+V1UxTldKbE5qWmhOVE5qTnpVd1ptSWlMQW9nSUNKdmQyNWxjaUk2SUNKawpZWFJoY21Wc1lYa3Ri
 R0ZpY3lJc0NpQWdJbkpsY0c4aU9pQWlaR0YwWVhKbGJHRjVMV3hwYm1zaUxBb2dJQ0pvZEhSd2Mx
 OXlZWGRmWW1GelpTSTZJQ0pvZEhSd2N6b3ZMM0poZHk1bmFYUm9kV0oxYzJWeVkyOXUKZEdWdWRD
 NWpiMjB2WkdGMFlYSmxiR0Y1TFd4aFluTXZaR0YwWVhKbGJHRjVMV3hwYm1zaUxBb2dJQ0p6YVdk
@@ -1100817,11 +1100849,11 @@ blpsY2kxdmJteHBibVV1CmMyZ2lDaUFnSUNCOUxBb2dJQ0FnSW1KdmIzUnpkSEpoY0MxelpYSjJa
 WEl0WTI5eVpTNTBZWEl1WjNvaU9pQjdDaUFnSUNBZ0lDSndZWFJvSWpvZ0ltUnBjM1F2WW05dmRI
 TjBjbUZ3TFhObGNuWmxjaTFqYjNKbApMblJoY2k1bmVpSXNDaUFnSUNBZ0lDSjFjbXhmY0dGMGFD
 STZJQ0prYVhOMEwySnZiM1J6ZEhKaGNDMXpaWEoyWlhJdFkyOXlaUzUwWVhJdVozb2lDaUFnSUNC
-OUNpQWdmU3dLSUNBaWMyOTFjbU5sWDJobFlXUWkKT2lBaVpUVTBOVEpqTXpjME4yUTBOR1E0T1dO
-aVlqYzROV0ZpWlRRd05tSXdOREJqWWpsbU9XVmpPU0lzQ2lBZ0ltWmxZWFIxY21Weklqb2dld29n
+OUNpQWdmU3dLSUNBaWMyOTFjbU5sWDJobFlXUWkKT2lBaU9XTTFZbUZtWlRGbE1tTTFOek0yWW1N
+eE5XUXdOR05sWlRVMVltVTJObUUxTTJNM05UQm1ZaUlzQ2lBZ0ltWmxZWFIxY21Weklqb2dld29n
 SUNBZ0ltMWpjRjlwYm1Oc2RXUmxaQ0k2SUhSeWRXVUtJQ0I5CkxBb2dJQ0pwYlcxMWRHRmliR1Zm
-YzI5MWNtTmxYM0psWmlJNklDSmxOVFExTW1Nek56UTNaRFEwWkRnNVkySmlOemcxWVdKbE5EQTJZ
-akEwTUdOaU9XWTVaV001SWdwOUNnPT0KJ0AKICBbSU8uRmlsZV06OldyaXRlQWxsQnl0ZXMoJG91
+YzI5MWNtTmxYM0psWmlJNklDSTVZelZpWVdabE1XVXlZelUzTXpaaVl6RTFaREEwWTJWbE5UVmla
+VFkyWVRVell6YzFNR1ppSWdwOUNnPT0KJ0AKICBbSU8uRmlsZV06OldyaXRlQWxsQnl0ZXMoJG91
 dCwgW0NvbnZlcnRdOjpGcm9tQmFzZTY0U3RyaW5nKCgkYjY0IC1yZXBsYWNlICdccycsJycpKSkK
 ICAkaW5zdGFsbGVyID0gSm9pbi1QYXRoICR0bXAgJ3dpbmRvd3MvaW5zdGFsbC1jbGllbnQucHMx
 JwogICYgcG93ZXJzaGVsbC5leGUgLU5vUHJvZmlsZSAtRXhlY3V0aW9uUG9saWN5IEJ5cGFzcyAt
@@ -1100917,6 +1100949,8 @@ chmod +x "$TMP/tools/frp-upstream"
 chmod +x "$TMP/tools/drlink"
 chmod +x "$TMP/tools/frpctl"
 chmod +x "$TMP/dist/bootstrap-client.sh"
+_drlink_stop_progress
+echo "Installer files received and restored."
 echo "Preparing installation..."
 echo "Installing Data Relay Link Server..."
 if [[ -z "${FRP_EXPECTED_SOURCE_REF:-}" ]]; then
@@ -1100974,4 +1101008,4 @@ PY
   fi
   unset _frp_bootstrap_ref
 fi
-"$TMP/install-server.sh" "$@"
+umask "$_drlink_original_umask"; _drlink_started=1; "$TMP/install-server.sh" "$@"
