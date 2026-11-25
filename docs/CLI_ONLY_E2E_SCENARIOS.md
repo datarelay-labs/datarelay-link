@@ -4,7 +4,7 @@
 > **Source:** `docs/FULL_USER_E2E_SCENARIOS.md` (all 116 original IDs and headings preserved in its canonical document).
 > **Product baseline:** v2.4.0 **includes** AI Access and MCP Bridge; they are excluded **only from this test profile**, not removed from the product.
 > **Executor:** current owner-selected runtime (default `CHATGPT_CHAT`); current explicit instruction overrides historical Codex-only text.
-> **Canonical Full User E2E SHA256:** `c4f083bef4d11dd748ee537a65ba0c7f6288e41f56a2117facdacb28b24603bc`
+> **Canonical Full User E2E SHA256:** `03377874d008f51422ba4dcee519715707baa1cc2b222fa9e388ae6ac0b8a5bd`
 > **Generation:** `python3 tools/generate_cli_only_e2e_contract.py --write`; `--check` verifies no source drift.
 > **Safety:** preserve current authorization, exact live platform/tool refusals, other actors, host ownership and management access; never reroute a denied effect.
 > **Candidate:** do not infer installed Source HEAD from a Git checkout; record each installed Server/Agent's provenance.
@@ -22,13 +22,15 @@
 
 ## 2. Start eligibility: no global test-start gate
 
+**Owner directive (2026-11-25): No separate connection preflight.** Use the owner-configured SSH aliases and existing SSH settings as-is. Do not run standalone SSH login/reachability probes, ping, TCP/port scans, SSH host-key checks, readiness scripts, or preliminary TLS/DNS checks merely to decide whether to start E2E. Read local inventory/config without network probes and execute the first actual scenario action directly. Record connection errors from that action only, classify the affected criterion, and continue independent scenarios; do not stop for repeated preflight or operator reconfirmation. Preserve normal SSH/security enforcement and genuine product DNS/TLS/OAuth, lifecycle and access-control assertions within their actual scenarios.
+
 1. Resolve `datarelay-labs/datarelay-link`, read `AGENTS.md`, `.engineering/project.yaml`, current installed candidate identities and this entire executable contract before the first user action.
 2. Inspect branch/HEAD/dirty status, active owners and existing RUN_ID/processes **once**. Do not start a competing actor, repin its candidate, edit its owned state or replace its evidence. Use independent safe resources/hosts. A live actor owns only its own mutable scope, not the entire lab.
 3. **There is no global LAB_GO** or `phase-state.json`, universal host-GO, AI/MCP/OAuth readiness, FCS completion, whole CI wait, newly created VM/snapshot or repeated owner permission required to begin an independently runnable CLI scenario.
 4. Dirty worktree: never build a falsely qualified candidate from uncommitted source. Continue public CLI observations against a truthfully pinned existing installation, with its actual `INSTALLED_HEAD`; only an exact installed HEAD or a cryptographically verified generated-only provenance commit whose first content parent matches the installed Source HEAD may qualify for candidate PASS. Never accept an older ancestor, another branch or product-file changes in that provenance commit.
 5. Missing prerequisite blocks only the dependent action. `ENVIRONMENT_BLOCKER` must mean demonstrated host/topology/required external resource unavailability, not a personal preference, stale report, absent release SLO or unstarted setup work.
 6. Historical platform/tool refusal is **evidence to re-check under present policy**, not a permanent ban. An actual current denial remains binding for that **exact operation**: do not bypass it by changing executor, sandbox, host, command, identity, permissions or route. Record tool, host, attempted command, literal error and impact, continue independent checks. High-risk production/credential/permission/release effects still need their own authority.
-7. Separate the functional Server (`frp-e2e-server`) from the owner-assigned public DNS/hostname Server (`frp-release-server`) when applicable. Ordinary CLI, lifecycle, traffic, concurrency and performance use the functional Server; public hostname/DNS-specific substeps use the approved DNS target. Missing DNS affects only those substeps.
+7. Use the owner-assigned functional Server (`frp-e2e-server`) for all CLI-only tests, including real public DNS/FQDN, public/bootstrap hostname and fallback, enrollment, lifecycle, traffic, concurrency, performance and Soak. Resolve its real public FQDN from the owner-private host map; the SSH IP is not the FQDN. Missing DNS affects only the dependent hostname criteria. The separate MCP Server is excluded from this CLI-only profile.
 8. All claims require **actual public CLI actions** through `drlink`; helper scripts can orchestrate/measure/record but cannot replace a user-role discovery path, a real confirmation or actual application traffic. Every per-host prerequisite and effect must be observed directly. Interactive PTY/TTY is required **only for an operation whose public CLI contract needs it**; a failed TTY tool blocks its interactive criterion alone. Do not turn CI, source inspection or scripted PASS into user E2E PASS.
 
 ## 3. Per-run state, ownership, lifecycle and evidence

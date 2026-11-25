@@ -26,7 +26,9 @@ ALLOWED_ALIASES = frozenset({
 })
 EXCLUDED_ALIASES = frozenset({"frp-e2e-linux114", "frp-e2e-macos"})
 SOURCE_RE = re.compile(r"^[0-9a-f]{40}$")
-MCP_SERVER_ALIAS = "frp-release-server"
+MCP_SERVER_ALIAS = "mcp-link"
+# Historical private inventories remain readable; new runs use mcp-link.
+MCP_SERVER_ALIASES = frozenset({MCP_SERVER_ALIAS, "frp-release-server"})
 MCP_FQDN_LABEL = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$")
 UNIX_READ_ONLY = (
     'printf "HOST="; hostname; '
@@ -144,12 +146,12 @@ def verify_manifest(manifest: dict) -> list[dict]:
     if "mcp_server" in manifest:
         mcp = manifest["mcp_server"]
         if not isinstance(mcp, dict) or (
-            mcp.get("ssh_alias") != MCP_SERVER_ALIAS or
+            mcp.get("ssh_alias") not in MCP_SERVER_ALIASES or
             mcp.get("role") != "mcp-server" or
             mcp.get("required") is not True or
             not valid_mcp_hostname(mcp.get("public_hostname")) or
-            MCP_SERVER_ALIAS in names or
-            (split_assigned and mcp.get("public_hostname") != split.get("MCP_DNS_SERVER"))
+            mcp.get("ssh_alias") in names or
+            (split_assigned and mcp.get("public_hostname") != split.get("MCP_SERVER", split.get("MCP_DNS_SERVER")))
         ):
             errors.append({"id": "MCP_HOST_CONFIG", "status": "NOT_READY",
                            "reason": "MCP Server must use the separately assigned owner SSH alias, public FQDN and mandatory role"})
@@ -366,14 +368,14 @@ def classify_mcp_server(host: dict, result: subprocess.CompletedProcess, expecte
 def collect_mcp_server(host: dict, expected_source: str,
                        phase: str = "INSTALLED_CANDIDATE", timeout: int = 15) -> dict:
     """Never accept an arbitrary host or invoke a credential/certificate mutation."""
-    if host.get("ssh_alias") != MCP_SERVER_ALIAS or not valid_mcp_hostname(host.get("public_hostname")):
+    if host.get("ssh_alias") not in MCP_SERVER_ALIASES or not valid_mcp_hostname(host.get("public_hostname")):
         raise ValueError("MCP Server must use the assigned owner alias and public hostname")
     # Use only the explicitly allowlisted owner's configured SSH alias.
     # Never override its host-key verification policy: disposable lab aliases
     # may have owner-approved ephemeral-host handling in ~/.ssh/config.
     # This is a management-route probe, not a substitute for product TLS E2E.
     argv = ["ssh", "-o", "BatchMode=yes",
-            "-o", "ConnectTimeout=5", MCP_SERVER_ALIAS, MCP_READ_ONLY]
+            "-o", "ConnectTimeout=5", host["ssh_alias"], MCP_READ_ONLY]
     try:
         result = subprocess.run(argv, text=True, capture_output=True,
                                 timeout=timeout, check=False)
