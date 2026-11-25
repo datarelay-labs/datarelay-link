@@ -41,14 +41,18 @@ function Get-FrpPackagedSourceHead {
 }
 
 function Confirm-FrpWindowsSourceProvenance {
-    param([Parameter(Mandatory = $true)][string]$AllocatorUrl)
+    param([Parameter(Mandatory = $true)][string]$AllocatorUrl, [string]$CaPath, [switch]$VerifyOnly)
     # The generated outer bootstrap remains on disk while its child installer
     # executes. Bind its actual bytes to the Server's CA-verified manifest.
     if (-not $env:FRP_WINDOWS_BOOTSTRAP_PATH) { return }
     $digest = Get-FrpSha256HexOfFile -Path $env:FRP_WINDOWS_BOOTSTRAP_PATH
-    if ($script:FrpVerifiedBootstrapDigest -ceq $digest) { return }
+    if (-not $VerifyOnly -and $script:FrpVerifiedBootstrapDigest -ceq $digest) { return }
     $origin = Get-FrpAllocatorOrigin -AllocatorUrl $AllocatorUrl
-    $manifest = (Invoke-FrpHttpsJson -Method GET -Url "$origin/artifacts/manifest.json") | ConvertFrom-Json
+    $manifest = if ($CaPath) {
+        (Invoke-FrpHttpsJson -Method GET -Url "$origin/artifacts/manifest.json" -CaPath $CaPath) | ConvertFrom-Json
+    } else {
+        (Invoke-FrpHttpsJson -Method GET -Url "$origin/artifacts/manifest.json") | ConvertFrom-Json
+    }
     $packaged = Get-FrpPackagedManifest
     $installerEntries = @($manifest.artifacts | Where-Object {
         $_.artifact_type -eq 'agent-installer' -and $_.platform -eq 'windows' -and
@@ -63,6 +67,7 @@ function Confirm-FrpWindowsSourceProvenance {
         $manifest.project_version -cne $packaged.project_version) {
         throw 'ERROR: Windows installer source provenance does not match the qualified Server artifact. No enrollment was attempted.'
     }
+    if ($VerifyOnly) { return }
     $provenance = [ordered]@{
         source_head = [string]$manifest.source_head
         content_source_head = Get-FrpPackagedSourceHead -Manifest $packaged
@@ -73,6 +78,101 @@ function Confirm-FrpWindowsSourceProvenance {
     [IO.File]::WriteAllText("$path.tmp", ($provenance | ConvertTo-Json))
     Move-Item -LiteralPath "$path.tmp" -Destination $path -Force
     $script:FrpVerifiedBootstrapDigest = $digest
+}
+
+# Only a CA and its exact atomic staging names, with no enrolled/pending
+# state, runtime, tasks or unknown files, are classified as an unclaimed
+# Windows trust residue. This runs under the existing lifecycle lock.
+function Get-FrpUnclaimedWindowsCaResidue {
+    if ($script:FrpClientLockDepth -lt 1) { return }
+    $root = Get-FrpWindowsRoot
+    $dirs = @('bin','config','state','certs','logs','tools','lib','backups')
+    $residue = @()
+    try {
+        $rootItem = Get-Item -LiteralPath $root -Force -ErrorAction Stop
+        if (-not $rootItem.PSIsContainer -or ($rootItem.Attributes -band [IO.FileAttributes]::ReparsePoint)) { return }
+        foreach ($dir in (Get-ChildItem -LiteralPath $root -Force -ErrorAction Stop)) {
+            if (-not $dir.PSIsContainer -or $dir.Name -notin $dirs -or ($dir.Attributes -band [IO.FileAttributes]::ReparsePoint)) { return }
+            foreach ($entry in (Get-ChildItem -LiteralPath $dir.FullName -Force -ErrorAction Stop)) {
+                if ($entry.Attributes -band [IO.FileAttributes]::ReparsePoint) { return }
+                if ($dir.Name -eq 'state') {
+                    if ($entry.Name -eq 'client-id' -and -not $entry.PSIsContainer) { continue }
+                    if ($entry.FullName -eq (Get-FrpClientLockPath) -and $entry.PSIsContainer) {
+                        $children = @(Get-ChildItem -LiteralPath $entry.FullName -Force -ErrorAction Stop)
+                        if ($children.Count -eq 1 -and $children[0].Name -eq 'pid' -and
+                            -not $children[0].PSIsContainer -and
+                            -not ($children[0].Attributes -band [IO.FileAttributes]::ReparsePoint) -and
+                            ([IO.File]::ReadAllText($children[0].FullName)).Trim() -eq [string]$PID) { continue }
+                    }
+                    return
+                }
+                if ($dir.Name -eq 'certs' -and -not $entry.PSIsContainer -and
+                    ($entry.Name -eq 'allocator-ca.crt' -or $entry.Name -cmatch '^allocator-ca\.crt\.[0-9a-f]{32}\.tmp$')) {
+                    $residue += $entry.FullName
+                    continue
+                }
+                return
+            }
+        }
+        foreach ($task in @((Get-FrpAutostartTaskName), (Get-FrpLifecycleTaskName)) + @(Get-FrpAutostartLegacyTaskNames)) {
+            if (Test-FrpAutostartTaskExists -TaskName $task) { return }
+        }
+        return $residue
+    } catch {
+        return
+    }
+}
+
+function Repair-FrpUnclaimedWindowsCaResidue {
+    param([string]$AllocatorUrl, [string]$CaSha256, [string]$BootstrapLocator)
+    # Only the qualified Zero-Touch outer bundle and its pre-provisioned
+    # CA authorize recovery. The ordinary pin check still rejects other
+    # mismatches, including manual installations and pending transactions.
+    if (-not $BootstrapLocator -or -not $CaSha256 -or
+        -not $env:FRP_ALLOCATOR_CA_FILE -or -not $env:FRP_WINDOWS_BOOTSTRAP_PATH) { return }
+    $before = @(Get-FrpUnclaimedWindowsCaResidue)
+    if ($before.Count -eq 0) { return }
+    $ca = Get-FrpAllocatorCaPath
+    $expected = Normalize-FrpCaSha256 -Value $CaSha256
+    $same = $false
+    if (Test-Path -LiteralPath $ca) {
+        try {
+            $old = New-Object System.Security.Cryptography.X509Certificates.X509Certificate2($ca)
+            try { $same = (Get-FrpCertificateDerSha256 -Certificate $old) -eq $expected }
+            finally { $old.Dispose() }
+        } catch { }
+    }
+    if ($same -and $before.Count -eq 1) { return }
+    $staged = Join-Path (Get-FrpCertsDir) ("allocator-ca.crt." + [guid]::NewGuid().ToString('N') + '.tmp')
+    $backup = Join-Path (Get-FrpCertsDir) ("allocator-ca.crt." + [guid]::NewGuid().ToString('N') + '.tmp')
+    try {
+        Get-FrpCaCertificate -AllocatorUrl $AllocatorUrl -ExpectedSha256 $expected -DestinationPath $staged | Out-Null
+        Confirm-FrpWindowsSourceProvenance -AllocatorUrl $AllocatorUrl -CaPath $staged -VerifyOnly
+        $after = @(Get-FrpUnclaimedWindowsCaResidue)
+        if ($after.Count -ne ($before.Count + 1) -or $staged -notin $after -or
+            @(Compare-Object -ReferenceObject @($before | Sort-Object) -DifferenceObject @($after | Where-Object { $_ -ne $staged } | Sort-Object)).Count -ne 0) {
+            throw 'ERROR: Windows Agent residue changed during verification'
+        }
+        if (Test-Path -LiteralPath $ca) {
+            [IO.File]::Replace($staged, $ca, $backup)
+        } else {
+            [IO.File]::Move($staged, $ca)
+        }
+        foreach ($scratch in @($before | Where-Object { $_ -ne $ca }) + @($backup)) {
+            if (Test-Path -LiteralPath $scratch) {
+                $item = Get-Item -LiteralPath $scratch -Force -ErrorAction Stop
+                if ($item.PSIsContainer -or ($item.Attributes -band [IO.FileAttributes]::ReparsePoint)) {
+                    throw 'ERROR: unsafe Windows Agent CA scratch path'
+                }
+                Remove-Item -LiteralPath $scratch -Force -ErrorAction Stop
+            }
+        }
+        Write-Host 'Removed unclaimed Agent CA residue; continuing fresh enrollment.'
+    } finally {
+        if (Test-Path -LiteralPath $staged) {
+            Remove-Item -LiteralPath $staged -Force -ErrorAction Stop
+        }
+    }
 }
 
 function Write-FrpInstalledVersion {
@@ -1404,6 +1504,9 @@ function Invoke-FrpZeroTouch {
             # Already pinned by the earlier (crashed) attempt; no CA hash is
             # required to resume.
         } else {
+            if (-not $resumePending) {
+                Repair-FrpUnclaimedWindowsCaResidue -AllocatorUrl $AllocatorUrl -CaSha256 $CaSha256 -BootstrapLocator $BootstrapLocator
+            }
             Write-Host 'Bootstrapping allocator CA (pin verify)...'
             Get-FrpCaCertificate -AllocatorUrl $AllocatorUrl -ExpectedSha256 $CaSha256 | Out-Null
         }
