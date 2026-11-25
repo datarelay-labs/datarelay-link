@@ -33,7 +33,7 @@ External copies, Project/chat attachments, exported snapshots, and same-named do
 | Feature ↔ CLI/AI ↔ Operator Workflow reconciliation | `CLI_FEATURE_SCENARIO_RECONCILIATION.md` — `FCS_CLI_ONLY` (13 Direct) or `FCS_FULL` (15 with AI/MCP) |
 | Exhaustive direct CLI audit | `CLI_EXHAUSTIVE_AUDIT.md` |
 | Exhaustive AI-assisted command audit | `AI_ASSISTED_COMMAND_EXHAUSTIVE_AUDIT.md` |
-| Internal control-plane/schema history | `CONTROL_PLANE_ARCHITECTURE.md` |
+| Internal control-plane architecture | `CONTROL_PLANE_ARCHITECTURE.md` |
 
 ## Operator lifecycle documents
 
@@ -42,7 +42,7 @@ External copies, Project/chat attachments, exported snapshots, and same-named do
 | Install Server / Agent | `INSTALLATION.md` |
 | Upgrade / release channels | `UPGRADE.md` |
 | Remote Service + Remote Access operation | `REMOTE_ACCESS.md` |
-| AI Identity / AI Access / MCP | `AI_ACCESS_MCP.md` |
+| AI Identity / AI Access / MCP (single beginner UX target) | `AI_ACCESS_MCP.md` |
 | Native Server-self MCP (v2.4, optional/unqualified candidate) | `SERVER_NATIVE_MCP.md` |
 | Troubleshooting | `TROUBLESHOOTING.md` |
 | Deployment topology | `DEPLOYMENT_MODES.md` |
@@ -64,6 +64,8 @@ External copies, Project/chat attachments, exported snapshots, and same-named do
 These are executable audit contracts. An unqualified trigger starts execution immediately; it is not a request to merely summarize the documents. Direct CLI and AI-assisted lanes may run in parallel when they do not share destructive state. Findings from either lane can block candidate freeze.
 
 ## Qualification and evidence documents
+
+`MCP_BRIDGE_DISPATCH_DESIGN.md`, `ISSUE165_INTEGRATION.md`, and `F001_F007_RUNTIME_CONTINUITY_REMEDIATION.md` contain bounded investigation or candidate evidence. They are not current runtime/configuration oracles. Use exact HEAD source and the active roadmap for current behavior.
 
 These documents are useful for qualification but do not redefine product semantics:
 

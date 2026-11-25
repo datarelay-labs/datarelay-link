@@ -308,6 +308,8 @@ CHATGPT_OWNER_UI_ALLOW_DENY=
 - [ ] root help, `?`, Tab, menu, `help commands`, command-specific help, and errors expose the same supported surface; no supported command requires memorization.
 - [ ] every behavior-changing setting/subcommand has an explicit disposition; family-level parsing alone does not count as coverage.
 - [ ] no duplicate public mutation path exists for the same operation without an explicit product reason.
+- [ ] current product, architecture, release checklist and generated tests use one contract; the legacy policy model and retired bundle schema are not executable or prescribed.
+- [ ] beginner AI Access target is implemented and verified (including first/second AI, independent host enrollment, explicitly reviewed owner scope, native server-self boundary, and deny-by-default).
 - [ ] unreleased/greenfield v2.4 exposes no compatibility-only root-bypass alias or executable obsolete hidden grammar.
 - [ ] installer completion text, enrollment instructions, diagnostics, update recommendations, and recovery text point only to current canonical commands or exact documented installer actions.
 - [ ] active documentation examples use canonical public grammar or an explicitly justified installer-only lifecycle.

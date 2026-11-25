@@ -7,7 +7,7 @@
 
 ### Beginner-first AI Access UX — target contract (2026-11-25)
 
-This is the single intended UX for the next implementation candidate, not a claim that the installed release already implements it. This guide is the detailed normative workflow; CLI, menu, Web UI, help, completion and tests must converge on this contract. Do not retain alternate public spellings, parallel wizards or duplicate menu entry points for retired UX. Preserve persisted identities, policy, certificates and audit history; no permission widening, implicit trust or silent reconfiguration during migration.
+This is the single intended UX for the next implementation candidate, not a claim that the installed release already implements it. This guide is the detailed normative workflow; CLI, menu, help, completion and tests must converge on this contract; any Web UI consuming these functions must follow the same design. Do not retain alternate public spellings, parallel wizards or duplicate menu entry points for retired UX. Preserve persisted identities, policy, certificates and audit history; no permission widening, implicit trust or silent reconfiguration during migration.
 
 - **Managed Hosts**: register/enroll and manage actual hosts. Never add a host through an AI connection screen.
 - **AI Identity**: connect, verify, inspect, reconnect and disconnect an AI client. Authentication alone is not authorization.

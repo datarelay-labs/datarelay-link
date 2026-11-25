@@ -83,6 +83,26 @@ class DocConsistencyV24(unittest.TestCase):
         self.assertIn("canonical `configurationBundle` mapping", checklist)
         self.assertNotIn("kind: ConfigurationBundle", bundle)
 
+    def test_changelog_target_matches_current_policy_and_agent_menu(self):
+        changelog = (ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
+        target = changelog.split("## 2.4.0 — development target", 1)[1].split("## Historical releases", 1)[0]
+        self.assertIn("Internet Access and AI Access start DENY", target)
+        self.assertIn("Remote Services / Agent / Configuration / System / Help / Exit", target)
+        self.assertNotIn("ConfigurationBundle v1alpha1", target)
+        self.assertNotIn("exec=false", target)
+
+    def test_current_docs_have_no_retired_mcp_operator_commands(self):
+        # This checks the explicitly approved target design, not runtime implementation.
+        # Historical release evidence and third-party source are not current operator manuals.
+        pattern = re.compile(
+            r"(?m)^\s*(?:sudo drlink\s+|drlink>\s+)?"
+            r"(?:set mcp-tls\b|unset mcp-tls\b|system credential "
+            r"(?:approve-oauth|deny-oauth|rotate ai-identity|revoke ai-identity|configure ai-identity)\b)"
+        )
+        for path in sorted((ROOT / "docs").glob("*.md")):
+            with self.subTest(path=path.name):
+                self.assertIsNone(pattern.search(path.read_text(encoding="utf-8")))
+
     def test_restricted_plane_guidance_has_no_blacklist_allow_fallback(self):
         master = MASTER.read_text(encoding="utf-8")
         product = PRODUCT.read_text(encoding="utf-8")

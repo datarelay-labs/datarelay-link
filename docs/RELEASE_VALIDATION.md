@@ -676,9 +676,9 @@ ZERO_TOUCH_EXPIRY_DOES_NOT_DISCONNECT_ENROLLED_CLIENT=PASS
 
 Also prove that applying a bundle containing 30 enrollment plans issues 0 tickets and that explicit batch issuance never exceeds remaining active-unused capacity.
 
-## 23. Version/governance transition validation
+## 23. Version/governance validation
 
-Before RC, tests that encode legacy MCP exclusion must be intentionally replaced.
+Verify actual MCP feature presence separately from stable qualification; current tests must enforce this distinction.
 
 Final governance proves:
 

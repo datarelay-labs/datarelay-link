@@ -8,7 +8,7 @@
 
 ## 1. Purpose and authority
 
-This document is retained to describe internal control-plane structure, migration history, and implementation constraints created during the v2.4 redesign. It must not redefine the frozen public model.
+This document describes current internal control-plane structure and implementation constraints. It must not redefine the public model.
 
 Current public terminology and policy behavior are defined by:
 
@@ -16,9 +16,9 @@ Current public terminology and policy behavior are defined by:
 2. `DATA_RELAY_LINK_CLI_AI_MASTER_v2.4_FINAL.md`.
 3. `Data Relay Link CLI Information Architecture.md`.
 
-Actual qualified runtime behavior on an exact Git HEAD remains implementation evidence. Where the historical/intermediate terminology below conflicts with the current public SSOT, the current public SSOT wins.
+Actual runtime behavior on an exact Git HEAD remains implementation evidence. Differences from the intended public contract are defects or explicitly pending designs, not alternate supported models.
 
-Internal-name mapping used while legacy schema names remain in code:
+Current internal storage mapping (do not rename persisted tables without a qualified migration):
 
 ```text
 managed_endpoints  -> Managed Host Network Object projection
@@ -41,7 +41,7 @@ plane-specific Access Policy (Remote BLACKLIST/WHITELIST; Internet/AI WHITELIST-
 
 Internal storage names above are not public nouns. Historical public designs are available in Git history, not in the current architecture.
 
-When a later section is marked historical, it is migration context. Current operator-visible behavior follows the Product Master and CLI/AI Master.
+Current operator-visible behavior follows the Product Master and CLI/AI Master.
 
 ## 2. Current architecture invariants
 
@@ -1240,7 +1240,7 @@ Any product/dependency code change between the two final Full Real E2E passes re
 
 ## 50. Explicit non-goals for this architecture phase
 
-The foundation does not require these before v2.4.0 stable:
+The CLI foundation does not require these as dependencies before v2.4.0 stable; an independently maintained Web UI must follow the same current contract:
 
 ```text
 Web UI

@@ -58,11 +58,11 @@ Includes:
 ```text
 official fatedier/frp
 Zero-Touch / Manual Enrollment
-immutable Client identity
+immutable Managed Host / Agent identity
 multi-service relay
 public-port reservation
-Linux/macOS/Windows clients
-lifecycle/update/doctor/support bundle
+Linux/macOS/Windows Agents
+lifecycle/update/diagnostics/support bundle
 ```
 
 Do not fork FRP.
@@ -357,9 +357,9 @@ ambiguous generic group
 
 Protect impact confirmation, stale edit detection, contextual Tab completion, REPL/shell hints, and backend isolation.
 
-## 13. Phase DL-11 — release-governance transition
+## 13. Phase DL-11 — release governance
 
-Remove old hard-coded v2.4 MCP exclusion from:
+Verify consistent feature presence and independent release qualification across:
 
 ```text
 release manifest schema
@@ -377,7 +377,7 @@ Final candidate truth:
 features.mcp_included=true
 ```
 
-only after actual MCP implementation exists and passes qualification.
+only when the candidate bytes actually contain MCP Bridge and AI Access. Qualification is a separate release gate, not a feature-presence flag.
 
 Keep exact-SHA pretag provenance, immutable tags, source/dist parity, checksums, and historical tag immutability.
 
@@ -500,9 +500,9 @@ verify clean stable install/bootstrap/update
 
 ## Cross-release performance track LPERF — MCP multi-host and Internet Access CPU spikes
 
-**Status:** BACKLOG / NOT STARTED (owner request 2026-11-23). **Priority:** P0 performance investigation. **Implementation tracker:** [#302](https://github.com/datarelay-labs/datarelay-link/issues/302). Recording this roadmap item is not implementation, deployment, or release approval. This bounded track covers the existing AI Access/MCP and Internet Access planes without overriding active source-bound E2E work.
+**Status:** Implementation/benchmark PR [#304](https://github.com/datarelay-labs/datarelay-link/pull/304) open; integration and exact-candidate qualification outstanding. **Priority:** P0 performance investigation. **Implementation tracker:** [#302](https://github.com/datarelay-labs/datarelay-link/issues/302). Recording this roadmap item is not implementation, deployment, or release approval. This bounded track covers the existing AI Access/MCP and Internet Access planes without overriding active source-bound E2E work.
 
-**Operator symptom:** CPU spikes and degraded responsiveness when several Managed Hosts are connected through MCP while the Link Server also handles outbound Internet Access. Actual deployed source HEAD, Bridge worker count, bottleneck, and production capacity have **not** been confirmed. Earlier [AUD-21 MCP dispatch findings](MCP_BRIDGE_DISPATCH_DESIGN.md) are historical evidence, not proof of current deployment.
+**Operator symptom:** CPU spikes and degraded responsiveness when several Managed Hosts are connected through MCP while the Link Server also handles outbound Internet Access. Actual deployed source HEAD, Bridge worker count, bottleneck, and production capacity have **not** been confirmed. Earlier [AUD-21 MCP dispatch findings](MCP_BRIDGE_DISPATCH_DESIGN.md) are historical evidence only; PR #304 and exact-candidate benchmarks govern current implementation status, not proof of current deployment.
 
 | WBS | Scope | Required result |
 | --- | --- | --- |

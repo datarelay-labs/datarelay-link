@@ -451,11 +451,9 @@ Internet Access policy is backed up through the consistent control-plane SQLite 
 
 Derived runtime files are regenerated after restore and are not the recovery authority.
 
-## 27. Legacy transition
+## 27. State migration
 
-Legacy `internet-profile`, Egress Profile, and authoritative `egress-control.json` semantics are development-history concepts and are not the v2.4.0 target control model.
-
-The implementation phase migrates or replaces them without dual authoritative state.
+SQLite remains the sole authoritative Internet Access policy store. Prior-state imports are supported only by the migration and backup/restore contract; do not add a second policy store or alternate public workflow.
 
 ## 28. Real E2E
 
