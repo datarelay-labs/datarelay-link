@@ -179,6 +179,10 @@ class LabReadinessSupportingTests(unittest.TestCase):
         self.assertTrue(lab.verify_manifest(missing), "Cannot omit MCP Server from a split lab")
         manifest["two_server_assignment"] = split
         self.assertEqual(lab.verify_manifest(manifest), [])
+        current = json.loads(json.dumps(manifest))
+        current["mcp_server"]["ssh_alias"] = "mcp-link"
+        current["two_server_assignment"]["MCP_SERVER"] = current["two_server_assignment"].pop("MCP_DNS_SERVER")
+        self.assertEqual(lab.verify_manifest(current), [])
         wrong_fqdn = json.loads(json.dumps(manifest))
         wrong_fqdn["two_server_assignment"]["MCP_DNS_SERVER"] = "another.example.test"
         self.assertTrue(lab.verify_manifest(wrong_fqdn))

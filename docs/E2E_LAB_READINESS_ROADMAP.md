@@ -12,8 +12,8 @@ F001 and F007 remain open until genuine exact-HEAD, signed Server/Agent evidence
 
 ## Owner-assigned routing and disposable-host authority
 
-- `MCP_DNS_SERVER` handles **MCP + DNS/public-hostname tests only**, including public TLS/OAuth, hostname DNS, bootstrap hostname and associated API checks.
-- `FUNCTION_PERFORMANCE_SERVER` handles **everything else**: functional Server, CLI, Remote Access, Internet Access, Agent, failure/recovery, performance and Soak. Mixed scenarios route each specific criterion to its matching host without doubling the 116-ID inventory.
+- `MCP_SERVER` (candidate alias `mcp-link`) handles **MCP-specific tests only**, including its own public HTTPS/TLS, OAuth and AI Access; verify actual public trust and test-only ownership before mutating it.
+- `FUNCTION_PERFORMANCE_SERVER` (alias `frp-e2e-server`) handles **everything else**: functional Server, CLI, Remote Access, Internet Access, Agent, public DNS/FQDN and bootstrap hostname/fallback, failure/recovery, performance and Soak. Use the owner-private mapped public FQDN for real hostname tests. Mixed scenarios route each specific criterion to its matching host without doubling the 116-ID inventory.
 - Two-Server separation is **not a new VM guest/snapshot/restore/host-provisioning prerequisite**. Native Windows/Rocky and credentials remain limited to the exact owner-assigned estate.
 
 **Owner decision — every assigned test host may be destroyed:** Within the owner-approved disposable roster, product loss, service interruption and reboot were approved. Before testing each host, inspect its prior DRLink state, clean only eligible test-only state and **verify it is** clean; then deploy the immutable test candidate and execute actual scenarios. Do not demand a fresh owner confirmation merely because a designated test VM may fail. Keep management SSH, unrelated machines and historical evidence intact.
