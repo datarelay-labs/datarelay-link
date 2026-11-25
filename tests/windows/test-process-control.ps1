@@ -25,17 +25,40 @@ try {
         Stop-FrpClient | Out-Null
         Write-FrpTestPass 'test-process-control (fake)'
     } else {
-        $probe = Join-Path $env:FRP_WINDOWS_ROOT 'console-probe.ps1'
+        # Exercise a genuine console-subsystem executable, just like frpc.
+        # A detached PowerShell host can exit before executing a script when
+        # it has no usable console. Do not use that as the process oracle.
+        $src = Join-Path $env:FRP_WINDOWS_ROOT 'console-probe.cs'
+        $exe = Join-Path $env:FRP_WINDOWS_ROOT 'console-probe.exe'
         $result = Join-Path $env:FRP_WINDOWS_ROOT 'console-probe.txt'
         @'
-param([string]$Result)
-Add-Type -Name ConsoleProbe -Namespace DRLinkTest -MemberDefinition '[System.Runtime.InteropServices.DllImport("kernel32.dll")] public static extern System.IntPtr GetConsoleWindow();'
-[IO.File]::WriteAllText($Result, [string]([DRLinkTest.ConsoleProbe]::GetConsoleWindow() -eq [IntPtr]::Zero))
-'@ | Set-Content -LiteralPath $probe -Encoding ASCII
-        $exe = Join-Path $env:SystemRoot 'System32/WindowsPowerShell/v1.0/powershell.exe'
-        $command = '"{0}" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "{1}" -Result "{2}"' -f $exe, $probe, $result
+using System;
+using System.IO;
+using System.Runtime.InteropServices;
+public static class ConsoleProbe {
+    [DllImport("kernel32.dll")]
+    private static extern IntPtr GetConsoleWindow();
+    public static int Main(string[] args) {
+        File.WriteAllText(args[0], (GetConsoleWindow() == IntPtr.Zero).ToString());
+        return 0;
+    }
+}
+'@ | Set-Content -LiteralPath $src -Encoding ASCII
+        $csc = @(
+            (Join-Path $env:WINDIR 'Microsoft.NET\Framework64\v4.0.30319\csc.exe'),
+            (Join-Path $env:WINDIR 'Microsoft.NET\Framework\v4.0.30319\csc.exe')
+        ) | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
+        Assert-FrpTrue ([bool]$csc) 'Windows console fixture compiler available'
+        & $csc /nologo /target:exe "/out:$exe" $src
+        Assert-FrpEqual 0 $LASTEXITCODE 'console fixture compiled'
+        $baseline = Join-Path $env:FRP_WINDOWS_ROOT 'console-probe-baseline.txt'
+        & $exe $baseline
+        Assert-FrpEqual 0 $LASTEXITCODE 'console fixture can execute'
+        Assert-FrpTrue (Test-Path -LiteralPath $baseline) 'console fixture writes result'
+        $command = '"{0}" "{1}"' -f $exe, $result
         $created = Start-FrpDetachedProcess -CommandLine $command -WorkingDirectory $env:FRP_WINDOWS_ROOT
         Assert-FrpEqual 0 ([int]$created.ReturnValue) 'native detached process created'
+        Assert-FrpTrue ([int]$created.ProcessId -gt 0) 'native process id returned'
         $deadline = [DateTime]::UtcNow.AddSeconds(30)
         while (-not (Test-Path -LiteralPath $result) -and [DateTime]::UtcNow -lt $deadline) {
             Start-Sleep -Milliseconds 200
