@@ -1,7 +1,7 @@
 # Data Relay Link v2.4 — E2E lab diagnostics (not a launch gate)
 
 > **Status:** Supporting diagnostic reference for owner-assigned test hosts.
-> **Authority:** `docs/FULL_USER_E2E_SCENARIOS.md` governs all 116 user scenarios; `docs/E2E_EXECUTION_PROCEDURE.md` specifies live execution and `docs/CODEX_DUAL_ROLE_TEST_PROTOCOL.md` defines independent Codex roles.
+> **Authority:** `docs/FULL_USER_E2E_SCENARIOS.md` governs all 116 user scenarios; `docs/E2E_EXECUTION_PROCEDURE.md` specifies live execution and `docs/CODEX_DUAL_ROLE_TEST_PROTOCOL.md` defines independent Direct and AI-assisted roles.
 > **Scope:** Issue #165, independently authorized disposable test hosts, source HEAD/evidence and release HOLD. This file is NOT a prerequisite checklist, phase authorization, or competing Work Packet.
 
 ## Execute live tests first

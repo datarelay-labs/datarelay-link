@@ -133,10 +133,10 @@ client_tags
 Acceptance:
 
 ```text
-neutral Objects
+typed Network/Service/Permission Objects and flat Groups
 no Source/Destination object duplication
-multi-value static Objects
-Object Group cycle protection
+context-valid static Network Objects
+reject unsupported nested Groups
 context validation
 Managed Host lifecycle ownership
 no silent identity rebinding
@@ -181,7 +181,7 @@ flow test/explain
 Remote Service + reachability intersection
 ```
 
-Legacy ACL becomes non-canonical and is removed/hidden before stable.
+Only canonical Remote Access policy is public; no alternate legacy policy path.
 
 ## 8. Phase DL-6 — Internet Access policy
 
@@ -253,7 +253,7 @@ Legacy JSON is migration input only, not dual authority.
 
 ## 11. Phase DL-9 — MCP Bridge / AI Access
 
-**Status:** Included in v2.4.0 target; supersedes old exclusion decision.
+**Status:** Included in v2.4.0 target.
 
 **Current release blocker:** Real ChatGPT owner/UI OAuth Authorization Code/consent, tool discovery, one policy-allowed operation, and one expected policy denial must be retained as release evidence from a plan/surface that officially supports full MCP at evidence-capture time. Machine-side MCP/OAuth conformance is required but does not clear this user-authentication gate by itself.
 
@@ -346,7 +346,7 @@ help
 exit
 ```
 
-Remove/hide pre-stable legacy public resources:
+Reject retired public resource names; do not retain compatibility aliases:
 
 ```text
 service-profile

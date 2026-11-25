@@ -68,6 +68,21 @@ class DocConsistencyV24(unittest.TestCase):
                   in catalog.guided_menu_entries("client")]
         self.assertEqual(actual, master)
 
+    def test_current_architecture_and_release_schema_do_not_revive_retired_contracts(self):
+        architecture = (ROOT / "docs" / "CONTROL_PLANE_ARCHITECTURE.md").read_text(encoding="utf-8")
+        checklist = (ROOT / "docs" / "RELEASE_CHECKLIST.md").read_text(encoding="utf-8")
+        bundle = (ROOT / "docs" / "CONFIGURATION_BUNDLE.md").read_text(encoding="utf-8")
+        for token in ("REMOTE_ACCESS_RULEBASE=ORDERED_FIRST_MATCH",
+                      "INTERNET_ACCESS_RULEBASE=ORDERED_FIRST_MATCH",
+                      "## 20. Intermediate Remote Access rulebase",
+                      "## 21. Intermediate Internet Access rulebase"):
+            self.assertNotIn(token, architecture)
+        self.assertIn("REMOTE_ACCESS_MODE=BLACKLIST_OR_WHITELIST", architecture)
+        self.assertIn("INTERNET_ACCESS_MODE=WHITELIST_ONLY", architecture)
+        self.assertNotIn("apiVersion: drlink.datarelay.run/v1alpha1", checklist)
+        self.assertIn("canonical `configurationBundle` mapping", checklist)
+        self.assertNotIn("kind: ConfigurationBundle", bundle)
+
     def test_restricted_plane_guidance_has_no_blacklist_allow_fallback(self):
         master = MASTER.read_text(encoding="utf-8")
         product = PRODUCT.read_text(encoding="utf-8")

@@ -64,7 +64,7 @@ AI Access          — WHITELIST only, deny-by-default
 ConfigurationBundle
 ```
 
-The earlier intermediate model based on neutral generic Objects, Managed Endpoint, Published Service, Service Preset, ordered first-match ALLOW/DENY Rules, and AI Principal is superseded.
+Only the public model described here is supported; replaced designs remain in Git history.
 
 Implementation storage or internal helper names must not redefine the public model.
 
@@ -89,7 +89,8 @@ Product version and Relay Engine version are independent.
 1–5 hosts       extremely simple
 10–30 hosts     comfortable CLI operation
 30–50 hosts     reusable Objects/Groups are sufficient
-100–1000 hosts  not the current product target
+100 hosts       MCP performance qualification target (not a proven support claim)
+1000 hosts      not the current product target
 ```
 
 Do not turn Data Relay Link into a large fleet-management or network-overlay platform merely to match competitor feature lists.
@@ -608,7 +609,7 @@ No other document may redefine the public CLI/AI model independently.
 
 **Decision:** Adopt the Managed Host + Network/Service/Permission Object + AI Identity + Agent-local Remote Service model; Remote Access retains BLACKLIST/WHITELIST while Internet Access and AI Access are WHITELIST-only and deny-by-default.
 
-**Supersedes:** the intermediate Managed Endpoint / Published Service / Service Preset / ordered first-match ALLOW-DENY / AI Principal public model.
+**Authority:** the current public model and typed selectors above.
 
 ### 2026-09 — Fixed TCP
 
