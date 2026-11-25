@@ -152,6 +152,13 @@ class ImmutableProvenanceE2ETests(unittest.TestCase):
                     row = next(x for x in ledger.read_ledger(private)
                                if x["SCENARIO_ID"] == "U-005")
                     self.assertEqual(row["RESULT"], "NOT_RUN")
+                    for cid in ledger.read_criteria(private)["catalog"]:
+                        if cid.startswith("U-005."):
+                            with self.assertRaises(ValueError):
+                                ledger.record_criterion(private, cid, result="PASS", installed_head=f.old,
+                                    target=kwargs["target"], command=kwargs["command"], evidence=kwargs["evidence"], reason="")
+                            ledger.record_criterion(private, cid, result="PASS", installed_head=f.content,
+                                target=kwargs["target"], command=kwargs["command"], evidence=kwargs["evidence"], reason="")
                     ledger.record(private, "U-005", installed_head=f.content, **kwargs)
                     row = next(x for x in ledger.read_ledger(private)
                                if x["SCENARIO_ID"] == "U-005")

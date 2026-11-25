@@ -1495,7 +1495,11 @@ def handle_set(plane: ControlPlane, rest: list[str]) -> Optional[int]:
         extra = rest[2:]
         if not extra:
             if not _guided_create_available():
-                return None
+                raise ControlPlaneError(
+                    "ERROR: Guided %s setup requires an interactive terminal.\n"
+                    "Use: set %s <RULE> mode <MODE> source <SOURCE> destination <DESTINATION> service <SERVICE> enabled|disabled\n"
+                    "No changes were applied." % (res, res)
+                )
             from drlink_v24_wizard import run_wizard
 
             return run_wizard(plane, res, name)

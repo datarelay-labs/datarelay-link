@@ -28,7 +28,7 @@ MIXED = {
 ID_PATTERN = re.compile(r"^## ((?:U|O|A|S|C|P)-\d{3})\s+[—:-]\s+(.+)$", re.M)
 BLOCKED_TERMS = re.compile(
     r"\b(?:AI Identity|AI Access|AI-assisted|AI adviser|AI mirror|"
-    r"ChatGPT|Plugin|MCP|OAuth|AI one-shot|AI workflow)\b", re.I
+    r"ChatGPT|Plugin|MCP|OAuth|AI one-shot|AI workflow|AI-generated)\b", re.I
 )
 
 INTRO = """# Data Relay Link v2.4.0 — CLI-only Full Functional E2E (100 scenarios)
@@ -54,13 +54,15 @@ INTRO = """# Data Relay Link v2.4.0 — CLI-only Full Functional E2E (100 scenar
 
 ## 2. Start eligibility: no global test-start gate
 
-1. Resolve `datarelay-labs/datarelay-link`, read `AGENTS.md`, `.engineering/project.yaml`, current installed candidate identities and this entire executable contract before the first user action.
+**Owner directive (2026-11-25): No separate connection preflight.** Use the owner-configured SSH aliases and existing SSH settings as-is. Do not run standalone SSH login/reachability probes, ping, TCP/port scans, SSH host-key checks, readiness scripts, or preliminary TLS/DNS checks merely to decide whether to start E2E. Read local inventory/config without network probes and execute the first actual scenario action directly. Record connection errors from that action only, classify the affected criterion, and continue independent scenarios; do not stop for repeated preflight or operator reconfirmation. Preserve normal SSH/security enforcement and genuine product DNS/TLS/OAuth, lifecycle and access-control assertions within their actual scenarios.
+
+1. Resolve `datarelay-labs/datarelay-link`, read `AGENTS.md`, `.engineering/project.yaml`, this entire executable contract before the first user action. Record installed candidate identities as part of the first actual scenario action, not a separate connection probe.
 2. Inspect branch/HEAD/dirty status, active owners and existing RUN_ID/processes **once**. Do not start a competing actor, repin its candidate, edit its owned state or replace its evidence. Use independent safe resources/hosts. A live actor owns only its own mutable scope, not the entire lab.
 3. **There is no global LAB_GO** or `phase-state.json`, universal host-GO, AI/MCP/OAuth readiness, FCS completion, whole CI wait, newly created VM/snapshot or repeated owner permission required to begin an independently runnable CLI scenario.
 4. Dirty worktree: never build a falsely qualified candidate from uncommitted source. Continue public CLI observations against a truthfully pinned existing installation, with its actual `INSTALLED_HEAD`; only an exact installed HEAD or a cryptographically verified generated-only provenance commit whose first content parent matches the installed Source HEAD may qualify for candidate PASS. Never accept an older ancestor, another branch or product-file changes in that provenance commit.
 5. Missing prerequisite blocks only the dependent action. `ENVIRONMENT_BLOCKER` must mean demonstrated host/topology/required external resource unavailability, not a personal preference, stale report, absent release SLO or unstarted setup work.
 6. Historical platform/tool refusal is **evidence to re-check under present policy**, not a permanent ban. An actual current denial remains binding for that **exact operation**: do not bypass it by changing executor, sandbox, host, command, identity, permissions or route. Record tool, host, attempted command, literal error and impact, continue independent checks. High-risk production/credential/permission/release effects still need their own authority.
-7. Separate the functional Server (`frp-e2e-server`) from the owner-assigned public DNS/hostname Server (`frp-release-server`) when applicable. Ordinary CLI, lifecycle, traffic, concurrency and performance use the functional Server; public hostname/DNS-specific substeps use the approved DNS target. Missing DNS affects only those substeps.
+7. Use the owner-assigned functional Server (`frp-e2e-server`) for all CLI-only tests, including real public DNS/FQDN, public/bootstrap hostname and fallback, enrollment, lifecycle, traffic, concurrency, performance and Soak. Resolve its real public FQDN from the owner-private host map; the SSH IP is not the FQDN. Missing DNS affects only the dependent hostname criteria. The separate MCP Server is excluded from this CLI-only profile.
 8. All claims require **actual public CLI actions** through `drlink`; helper scripts can orchestrate/measure/record but cannot replace a user-role discovery path, a real confirmation or actual application traffic. Every per-host prerequisite and effect must be observed directly. Interactive PTY/TTY is required **only for an operation whose public CLI contract needs it**; a failed TTY tool blocks its interactive criterion alone. Do not turn CI, source inspection or scripted PASS into user E2E PASS.
 
 ## 3. Per-run state, ownership, lifecycle and evidence
@@ -82,14 +84,17 @@ INTRO = """# Data Relay Link v2.4.0 — CLI-only Full Functional E2E (100 scenar
 - Functional load requires **60-second warmup**, **300-second steady state for every applicable case**, and **P-013 3,600-second functional soak** once representative real application data paths work. **P-019 8h/24h is optional until explicitly selected.**
 - Exact labels retained for machine audit: `WARMUP=60s`, `STEADY_STATE_EACH_CASE=300s`, `SOAK=3600s`, `EXTENDED_SOAK=8h`, `ENDURANCE_SOAK=24h`; only the last two require explicit selection.
 - Run independent persistent workloads via managed `tmux`/systemd/equivalent when a connection cannot guarantee process lifetime. Retain PID/session, start/end UTC, real 60/300/3600-second samples and terminal results; do not claim elapsed PASS from an active PID or timer.
-- Measure receiver-confirmed 1KiB/64KiB/1MiB and stream/full-duplex goodput, checksum, CPS, 4/16/64+ connections, p50/p95/p99 latency, CPU/RSS/FD, mixed applications, denied traffic, saturation and function-under-load collision/recovery. Apply existing approved numeric SLOs without weakening them. **Unknown numeric SLO** is `MEASURED_NOT_QUALIFIED` for numeric qualification only, never justification to skip runnable functional measurements or hide actual errors.
+- Measure receiver-confirmed 1KiB/64KiB/1MiB and stream/full-duplex goodput, checksum, CPS, 4/16/64+ connections, p50/p95/p99 latency, CPU/RSS/FD, mixed applications, denied traffic, saturation and function-under-load collision/recovery. Apply existing approved numeric SLOs without weakening them. **Unknown numeric SLO** is `MEASURED_NOT_QUALIFIED` for numeric qualification only, never justification to skip runnable functional measurements or hide actual errors. After all functional assertions and required measurements actually pass, record `FUNCTIONAL_PASS_NUMERIC_UNQUALIFIED` with exact-HEAD evidence, not a qualified numeric PASS. A measured sample alone is insufficient.
 
 ## 5. Dispositions and truthfully separate completion gates
 
-Allowed outcomes: `NOT_RUN`, `IN_PROGRESS`, `PASS`, `FAIL`, `PARTIAL`, `FAIL_PRECONDITION`, `BLOCKED_ENVIRONMENT`, `BLOCKED_TOOLING`, `BLOCKED_PLATFORM_DENIAL`, `BLOCKED_MANAGEMENT_PATH`, `MEASURED_NOT_QUALIFIED`, `EXCLUDED_AI_MCP`; `P-019` may remain `NOT_RUN` when unselected. Always distinguish `BLOCKED` vs `FAIL`, the product cause vs management/tool limitations, candidate qualification vs valid installed-version behavior, functional PASS vs unqualified numeric SLO.
+Use the finite criterion groups in `docs/CLI_ONLY_E2E_CRITERIA.md` to track completed and remaining substeps with the inventory tool. A group is complete only when every corresponding original assertion has evidence; these groups do not replace the original scenario body. Freeze the per-run criterion plan from the installed public CLI catalog and selected host inventory (local information, no connectivity preflight). Record an actual unsupported feature separately from a claimed but missing user path. Do not label an unattempted or merely inconvenient test as unsupported.
+
+Allowed outcomes: `NOT_RUN`, `IN_PROGRESS`, `PASS`, `FAIL`, `PARTIAL`, `FAIL_PRECONDITION`, `BLOCKED_ENVIRONMENT`, `BLOCKED_TOOLING`, `BLOCKED_PLATFORM_DENIAL`, `BLOCKED_MANAGEMENT_PATH`, `MEASURED_NOT_QUALIFIED`, `FUNCTIONAL_PASS_NUMERIC_UNQUALIFIED`, `NOT_APPLICABLE`, `EXCLUDED_AI_MCP`; `P-019` may remain `NOT_RUN` when unselected. Entire-scenario NOT_APPLICABLE is restricted to the explicitly conditional P-020 when the actual infrastructure does not support controlled impairment, with evidence; missing access, a refused effect or unprepared setup is not N/A. Always distinguish `BLOCKED` vs `FAIL`, the product cause vs management/tool limitations, candidate qualification vs valid installed-version behavior, functional PASS vs unqualified numeric SLO.
 
 - `EXECUTABLE_SCOPE_COMPLETE`: every safe runnable original CLI-only criterion has a supported result or a concrete, attributable dependency-specific blocking record. No missing substeps hiding behind a completed parent row.
-- `ALL_APPLICABLE_CLI_E2E_PASS`: every required CLI-only criterion and its native/traffic/performance conditions is qualified PASS on the exact candidate, with no unresolved mandatory defect or blocker. Optional profiles are identified separately.
+- `CLI_FUNCTIONAL_E2E_PASS`: every required applicable functional assertion passes on the exact candidate, including actual mandatory load, integrity, recovery and measurements; absent numeric SLO remains explicitly unqualified. An observed FAIL is never waived.
+- `ALL_APPLICABLE_CLI_E2E_PASS`: every required CLI-only criterion and its native/traffic/performance conditions is qualified PASS on the exact candidate, with no unresolved mandatory defect or blocker. Optional profiles are identified separately. Select P-019 explicitly at initialization with --extended-soak; unselected optional progress does not prevent required completion, but any observed functional failure remains visible and blocks a positive gate. Do not claim unselected optional qualification.
 - Neither status implies `FULL_USER_E2E_PASS`, AI/MCP acceptance, a production deployment, a release, merge/tag or owner acceptance.
 - A tool or platform failure should be attempted/recorded as a bounded concrete operation and **must not be inflated into a global blocker**. Close out run-owned resources via public paths and report which original IDs remain FAIL/PARTIAL/BLOCKED/NOT_RUN.
 
@@ -120,6 +125,7 @@ def patch_section(sid: str, text: str) -> str:
     elif sid == "U-013":
         text = re.sub(r"(?m)^- AI Identity authentication vs AI Access authorization ambiguity;\n", "", text)
         text = text.replace("AI_TERM=", "PUBLIC_TERM=")
+        text = text.replace(", and AI-generated guidance", "")
         text = text.replace("If ChatGPT must guess hidden syntax", "If an operator must guess hidden syntax")
         text = text.replace("and AI-assisted", "and direct-user")
         text = text.replace("AI-assisted", "direct CLI")
@@ -143,6 +149,7 @@ def patch_section(sid: str, text: str) -> str:
         text = text.replace("## A-016 — AI workflow and CLI traceability audit",
                             "## A-016 — Direct CLI workflow and traceability audit")
         text = text.replace("At the end of FULL_USER_E2E", "At the end of CLI_ONLY_E2E")
+        text = text.replace("Every applicable runtime-discovered/reconciled public command and behavior-changing variant", "Each distinct applicable command and behavior-changing variant in the frozen current installed public CLI catalog (reconciled with section 14 and current CLI Reference)")
         text = re.sub(r"(?m)^-> AI_ASSISTED_RESULT/EVIDENCE\n", "", text)
         text = text.replace(
             " and one AI-assisted use-case record unless an explicit permitted AI_NOT_APPLICABLE reason is retained",
@@ -187,6 +194,7 @@ def platform_and_command_matrix(source: str) -> str:
              if not AI_ONLY_CLI_COMMAND.match(line.strip())]
     result = "\n".join(lines).replace("FULL_USER_E2E", "CLI_ONLY_E2E")
     result = result.replace("public v2.4 CLI/AI Master", "public v2.4.0 direct CLI Reference")
+    result = result.replace("test every platform currently claimed by the candidate at its actual qualification level.", "record every claimed platform at its actual qualification level. Test all currently assigned, suitable native hosts; missing claimed platforms remain explicit platform-qualification gaps, not a reason to stop other available-host scenarios. A configured required host that fails an actual scenario action remains BLOCKED, not N/A. Do not invent additional host-count tiers.")
     if re.search(r"(?mi)^(?:show|set|unset|test) (?:ai-|mcp-tls|permission-)", result):
         raise AssertionError("AI/MCP command leaked into direct CLI inventory")
     return result.rstrip() + "\n\n"
@@ -210,6 +218,7 @@ def original_shared_execution_contract(source: str) -> str:
     rep = rep.replace("wrong AI permission, ", "")
     rep = rep.replace("and/or AI assistance using only user-visible output", "using only user-visible output")
     rep = rep.replace("RECOVERY_USING_ONLY_CLI_OR_AI=100%", "RECOVERY_USING_ONLY_CLI=100%")
+    rep += "\n\nFor CLI-only, freeze the finite high-risk workflow families and deliberate mistake classes in the criterion catalog; expand only for an actual new public behavior discovered during the run, record applicability with evidence, and share overlapping same-run receipts across IDs. A missing receipt is pending, not automatically a product failure. Preserve the minimum repetition counts for each applicable family.\n"
     a = source.index("### 1.4.1 Scenario prerequisites, evidence reuse, and bounded stop rules")
     b = source.index("## 1.5 Parallel execution scheduler")
     pre = source[a:b].replace("functional MCP/auth, ", "")
