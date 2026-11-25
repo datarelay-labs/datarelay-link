@@ -1,5 +1,10 @@
 # Human UX Adversarial E2E Framework
 
+
+## AI Access beginner journeys (target)
+
+Use [AI_ACCESS_MCP.md](AI_ACCESS_MCP.md) as the workflow oracle. Test with an operator unfamiliar with MCP: discover Connect AI without System knowledge; handle absent/ready TLS, Direct mode, OAuth failures and pending approvals; connect a second AI without TLS reconfiguration; independently enroll a new Managed Host; add/edit a firewall-style AI Access Rule; use built-in profiles without creating Objects; skip policy and verify DENY; verify selected-only and explicitly dynamic trusted-host scope; revoke/disconnect and verify DENY; ensure no competing commands/menu entries remain. Run real OAuth/tool allow and deny and preserve existing state on upgrade. Do not mark PASS until actual candidate evidence exists.
+
 ## Purpose
 
 Emulate a first-time Data Relay Link operator — including realistic mistakes —

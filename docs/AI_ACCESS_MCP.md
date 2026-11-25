@@ -1,9 +1,39 @@
 # Data Relay Link — AI Identity, AI Access, and MCP
 
-> **Status:** v2.4 development operator/developer guide
+> **Status:** AI Access UX redesign target; implementation and installed-runtime qualification pending
 > **Authority:** Public CLI semantics come from the CLI/AI Master; security and transport boundaries come from `SECURITY.md`.
 
 ## 1. Model
+
+### Beginner-first AI Access UX — target contract (2026-11-25)
+
+This is the single intended UX for the next implementation candidate, not a claim that the installed release already implements it. The this guide is the detailed normative workflow; CLI, menu, Web UI, help, completion and tests must converge on this contract. Do not retain alternate public spellings, parallel wizards or duplicate menu entry points for retired UX. Preserve persisted identities, policy, certificates and audit history; no permission widening, implicit trust or silent reconfiguration during migration.
+
+- **Managed Hosts**: register/enroll and manage actual hosts. Never add a host through an AI connection screen.
+- **AI Identity**: connect, verify, inspect, reconnect and disconnect an AI client. Authentication alone is not authorization.
+- **AI Access Rules**: select Source (verified AI Identity), Destination (Managed Host-backed Network Object / Network Group), and Permission (built-in profile or reusable custom Object/Group), with explicit path and execution constraints. The firewall-style policy is separate from inventory and authentication.
+- **System → MCP Server Settings / Certificates**: owns infrastructure. The Connect AI wizard detects readiness and offers the same settings workflow inline when needed, then returns to onboarding. Ready TLS is reused without issuing or reconfiguring a certificate. Direct mode must report the supported single443 prerequisite; no silent deployment-mode switch.
+- **Advanced Permissions**: custom Permission Objects/Groups only when needed; not prerequisites for routine onboarding. Read-only grants host-info, process-read and explicitly scoped file-read. Full management offers all seven capabilities only after explicit review of destination, path and OS execution constraints. No automatic root or unrestricted path grant by selecting a label.
+- AI Access is WHITELIST-only. The wizard and one-shot Rule grammar require no mode field; first reviewed rule initializes WHITELIST atomically. No Policy, disabled enforcement, unverified/revoked identity, no matching rule or unsafe/unavailable target remains DENY.
+
+First connection: AI Access → Connect AI → select ChatGPT/Claude/Other and name → check endpoint/TLS (fix only if needed) → show public URL and client connection instructions → verify pending OAuth request, explicit operator approval and actual PKCE exchange → optionally open the separate Access Rule wizard with the verified Source preselected. Review destination and permissions before applying; skipping policy setup leaves DENY. The first Owner shortcut is optional and explicitly reviewed: only a verified identity may receive a named audited rule for all trusted hosts, including future signed enrollments **only if the operator explicitly chooses that dynamic scope**, with explicit permissions and path bounds. Otherwise select existing host(s)/group. Never implicitly authorize a new AI because it is first. Subsequent hosts are enrolled under Managed Hosts; a matching dynamic policy needs no AI reconfiguration; other policies remain unchanged until edited. Show effective access and actual connectivity separately.
+
+Normal commands:
+```text
+set ai-identity
+set ai-identity <NAME>
+show ai-identities
+show ai-identity <NAME>
+unset ai-identity <NAME>
+set ai-access
+set ai-access <RULE>
+show ai-access
+unset ai-access <RULE>
+test ai-access source <AI_IDENTITY> destination <DESTINATION> permission <PERMISSION> [path <PATH>]
+show ai-access-log
+```
+Name-free set opens the relevant guided create/select flow. Named Identity opens onboarding or management; named Rule opens create/edit. AI Identity management contains pending requests, approve/deny, reconnect, authentication method, rotation and revocation; security-sensitive effects require the existing explicit review/authorization, never a duplicate or bypass. System owns `set server mcp` (guided setup), `unset server mcp` (remove route, retain certificate/account material), `unset server mcp purge` (interactive destructive confirmation), certificate lifecycle and `system diagnostics mcp`. The approved one-shot grammar is documented in CLI Reference. Preserve real user OAuth, positive and negative authorization, safe certificate activation/rollback, upgrade state continuity and exact-head E2E release gates.
+
 
 ```text
 Authentication
@@ -52,18 +82,18 @@ The exact public MCP/OAuth endpoint design and host interoperability must remain
 Operator credential / OAuth lifecycle:
 
 ```text
-system credential rotate ai-identity <IDENTITY>
-system credential revoke ai-identity <IDENTITY>
-system credential configure ai-identity <IDENTITY> authentication <static-bearer|oauth>
-system credential approve-oauth <PENDING-ID> [AI-IDENTITY]
-system credential deny-oauth <PENDING-ID>
+set ai-identity <IDENTITY> rotate
+set ai-identity <IDENTITY> revoke
+set ai-identity <IDENTITY> authentication <static-bearer|oauth>
+set ai-identity <IDENTITY> approve <PENDING-ID>
+set ai-identity <IDENTITY> deny <PENDING-ID>
 ```
 
 Credential rotate/revoke/configure are security-sensitive authentication changes; revoke can interrupt active clients. OAuth approve is an explicit authorization decision that can widen access, while deny rejects the pending authorization. These explicit commands are themselves operator approval and do not add a second confirmation prompt.
 
-Public MCP is served only through the `single443` HTTPS frontend. `direct` deployment mode uses its public control port for the FRP listener and therefore must not advertise or activate `https://<host>/mcp`; `set mcp-tls` and certificate mutation commands fail closed until the Server is reconfigured to `single443`. The supported transition is to re-run the Data Relay Link Server installer from the same immutable release/source ref with `FRP_DEPLOYMENT_MODE=single443`, confirming the cutover by typing `SWITCH` on a TTY or setting `FRP_CONFIRM_MODE_SWITCH=yes` for a non-interactive run. A stale TLS intent or certificate from an earlier configuration does not make Direct mode MCP-capable.
+Public MCP is served only through the `single443` HTTPS frontend. `direct` deployment mode uses its public control port for the FRP listener and therefore must not advertise or activate `https://<host>/mcp`; `set server mcp` and certificate mutation commands fail closed until the Server is reconfigured to `single443`. The supported transition is to re-run the Data Relay Link Server installer from the same immutable release/source ref with `FRP_DEPLOYMENT_MODE=single443`, confirming the cutover by typing `SWITCH` on a TTY or setting `FRP_CONFIRM_MODE_SWITCH=yes` for a non-interactive run. A stale TLS intent or certificate from an earlier configuration does not make Direct mode MCP-capable.
 
-For a single443 Server with an explicitly configured MCP TLS hostname and mode, that hostname is the canonical `https://<MCP-HOSTNAME>/mcp` origin for OAuth issuer, discovery, registration and token exchange. It takes priority over an older `DRLINK_MCP_PUBLIC_URL` environment override (which remains a fallback when no dedicated MCP TLS hostname is configured). After a hostname change, inspect `/.well-known/oauth-authorization-server` and `/.well-known/oauth-protected-resource/mcp` through the externally reachable MCP HTTPS hostname; the issuer, registration endpoint, token endpoint and protected resource must all match the routed, certificate-valid FQDN. Internal loopback discovery checks do not substitute for the external client test.
+For a single443 Server with an explicitly configured MCP TLS hostname and mode, that hostname is the canonical `https://<MCP-HOSTNAME>/mcp` origin for OAuth issuer, discovery, registration and token exchange. The configured MCP hostname is the authoritative public origin; do not expose a competing public configuration path. After a hostname change, inspect `/.well-known/oauth-authorization-server` and `/.well-known/oauth-protected-resource/mcp` through the externally reachable MCP HTTPS hostname; the issuer, registration endpoint, token endpoint and protected resource must all match the routed, certificate-valid FQDN. Internal loopback discovery checks do not substitute for the external client test.
 
 ### First-time ChatGPT OAuth connection (DCR / CIMD)
 
@@ -77,7 +107,7 @@ identity (that would make initial onboarding impossible).
    before taking the operator action. On the **DRLink Server** run:
 
    ```text
-   system credential approve-oauth <PENDING-ID> chatgpt
+   set ai-identity chatgpt approve <PENDING-ID>
    ```
 
    For a previously absent AI Identity, this explicit action creates only
@@ -92,9 +122,7 @@ identity (that would make initial onboarding impossible).
    If the operator approves a newer request for this same still-PENDING
    first identity, the superseded authorization code is invalidated and
    cannot later acquire trusted access.
-4. The resulting MCP identity still has **no privileged AI Access rights**
-   until a separate, narrowly scoped WHITELIST rule is configured. In the
-   initial No Policy state, all privileged MCP operations remain DENY.
+4. The verified identity remains DENY until the operator reviews and applies a separate Access Rule. The wizard may preselect the verified source and offer an explicit Owner profile as described above; no policy is created if the operator skips this step.
 
 This flow permits first-time OAuth onboarding without using a private
 registration database edit, fabricated credentials or an automatic
@@ -153,7 +181,7 @@ enabled
 Example first rule:
 
 ```text
-set ai-access claude-prod mode whitelist source claude destination production-servers permission read-only enabled
+set ai-access claude-prod source claude destination production-servers permission read-only enabled
 ```
 
 ## 5. Policy semantics

@@ -8,6 +8,8 @@
 
 ## Scope
 
+Public AI Identity/TLS management follows the target in [AI_ACCESS_MCP.md](AI_ACCESS_MCP.md); native dispatch, actual authorization and security qualification are unchanged.
+
 Native MCP controls the DRLink Server through the existing authenticated Bridge.
 It does not require an Agent, central Server Peer, Enrollment Code, new ingress,
 or another OAuth approval. This workstream changes the MCP implementation,
@@ -186,11 +188,10 @@ sudo python3 tools/operator-native-mcp-full-control.py --apply \
 
 For an unbound DCR/CIMD OAuth request, only a currently enabled and
 verified/active operator-configured Identity is displayed. The result looks like
-`sudo drlink system credential approve-oauth oap_<PENDING-ID> plugin-personal-e2e`.
+`sudo drlink set ai-identity plugin-personal-e2e approve oap_<PENDING-ID>`.
 This is only a **display hint**, never automatic approval or authorization. If
 no verified hint is configured, the page retains `<AI-IDENTITY>` rather than
-guessing. An already-bound OAuth client shows the fully executable command
-without an Identity argument. The operator must still review the client and
+guessing. An already-bound OAuth client shows the fully executable command with the verified bound Identity. The operator must still review the client and
 execute the command on the correct DRLink Server. Existing TLS, OAuth consent,
 identity credentials, and AI Access rules are unchanged.
 

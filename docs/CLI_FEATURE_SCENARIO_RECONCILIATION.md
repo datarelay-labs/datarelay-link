@@ -1,5 +1,7 @@
 # Data Relay Link — Feature ↔ CLI/AI ↔ Operator Workflow Reconciliation
 
+> AI Access reconciliation target: [AI_ACCESS_MCP.md](AI_ACCESS_MCP.md). Audit catalog, help, completion, menu and Web UI against the single target grammar; retired command paths must not be executable or discoverable. Verify real installed behavior only; discrepancies are findings until implementation and actual rerun.
+
 > **Document role:** Canonical non-destructive audit contract for product capability ↔ public CLI + AI-assisted operator support ↔ operator workflow coherence
 > **Executor:** current owner-selected runtime (default CHATGPT_CHAT); FCS_CLI_ONLY and FCS_FULL use distinct coverage gates.
 > **Scope:** feature/CLI/AI-assisted workflow completeness, uniqueness, discoverability, terminology, procedure, structure, safety contract, recovery guidance, and audit cleanup
@@ -841,7 +843,7 @@ Required contract:
 - no mutation before any required confirmation;
 - automation-safe exit status.
 
-Do **not** invent a universal TTY-only rule for all destructive commands. For example, current canonical documentation explicitly makes `unset mcp-tls purge` and `unset managed-host-group` interactive-only, while other y/N safety flows may accept documented stdin confirmation.
+Do **not** invent a universal TTY-only rule for all destructive commands. For example, current canonical documentation explicitly makes `unset server mcp purge` and `unset managed-host-group` interactive-only, while other y/N safety flows may accept documented stdin confirmation.
 
 Missing isolated regression coverage for a security-sensitive/destructive contract may itself be a finding.
 
