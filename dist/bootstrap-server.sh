@@ -1,4 +1,107 @@
 #!/usr/bin/env bash
+# Generated prefix. For stdin, spool the complete remaining body with buffered
+# I/O; never feed the large base64 here-documents to the streaming Bash parser.
+if [[ -z "${BASH_SOURCE[0]:-}" ]]; then
+  set -euo pipefail
+  # Capture the original curl source ref while that process still exists.
+  if [[ -z "${FRP_EXPECTED_SOURCE_REF:-}" ]]; then
+  _frp_bootstrap_ref=""
+  if [[ -n "${FRP_BOOTSTRAP_URL:-}" ]]; then
+    _frp_bootstrap_ref="$(python3 -c '
+import sys
+from urllib.parse import unquote, urlsplit
+url = sys.argv[1]
+host, owner = sys.argv[2:4]
+allowed = set(sys.argv[4:])
+try:
+    p = urlsplit(url)
+except ValueError:
+    raise SystemExit(0)
+if p.scheme != "https" or p.hostname != host:
+    raise SystemExit(0)
+parts = [unquote(x) for x in p.path.split("/") if x]
+if len(parts) >= 3 and parts[0] == owner and parts[1] in allowed:
+    print(parts[2])
+' "$FRP_BOOTSTRAP_URL" raw.githubusercontent.com datarelay-labs datarelay-link data-relay-link 2>/dev/null || true)"
+  fi
+  if [[ -z "$_frp_bootstrap_ref" && -d /proc ]]; then
+    _frp_bootstrap_ref="$(python3 - <<'PY' 2>/dev/null || true
+import os, re
+from urllib.parse import unquote, urlsplit
+pat = re.compile(
+    r"https://raw\\.githubusercontent\\.com/datarelay-labs/"
+    r"(?:datarelay-link|data-relay-link)/"
+    r"([^/\\s\"']+)/dist/bootstrap-server\\.sh"
+)
+pgid = os.getpgid(0)
+for name in os.listdir("/proc"):
+    if not name.isdigit():
+        continue
+    try:
+        if os.getpgid(int(name)) != pgid:
+            continue
+        raw = open(f"/proc/{name}/cmdline", "rb").read()
+    except (OSError, ProcessLookupError, PermissionError):
+        continue
+    text = raw.replace(b"\\0", b" ").decode("utf-8", "replace")
+    m = pat.search(text)
+    if not m:
+        continue
+    ref = unquote(m.group(1))
+    if ref and ref not in (".", ".."):
+        print(ref)
+        break
+PY
+)"
+  fi
+  if [[ -n "$_frp_bootstrap_ref" ]]; then
+    export FRP_EXPECTED_SOURCE_REF="$_frp_bootstrap_ref"
+  fi
+  unset _frp_bootstrap_ref
+fi
+  _drlink_stream_dir="$(mktemp -d)"
+  _drlink_stream_pid=""
+  _drlink_stream_cleanup() {
+    local rc=$?
+    trap - EXIT
+    if [[ -n "$_drlink_stream_pid" ]]; then
+      kill "$_drlink_stream_pid" 2>/dev/null || true
+      wait "$_drlink_stream_pid" 2>/dev/null || true
+    fi
+    rm -rf -- "$_drlink_stream_dir"
+    exit "$rc"
+  }
+  trap _drlink_stream_cleanup EXIT
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
+  echo "Downloading qualified Data Relay Link installer (84748865 bytes)..."
+  _drlink_stream_parent="$BASHPID"
+  (
+    while sleep 5; do
+      kill -0 "$_drlink_stream_parent" 2>/dev/null || exit 0
+      echo "  Download in progress: $(wc -c < "$_drlink_stream_dir/body.sh" 2>/dev/null || echo 0) / 84748865 bytes" >&2
+    done
+  ) </dev/null &
+  _drlink_stream_pid=$!
+  if ! cat > "$_drlink_stream_dir/body.sh"; then
+    echo "ERROR: Installer download or staging failed. Installation has not started." >&2
+    exit 1
+  fi
+  kill "$_drlink_stream_pid" 2>/dev/null || true
+  wait "$_drlink_stream_pid" 2>/dev/null || true
+  _drlink_stream_pid=""
+  echo "Download complete. Verifying installer payload..."
+  if ! printf '%s  %s\n' '6ee4dac768f9edc54a10cf44b76d30521d43ee39cfd41f6022d8d3b345287543' "$_drlink_stream_dir/body.sh" | sha256sum --check --status; then
+    echo "ERROR: Incomplete or corrupt installer payload. Installation has not started. Retry the same command." >&2
+    exit 1
+  fi
+  echo "Installer payload verified. Restoring installation files..."
+  # Keep the prior stdin/TTY contract and forward every installer argument.
+  bash "$_drlink_stream_dir/body.sh" "$@"
+  exit $?
+fi
+# END STREAM PREFIX; the remaining bytes are the SHA256-bound installer body.
+#!/usr/bin/env bash
 set -euo pipefail
 echo "Downloading qualified Data Relay Link installer..."
 TMP="$(mktemp -d)"
@@ -43,7 +146,7 @@ B64
 base64 -d >"$TMP/release-manifest.json" <<'B64'
 ewogICJzY2hlbWFfdmVyc2lvbiI6IDEsCiAgInByb2plY3RfdmVyc2lvbiI6ICIyLjQuMCIsCiAg
 ImZycF92ZXJzaW9uIjogIjAuNzEuMCIsCiAgImNoYW5uZWwiOiAiZGV2ZWxvcG1lbnQiLAogICJn
-aXRfcmVmIjogIjRkNWYwYmUwZWFhYjM4MGNkMWJhOTNlMjkxZTA0NzJmNmUxZWY4NGMiLAogICJv
+aXRfcmVmIjogIjc2MjAzOGMwNzY5NzhhY2Q0MDIyNmJhM2ExZjI4YjgzMjY0ZGRlZjEiLAogICJv
 d25lciI6ICJkYXRhcmVsYXktbGFicyIsCiAgInJlcG8iOiAiZGF0YXJlbGF5LWxpbmsiLAogICJo
 dHRwc19yYXdfYmFzZSI6ICJodHRwczovL3Jhdy5naXRodWJ1c2VyY29udGVudC5jb20vZGF0YXJl
 bGF5LWxhYnMvZGF0YXJlbGF5LWxpbmsiLAogICJzaWduaW5nIjogZmFsc2UsCiAgImludGVncml0
@@ -130,10 +233,10 @@ LnNoIjogewogICAgICAicGF0aCI6ICJkaXN0L2Jvb3RzdHJhcC1zZXJ2ZXItb25saW5lLnNoIiwK
 ICAgICAgInVybF9wYXRoIjogImRpc3QvYm9vdHN0cmFwLXNlcnZlci1vbmxpbmUuc2giCiAgICB9
 LAogICAgImJvb3RzdHJhcC1zZXJ2ZXItY29yZS50YXIiOiB7CiAgICAgICJwYXRoIjogImRpc3Qv
 Ym9vdHN0cmFwLXNlcnZlci1jb3JlLnRhciIsCiAgICAgICJ1cmxfcGF0aCI6ICJkaXN0L2Jvb3Rz
-dHJhcC1zZXJ2ZXItY29yZS50YXIiCiAgICB9CiAgfSwKICAic291cmNlX2hlYWQiOiAiNGQ1ZjBi
-ZTBlYWFiMzgwY2QxYmE5M2UyOTFlMDQ3MmY2ZTFlZjg0YyIsCiAgImZlYXR1cmVzIjogewogICAg
-Im1jcF9pbmNsdWRlZCI6IHRydWUKICB9LAogICJpbW11dGFibGVfc291cmNlX3JlZiI6ICI0ZDVm
-MGJlMGVhYWIzODBjZDFiYTkzZTI5MWUwNDcyZjZlMWVmODRjIgp9Cg==
+dHJhcC1zZXJ2ZXItY29yZS50YXIiCiAgICB9CiAgfSwKICAic291cmNlX2hlYWQiOiAiNzYyMDM4
+YzA3Njk3OGFjZDQwMjI2YmEzYTFmMjhiODMyNjRkZGVmMSIsCiAgImZlYXR1cmVzIjogewogICAg
+Im1jcF9pbmNsdWRlZCI6IHRydWUKICB9LAogICJpbW11dGFibGVfc291cmNlX3JlZiI6ICI3NjIw
+MzhjMDc2OTc4YWNkNDAyMjZiYTNhMWYyOGI4MzI2NGRkZWYxIgp9Cg==
 B64
 base64 -d >"$TMP/install-server.sh" <<'B64'
 IyEvdXNyL2Jpbi9lbnYgYmFzaApzZXQgLWV1byBwaXBlZmFpbAoKQkFTRV9ESVI9IiQoY2QgIiQo
@@ -1019279,8 +1019382,8 @@ R1YyWld4dmNHMWxiblFLCkI2NApfZnJwX2I2NGQgPiIkVE1QL3JlbGVhc2UtbWFuaWZlc3QuanNv
 biIgPDwnQjY0Jwpld29nSUNKelkyaGxiV0ZmZG1WeWMybHZiaUk2SURFc0NpQWdJbkJ5YjJwbFkz
 UmZkbVZ5YzJsdmJpSTZJQ0l5TGpRdU1DSXNDaUFnCkltWnljRjkyWlhKemFXOXVJam9nSWpBdU56
 RXVNQ0lzQ2lBZ0ltTm9ZVzV1Wld3aU9pQWlaR1YyWld4dmNHMWxiblFpTEFvZ0lDSm4KYVhSZmNt
-Vm1Jam9nSWpSa05XWXdZbVV3WldGaFlqTTRNR05rTVdKaE9UTmxNamt4WlRBME56Sm1ObVV4WldZ
-NE5HTWlMQW9nSUNKdgpkMjVsY2lJNklDSmtZWFJoY21Wc1lYa3RiR0ZpY3lJc0NpQWdJbkpsY0c4
+Vm1Jam9nSWpjMk1qQXpPR013TnpZNU56aGhZMlEwTURJeU5tSmhNMkV4WmpJNFlqZ3pNalkwWkdS
+bFpqRWlMQW9nSUNKdgpkMjVsY2lJNklDSmtZWFJoY21Wc1lYa3RiR0ZpY3lJc0NpQWdJbkpsY0c4
 aU9pQWlaR0YwWVhKbGJHRjVMV3hwYm1zaUxBb2dJQ0pvCmRIUndjMTl5WVhkZlltRnpaU0k2SUNK
 b2RIUndjem92TDNKaGR5NW5hWFJvZFdKMWMyVnlZMjl1ZEdWdWRDNWpiMjB2WkdGMFlYSmwKYkdG
 NUxXeGhZbk12WkdGMFlYSmxiR0Y1TFd4cGJtc2lMQW9nSUNKemFXZHVhVzVuSWpvZ1ptRnNjMlVz
@@ -1019397,11 +1019500,11 @@ ZEhOMGNtRndMWE5sY25abGNpMXZibXhwYm1VdWMyZ2lDaUFnSUNCOQpMQW9nSUNBZ0ltSnZiM1J6
 ZEhKaGNDMXpaWEoyWlhJdFkyOXlaUzUwWVhJaU9pQjdDaUFnSUNBZ0lDSndZWFJvSWpvZ0ltUnBj
 M1F2ClltOXZkSE4wY21Gd0xYTmxjblpsY2kxamIzSmxMblJoY2lJc0NpQWdJQ0FnSUNKMWNteGZj
 R0YwYUNJNklDSmthWE4wTDJKdmIzUnoKZEhKaGNDMXpaWEoyWlhJdFkyOXlaUzUwWVhJaUNpQWdJ
-Q0I5Q2lBZ2ZTd0tJQ0FpYzI5MWNtTmxYMmhsWVdRaU9pQWlOR1ExWmpCaQpaVEJsWVdGaU16Z3dZ
-MlF4WW1FNU0yVXlPVEZsTURRM01tWTJaVEZsWmpnMFl5SXNDaUFnSW1abFlYUjFjbVZ6SWpvZ2V3
+Q0I5Q2lBZ2ZTd0tJQ0FpYzI5MWNtTmxYMmhsWVdRaU9pQWlOell5TURNNApZekEzTmprM09HRmpa
+RFF3TWpJMlltRXpZVEZtTWpoaU9ETXlOalJrWkdWbU1TSXNDaUFnSW1abFlYUjFjbVZ6SWpvZ2V3
 b2dJQ0FnCkltMWpjRjlwYm1Oc2RXUmxaQ0k2SUhSeWRXVUtJQ0I5TEFvZ0lDSnBiVzExZEdGaWJH
-VmZjMjkxY21ObFgzSmxaaUk2SUNJMFpEVm0KTUdKbE1HVmhZV0l6T0RCalpERmlZVGt6WlRJNU1X
-VXdORGN5WmpabE1XVm1PRFJqSWdwOUNnPT0KQjY0Cl9mcnBfYjY0ZCA+IiRUTVAvaW5zdGFsbC1j
+VmZjMjkxY21ObFgzSmxaaUk2SUNJM05qSXcKTXpoak1EYzJPVGM0WVdOa05EQXlNalppWVROaE1X
+WXlPR0k0TXpJMk5HUmtaV1l4SWdwOUNnPT0KQjY0Cl9mcnBfYjY0ZCA+IiRUTVAvaW5zdGFsbC1j
 bGllbnQuc2giIDw8J0I2NCcKSXlFdmRYTnlMMkpwYmk5bGJuWWdZbUZ6YUFwelpYUWdMV1YxYnlC
 d2FYQmxabUZwYkFvS1gwWlNVRjlKVGxOVVFVeE1YME5NU1VWTwpWRjlFU1ZJOUlpUW9ZMlFnSWlR
 b1pHbHlibUZ0WlNBaUpIdENRVk5JWDFOUFZWSkRSVnN3WFgwaUtTSWdKaVlnY0hka0tTSUtJeUJD
@@ -1100731,8 +1100834,8 @@ b3JjZSAtUGF0aCAkZGlyIHwgT3V0LU51bGwKICAkb3V0ID0gSm9pbi1QYXRoICR0bXAgJ3JlbGVh
 c2UtbWFuaWZlc3QuanNvbicKICAkYjY0ID0gQCcKZXdvZ0lDSnpZMmhsYldGZmRtVnljMmx2YmlJ
 NklERXNDaUFnSW5CeWIycGxZM1JmZG1WeWMybHZiaUk2SUNJeUxqUXVNQ0lzQ2lBZ0ltWnljRjky
 WlhKemFXOXVJam9nSWpBdU56RXVNQ0lzQ2lBZ0ltTm9ZVzV1ClpXd2lPaUFpWkdWMlpXeHZjRzFs
-Ym5RaUxBb2dJQ0puYVhSZmNtVm1Jam9nSWpSa05XWXdZbVV3WldGaFlqTTRNR05rTVdKaE9UTmxN
-amt4WlRBME56Sm1ObVV4WldZNE5HTWlMQW9nSUNKdmQyNWxjaUk2SUNKawpZWFJoY21Wc1lYa3Ri
+Ym5RaUxBb2dJQ0puYVhSZmNtVm1Jam9nSWpjMk1qQXpPR013TnpZNU56aGhZMlEwTURJeU5tSmhN
+MkV4WmpJNFlqZ3pNalkwWkdSbFpqRWlMQW9nSUNKdmQyNWxjaUk2SUNKawpZWFJoY21Wc1lYa3Ri
 R0ZpY3lJc0NpQWdJbkpsY0c4aU9pQWlaR0YwWVhKbGJHRjVMV3hwYm1zaUxBb2dJQ0pvZEhSd2Mx
 OXlZWGRmWW1GelpTSTZJQ0pvZEhSd2N6b3ZMM0poZHk1bmFYUm9kV0oxYzJWeVkyOXUKZEdWdWRD
 NWpiMjB2WkdGMFlYSmxiR0Y1TFd4aFluTXZaR0YwWVhKbGJHRjVMV3hwYm1zaUxBb2dJQ0p6YVdk
@@ -1100849,11 +1100952,11 @@ blpsY2kxdmJteHBibVV1CmMyZ2lDaUFnSUNCOUxBb2dJQ0FnSW1KdmIzUnpkSEpoY0MxelpYSjJa
 WEl0WTI5eVpTNTBZWElpT2lCN0NpQWdJQ0FnSUNKd1lYUm9Jam9nSW1ScGMzUXZZbTl2ZEhOMGNt
 RndMWE5sY25abGNpMWpiM0psTG5SaApjaUlzQ2lBZ0lDQWdJQ0oxY214ZmNHRjBhQ0k2SUNKa2FY
 TjBMMkp2YjNSemRISmhjQzF6WlhKMlpYSXRZMjl5WlM1MFlYSWlDaUFnSUNCOUNpQWdmU3dLSUNB
-aWMyOTFjbU5sWDJobFlXUWlPaUFpTkdRMVpqQmkKWlRCbFlXRmlNemd3WTJReFltRTVNMlV5T1RG
-bE1EUTNNbVkyWlRGbFpqZzBZeUlzQ2lBZ0ltWmxZWFIxY21Weklqb2dld29nSUNBZ0ltMWpjRjlw
+aWMyOTFjbU5sWDJobFlXUWlPaUFpTnpZeU1ETTQKWXpBM05qazNPR0ZqWkRRd01qSTJZbUV6WVRG
+bU1qaGlPRE15TmpSa1pHVm1NU0lzQ2lBZ0ltWmxZWFIxY21Weklqb2dld29nSUNBZ0ltMWpjRjlw
 Ym1Oc2RXUmxaQ0k2SUhSeWRXVUtJQ0I5TEFvZ0lDSnBiVzExCmRHRmliR1ZmYzI5MWNtTmxYM0ps
-WmlJNklDSTBaRFZtTUdKbE1HVmhZV0l6T0RCalpERmlZVGt6WlRJNU1XVXdORGN5WmpabE1XVm1P
-RFJqSWdwOUNnPT0KJ0AKICBbSU8uRmlsZV06OldyaXRlQWxsQnl0ZXMoJG91dCwgW0NvbnZlcnRd
+WmlJNklDSTNOakl3TXpoak1EYzJPVGM0WVdOa05EQXlNalppWVROaE1XWXlPR0k0TXpJMk5HUmta
+V1l4SWdwOUNnPT0KJ0AKICBbSU8uRmlsZV06OldyaXRlQWxsQnl0ZXMoJG91dCwgW0NvbnZlcnRd
 OjpGcm9tQmFzZTY0U3RyaW5nKCgkYjY0IC1yZXBsYWNlICdccycsJycpKSkKICAkaW5zdGFsbGVy
 ID0gSm9pbi1QYXRoICR0bXAgJ3dpbmRvd3MvaW5zdGFsbC1jbGllbnQucHMxJwogICYgcG93ZXJz
 aGVsbC5leGUgLU5vUHJvZmlsZSAtRXhlY3V0aW9uUG9saWN5IEJ5cGFzcyAtRmlsZSAkaW5zdGFs
