@@ -25,7 +25,7 @@ git worktree add --detach "$WT" "$HEAD_COMMIT" >/dev/null
 cd "$WT"
 
 python3 scripts/build-bundles.py >/dev/null
-if ! git diff --exit-code --   dist/bootstrap-server.sh   dist/bootstrap-client.sh   dist/bootstrap-client.ps1 >/dev/null; then
+if ! git diff --exit-code --   dist/bootstrap-server.sh dist/bootstrap-server-online.sh dist/bootstrap-server-core.tar   dist/bootstrap-client.sh   dist/bootstrap-client.ps1 >/dev/null; then
   fail "DERIVED_BUNDLE_STALE: regenerate bundles during implementation"
 fi
 echo "PASS DERIVED_BUNDLE_PARITY"

@@ -26,17 +26,18 @@ Until an immutable `v2.4.0` tag exists, do not install from a future tag, mutabl
 
 Development/pre-release installation uses an exact immutable Git SHA or an explicitly qualified candidate artifact.
 
-Conceptual exact-SHA bootstrap:
+Recommended online installation (replace the placeholder with the verified candidate SHA):
 
 ```bash
-curl -fsSL \
-  https://raw.githubusercontent.com/datarelay-labs/datarelay-link/<EXACT_SHA>/dist/bootstrap-server.sh \
-  | sudo bash
+REF='<EXACT_SHA>'
+curl -fL --connect-timeout 10 --max-time 30 "https://raw.githubusercontent.com/datarelay-labs/datarelay-link/$REF/dist/bootstrap-server-online.sh" | sudo bash -s -- "$REF"
 ```
 
-The exact SHA must be the candidate or source-preparation HEAD that the operator intends to test.
+The initial script is small. It checks the Linux CPU architecture, downloads the common core and native FRP archive first, and then fetches the remaining archives required for Server-local Agent distribution. All transfers have visible progress, timeouts, and SHA256 checks. The exact qualified standalone installer is reconstructed and verified before it runs. A failed transfer or integrity check does not start installation. The same immutable ref can be retried.
 
-Stable installation may use the immutable stable tag only after that tag and its qualified artifacts actually exist.
+For offline or pre-staged installation, retain the original self-contained `dist/bootstrap-server.sh` artifact, verify it against the qualified SHA256SUMS, and run it locally. It includes all platform archives and must not be confused with the small online entry. While the standalone stream is being received and restored it prints a status message every five seconds, reports large files by name, and stops these messages before interactive setup. An interrupted or incomplete payload fails before installation starts.
+
+Stable online installation may use `REF='v2.4.0'` only after the immutable stable tag and its qualified artifacts actually exist.
 
 ## 3. Server installation result
 

@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
 import base64
+import hashlib
+import io
+import tarfile
 import json
 import sys
 from pathlib import Path
@@ -134,11 +137,45 @@ def write_server_bundle(rels):
         'set -euo pipefail',
         'echo "Downloading qualified Data Relay Link installer..."',
         'TMP="$(mktemp -d)"',
-        'trap \'rm -rf "$TMP"\' EXIT',
-        'echo "Validating installer..."',
+        '_drlink_original_umask=$(umask)',
+        'umask 077',
+        '_drlink_started=0',
+        '_drlink_progress_pid=""',
+        '_drlink_stop_progress() {',
+        '  if [[ -n "$_drlink_progress_pid" ]]; then',
+        '    kill "$_drlink_progress_pid" 2>/dev/null || true',
+        '    wait "$_drlink_progress_pid" 2>/dev/null || true',
+        '    _drlink_progress_pid=""',
+        '  fi',
+        '}',
+        '_drlink_cleanup() {',
+        '  local rc=$?',
+        '  trap - EXIT',
+        '  _drlink_stop_progress',
+        '  rm -rf -- "$TMP"',
+        '  if [[ "$_drlink_started" != 1 ]]; then',
+        '    echo "ERROR: Installer payload reception or preparation did not finish. Installation has not started. Retry the same command." >&2',
+        '    if [[ "$rc" == 0 ]]; then rc=1; fi',
+        '  fi',
+        '  exit "$rc"',
+        '}',
+        "trap _drlink_cleanup EXIT",
+        "trap 'exit 130' INT",
+        "trap 'exit 143' TERM",
+        'echo "Receiving and restoring installer files (download may still be running)..."',
+        '_drlink_parent="$BASHPID"',
+        '(',
+        '  while sleep 5; do',
+        '    kill -0 "$_drlink_parent" 2>/dev/null || exit 0',
+        '    echo "  Still receiving/restoring installer files; please keep this session open." >&2',
+        '  done',
+        ') </dev/null &',
+        '_drlink_progress_pid=$!',
     ]
     for rel in rels:
         data=base64.b64encode(bundle_payload(rel)).decode()
+        if '/binaries/' in rel or rel.startswith('dist/bootstrap-client.'):
+            out.append(f'echo "Restoring installer payload: {Path(rel).name}" >&2')
         parent=str(Path(rel).parent)
         if parent!='.': out.append(f'mkdir -p "$TMP/{parent}"')
         out.append(f"base64 -d >\"$TMP/{rel}\" <<'B64'")
@@ -147,6 +184,8 @@ def write_server_bundle(rels):
     for rel in rels:
         if rel.endswith('.sh') or rel.startswith('tools/') or rel.endswith('.py'):
             out.append(f'chmod +x "$TMP/{rel}"')
+    out.append('_drlink_stop_progress')
+    out.append('echo "Installer files received and restored."')
     out.append('echo "Preparing installation..."')
     out.append('echo "Installing Data Relay Link Server..."')
     return out
@@ -300,9 +339,45 @@ for path in sorted((root / 'third_party' / 'frp').rglob('*')):
 server_rels.extend(['dist/bootstrap-client.sh', 'dist/bootstrap-client.ps1'])
 lines = write_server_bundle(server_rels)
 lines.append(SERVER_BOOTSTRAP_REF_SNIPPET)
-lines.append('exec "$TMP/install-server.sh" "$@"')
+lines.append('umask "$_drlink_original_umask"; _drlink_started=1; "$TMP/install-server.sh" "$@"')
 (dist/'bootstrap-server.sh').write_text('\n'.join(lines)+'\n')
 (dist/'bootstrap-server.sh').chmod(0o755)
+
+# Online transport: compact, verified common payload plus the original
+# compressed platform archives. Reconstruct the exact standalone installer
+# before execution so installed bundle identity remains unchanged.
+binary_rels = [rel for rel in server_rels if '/binaries/' in rel]
+segments = []
+offset = 0
+for rel in binary_rels:
+    start = lines.index(f"base64 -d >\"$TMP/{rel}\" <<'B64'", offset)
+    end = lines.index('B64', start + 1)
+    segments.append(('\n'.join(lines[offset:start + 1]) + '\n').encode())
+    offset = end
+segments.append(('\n'.join(lines[offset:]) + '\n').encode())
+core = dist / 'bootstrap-server-core.tar'
+# USTAR metadata and uncompressed bytes are platform independent. gzip
+# deflate output differs between Linux and macOS zlib implementations.
+with tarfile.open(core, mode='w', format=tarfile.USTAR_FORMAT) as archive:
+    for index, data in enumerate(segments):
+        item = tarfile.TarInfo(f'part-{index}')
+        item.size, item.mode, item.mtime = len(data), 0o600, 0
+        archive.addfile(item, io.BytesIO(data))
+
+def file_sha(path):
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+template = (root / 'scripts/bootstrap-server-online.sh').read_text()
+rows = '\n'.join(
+    f'    "{rel}|{file_sha(root / rel)}|{(root / rel).stat().st_size}"'
+    for rel in binary_rels
+)
+online = (template.replace('@CORE_SHA256@', file_sha(core))
+          .replace('@CORE_SIZE@', str(core.stat().st_size))
+          .replace('@BUNDLE_SHA256@', file_sha(dist / 'bootstrap-server.sh'))
+          .replace('@BINARY_ROWS@', rows))
+(dist / 'bootstrap-server-online.sh').write_text(online)
+(dist / 'bootstrap-server-online.sh').chmod(0o755)
 
 for src,dst in [('uninstall-client.sh','uninstall-client.sh'),('uninstall-server.sh','uninstall-server.sh')]:
     (dist/dst).write_bytes((root/src).read_bytes())

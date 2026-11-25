@@ -2,6 +2,11 @@
 # Immutable release channel: stable must not silently follow mutable main.
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+WORKDIR="$(mktemp -d)"
+trap 'rm -rf "$WORKDIR"' EXIT
+export FRP_DEPLOY_TEST_ROOT="$WORKDIR/empty"
+mkdir -p "$FRP_DEPLOY_TEST_ROOT"
+unset FRP_EXPECTED_SOURCE_REF FRP_TXN_SOURCE_REF FRP_EXPECTED_SOURCE_HEAD
 # shellcheck source=lib/frp-common.sh
 . "$ROOT/lib/frp-common.sh"
 # shellcheck source=lib/frp-client-common.sh
@@ -49,22 +54,22 @@ STABLE_URL="$(frp_default_client_installer_url)"
 [[ "$STABLE_URL" == *"v${PROJECT_VERSION}"* ]] || fail "stable default missing tag"
 
 # HTTPS transport must remain mandatory for updates.
-export FRP_CLIENT_TEST_ROOT="$(mktemp -d)"
-trap 'rm -rf "$FRP_CLIENT_TEST_ROOT"' EXIT
+export FRP_CLIENT_TEST_ROOT="$WORKDIR/client"
+mkdir -p "$FRP_CLIENT_TEST_ROOT"
 export FRP_CLIENT_UPDATE_URL="http://example.invalid/bootstrap-client.sh"
-if frp_client_fetch_and_upgrade >/tmp/frp-release-channel-http.out 2>/tmp/frp-release-channel-http.err; then
+if frp_client_fetch_and_upgrade >"$WORKDIR/http.out" 2>"$WORKDIR/http.err"; then
   fail "HTTP update URL should be rejected"
 fi
-grep -qi 'HTTPS' /tmp/frp-release-channel-http.err || fail "HTTPS requirement message missing"
+grep -qi 'HTTPS' "$WORKDIR/http.err" || fail "HTTPS requirement message missing"
 pass "UPDATE_HTTPS_REQUIRED"
 
 # A stable client also rejects mutable refs even when transport is HTTPS.
 export FRP_CLIENT_UPDATE_URL="https://raw.githubusercontent.com/datarelay-labs/datarelay-link/main/dist/bootstrap-client.sh"
 export FRP_CLIENT_UPDATE_METADATA_URL="https://raw.githubusercontent.com/datarelay-labs/datarelay-link/main/SHA256SUMS"
-if frp_client_fetch_and_upgrade >/tmp/frp-release-channel-main.out 2>/tmp/frp-release-channel-main.err; then
+if frp_client_fetch_and_upgrade >"$WORKDIR/main.out" 2>"$WORKDIR/main.err"; then
   fail "stable update should reject mutable main"
 fi
-grep -q "source ref v${PROJECT_VERSION}" /tmp/frp-release-channel-main.err || fail "stable ref rejection message missing"
+grep -q "source ref v${PROJECT_VERSION}" "$WORKDIR/main.err" || fail "stable ref rejection message missing"
 pass "STABLE_MUTABLE_REF_REJECTED"
 
 # Artifact SHA verification rejects a tampered payload when expected hash is set.
@@ -152,8 +157,7 @@ esac
 pass "STABLE_IMMUTABLE"
 
 # Persist channel across installer re-runs and missing env.
-persist="$(mktemp -d)"
-trap 'rm -rf "$FRP_CLIENT_TEST_ROOT" "$persist"' EXIT
+persist="$WORKDIR/persist"
 export FRP_DEPLOY_TEST_ROOT="$persist"
 mkdir -p "$persist/etc/drlink"
 unset FRP_RELEASE_CHANNEL || true
@@ -181,7 +185,7 @@ pass "SOURCE_REF"
 pass "BUILD_IDENTITY"
 
 unset FRP_RELEASE_CHANNEL || true
-stable_tree="$(mktemp -d)"
+stable_tree="$WORKDIR/stable"
 export FRP_DEPLOY_TEST_ROOT="$stable_tree"
 mkdir -p "$stable_tree/etc/drlink"
 export FRP_RELEASE_CHANNEL=stable

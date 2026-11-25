@@ -75,6 +75,7 @@ python3 tests/test-remote-service-upsert-no-churn.py
 python3 tests/test-zero-touch-doc-contract.py
 python3 tests/test-zero-touch-guided-preflight.py
 python3 tests/test-operator-input-validation.py
+python3 tests/test-server-online-bootstrap.py
 python3 tests/test-zero-touch-entry-fields.py
 python3 tests/test-zero-touch-locator-index.py
 # The real Stage-1 root check and Server-local approval must also be
