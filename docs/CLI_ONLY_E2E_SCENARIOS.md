@@ -24,7 +24,7 @@
 
 **Owner directive (2026-11-25): No separate connection preflight.** Use the owner-configured SSH aliases and existing SSH settings as-is. Do not run standalone SSH login/reachability probes, ping, TCP/port scans, SSH host-key checks, readiness scripts, or preliminary TLS/DNS checks merely to decide whether to start E2E. Read local inventory/config without network probes and execute the first actual scenario action directly. Record connection errors from that action only, classify the affected criterion, and continue independent scenarios; do not stop for repeated preflight or operator reconfirmation. Preserve normal SSH/security enforcement and genuine product DNS/TLS/OAuth, lifecycle and access-control assertions within their actual scenarios.
 
-1. Resolve `datarelay-labs/datarelay-link`, read `AGENTS.md`, `.engineering/project.yaml`, current installed candidate identities and this entire executable contract before the first user action.
+1. Resolve `datarelay-labs/datarelay-link`, read `AGENTS.md`, `.engineering/project.yaml`, this entire executable contract before the first user action. Record installed candidate identities as part of the first actual scenario action, not a separate connection probe.
 2. Inspect branch/HEAD/dirty status, active owners and existing RUN_ID/processes **once**. Do not start a competing actor, repin its candidate, edit its owned state or replace its evidence. Use independent safe resources/hosts. A live actor owns only its own mutable scope, not the entire lab.
 3. **There is no global LAB_GO** or `phase-state.json`, universal host-GO, AI/MCP/OAuth readiness, FCS completion, whole CI wait, newly created VM/snapshot or repeated owner permission required to begin an independently runnable CLI scenario.
 4. Dirty worktree: never build a falsely qualified candidate from uncommitted source. Continue public CLI observations against a truthfully pinned existing installation, with its actual `INSTALLED_HEAD`; only an exact installed HEAD or a cryptographically verified generated-only provenance commit whose first content parent matches the installed Source HEAD may qualify for candidate PASS. Never accept an older ancestor, another branch or product-file changes in that provenance commit.
@@ -52,14 +52,17 @@
 - Functional load requires **60-second warmup**, **300-second steady state for every applicable case**, and **P-013 3,600-second functional soak** once representative real application data paths work. **P-019 8h/24h is optional until explicitly selected.**
 - Exact labels retained for machine audit: `WARMUP=60s`, `STEADY_STATE_EACH_CASE=300s`, `SOAK=3600s`, `EXTENDED_SOAK=8h`, `ENDURANCE_SOAK=24h`; only the last two require explicit selection.
 - Run independent persistent workloads via managed `tmux`/systemd/equivalent when a connection cannot guarantee process lifetime. Retain PID/session, start/end UTC, real 60/300/3600-second samples and terminal results; do not claim elapsed PASS from an active PID or timer.
-- Measure receiver-confirmed 1KiB/64KiB/1MiB and stream/full-duplex goodput, checksum, CPS, 4/16/64+ connections, p50/p95/p99 latency, CPU/RSS/FD, mixed applications, denied traffic, saturation and function-under-load collision/recovery. Apply existing approved numeric SLOs without weakening them. **Unknown numeric SLO** is `MEASURED_NOT_QUALIFIED` for numeric qualification only, never justification to skip runnable functional measurements or hide actual errors.
+- Measure receiver-confirmed 1KiB/64KiB/1MiB and stream/full-duplex goodput, checksum, CPS, 4/16/64+ connections, p50/p95/p99 latency, CPU/RSS/FD, mixed applications, denied traffic, saturation and function-under-load collision/recovery. Apply existing approved numeric SLOs without weakening them. **Unknown numeric SLO** is `MEASURED_NOT_QUALIFIED` for numeric qualification only, never justification to skip runnable functional measurements or hide actual errors. After all functional assertions and required measurements actually pass, record `FUNCTIONAL_PASS_NUMERIC_UNQUALIFIED` with exact-HEAD evidence, not a qualified numeric PASS. A measured sample alone is insufficient.
 
 ## 5. Dispositions and truthfully separate completion gates
 
-Allowed outcomes: `NOT_RUN`, `IN_PROGRESS`, `PASS`, `FAIL`, `PARTIAL`, `FAIL_PRECONDITION`, `BLOCKED_ENVIRONMENT`, `BLOCKED_TOOLING`, `BLOCKED_PLATFORM_DENIAL`, `BLOCKED_MANAGEMENT_PATH`, `MEASURED_NOT_QUALIFIED`, `EXCLUDED_AI_MCP`; `P-019` may remain `NOT_RUN` when unselected. Always distinguish `BLOCKED` vs `FAIL`, the product cause vs management/tool limitations, candidate qualification vs valid installed-version behavior, functional PASS vs unqualified numeric SLO.
+Use the finite criterion groups in `docs/CLI_ONLY_E2E_CRITERIA.md` to track completed and remaining substeps with the inventory tool. A group is complete only when every corresponding original assertion has evidence; these groups do not replace the original scenario body. Freeze the per-run criterion plan from the installed public CLI catalog and selected host inventory (local information, no connectivity preflight). Record an actual unsupported feature separately from a claimed but missing user path. Do not label an unattempted or merely inconvenient test as unsupported.
+
+Allowed outcomes: `NOT_RUN`, `IN_PROGRESS`, `PASS`, `FAIL`, `PARTIAL`, `FAIL_PRECONDITION`, `BLOCKED_ENVIRONMENT`, `BLOCKED_TOOLING`, `BLOCKED_PLATFORM_DENIAL`, `BLOCKED_MANAGEMENT_PATH`, `MEASURED_NOT_QUALIFIED`, `FUNCTIONAL_PASS_NUMERIC_UNQUALIFIED`, `NOT_APPLICABLE`, `EXCLUDED_AI_MCP`; `P-019` may remain `NOT_RUN` when unselected. Entire-scenario NOT_APPLICABLE is restricted to the explicitly conditional P-020 when the actual infrastructure does not support controlled impairment, with evidence; missing access, a refused effect or unprepared setup is not N/A. Always distinguish `BLOCKED` vs `FAIL`, the product cause vs management/tool limitations, candidate qualification vs valid installed-version behavior, functional PASS vs unqualified numeric SLO.
 
 - `EXECUTABLE_SCOPE_COMPLETE`: every safe runnable original CLI-only criterion has a supported result or a concrete, attributable dependency-specific blocking record. No missing substeps hiding behind a completed parent row.
-- `ALL_APPLICABLE_CLI_E2E_PASS`: every required CLI-only criterion and its native/traffic/performance conditions is qualified PASS on the exact candidate, with no unresolved mandatory defect or blocker. Optional profiles are identified separately.
+- `CLI_FUNCTIONAL_E2E_PASS`: every required applicable functional assertion passes on the exact candidate, including actual mandatory load, integrity, recovery and measurements; absent numeric SLO remains explicitly unqualified. An observed FAIL is never waived.
+- `ALL_APPLICABLE_CLI_E2E_PASS`: every required CLI-only criterion and its native/traffic/performance conditions is qualified PASS on the exact candidate, with no unresolved mandatory defect or blocker. Optional profiles are identified separately. Select P-019 explicitly at initialization with --extended-soak; unselected optional progress does not prevent required completion, but any observed functional failure remains visible and blocks a positive gate. Do not claim unselected optional qualification.
 - Neither status implies `FULL_USER_E2E_PASS`, AI/MCP acceptance, a production deployment, a release, merge/tag or owner acceptance.
 - A tool or platform failure should be attempted/recorded as a bounded concrete operation and **must not be inflated into a global blocker**. Close out run-owned resources via public paths and report which original IDs remain FAIL/PARTIAL/BLOCKED/NOT_RUN.
 
@@ -125,6 +128,10 @@ DELIBERATE_MISTAKE_COVERAGE=100%
 RECOVERY_USING_ONLY_CLI=100%
 UNDOCUMENTED_KNOWLEDGE_REQUIRED=0
 ~~~
+
+
+
+For CLI-only, freeze the finite high-risk workflow families and deliberate mistake classes in the criterion catalog; expand only for an actual new public behavior discovered during the run, record applicability with evidence, and share overlapping same-run receipts across IDs. A missing receipt is pending, not automatically a product failure. Preserve the minimum repetition counts for each applicable family.
 
 ### 1.4.1 Scenario prerequisites, evidence reuse, and bounded stop rules
 
@@ -508,9 +515,12 @@ U-012 inherits the U-006 protected-host proxy hard gate. HTTP/HTTPS coverage mus
 For the package/update workflow, retain evidence of the exact repository FQDNs used, the effective proxy configuration, successful update through Data Relay Link, policy-caused failure after removing a required destination, and successful recovery after restoring it. The final result must include `PROXY_CONFIGURATION_VERIFIED=PASS` and `PROXY_APPLICATION_PATH=PASS`; do not require disabling the host's direct Internet path.
 
 
+**Scope clarification:** Fixed TCP Egress is a claimed distinct outbound listener path (CONTROLLED_EGRESS.md section 17), not a Fixed TCP Remote Service or HTTP CONNECT. If the installed public CLI cannot configure/discover the claimed listener, capture the actual help and outcome and record the missing public surface as a product finding; do not require a hidden command or mark it N/A. Continue the other application paths.
+
+
 ## U-013 — Cross-surface terminology, clarity, and operator-guidance consistency — MANDATORY
 
-Treat **every user-visible output encountered in the run** as UX evidence, not only whether the command succeeded. Compare terminology and guidance across Server/Agent REPL, one-shot output, menus, `?`, help topics, Tab completion, wizards, errors, status/detail views, diagnostics, generated enrollment/bootstrap commands, ConfigurationBundle plans, update/recovery output, and AI-generated guidance.
+Treat **every user-visible output encountered in the run** as UX evidence, not only whether the command succeeded. Compare terminology and guidance across Server/Agent REPL, one-shot output, menus, `?`, help topics, Tab completion, wizards, errors, status/detail views, diagnostics, generated enrollment/bootstrap commands, ConfigurationBundle plans, update/recovery output.
 
 Continuously look for and record:
 
@@ -1117,7 +1127,7 @@ PUBLIC_CLI_COMMAND_OR_VARIANT
 -> DIRECT_RESULT/EVIDENCE
 ~~~
 
-Every applicable runtime-discovered/reconciled public command and behavior-changing variant must have at least one current-run Direct execution record **inside a real use case**. Section 14 is reconciled after public discovery; it is not the human operator's command script.
+Each distinct applicable command and behavior-changing variant in the frozen current installed public CLI catalog (reconciled with section 14 and current CLI Reference) must have at least one current-run Direct execution record **inside a real use case**. Section 14 is reconciled after public discovery; it is not the human operator's command script.
 
 Separately map every canonical current v2.4.0 CLI Reference scenario relevant to the current candidate, including:
 
@@ -2079,7 +2089,7 @@ POST_COLLISION_RECOVERY=PASS
 
 # 13. Platform matrix
 
-For CLI_ONLY_E2E, test every platform currently claimed by the candidate at its actual qualification level.
+For CLI_ONLY_E2E, record every claimed platform at its actual qualification level. Test all currently assigned, suitable native hosts; missing claimed platforms remain explicit platform-qualification gaps, not a reason to stop other available-host scenarios. A configured required host that fails an actual scenario action remains BLOCKED, not N/A. Do not invent additional host-count tiers.
 
 Current release validation includes this matrix:
 

@@ -8,6 +8,9 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
 import unittest
+import concurrent.futures
+import subprocess
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 GEN = ROOT / "tools/cli_only_e2e_inventory.py"
@@ -135,6 +138,101 @@ class CLIE2EContractTest(unittest.TestCase):
             self.assertFalse(report["ALL_APPLICABLE_CLI_E2E_PASS"])
             self.assertEqual(report["PASS"], 0)
             self.assertEqual(report["NOT_RUN"], 100)
+
+    def test_criteria_cover_all_original_ids_and_are_frozen(self):
+        m = load()
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            m.initialize(root, CANONICAL.read_text(), "a"*40)
+            plan = m.read_criteria(root)
+            self.assertEqual(len(plan["catalog"]), 321)
+            self.assertEqual(len(m.pending_criteria(root, m.read_ledger(root))), 318)
+            self.assertEqual(len({x.split(".")[0] for x in plan["catalog"]}), 100)
+            plan["catalog"]["U-001.01"] = "silently changed"
+            m.write_json_atomic(m.criterion_path(root), plan)
+            with self.assertRaisesRegex(ValueError, "catalog changed"):
+                m.read_criteria(root)
+
+    def test_group_evidence_required_for_new_positive_verdict(self):
+        m = load()
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            m.initialize(root, CANONICAL.read_text(), "a"*40)
+            (root/"receipt.txt").write_text("test-only fixture")
+            args = dict(result="FUNCTIONAL_PASS_NUMERIC_UNQUALIFIED", target="lab",
+                        installed_head="a"*40, command="test fixture", cleanup="DONE",
+                        evidence="receipt.txt", skip_reason="NO_APPROVED_NUMERIC_SLO: absent", notes="")
+            with self.assertRaisesRegex(ValueError, "criterion groups"):
+                m.record(root, "P-013", **args)
+            with patch.object(m, "bound_installed_head"):
+                for cid in m.criteria_catalog():
+                    if cid.startswith("P-013."):
+                        m.record_criterion(root, cid, result="PASS", target="lab",
+                            installed_head="a"*40, command="test fixture", evidence="receipt.txt", reason="")
+                (root/"receipt.txt").write_text("altered")
+                with self.assertRaisesRegex(ValueError, "evidence changed"):
+                    m.record(root, "P-013", **args)
+                (root/"receipt.txt").write_text("test-only fixture")
+                m.record(root, "P-013", **args)
+            self.assertEqual(m.summary(m.read_ledger(root))["FUNCTIONAL_PASS_NUMERIC_UNQUALIFIED"], 1)
+
+    def test_distinct_gates_and_optional_soak(self):
+        m = load()
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            m.initialize(root, CANONICAL.read_text(), "a"*40)
+            rows = m.read_ledger(root)
+            for row in rows:
+                if row["SCOPE"] != "EXCLUDED_AI_MCP":
+                    row["RESULT"] = "PASS"
+            optional = next(r for r in rows if r["SCENARIO_ID"]=="P-019")
+            perf = next(r for r in rows if r["SCENARIO_ID"]=="P-013")
+            optional["RESULT"] = "PARTIAL"
+            self.assertTrue(m.summary(rows)["ALL_APPLICABLE_CLI_E2E_PASS"])
+            perf["RESULT"] = "FUNCTIONAL_PASS_NUMERIC_UNQUALIFIED"
+            self.assertTrue(m.summary(rows)["CLI_FUNCTIONAL_E2E_PASS"])
+            self.assertFalse(m.summary(rows)["ALL_APPLICABLE_CLI_E2E_PASS"])
+            perf["RESULT"] = "MEASURED_NOT_QUALIFIED"
+            self.assertFalse(m.summary(rows)["CLI_FUNCTIONAL_E2E_PASS"])
+            perf["RESULT"] = "PASS"
+            optional["PERFORMANCE_PROFILE"] = m.OPTIONAL_SELECTED
+            self.assertFalse(m.summary(rows)["CLI_FUNCTIONAL_E2E_PASS"])
+            optional["PERFORMANCE_PROFILE"] = m.OPTIONAL_UNSELECTED
+            optional["RESULT"] = "FAIL"
+            self.assertFalse(m.summary(rows)["CLI_FUNCTIONAL_E2E_PASS"])
+
+    def test_narrow_na_does_not_mask_product_failure(self):
+        m = load()
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            m.initialize(root, CANONICAL.read_text(), "a"*40)
+            (root/"receipt.txt").write_text("fixture: impairment unavailable")
+            args = dict(result="NOT_APPLICABLE", target="lab", installed_head="a"*40,
+                        command="fixture", cleanup="NO_OWNED_RESOURCES", evidence="receipt.txt",
+                        skip_reason="INFRASTRUCTURE_UNSUPPORTED: fixture", notes="")
+            with self.assertRaises(ValueError):
+                m.record(root, "U-012", **args)
+            with self.assertRaises(ValueError):
+                m.record(root, "P-020", **dict(args, skip_reason="no access"))
+            m.record_criterion(root,"P-020.01",result="FAIL",installed_head="a"*40,
+                              target="lab",command="fixture",evidence="receipt.txt",reason="real fail fixture")
+            with self.assertRaisesRegex(ValueError, "observed failure"):
+                m.record(root, "P-020", **args)
+
+    def test_concurrent_parent_updates_are_not_lost(self):
+        m = load()
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            m.initialize(root, CANONICAL.read_text(), "a"*40)
+            ids = [r["SCENARIO_ID"] for r in m.read_ledger(root) if r["SCOPE"]!="EXCLUDED_AI_MCP"][:12]
+            def write(sid):
+                subprocess.run([sys.executable, str(GEN), "record", "--run-root", str(root),
+                                "--scenario-id", sid, "--result", "PARTIAL",
+                                "--skip-reason", "test-only fixture"], check=True, capture_output=True)
+            with concurrent.futures.ThreadPoolExecutor(max_workers=6) as pool:
+                list(pool.map(write,ids))
+            self.assertEqual(m.summary(m.read_ledger(root))["PARTIAL"], len(ids))
+
 
 
 if __name__ == "__main__":
