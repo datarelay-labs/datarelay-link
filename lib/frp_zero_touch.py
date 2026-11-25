@@ -498,6 +498,109 @@ def render_short_url_bootstrap_script(allocator_url, ca_sha256, ticket, installe
     return '\n'.join(lines)
 
 
+def _entry_windows_download_client(private_ca_origin):
+    """Request-local .NET validator usable on both WinPS 5.1 and PowerShell 7.
+
+    ServicePointManager scriptblock callbacks do not reliably apply to real
+    HTTPS on .NET Core. A compiled callback needs no PowerShell runspace and
+    preserves CA pinning, hostname validation and normal public trust.
+    """
+    source = r"""using System;
+using System.IO;
+using System.Net;
+using System.Net.Security;
+using System.Security.Cryptography;
+using System.Security.Cryptography.X509Certificates;
+
+namespace DataRelayLinkBootstrap {
+ public sealed class EntryDownloadV1 {
+  private readonly X509Certificate2 ca;
+  private readonly Uri pinnedOrigin;
+  public EntryDownloadV1(X509Certificate2 certificate, string origin) {
+   ca = certificate;
+   pinnedOrigin = certificate == null ? null : new Uri(origin);
+  }
+  private bool Validate(object sender, X509Certificate certificate,
+                        X509Chain peerChain, SslPolicyErrors errors) {
+   if (certificate == null) return false;
+   if (ca == null) return errors == SslPolicyErrors.None;
+   if ((errors & ~SslPolicyErrors.RemoteCertificateChainErrors) != 0)
+    return false;
+   using (var leaf = new X509Certificate2(certificate.GetRawCertData()))
+   using (var chain = new X509Chain()) {
+    chain.ChainPolicy.ExtraStore.Add(ca);
+    if (peerChain != null)
+     foreach (X509ChainElement element in peerChain.ChainElements)
+      chain.ChainPolicy.ExtraStore.Add(element.Certificate);
+    chain.ChainPolicy.ApplicationPolicy.Add(new Oid("1.3.6.1.5.5.7.3.1"));
+    chain.ChainPolicy.VerificationFlags = X509VerificationFlags.AllowUnknownCertificateAuthority;
+    chain.ChainPolicy.RevocationMode = X509RevocationMode.NoCheck;
+    bool built = chain.Build(leaf);
+    if (chain.ChainElements.Count == 0) return false;
+    foreach (X509ChainStatus status in chain.ChainStatus)
+     if ((status.Status & ~X509ChainStatusFlags.UntrustedRoot) != 0)
+      return false;
+    return (built || chain.ChainStatus.Length > 0) &&
+     Convert.ToBase64String(chain.ChainElements[chain.ChainElements.Count-1].Certificate.RawData)
+       == Convert.ToBase64String(ca.RawData);
+   }
+  }
+  private void RequireOrigin(Uri uri) {
+   if (uri.Scheme != Uri.UriSchemeHttps || !String.IsNullOrEmpty(uri.UserInfo))
+    throw new InvalidOperationException("HTTPS artifact URL required");
+   if (pinnedOrigin != null &&
+       !String.Equals(uri.GetLeftPart(UriPartial.Authority),
+         pinnedOrigin.GetLeftPart(UriPartial.Authority), StringComparison.OrdinalIgnoreCase))
+    throw new InvalidOperationException("pinned artifact origin changed");
+  }
+  private HttpWebResponse Open(string url) {
+   var uri = new Uri(url);
+   for (int hop = 0; hop <= 5; hop++) {
+    RequireOrigin(uri);
+    var request = (HttpWebRequest)WebRequest.Create(uri);
+    request.AllowAutoRedirect = false;
+    request.KeepAlive = false;
+    request.Timeout = 30000;
+    request.ReadWriteTimeout = 30000;
+    request.ServerCertificateValidationCallback = Validate;
+    var response = (HttpWebResponse)request.GetResponse();
+    int status = (int)response.StatusCode;
+    if (status == 200) return response;
+    string location = response.Headers["Location"];
+    response.Dispose();
+    if ((status != 301 && status != 302 && status != 303 && status != 307 && status != 308)
+        || String.IsNullOrEmpty(location))
+     throw new InvalidOperationException("artifact download failed: HTTP " + status);
+    uri = new Uri(uri, location);
+   }
+   throw new InvalidOperationException("artifact redirect limit exceeded");
+  }
+  public void DownloadFile(string url, string path) {
+   using (var response = Open(url))
+   using (var input = response.GetResponseStream())
+   using (var output = File.Create(path))
+    input.CopyTo(output);
+  }
+  public string DownloadString(string url) {
+   using (var response = Open(url))
+   using (var reader = new StreamReader(response.GetResponseStream()))
+    return reader.ReadToEnd();
+  }
+ }
+}"""
+    setup = (
+        "  if (-not ('DataRelayLinkBootstrap.EntryDownloadV1' -as [type])) {\n"
+        "    Add-Type -TypeDefinition @'\n" + source +
+        "\n'@ -IgnoreWarnings -WarningAction SilentlyContinue\n"
+        "  }\n"
+    )
+    if private_ca_origin:
+        setup += "  $wc = New-Object DataRelayLinkBootstrap.EntryDownloadV1($caCert, ([Uri]$artifactOrigin).GetLeftPart([UriPartial]::Authority))"
+    else:
+        setup += "  $wc = New-Object DataRelayLinkBootstrap.EntryDownloadV1($null, '')"
+    return setup
+
+
 def render_short_url_windows_bootstrap_script(
     allocator_url, ca_sha256, ticket, installer_url, *, entry_locator=None, ca_pem=None
 ):
@@ -528,10 +631,15 @@ def render_short_url_windows_bootstrap_script(
         "# Data Relay Link - Windows Zero-Touch short URL bootstrap",
         "$ErrorActionPreference = 'Stop'",
         "$ProgressPreference = 'SilentlyContinue'",
-        "[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12",
+        *([
+            "$savedBootstrapEnv = @{}",
+            "foreach ($name in @('FRP_ALLOCATOR_URL','FRP_ALLOCATOR_CA_SHA256','FRP_ALLOCATOR_CA_FILE','FRP_BOOTSTRAP_TICKET','FRP_BOOTSTRAP_LOCATOR','FRP_ZERO_TOUCH','FRP_PLATFORM','FRP_EXPECTED_SOURCE_HEAD','FRP_EXPECTED_SOURCE_REF','FRP_RELEASE_CHANNEL','FRP_BUNDLE_SHA256','PSModulePath')) { $savedBootstrapEnv[$name] = [Environment]::GetEnvironmentVariable($name, 'Process') }",
+            "$savedSecurityProtocol = [Net.ServicePointManager]::SecurityProtocol",
+        ] if entry else []),
         "$dir = Join-Path $env:TEMP ('frp-bs-' + [guid]::NewGuid().ToString('N'))",
         'New-Item -ItemType Directory -Force -Path $dir | Out-Null',
         'try {',
+        "  [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12",
         "  $sums = Join-Path $dir 'SHA256SUMS'",
         "  $installer = Join-Path $dir 'bootstrap-client.ps1'",
     ]
@@ -554,7 +662,7 @@ def render_short_url_windows_bootstrap_script(
         ])
         if entry:
             lines.append('  $env:FRP_ALLOCATOR_CA_FILE = $ca')
-    if private_ca_origin:
+    if private_ca_origin and not entry:
         installer_host = (urlparse(installer).hostname or '').lower()
         lines.extend([
             '  $script:drlinkCaCert = $caCert',
@@ -577,8 +685,12 @@ def render_short_url_windows_bootstrap_script(
             '    return ($rootEl.Thumbprint -eq $script:drlinkCaThumb)',
             '  }',
         ])
+    if entry:
+        lines.append("  $artifactOrigin = %s" % powershell_quote(installer))
+        lines.append(_entry_windows_download_client(private_ca_origin))
+    else:
+        lines.append('  $wc = New-Object Net.WebClient')
     lines.extend([
-        '  $wc = New-Object Net.WebClient',
         '  $wc.DownloadFile(%s, $sums)' % powershell_quote(sums_url),
         '  $wc.DownloadFile(%s, $installer)' % powershell_quote(installer),
         '  $want = $null',
@@ -599,18 +711,23 @@ def render_short_url_windows_bootstrap_script(
         *(['  Remove-Item Env:FRP_BOOTSTRAP_TICKET -ErrorAction SilentlyContinue'] if entry else []),
         "  $env:FRP_ZERO_TOUCH = '1'",
         "  $env:FRP_PLATFORM = 'windows'",
+        *(["  [Environment]::SetEnvironmentVariable('PSModulePath', $null, 'Process')"] if entry else []),
         '  & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $installer -ZeroTouch',
         '  $rc = $LASTEXITCODE',
         '  Remove-Item Env:FRP_BOOTSTRAP_TICKET -ErrorAction SilentlyContinue',
         '  if ($rc -ne 0) { exit $rc }',
         '} finally {',
     ])
-    if private_ca_origin:
+    if private_ca_origin and not entry:
         lines.append(
             '  [Net.ServicePointManager]::ServerCertificateValidationCallback = $oldCertCallback'
         )
     lines.extend([
-        *(['  Remove-Item Env:FRP_BOOTSTRAP_LOCATOR,Env:FRP_ALLOCATOR_CA_FILE -ErrorAction SilentlyContinue'] if entry else []),
+        *([
+            "  foreach ($name in $savedBootstrapEnv.Keys) { [Environment]::SetEnvironmentVariable($name, $savedBootstrapEnv[$name], 'Process') }",
+            "  [Net.ServicePointManager]::SecurityProtocol = $savedSecurityProtocol",
+            "  if ($caCert) { $caCert.Dispose() }",
+        ] if entry else []),
         '  Remove-Item -LiteralPath $dir -Recurse -Force -ErrorAction SilentlyContinue',
         '}',
         '',

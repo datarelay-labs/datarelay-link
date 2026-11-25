@@ -3,6 +3,11 @@
 from __future__ import annotations
 
 import re
+import os
+import ssl
+import hashlib
+import threading
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import tempfile
 import json
 import shutil
@@ -129,6 +134,128 @@ class WindowsPinnedCaCommandTests(unittest.TestCase):
             self.assertEqual(proc.returncode,0,proc.stdout+proc.stderr)
             for case in ('name_mismatch','cert_missing','name_and_chain','only_private_ca_chain'):
                 self.assertIn('TLS_CASE_PASS '+case,proc.stdout)
+
+    def test_rendered_entry_private_tls(self):
+        """Real HTTPS and generated Stage-1; downloaded installer is inert."""
+        requested = os.environ.get('DRLINK_STAGE_TEST_POWERSHELL')
+        parent = shutil.which(requested or 'pwsh')
+        if requested:
+            self.assertIsNotNone(parent, 'requested native PowerShell unavailable')
+        elif not parent or (os.name != 'nt' and not shutil.which('openssl')):
+            self.skipTest('PowerShell and fixture PKI tools unavailable')
+        with tempfile.TemporaryDirectory(prefix='drlink-entry-tls-') as tmp:
+            root = Path(tmp)
+            if os.name == 'nt':
+                for name in ('good', 'other'):
+                    subprocess.run([sys.executable, str(ROOT/'tests/windows/gen_frp_smoke_certs.py'),
+                                    '--out-dir', str(root/name)], check=True, timeout=30)
+                cert = root/'good/leaf.pem'
+                key = root/'good/leaf.key'
+                ca = (root/'good/ca.pem').read_text()
+                fp = hashlib.sha256((root/'good/ca.crt').read_bytes()).hexdigest()
+                wrong_ca = (root/'other/ca.pem').read_text()
+                wrong_fp = hashlib.sha256((root/'other/ca.crt').read_bytes()).hexdigest()
+            else:
+                import frp_pki
+                pki = frp_pki.ensure_pki(root/'good', '127.0.0.1')
+                other = frp_pki.ensure_pki(root/'other', '127.0.0.1')
+                cert, key = pki['server_crt'], pki['server_key']
+                ca, fp = Path(pki['ca_crt']).read_text(), pki['fingerprint']
+                wrong_ca, wrong_fp = Path(other['ca_crt']).read_text(), other['fingerprint']
+            env = dict(os.environ, TEMP=tmp)
+            if os.name != 'nt':
+                launcher = root/'powershell.exe'
+                launcher.write_text('#!/bin/sh\nexec '+__import__('shlex').quote(parent)+' "$@"\n')
+                launcher.chmod(0o755)
+                env['PATH'] = tmp + os.pathsep + env['PATH']
+            # Do not execute a real product installer or alter OS trust.
+            installer = (
+                "param([switch]$ZeroTouch)\n"
+                "if (-not $ZeroTouch -or $env:FRP_BOOTSTRAP_LOCATOR -ne 'A3xK9m' "
+                "-or -not (Test-Path -LiteralPath $env:FRP_ALLOCATOR_CA_FILE)) { exit 19 }\n"
+                "if ($env:OS -eq 'Windows_NT') { Get-Acl -LiteralPath $env:TEMP -ErrorAction Stop | Out-Null }\n"
+                "Write-Output 'INERT_INSTALLER_EXECUTED'\n"
+            ).encode('ascii')
+            state = {'mode': 'good'}
+            paths = []
+            class Handler(BaseHTTPRequestHandler):
+                def log_message(self, *_args):
+                    pass
+                def do_GET(self):
+                    paths.append(self.path)
+                    if self.path == '/fixture/SHA256SUMS':
+                        body = (hashlib.sha256(installer).hexdigest() + '  bootstrap-client.ps1\n').encode()
+                    elif self.path == '/fixture/bootstrap-client.ps1':
+                        body = installer if state['mode'] != 'tampered' else b"Write-Output 'TAMPERED_EXECUTED'\n"
+                        if state['mode'] == 'redirect':
+                            self.send_response(302)
+                            self.send_header('Location', 'http://127.0.0.1:1/forbidden')
+                            self.end_headers()
+                            return
+                    else:
+                        self.send_error(404)
+                        return
+                    self.send_response(200)
+                    self.send_header('Content-Length', str(len(body)))
+                    self.end_headers()
+                    self.wfile.write(body)
+            server = ThreadingHTTPServer(('127.0.0.1', 0), Handler)
+            ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+            ctx.load_cert_chain(cert, key)
+            server.socket = ctx.wrap_socket(server.socket, server_side=True)
+            worker = threading.Thread(target=server.serve_forever, daemon=True)
+            worker.start()
+            try:
+                origin = 'https://127.0.0.1:%d' % server.server_port
+                wrapper = root/'run-stage.ps1'
+                wrapper.write_text(
+                    "$ErrorActionPreference='Stop'\n"
+                    "$env:FRP_ZERO_TOUCH='audit-original'\n"
+                    "$env:FRP_BOOTSTRAP_LOCATOR='audit-previous'\n"
+                    "$modulePath=$env:PSModulePath\n"
+                    "$protocol=[Net.ServicePointManager]::SecurityProtocol\n"
+                    "$failed=$false\n"
+                    "try { Invoke-Expression (Get-Content -LiteralPath $env:TEST_STAGE -Raw) } "
+                    "catch { $failed=$true; Write-Output ('STAGE_FAILURE='+$_.Exception.Message) }\n"
+                    "if ($env:FRP_ZERO_TOUCH -ne 'audit-original' -or "
+                    "$env:FRP_BOOTSTRAP_LOCATOR -ne 'audit-previous' -or "
+                    "$env:PSModulePath -cne $modulePath -or "
+                    "[Net.ServicePointManager]::SecurityProtocol -ne $protocol) { throw 'parent state changed' }\n"
+                    "Write-Output 'PARENT_STATE_RESTORED'\n"
+                    "if ($failed) { exit 17 }; exit 0\n",
+                    encoding='ascii')
+                for name, pem, digest, mode, expected in (
+                    ('valid', ca, fp, 'good', 0),
+                    ('wrong_ca', wrong_ca, wrong_fp, 'good', 17),
+                    ('tampered', ca, fp, 'tampered', 17),
+                    ('insecure_redirect', ca, fp, 'redirect', 17),
+                ):
+                    with self.subTest(case=name):
+                        state['mode'] = mode
+                        paths.clear()
+                        stage = root/'entry.ps1'
+                        stage.write_text(zt.render_short_url_windows_bootstrap_script(
+                            origin+'/enroll', digest, None, origin+'/fixture/bootstrap-client.ps1',
+                            entry_locator='A3xK9m', ca_pem=pem), encoding='ascii')
+                        proc = subprocess.run([parent, '-NoProfile', '-NonInteractive',
+                            '-ExecutionPolicy', 'Bypass', '-File', str(wrapper)],
+                            env=dict(env, TEST_STAGE=str(stage)), capture_output=True,
+                            text=True, timeout=60)
+                        self.assertEqual(proc.returncode, expected, proc.stdout+proc.stderr)
+                        self.assertIn('PARENT_STATE_RESTORED', proc.stdout)
+                        self.assertEqual('INERT_INSTALLER_EXECUTED' in proc.stdout, expected == 0,
+                                         proc.stdout+proc.stderr)
+                        self.assertNotIn('TAMPERED_EXECUTED', proc.stdout)
+                        if name == 'wrong_ca':
+                            self.assertEqual(paths, [], 'untrusted peer received HTTP request')
+                        else:
+                            self.assertEqual(paths, ['/fixture/SHA256SUMS', '/fixture/bootstrap-client.ps1'])
+                        self.assertEqual(list(root.glob('frp-bs-*')), [], 'temporary artifacts remain')
+                        print('ENTRY_WINDOWS_REAL_TLS_'+name.upper()+'=PASS')
+            finally:
+                server.shutdown()
+                worker.join(timeout=5)
+                server.server_close()
 
     def test_current_entry_and_downstream_hash_before_execute(self):
         command=zt.render_entry_command("remote.xdr.ooo","A3xK9m","windows")

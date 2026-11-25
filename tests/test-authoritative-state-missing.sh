@@ -206,9 +206,20 @@ path = root / "var/lib/drlink/service-profiles.json"
 prof.initialize_profiles_state(path=path)
 state = prof.require_profiles_state(path=path)
 pid, _ = prof.create_profile(state, "Web", preset="http", local_ip="127.0.0.1", local_port=80)
-# atomic ssh transition
-pid2, profile, old = prof.update_profile(state, pid, "preset", "ssh:ops")
-assert profile["preset"] == "ssh" and profile["ssh_user"] == "ops"
+# Atomic SSH transition must follow the current profile contract: SSH account
+# names belong to the user connection, never to a reusable Service Profile.
+import copy
+before = copy.deepcopy(state)
+try:
+    prof.update_profile(state, pid, "preset", "ssh:ops")
+    raise AssertionError("retired ssh:user preset was accepted")
+except prof.ProfileError:
+    pass
+assert state == before, "rejected legacy preset changed authoritative state"
+pid2, profile, old = prof.update_profile(state, pid, "preset", "ssh")
+assert pid2 == pid and old == "http"
+assert profile["preset"] == "ssh" and "ssh_user" not in profile
+prof.validate_profiles_state(state)
 # health old_value
 profile["health_check"] = {"type": "tcp", "timeout_seconds": 3, "interval_seconds": 10, "max_failed": 1}
 pid3, profile2, old_to = prof.update_profile(state, pid, "health-timeout", "7")
