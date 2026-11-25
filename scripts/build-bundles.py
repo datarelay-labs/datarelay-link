@@ -340,6 +340,16 @@ server_rels.extend(['dist/bootstrap-client.sh', 'dist/bootstrap-client.ps1'])
 lines = write_server_bundle(server_rels)
 lines.append(SERVER_BOOTSTRAP_REF_SNIPPET)
 lines.append('umask "$_drlink_original_umask"; _drlink_started=1; "$TMP/install-server.sh" "$@"')
+# Bash reads non-seekable script input byte by byte. Consume the remaining
+# self-contained body with a buffered copy before Bash parses it. The prefix
+# is deliberately small and the body digest is independent of that prefix.
+lines.insert(0, '# END STREAM PREFIX; the remaining bytes are the SHA256-bound installer body.')
+body = ('\n'.join(lines) + '\n').encode()
+stage_template = (root / 'scripts/bootstrap-server-stream.sh').read_text()
+stage = (stage_template.replace('@BODY_SHA256@', hashlib.sha256(body).hexdigest())
+         .replace('@BODY_SIZE@', str(len(body)))
+         .replace('@SOURCE_REF_SNIPPET@', SERVER_BOOTSTRAP_REF_SNIPPET))
+lines = stage.rstrip('\n').split('\n') + lines
 (dist/'bootstrap-server.sh').write_text('\n'.join(lines)+'\n')
 (dist/'bootstrap-server.sh').chmod(0o755)
 
