@@ -84,6 +84,13 @@ Allowed roots validate paths and initial cwd; a general shell can subsequently
 access anything its OS account permits. Do not describe this profile as a
 restricted filesystem or process sandbox.
 
+For the full-control command tools only, a directory alias may be resolved to
+its existing canonical directory when the effective AI Access paths explicitly
+include `/**` and the operator-selected roots include `/`. The resolved path is
+validated before launch and stored in the job receipt. Scoped command grants,
+restricted executors and direct file operations retain their no-symlink checks.
+This changes neither AI permissions nor the configured execution account.
+
 ## Public tools
 
 | Tool | Input | AI Access | Result |
