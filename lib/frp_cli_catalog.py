@@ -1630,13 +1630,14 @@ def domain_help(topic, role):
                     "  system credential approve-oauth <PENDING-ID> [AI-IDENTITY]",
                     "  system credential deny-oauth <PENDING-ID>",
                     "  system diagnostics mcp",
-                    "  set mcp-tls hostname <FQDN>",
-                    "  set mcp-tls mode <auto-acme|user-certificate>",
-                    "  set mcp-tls contact-email <EMAIL>",
-                    "  set mcp-tls acme-environment <production|staging>",
-                    "  set mcp-tls acme-directory <URL>",
-                    "  unset mcp-tls",
-                    "  unset mcp-tls purge",
+                    "  set server mcp",
+                    "  set server mcp hostname <FQDN>",
+                    "  set server mcp mode <auto-acme|user-certificate>",
+                    "  set server mcp contact-email <EMAIL>",
+                    "  set server mcp acme-environment <production|staging>",
+                    "  set server mcp acme-directory <URL>",
+                    "  unset server mcp",
+                    "  unset server mcp purge",
                     "  system certificate issue",
                     "  system certificate import <CERT> <KEY> [CHAIN]",
                     "  system certificate renew",
@@ -1829,7 +1830,7 @@ _IMPACT_BY_PATH = {
         "Changes the authentication mode or OAuth redirect settings of the "
         "AI Identity; this can change which clients can authenticate."
     ),
-    ("unset", "mcp-tls"): (
+    ("unset", "server", "mcp"): (
         "Clears the MCP TLS intent and removes the public MCP route; the "
         "DRLink-owned certificate and ACME account material is kept. Active "
         "MCP/OAuth connections may be interrupted."
@@ -2392,6 +2393,8 @@ NAVIGATION_TREE = {
         ("server_set_bootstrap", "Bootstrap hostname", "", "workflow", "set_bootstrap_hostname"),
         ("server_set_installer", "Linux/macOS Agent installer URL", "", "workflow", "set_installer_url"),
         ("server_set_win_installer", "Windows Agent installer URL", "", "workflow", "set_windows_installer_url"),
+        ("server_set_mcp", "MCP Server Settings", "", "command", "set server mcp"),
+        ("server_cert_status", "MCP Certificate Status", "", "command", "system certificate status"),
         ("back", "Back", "", "back", None),
     ),
     "server.system.backup": (

@@ -786,10 +786,6 @@ def _show(plane: ControlPlane, rest):
         for row in rows:
             sys.stdout.write("%s %s %s\n" % (row["id"], row["kind"], row["status"]))
         return 0
-    if res == "mcp-tls":
-        view = mcp_tls.status_view(plane, plane.root)
-        sys.stdout.write(mcp_tls.format_status(view))
-        return 0
     raise SystemExit("Unknown show resource.")
 
 
@@ -1051,33 +1047,93 @@ def _set(plane: ControlPlane, rest, client_sel):
         _run(plane._mutate, "set enrollment %s" % kind, "create enrollment", write)
         sys.stdout.write("Enrollment created. Secret is not redisplayed.\n")
         return 0
-    if res == "mcp-tls":
-        return _set_mcp_tls(plane, rest[1:])
+    if rest[:2] == ["server", "mcp"]:
+        v24cli._require_server(plane, "MCP Server settings")
+        return _set_mcp_tls(plane, rest[2:])
     raise SystemExit("Unknown set resource.")
 
 
+def _guide_mcp_server(plane: ControlPlane) -> int:
+    """Review and configure shared MCP server settings; never change mode silently."""
+    try:
+        mcp_tls.require_public_frontend(plane.root)
+        view = mcp_tls.status_view(plane, plane.root)
+        state = mcp_tls.load_state(plane)
+        sys.stdout.write(mcp_tls.format_status(view))
+        if (view.get("frontend_available") and view.get("cloud_compatible")
+                and view.get("certificate") in (mcp_tls.STATUS_VALID, mcp_tls.STATUS_RENEWAL_DUE)
+                and view.get("url", "").startswith("https://")):
+            sys.stdout.write("Existing certificate retained. Check actual connectivity with system diagnostics mcp.\n")
+            return 0
+        host = input("MCP public hostname [%s]: " % (state.get("hostname") or "required")).strip()
+        host = host or state.get("hostname") or ""
+        if not host:
+            raise SystemExit("MCP public hostname is required.")
+        host = mcp_tls.canonicalize_hostname(host)
+        selection = input("Certificate: 1) Automatic public certificate  2) Existing certificate [1]: ").strip() or "1"
+        if selection not in ("1", "2"):
+            raise SystemExit("Invalid certificate choice. No changes were applied.")
+        mode = "auto-acme" if selection == "1" else "user-certificate"
+        email = input("ACME contact email (optional): ").strip() if selection == "1" else None
+        cert = key = chain = None
+        if selection == "2":
+            cert = input("Certificate file: ").strip()
+            key = input("Private key file: ").strip()
+            chain = input("Chain file (optional): ").strip() or None
+            if not cert or not key:
+                raise SystemExit("Certificate and key files are required. No changes were applied.")
+        sys.stdout.write("Review MCP Server: hostname=%s, certificate=%s\n" % (host, mode))
+        sys.stdout.write("Activating a different certificate may interrupt MCP/OAuth connections.\n")
+        if not _confirm_from_stdin("Apply and activate? [y/N]:"):
+            sys.stdout.write("Cancelled. No changes were applied.\n")
+            return 0
+        preflight = mcp_tls.preflight_hostname(host, require_public_dns=selection == "1")
+        if not preflight.get("ok"):
+            sys.stdout.write(json.dumps(preflight, indent=2) + "\nNo changes were applied.\n")
+            return 1
+        mcp_tls.configure_intent(plane, hostname=host, mode=mode, contact_email=email,
+                                 acme_environment="production" if selection == "1" else None)
+        try:
+            if selection == "1":
+                mcp_tls.issue_and_activate(plane, plane.root)
+            else:
+                mcp_tls.import_user_certificate(plane, plane.root, cert_path=cert,
+                                                key_path=key, chain_path=chain)
+        except McpTlsError as exc:
+            sys.stderr.write("MCP intent saved, activation failed: %s\n" % exc)
+            return 1
+        sys.stdout.write(mcp_tls.format_status(mcp_tls.status_view(plane, plane.root)))
+        return 0
+    except McpTlsError as exc:
+        raise SystemExit(str(exc)) from exc
+
+
 def _set_mcp_tls(plane: ControlPlane, rest):
+    if not rest and _stdin_is_interactive():
+        return _guide_mcp_server(plane)
     if not rest:
         raise SystemExit(
-            "Missing mcp-tls setting.\n\n"
+            "Missing MCP Server setting.\n\n"
             "Usage:\n"
-            "  set mcp-tls hostname <fqdn>\n"
-            "  set mcp-tls mode auto-acme|user-certificate|private-ca\n"
-            "  set mcp-tls contact-email <email>\n"
-            "  set mcp-tls acme-environment staging|production\n\n"
+            "  set server mcp hostname <fqdn>\n"
+            "  set server mcp mode auto-acme|user-certificate|private-ca\n"
+            "  set server mcp contact-email <email>\n"
+            "  set server mcp acme-environment staging|production\n\n"
             "Default public-cloud mode is AUTO_ACME.\n"
             "PRIVATE_CA is for internal/test clients that trust the DRLink CA;\n"
             "it is not the default ChatGPT/Claude cloud connector path.\n"
             "After configure: system certificate issue|import|renew"
         )
     prop = rest[0]
+    if len(rest) != 2:
+        raise SystemExit("Usage: set server mcp <SETTING> <VALUE>")
     try:
         mcp_tls.require_public_frontend(plane.root)
         if prop == "hostname":
-            _need(rest, 2, "set mcp-tls hostname <fqdn>")
+            _need(rest, 2, "set server mcp hostname <fqdn>")
             state = mcp_tls.configure_intent(plane, hostname=rest[1])
         elif prop == "mode":
-            _need(rest, 2, "set mcp-tls mode auto-acme|user-certificate|private-ca")
+            _need(rest, 2, "set server mcp mode auto-acme|user-certificate|private-ca")
             state = mcp_tls.configure_intent(plane, mode=rest[1])
             if state.get("mode") == mcp_tls.MODE_PRIVATE_CA:
                 sys.stdout.write(
@@ -1085,16 +1141,16 @@ def _set_mcp_tls(plane: ControlPlane, rest):
                     "Cloud-hosted Remote MCP clients that do not trust this CA may reject it.\n"
                 )
         elif prop in ("contact-email", "email"):
-            _need(rest, 2, "set mcp-tls contact-email <email>")
+            _need(rest, 2, "set server mcp contact-email <email>")
             state = mcp_tls.configure_intent(plane, contact_email=rest[1])
         elif prop in ("acme-environment", "acme-env"):
-            _need(rest, 2, "set mcp-tls acme-environment staging|production")
+            _need(rest, 2, "set server mcp acme-environment staging|production")
             state = mcp_tls.configure_intent(plane, acme_environment=rest[1])
         elif prop in ("acme-directory", "acme-directory-url"):
-            _need(rest, 2, "set mcp-tls acme-directory <url>")
+            _need(rest, 2, "set server mcp acme-directory <url>")
             state = mcp_tls.configure_intent(plane, acme_directory_url=rest[1])
         else:
-            raise SystemExit("Unknown mcp-tls setting: %s" % prop)
+            raise SystemExit("Unknown MCP Server setting: %s" % prop)
     except McpTlsError as exc:
         raise SystemExit(str(exc)) from exc
     sys.stdout.write("MCP TLS intent updated.\n")
@@ -1217,14 +1273,16 @@ def _unset(plane: ControlPlane, rest, client_sel):
     if res == "enrollment":
         plane.conn.execute("DELETE FROM enrollments WHERE id = ?", (rest[1],))
         return 0
-    if res == "mcp-tls":
+    if rest[:2] == ["server", "mcp"]:
+        v24cli._require_server(plane, "MCP Server settings")
+        rest = rest[1:]
         if len(rest) > 2 or (len(rest) == 2 and rest[1] != "purge"):
-            raise SystemExit("Usage:\n  unset mcp-tls\n  unset mcp-tls purge")
+            raise SystemExit("Usage:\n  unset server mcp\n  unset server mcp purge")
         purge = len(rest) == 2
         if purge:
             if not _stdin_is_interactive():
                 sys.stderr.write(
-                    "ERROR: unset mcp-tls purge requires interactive confirmation.\n"
+                    "ERROR: unset server mcp purge requires interactive confirmation.\n"
                     "This removes DRLink-owned MCP TLS certificate and ACME account material.\n"
                     "Run interactively and answer y.\n"
                     "No changes were applied.\n"
@@ -1244,7 +1302,7 @@ def _unset(plane: ControlPlane, rest, client_sel):
         if purge:
             sys.stdout.write("DRLink-owned certificate and ACME account material removed.\n")
         else:
-            sys.stdout.write("Certificate files retained (use unset mcp-tls purge to remove secrets).\n")
+            sys.stdout.write("Certificate files retained (use unset server mcp purge to remove secrets).\n")
         return 0
     raise SystemExit("Unknown unset resource.")
 
@@ -1612,7 +1670,7 @@ def _system_certificate(plane: ControlPlane, rest):
             state = mcp_tls.load_state(plane)
             host = state.get("hostname") or ""
             if not host:
-                raise SystemExit("Configure hostname first: set mcp-tls hostname <fqdn>")
+                raise SystemExit("Configure hostname first: set server mcp hostname <fqdn>")
             require_public = (state.get("mode") or mcp_tls.DEFAULT_PUBLIC_CLOUD_TLS_MODE) == mcp_tls.MODE_AUTO_ACME
             result = mcp_tls.preflight_hostname(host, require_public_dns=require_public)
             sys.stdout.write(json.dumps(result, indent=2) + "\n")

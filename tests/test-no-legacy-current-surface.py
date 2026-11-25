@@ -210,6 +210,16 @@ class LegacyReintroductionGate(unittest.TestCase):
         self.assertEqual(result.get("status"), "error", result)
         self.assertIn("system certificate status", result.get("message") or "")
 
+    def test_mcp_server_setting_uses_one_public_surface(self):
+        for verb in ("set", "unset"):
+            old = [verb, "mcp-tls"]
+            self.assertIsNone(catalog.find(old, role="server"))
+            self.assertEqual(grammar.match(old, role="server").get("status"), "error")
+            self.assertEqual(grammar.match(old + ["?"], role="server").get("status"), "error")
+            new = [verb, "server", "mcp"]
+            self.assertEqual(grammar.match(new, role="server").get("action"), "control_plane")
+            self.assertNotEqual(grammar.match(new, role="client").get("status"), "ok")
+
     def test_guided_menu_has_no_legacy_labels(self):
         bad = []
         for key, entries in catalog.NAVIGATION_TREE.items():

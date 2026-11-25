@@ -1634,7 +1634,7 @@ frpctl_nav_workflow manage_host
             (["unset", "remote-access", "?"], "unset remote-access <RULE>", "policy"),
             (["unset", "internet-access", "?"], "unset internet-access <RULE>", "policy"),
             (["unset", "ai-access", "?"], "unset ai-access <RULE>", "policy"),
-            (["unset", "mcp-tls", "?"], "unset mcp-tls", "purge"),
+            (["unset", "server", "mcp", "?"], "unset server mcp", "purge"),
             (["system", "diff", "?"], "system diff <REVISION_A> <REVISION_B>", "configuration"),
             (["system", "backup", "?"], "system backup [<path>]", "validate"),
         )
@@ -1645,7 +1645,7 @@ frpctl_nav_workflow manage_host
             self.assertIn(usage, text, (tokens, text))
             self.assertIn(child, text, (tokens, text))
 
-        tls = grammar.match(["unset", "mcp-tls", "?"], role="server")
+        tls = grammar.match(["unset", "server", "mcp", "?"], role="server")
         tls_text = tls.get("message") or ""
         self.assertIn("Risk: outage", tls_text)
         self.assertIn("retaining DRLink-owned certificate", tls_text)
@@ -1704,7 +1704,7 @@ frpctl_nav_workflow manage_host
     def test_mcp_tls_purge_metadata_explains_interactive_only_contract(self):
         rows = json.loads((LIB / "frp_cli_final_commands.json").read_text(encoding="utf-8"))
         by_path = {tuple(row["path"]): row for row in rows}
-        purge = by_path[("unset", "mcp-tls", "purge")]
+        purge = by_path[("unset", "server", "mcp", "purge")]
         detail = str(purge.get("detail") or "").lower()
         self.assertTrue(purge["destructive"])
         self.assertEqual(purge["risk"], "irreversible")

@@ -2332,15 +2332,17 @@
     "tail": "any",
     "path": [
       "set",
-      "mcp-tls"
+      "server",
+      "mcp"
     ],
     "category": "System",
-    "summary": "Configure MCP public TLS intent",
+    "summary": "Configure MCP Server settings",
     "examples": [
-      "set mcp-tls hostname mcp.example.com",
-      "set mcp-tls mode auto-acme",
-      "set mcp-tls contact-email ops@example.com",
-      "set mcp-tls acme-environment staging"
+      "set server mcp",
+      "set server mcp hostname mcp.example.com",
+      "set server mcp mode auto-acme",
+      "set server mcp contact-email ops@example.com",
+      "set server mcp acme-environment staging"
     ],
     "args": [
       {
@@ -2352,7 +2354,7 @@
           "acme-environment",
           "acme-directory"
         ],
-        "required": true
+        "required": false
       }
     ]
   },
@@ -2370,12 +2372,13 @@
     "tail": null,
     "path": [
       "unset",
-      "mcp-tls"
+      "server",
+      "mcp"
     ],
     "category": "System",
     "summary": "Clear MCP public TLS configuration",
     "examples": [
-      "unset mcp-tls"
+      "unset server mcp"
     ],
     "args": []
   },
@@ -2393,13 +2396,14 @@
     "tail": null,
     "path": [
       "unset",
-      "mcp-tls",
+      "server",
+      "mcp",
       "purge"
     ],
     "category": "System",
     "summary": "Purge MCP TLS certificate and ACME account material",
     "examples": [
-      "unset mcp-tls purge"
+      "unset server mcp purge"
     ],
     "args": []
   },

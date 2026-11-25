@@ -133,7 +133,6 @@ CONTROL_PLANE_SHOW = frozenset(
         "remote-services",
         "remote-service",
         "agent",
-        "mcp-tls",
         # Legacy rejected with guidance inside control CLI
         "objects",
         "object",
@@ -167,7 +166,6 @@ CONTROL_PLANE_MUTATE = frozenset(
         "ai-identity",
         "ai-access",
         "remote-service",
-        "mcp-tls",
         # Legacy rejected with guidance
         "object",
         "object-group",
@@ -533,13 +531,13 @@ def reject_obsolete_surface(tokens):
                 "set managed-host-group <GROUP>, or unset managed-host-group <GROUP>."
             ),
         }
-    if verb == "show" and len(raw) >= 2 and raw[1] == "mcp-tls":
+    if verb in ("show", "set", "unset") and len(raw) >= 2 and raw[1] == "mcp-tls":
         return {
             "status": "error",
             "exit_code": 2,
             "message": (
-                "Duplicate MCP TLS status shorthand is not part of the current Data Relay Link grammar.\n"
-                "Use system certificate status instead."
+                "Retired MCP TLS resource is not part of the current Data Relay Link grammar.\n"
+                "Use system certificate status or set server mcp / unset server mcp instead."
             ),
         }
     if verb in ("show", "set", "unset", "test", "create", "add", "remove", "enable", "disable", "delete", "system") and len(raw) >= 2:
@@ -1270,7 +1268,7 @@ def _catalog_context_help(tokens, role, names=None, clients=None):
         ("unset", "remote-access"),
         ("unset", "internet-access"),
         ("unset", "ai-access"),
-        ("unset", "mcp-tls"),
+        ("unset", "server", "mcp"),
         ("system", "diff"),
         ("system", "backup"),
         ("set", "remote-access"),
@@ -2819,6 +2817,10 @@ def _match_set(tokens, role, names=None):
     if len(tokens) == 1:
         return incomplete("Missing resource.", ["set <resource> ..."], avail, tip="drlink help set")
     resource = tokens[1]
+    if resource == "server" and tokens[2:3] == ["mcp"]:
+        if not server:
+            return {"status": "role", "need": "server", "command": "set server mcp"}
+        return _control_plane_ok(tokens)
     if resource in CONTROL_PLANE_MUTATE:
         return _control_plane_ok(tokens)
     if resource == "client":
@@ -3196,6 +3198,10 @@ def _match_unset(tokens, role, names=None):
             avail,
         )
     resource = tokens[1]
+    if resource == "server" and tokens[2:3] == ["mcp"]:
+        if not server:
+            return {"status": "role", "need": "server", "command": "unset server mcp"}
+        return _control_plane_ok(tokens)
     if resource in CONTROL_PLANE_MUTATE:
         return _control_plane_ok(tokens)
     if resource == "service":
