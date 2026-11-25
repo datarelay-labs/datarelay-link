@@ -108,20 +108,24 @@ frp_allocator_ca_path() {
   frp_client_path /etc/drlink/allocator-ca.crt
 }
 
-# Only the unclaimed CA-only residue is unambiguously safe to replace.
+# Unclaimed CA residue and CA atomic-write scratch files are safe to recover.
 # Do not classify an enrolled, interrupted, dual-role, or unknown installation
 # as disposable merely because the CLI is missing. The fresh installer has
 # already created client-id, which is the OS machine identifier, not a claim.
 frp_client_has_orphan_allocator_ca_only() {
-  local ca dir etc_frp entry path
+  local ca dir etc_frp entry path found=0
   ca="$(frp_allocator_ca_path)"
-  [[ -f "$ca" && ! -L "$ca" ]] || return 1
   dir="${ca%/*}"
   [[ -d "$dir" && ! -L "$dir" ]] || return 1
   for entry in "$dir"/* "$dir"/.[!.]* "$dir"/..?*; do
     [[ -e "$entry" || -L "$entry" ]] || continue
-    [[ "$entry" == "$ca" ]] || return 1
+    [[ -f "$entry" && ! -L "$entry" ]] || return 1
+    if [[ "$entry" != "$ca" && ! "${entry##*/}" =~ ^allocator-ca\.crt\.[a-zA-Z0-9]{6}$ ]]; then
+      return 1
+    fi
+    found=1
   done
+  [[ "$found" == "1" ]] || return 1
   etc_frp="$(frp_client_path /etc/frp)"
   [[ ! -L "$etc_frp" ]] || return 1
   if [[ -e "$etc_frp" ]]; then
@@ -150,7 +154,7 @@ frp_client_has_orphan_allocator_ca_only() {
 # never an existing Agent trust anchor. Validate the new fingerprint and
 # bundle provenance before touching the old file; replace it atomically.
 frp_client_recover_orphan_allocator_ca() {
-  local url="$1" origin ca expected actual source
+  local url="$1" origin ca expected actual source entry scratch=0
   [[ -n "${FRP_BOOTSTRAP_LOCATOR:-}" && -n "${FRP_ALLOCATOR_CA_FILE:-}" ]] || return 0
   [[ -n "${FRP_ALLOCATOR_CA_SHA256:-}" ]] || return 0
   if frp_is_darwin; then
@@ -163,7 +167,12 @@ frp_client_recover_orphan_allocator_ca() {
   expected="$(frp_normalize_ca_fingerprint "$FRP_ALLOCATOR_CA_SHA256")" || return 1
   ca="$(frp_allocator_ca_path)"
   actual="$(frp_ca_fingerprint_file "$ca" 2>/dev/null)" || actual=""
-  [[ "$actual" != "$expected" ]] || return 0
+  for entry in "${ca%/*}"/allocator-ca.crt.*; do
+    [[ -f "$entry" && ! -L "$entry" ]] || continue
+    [[ "${entry##*/}" =~ ^allocator-ca\.crt\.[a-zA-Z0-9]{6}$ ]] || continue
+    scratch=1
+  done
+  [[ "$actual" != "$expected" || "$scratch" == "1" ]] || return 0
   actual="$(frp_ca_fingerprint_file "$source")" || return 1
   [[ "$actual" == "$expected" ]] || {
     echo "ERROR: incoming allocator CA fingerprint mismatch" >&2
@@ -173,6 +182,11 @@ frp_client_recover_orphan_allocator_ca() {
   # Recheck before the atomic replacement; never remove unknown state.
   frp_client_has_orphan_allocator_ca_only || return 1
   frp_atomic_install_allocator_ca "$source" "$expected" || return 1
+  for entry in "${ca%/*}"/allocator-ca.crt.*; do
+    [[ -f "$entry" && ! -L "$entry" ]] || continue
+    [[ "${entry##*/}" =~ ^allocator-ca\.crt\.[a-zA-Z0-9]{6}$ ]] || continue
+    rm -f -- "$entry" || return 1
+  done
   echo "Removed stale, unclaimed Agent CA residue; continuing fresh enrollment."
 }
 
