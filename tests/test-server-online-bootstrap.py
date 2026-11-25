@@ -77,7 +77,7 @@ echo EXACT_OFFLINE_BUNDLE_EXECUTION=PASS
         # No installed files or services are touched.
         temp = self.path / 'staging'
         temp.mkdir()
-        prefix = OFFLINE.read_text().split('base64 -d >"$TMP/VERSION"',1)[0]
+        prefix = OFFLINE.read_text().split('# END STREAM PREFIX;',1)[0]
         proc = subprocess.Popen(['/bin/bash'], stdin=subprocess.PIPE,
                                 stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                                 env=dict(os.environ, TMPDIR=str(temp)))
@@ -86,13 +86,13 @@ echo EXACT_OFFLINE_BUNDLE_EXECUTION=PASS
             proc.stdin.flush()
             data = b''
             deadline = time.monotonic() + 12
-            while b'Still receiving/restoring installer files' not in data and time.monotonic() < deadline:
+            while b'Download in progress:' not in data and time.monotonic() < deadline:
                 if select.select([proc.stdout], [], [], 1)[0]:
                     chunk = os.read(proc.stdout.fileno(), 8192)
                     if not chunk:
                         break
                     data += chunk
-            self.assertIn(b'Still receiving/restoring installer files', data)
+            self.assertIn(b'Download in progress:', data)
             proc.stdin.close()
             proc.stdin = None
             tail, _ = proc.communicate(timeout=12)
@@ -104,6 +104,37 @@ echo EXACT_OFFLINE_BUNDLE_EXECUTION=PASS
             if proc.poll() is None:
                 proc.terminate()
                 proc.communicate(timeout=12)
+
+    def test_stdin_bootstrap_verified_and_fast(self):
+        # Exercise the exact full generated artifact via a real pipe, not a
+        # regular stdin file descriptor. --help never mutates host state.
+        with OFFLINE.open('rb') as src:
+            producer = subprocess.Popen(['cat'], stdin=src, stdout=subprocess.PIPE)
+            try:
+                result = subprocess.run(['/bin/bash', '-s', '--', '--help'],
+                                        stdin=producer.stdout, capture_output=True,
+                                        text=True, timeout=90)
+            finally:
+                producer.stdout.close()
+                producer.wait(timeout=10)
+        self.assertEqual(producer.returncode, 0)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn('Installer payload verified.', result.stdout)
+        self.assertIn('Usage:', result.stdout)
+        self.assertNotIn('Incomplete or corrupt', result.stderr)
+
+    def test_stdin_bootstrap_tamper_rejected(self):
+        # Tamper one byte in the body; a valid-looking script must not execute.
+        blob = OFFLINE.read_bytes()
+        prefix, body = blob.split(b'\n#!/usr/bin/env bash\n', 1)
+        body = b'#!/usr/bin/env bash\n' + body
+        self.assertIn(b'Preparing installation...', body)
+        body = body.replace(b'Preparing installation...', b'Preparing installation!!!', 1)
+        result = subprocess.run(['/bin/bash', '-s', '--', '--help'],
+                                input=prefix + b'\n' + body, capture_output=True, timeout=90)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn(b'Incomplete or corrupt installer payload', result.stderr)
+        self.assertNotIn(b'Installing Data Relay Link Server', result.stdout)
 
     def test_small_entry_and_transfer_reduction(self):
         self.assertLess(ONLINE.stat().st_size, 8192)
