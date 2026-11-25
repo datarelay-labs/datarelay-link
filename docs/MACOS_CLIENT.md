@@ -8,11 +8,16 @@ are not supported.
 
 - Apple Silicon (`arm64`)
 - macOS 11 Big Sur or newer
-- `sudo`, launchd, `curl`, `openssl`, `python3`, `tar`, and `shasum`
+- `sudo`, launchd, `curl`, `openssl`, `tar`, and `shasum` (OS tools)
+- Network access to the Server and, when no compatible Python is present,
+  the pinned upstream Python Build Standalone release over authenticated HTTPS.
 
-The installer does not enable Remote Login, change the firewall, create users,
-or install Homebrew packages. Install missing Command Line Tools with
-`xcode-select --install`.
+The Zero-Touch Bootstrap provisions a product-owned, SHA256-pinned Apple
+Silicon Python runtime when needed, without requiring Homebrew or Command
+Line Tools. It does not modify the system Python, enable Remote Login, change
+the firewall, or create users. Manual installation still requires a
+compatible existing Python. The managed interpreter is under the Agent state
+root and is removed by Agent uninstall.
 
 ## Layout
 

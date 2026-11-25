@@ -37,6 +37,13 @@ BOOTSTRAP_LOCATOR_RE = re.compile(r'[A-Za-z0-9_-]{6}')
 # /enroll is an existing allocator endpoint (POST).
 BOOTSTRAP_RESERVED_LOCATORS = frozenset({'enroll', 'zt0000'})
 
+# Product-local Apple Silicon interpreter, not an unpinned Homebrew/CLT
+# prerequisite. Pin the upstream release artifact rather than its mutable latest.
+MACOS_RUNTIME_URL = ('https://github.com/astral-sh/python-build-standalone/releases/download/20261123/'
+                     'cpython-3.11.18%2B20261123-aarch64-apple-darwin-install_only.tar.gz')
+MACOS_RUNTIME_SHA256 = 'e1b27b6f634cf9c01722ebae87be0b08c98a21e5b123edbdf3a0e7bf4b57e0ee'
+
+
 
 def is_bootstrap_locator(value):
     return (isinstance(value, str)
@@ -215,7 +222,171 @@ def _private_ca_pin_shell(allocator_url, ca_sha256):
     ) % (shell_quote(ca_url), shell_quote(fp), fp)
 
 
-def _qualified_linux_shell(installer_url, allocator_url, ca_file, bundle_file, workdir):
+def _entry_posix_runtime_setup():
+    """Provision missing Linux prerequisites via existing OS repository trust.
+
+    This is part of the downloaded entry, never a customer command field.
+    Do not change repository configuration, trust anchors or system Python
+    links. Darwin can install the independently pinned portable runtime in
+    the product-owned directory, without installing CLT or Homebrew.
+    """
+    return r"""entry_os="$(uname -s)"
+entry_linux_python_package() {
+  case "$1:$2" in
+    rhel:8|centos:8|rocky:8|almalinux:8|ol:8) printf '%s' python39 ;;
+    *) printf '%s' python3 ;;
+  esac
+}
+entry_install_linux_packages() {
+  [[ "$entry_os" == Linux ]] || return 1
+  if command -v apt-get >/dev/null 2>&1; then
+    apt-get update -qq &&
+      DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends "$@"
+  elif command -v dnf >/dev/null 2>&1; then
+    dnf install -y "$@"
+  elif command -v yum >/dev/null 2>&1; then
+    yum install -y "$@"
+  else
+    echo "ERROR: no supported OS package manager for Bootstrap dependencies" >&2
+    return 1
+  fi
+}
+entry_find_python() {
+  local candidate bin
+  if [[ "$entry_os" == Darwin ]]; then
+    # A transient PATH interpreter cannot support a future launchd service.
+    for bin in /usr/bin/python3 /opt/homebrew/bin/python3 /usr/local/bin/python3; do
+      [[ -x "$bin" ]] || continue
+      if [[ "$bin" == /usr/bin/python3 ]] && ! xcode-select -p >/dev/null 2>&1; then continue; fi
+      if "$bin" -c 'import sys; sys.exit(0 if sys.version_info >= (3,7) else 1)' >/dev/null 2>&1; then
+        ENTRY_PYTHON="$bin"
+        return 0
+      fi
+    done
+    return 1
+  fi
+  for candidate in python3 python3.13 python3.12 python3.11 python3.10 python3.9 python3.8 python3.7; do
+    bin="$(type -P "$candidate" 2>/dev/null || true)"
+    [[ -n "$bin" ]] || continue
+    if "$bin" -c 'import sys; sys.exit(0 if sys.version_info >= (3,7) else 1)' >/dev/null 2>&1; then
+      ENTRY_PYTHON="$bin"
+      return 0
+    fi
+  done
+  return 1
+}
+entry_ensure_openssl() {
+  command -v openssl >/dev/null 2>&1 && return 0
+  if [[ "$entry_os" == Linux ]]; then
+    entry_install_linux_packages openssl || return 1
+    hash -r
+  fi
+  command -v openssl >/dev/null 2>&1 || {
+    echo "ERROR: Bootstrap cannot provision OpenSSL on this host" >&2
+    return 1
+  }
+}
+entry_owned_path() {
+  local path="$1" meta owner mode
+  [[ -e "$path" && ! -L "$path" ]] || return 1
+  meta="$(stat -f '%u %Lp' "$path")" || return 1
+  read -r owner mode <<< "$meta"
+  [[ "$owner" == "$(id -u)" && "$mode" =~ ^[0-7]{3,4}$ ]] || return 1
+  (( (8#$mode & 022) == 0 ))
+}
+entry_owned_directory() {
+  [[ -d "$1" ]] && entry_owned_path "$1"
+}
+entry_make_owned_directory() {
+  if [[ ! -e "$1" && ! -L "$1" ]]; then
+    mkdir -m 0755 "$1" || return 1
+  fi
+  entry_owned_directory "$1"
+}
+entry_macos_python_path() {
+  local base="$1" runtime="$1/runtime/python" bin marker
+  bin="$runtime/bin/python3"
+  marker="$runtime/.drlink-runtime-sha256"
+  entry_owned_directory "$base" &&
+    entry_owned_directory "$base/runtime" &&
+    entry_owned_directory "$runtime" &&
+    entry_owned_directory "$runtime/bin" || return 1
+  [[ -f "$marker" && -x "$bin" && -L "$bin" ]] || return 1
+  [[ "$(readlink "$bin")" == python3.11 ]] || return 1
+  entry_owned_path "$runtime/bin/python3.11" && entry_owned_path "$marker" || return 1
+  [[ "$(cat "$marker")" == @MACOS_SHA@ ]] || return 1
+  "$bin" -I -c 'import sys,ssl,sqlite3,hashlib; sys.exit(0 if sys.version_info[:3] == (3,11,18) else 1)' >/dev/null 2>&1 || return 1
+  printf '%s' "$bin"
+}
+entry_macos_install_python() (
+  local base="$1" scratch="$2" runtime="$1/runtime/python" stage="" archive got
+  [[ "$entry_os" == Darwin && "$(uname -m)" == arm64 ]] || {
+    echo "ERROR: the managed runtime requires Apple Silicon macOS" >&2; return 1
+  }
+  entry_macos_python_path "$base" >/dev/null && return 0
+  entry_owned_directory "$(dirname "$base")" &&
+    entry_make_owned_directory "$base" &&
+    entry_make_owned_directory "$base/runtime" || {
+    echo "ERROR: unsafe managed Python directory" >&2; return 1
+  }
+  if [[ -e "$runtime" || -L "$runtime" ]]; then
+    entry_macos_python_path "$base" >/dev/null && return 0
+    echo "ERROR: existing managed Python runtime is invalid; refusing replacement" >&2
+    return 1
+  fi
+  stage="$(mktemp -d "$base/runtime/.python-install.XXXXXX")" || return 1
+  trap 'rm -rf "$stage"' EXIT
+  archive="$scratch/drlink-macos-python.tar.gz"
+  echo "Preparing Data Relay Link managed Python runtime ..." >&2
+  curl -fsSL --proto '=https' --proto-redir '=https' --tlsv1.2 --max-time 300 @MACOS_URL@ -o "$archive" || return 1
+  got="$(shasum -a 256 "$archive" | awk '{print tolower($1)}')" || return 1
+  [[ "$got" == @MACOS_SHA@ ]] || {
+    echo "ERROR: managed Python archive SHA256 mismatch" >&2; return 1
+  }
+  # Exact upstream archive was inspected; never extract before digest match.
+  tar -xzf "$archive" --no-same-owner -C "$stage" || return 1
+  [[ -d "$stage/python" && ! -L "$stage/python" && -x "$stage/python/bin/python3" ]] || return 1
+  chmod -R go-w "$stage/python" || return 1
+  "$stage/python/bin/python3" -I -c 'import sys,ssl,sqlite3,hashlib; sys.exit(0 if sys.version_info[:3] == (3,11,18) else 1)' || return 1
+  printf '%s\n' @MACOS_SHA@ >"$stage/python/.drlink-runtime-sha256" || return 1
+  # rename never merges into an existing directory. A concurrent successful
+  # install can be reused, but no partial or unknown runtime is executed.
+  if ! "$stage/python/bin/python3" -I -c 'import os,sys; os.rename(sys.argv[1],sys.argv[2])' "$stage/python" "$runtime"; then
+    entry_macos_python_path "$base" >/dev/null || return 1
+  fi
+  entry_macos_python_path "$base" >/dev/null || return 1
+)
+entry_ensure_python() {
+  local package ID="" VERSION_ID="" macbase='/Library/Application Support/drlink'
+  if [[ "$entry_os" == Darwin ]]; then
+    if ENTRY_PYTHON="$(entry_macos_python_path "$macbase")"; then
+      export PATH="${ENTRY_PYTHON%/*}:$PATH"
+      return 0
+    fi
+    if entry_find_python; then
+      export PATH="${ENTRY_PYTHON%/*}:$PATH"
+      return 0
+    fi
+    entry_macos_install_python "$macbase" "$WORKDIR" || return 1
+    ENTRY_PYTHON="$(entry_macos_python_path "$macbase")" || return 1
+    export PATH="${ENTRY_PYTHON%/*}:$PATH"
+    return 0
+  fi
+  entry_find_python && return 0
+  if [[ "$entry_os" == Linux ]]; then
+    if [[ -r /etc/os-release ]]; then . /etc/os-release; fi
+    package="$(entry_linux_python_package "$ID" "${VERSION_ID%%.*}")"
+    entry_install_linux_packages "$package" || return 1
+    hash -r
+    entry_find_python && return 0
+  fi
+  echo "ERROR: compatible Python runtime is not available to the Bootstrap" >&2
+  return 1
+}""".replace('@MACOS_SHA@', shell_quote(MACOS_RUNTIME_SHA256)).replace(
+        '@MACOS_URL@', shell_quote(MACOS_RUNTIME_URL))
+
+
+def _qualified_linux_shell(installer_url, allocator_url, ca_file, bundle_file, workdir, *, entry=False):
     """Verify the pinned Server's outer candidate before any installer executes."""
     origin = https_origin(allocator_url)
     if str(installer_url) != origin + '/artifacts/agent/bootstrap-client.sh':
@@ -251,7 +422,7 @@ print(c+"\\t"+r+"\\t"+h+"\\t"+head)
     return ca_setup + (
         'curl -fsSL --proto =https "${ca_args[@]}" %s -o "%s/manifest.json"; '
         'curl -fsSL --proto =https "${ca_args[@]}" %s -o "%s/qualified-sums"; '
-        'metadata=$(python3 -c %s "%s/manifest.json" "%s/qualified-sums" "%s"); '
+        'metadata=$(%s -c %s "%s/manifest.json" "%s/qualified-sums" "%s"); '
         'IFS=$(printf "\\t") read -r channel source_ref digest source_head <<< "$metadata"; '
         'if [[ -n "${FRP_EXPECTED_SOURCE_REF:-}" && "$FRP_EXPECTED_SOURCE_REF" != "$source_ref" ]]; then '
         'echo "ERROR: qualified bootstrap source does not match requested source" >&2; exit 1; fi; '
@@ -266,6 +437,7 @@ print(c+"\\t"+r+"\\t"+h+"\\t"+head)
         'FRP_RELEASE_CHANNEL="$channel" FRP_EXPECTED_RELEASE_CHANNEL="$channel"; '
     ) % (shell_quote(origin + '/artifacts/manifest.json'), workdir,
          shell_quote(origin + '/artifacts/SHA256SUMS'), workdir,
+         '"$ENTRY_PYTHON"' if entry else 'python3',
          shell_quote("exec(" + repr(validator) + ")"), workdir, workdir, bundle_file)
 
 
@@ -456,6 +628,8 @@ def render_short_url_bootstrap_script(allocator_url, ca_sha256, ticket, installe
         'trap cleanup EXIT',
         'umask 077',
         *([
+            _entry_posix_runtime_setup(),
+            'entry_ensure_openssl',
             'FRP_ALLOCATOR_CA_FILE="$WORKDIR/allocator-ca.crt"',
             'printf %s %s > "$FRP_ALLOCATOR_CA_FILE"' % ('%s', shell_quote(ca_pem)),
             'openssl x509 -in "$FRP_ALLOCATOR_CA_FILE" -outform DER -out "$WORKDIR/ca.der"',
@@ -483,11 +657,12 @@ def render_short_url_bootstrap_script(allocator_url, ca_sha256, ticket, installe
         '  exit 1',
         'fi',
         *provenance_lines,
+        *(['entry_ensure_python'] if entry else []),
         'chmod 0700 "$INSTALLER_FILE"',
         '# Same-origin artifacts use FRP_ALLOCATOR_CA_FILE when the fresh-client',
         '# command supplied it. A distinct public installer origin uses stock OS trust.',
         '# The installer then pins this CA by fingerprint before enrollment.',
-        _qualified_linux_shell(installer, allocator_url, '', '$INSTALLER_FILE', '$WORKDIR'),
+        _qualified_linux_shell(installer, allocator_url, '', '$INSTALLER_FILE', '$WORKDIR', entry=entry),
         'FRP_INSTALLER_URL="$INSTALLER_URL" FRP_BUNDLE_FILE="$INSTALLER_FILE" bash "$INSTALLER_FILE"',
         '',
     ]

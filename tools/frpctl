@@ -39,6 +39,11 @@ elif [[ -f '/Library/Application Support/drlink/lib/frp-doctor-common.sh' ]]; th
   . '/Library/Application Support/drlink/lib/frp-doctor-common.sh'
 fi
 
+# Propagate the product-owned interpreter to Agent subprocesses as well.
+if declare -F frp_select_compatible_python >/dev/null 2>&1 && frp_is_darwin; then
+  frp_select_compatible_python || true
+fi
+
 # Rocky Linux 8's /usr/bin/python3 is often 3.6, which cannot load
 # `from __future__ import annotations`. Prefer that python3 when it is new
 # enough, otherwise the first versioned interpreter that meets the minimum.
@@ -46,6 +51,11 @@ frpctl_resolve_python() {
   local cand bin
   if [[ -n "${FRP_PYTHON:-}" ]]; then
     printf '%s\n' "$FRP_PYTHON"
+    return 0
+  fi
+  if declare -F frp_macos_managed_python >/dev/null 2>&1 && frp_is_darwin &&
+    bin="$(frp_macos_managed_python)"; then
+    printf '%s\n' "$bin"
     return 0
   fi
   for cand in python3 python3.13 python3.12 python3.11 python3.10 python3.9 python3.8 python3.7; do

@@ -135,6 +135,90 @@ class EntryFields(unittest.TestCase):
                 server.server_close()
                 worker.join(timeout=3)
 
+    @unittest.skipUnless(os.name == 'posix' and shutil.which('bash'), 'Bash required')
+    def test_posix_entry_dependency_setup(self):
+        """Missing/old Python handled before qualified manifest parsing.
+
+        Fake package manager is restricted to the disposable fixture. No host
+        packages or OS trust configuration are altered by this regression.
+        """
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            def exe(name, body):
+                f = root / name
+                f.write_text('#!/bin/sh\n' + body + '\n')
+                f.chmod(0o755)
+            exe('uname', 'printf Linux')
+            exe('python3', 'exit 1')
+            exe('python3.9', 'exit 0')
+            exe('openssl', 'exit 0')
+            exe('apt-get', 'printf "%s\\n" "$*" >> "$TEST_ROOT/transactions"; exit 81')
+            env = dict(os.environ, PATH=d, TEST_ROOT=d)
+            script = zt._entry_posix_runtime_setup()
+            def run(tail):
+                return subprocess.run([shutil.which('bash'), '-ec', script + '\n' + tail],
+                                      env=env, capture_output=True, text=True, timeout=15)
+            existing = run('entry_ensure_openssl; entry_ensure_python; printf "%s" "$ENTRY_PYTHON"')
+            self.assertEqual(existing.returncode, 0, existing.stderr)
+            self.assertEqual(existing.stdout, str(root / 'python3.9'))
+            self.assertFalse((root/'transactions').exists())
+            (root/'python3.9').unlink()
+            failed = run('entry_ensure_python; echo EXECUTED')
+            self.assertNotEqual(failed.returncode, 0)
+            self.assertNotIn('EXECUTED', failed.stdout)
+            self.assertIn('update -qq', (root/'transactions').read_text())
+            (root/'transactions').unlink()
+            (root/'openssl').unlink()
+            exe('apt-get', r'''printf "%s\n" "$*" >> "$TEST_ROOT/transactions"
+case "$*" in
+  *install*openssl*) printf "#!/bin/sh\nexit 0\n" > "$TEST_ROOT/openssl"; /bin/chmod +x "$TEST_ROOT/openssl" ;;
+  *install*python3*) printf "#!/bin/sh\nexit 0\n" > "$TEST_ROOT/python3"; /bin/chmod +x "$TEST_ROOT/python3" ;;
+esac''')
+            installed = run('entry_ensure_openssl; entry_ensure_python; printf "%s" "$ENTRY_PYTHON"')
+            self.assertEqual(installed.returncode, 0, installed.stderr)
+            self.assertEqual(installed.stdout, str(root / 'python3'))
+            self.assertIn('install -y --no-install-recommends openssl', (root/'transactions').read_text())
+            self.assertRegex((root/'transactions').read_text(),
+                             r'install -y --no-install-recommends python3(?:9)?(?:\n|$)')
+            choices = run('entry_linux_python_package rocky 8; printf " "; entry_linux_python_package rocky 9')
+            self.assertEqual(choices.stdout, 'python39 python3')
+
+    @unittest.skipUnless(sys.platform == 'darwin' and __import__('platform').machine() == 'arm64',
+                         'native Apple Silicon runtime qualification')
+    def test_native_macos_managed_runtime(self):
+        """Real pinned download/extract/execute, no system Python/CLT setup."""
+        with tempfile.TemporaryDirectory(prefix='drlink-macos-runtime-') as temp:
+            base = Path(temp) / 'state'
+            scratch = Path(temp) / 'scratch'
+            scratch.mkdir(mode=0o700)
+            env = dict(os.environ, TEST_STATE=str(base), TEST_SCRATCH=str(scratch),
+                       PATH='/usr/bin:/bin:/usr/sbin:/sbin',
+                       FRP_TEST_UNAME_S='Darwin', FRP_MACOS_STATE_ROOT='/state',
+                       FRP_CLIENT_TEST_ROOT=temp,
+                       TEST_COMMON=str(Path(__file__).resolve().parents[1]/'lib/frp-common.sh'))
+            script = zt._entry_posix_runtime_setup() + r"""
+entry_macos_install_python "$TEST_STATE" "$TEST_SCRATCH"
+managed="$(entry_macos_python_path "$TEST_STATE")"
+"$managed" -I -c 'import sys,ssl,sqlite3; print("MANAGED_PYTHON="+sys.version.split()[0])'
+# Retry must reuse, not download or reinstall the runtime.
+curl() { echo 'unexpected duplicate download' >&2; return 77; }
+entry_macos_install_python "$TEST_STATE" "$TEST_SCRATCH"
+[[ "$(entry_macos_python_path "$TEST_STATE")" == "$managed" ]]
+. "$TEST_COMMON"
+frp_select_compatible_python
+[[ "$_FRP_COMPAT_PYTHON_BIN" == "$managed" ]]
+[[ "$(frp_macos_lifecycle_python)" == "$managed" ]]
+[[ "$(command -v python3)" == "$managed" ]]
+echo MACOS_MANAGED_RUNTIME_NATIVE=PASS
+"""
+            run = subprocess.run(['/bin/bash', '-euo', 'pipefail', '-c', script],
+                                 env=env, capture_output=True, text=True, timeout=360)
+            self.assertEqual(run.returncode, 0, run.stdout + run.stderr)
+            self.assertIn('MANAGED_PYTHON=3.11.18', run.stdout)
+            self.assertIn('MACOS_MANAGED_RUNTIME_NATIVE=PASS', run.stdout)
+            self.assertEqual(list((base/'runtime').glob('.python-install.*')), [])
+            print(run.stdout.strip())
+
     def test_candidate_generation_skips_reserved(self):
         with patch.object(zt.secrets, "choice", side_effect=list("enrollA3xK9m")):
             self.assertEqual(zt.new_bootstrap_locator(), "A3xK9m")
