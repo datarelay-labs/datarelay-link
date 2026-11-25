@@ -96,8 +96,6 @@ class AiPathScopePublicParity(unittest.TestCase):
             "set",
             "ai-access",
             "allow-read",
-            "mode",
-            "whitelist",
             "source",
             "bot",
             "destination",
@@ -123,8 +121,6 @@ class AiPathScopePublicParity(unittest.TestCase):
             "set",
             "ai-access",
             "allow-read",
-            "mode",
-            "whitelist",
             "source",
             "bot",
             "destination",
@@ -143,8 +139,6 @@ class AiPathScopePublicParity(unittest.TestCase):
             "set",
             "ai-access",
             "allow-read",
-            "mode",
-            "whitelist",
             "source",
             "bot",
             "destination",
@@ -167,8 +161,6 @@ class AiPathScopePublicParity(unittest.TestCase):
             "set",
             "ai-access",
             "allow-info",
-            "mode",
-            "whitelist",
             "source",
             "bot",
             "destination",
@@ -199,8 +191,6 @@ class AiPathScopePublicParity(unittest.TestCase):
             "set",
             "ai-access",
             "allow-read",
-            "mode",
-            "whitelist",
             "source",
             "bot",
             "destination",
@@ -311,8 +301,6 @@ configurationBundle:
             "set",
             "ai-access",
             "allow-read",
-            "mode",
-            "whitelist",
             "source",
             "bot",
             "destination",
@@ -373,6 +361,59 @@ configurationBundle:
         self.assertEqual(rc, 0, err)
         self.assertIn("DENY", out)
         self.assertEqual(self._auth("read_file", operand=out_path)["action"], "DENY")
+
+    def test_noninteractive_bare_rule_cannot_create_old_policy(self):
+        before = self.plane.current_revision()
+        set_wizard_io(None)
+        rc, _, err = self._run("set", "ai-access", "bare")
+        self.assertNotEqual(rc, 0)
+        self.assertIn("TTY", err)
+        self.assertEqual(self.plane.conn.execute("SELECT COUNT(*) FROM ai_access_rules").fetchone()[0], 0)
+        self.assertEqual(self.plane.conn.execute("SELECT COUNT(*) FROM ai_policy_rules").fetchone()[0], 0)
+        self.assertEqual(self.plane.current_revision(), before)
+
+    def test_first_mode_free_rule_and_retired_mode_rejected(self):
+        before = self.plane.current_revision()
+        rc, _, err = self._run("set", "ai-access", "bad", "mode", "whitelist",
+                               "source", "bot", "destination", "ubuntu-prod",
+                               "permission", "info-only", "enabled")
+        self.assertNotEqual(rc, 0)
+        self.assertIn("mode", err)
+        self.assertEqual(self.plane.current_revision(), before)
+        self.assertIsNone(v24.get_access_policy(self.plane, "ai")["mode"])
+        rc, _, err = self._run("set", "ai-access", "good", "source", "bot",
+                               "destination", "ubuntu-prod", "permission", "info-only", "enabled")
+        self.assertEqual(rc, 0, err)
+        self.assertEqual(v24.get_access_policy(self.plane, "ai")["mode"], "whitelist")
+
+    def test_named_free_profile_review_cancel_then_apply(self):
+        before = self.plane.current_revision()
+        answers = ["profile-rule", "bot", "ubuntu-prod", "Read-only profile",
+                   self.vendor_glob, "y"]
+        set_wizard_io(ScriptedIO(answers + ["0"]))
+        rc, _, err = self._run("set", "ai-access")
+        self.assertEqual(rc, 0, err)
+        self.assertIsNone(v24.get_permission_object(self.plane, "profile-read-only"))
+        self.assertEqual(self.plane.current_revision(), before)
+        set_wizard_io(ScriptedIO(answers + ["1"]))
+        rc, _, err = self._run("set", "ai-access")
+        self.assertEqual(rc, 0, err)
+        self.assertEqual(v24.expand_permissions(self.plane, "profile-read-only"),
+                         {"host-info", "process-read", "file-read"})
+        self.assertEqual(v24.list_ai_policy_path_scopes(self.plane, "profile-rule"), [self.vendor_glob])
+        self.assertEqual(self._auth("read_file", operand=str(self.vendor / "app.log"))["action"], "ALLOW")
+        self.assertEqual(self._auth("read_file", operand=str(self.etc / "config.yaml"))["action"], "DENY")
+        self.assertEqual(self._auth("exec", operand="id")["action"], "DENY")
+
+    def test_builtin_profile_collision_does_not_rewrite_existing_permission(self):
+        v24.set_permission_object(self.plane, "profile-read-only", permissions=["host-info"], oneshot=True)
+        before = self.plane.current_revision()
+        set_wizard_io(ScriptedIO(["bot", "ubuntu-prod", "Read-only profile"]))
+        rc, _, err = self._run("set", "ai-access", "collision")
+        self.assertNotEqual(rc, 0)
+        self.assertIn("conflicts", err)
+        self.assertEqual(v24.expand_permissions(self.plane, "profile-read-only"), {"host-info"})
+        self.assertEqual(self.plane.current_revision(), before)
 
     def test_wizard_binds_paths_for_file_permission(self):
         # AI Access is WHITELIST-only; wizard does not ask for policy mode.

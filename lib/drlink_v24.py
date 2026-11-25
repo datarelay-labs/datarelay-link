@@ -4652,125 +4652,12 @@ def format_policy_test(family: str, evaluation: dict, selectors: dict, remote_se
 # ---------------------------------------------------------------------------
 
 
-# Owner-controlled MCP bootstrap is an explicitly operator-approved first
-# OAuth identity ceremony, not a generic grant for every OAuth client.
+# Preserve the previously persisted explicit owner group membership lifecycle
+# on upgrade. Authentication must never create a new access policy.
 MCP_OWNER_PRINCIPAL_META = "mcp_owner_operator_approved_principal"
 MCP_OWNER_PERMISSION = "mcp-owner-all"
 MCP_OWNER_HOST_GROUP = "mcp-owner-managed-hosts"
 MCP_OWNER_RULE = "mcp-owner-full-access"
-
-
-def _owner_managed_endpoint_rows(plane_db) -> list:
-    return list(plane_db.conn.execute(
-        "SELECT o.id AS object_id, c.id AS client_id FROM objects o "
-        "JOIN managed_endpoints e ON e.object_id=o.id "
-        "JOIN clients c ON c.id=e.client_id "
-        "WHERE o.type='managed_endpoint' AND o.origin='managed' "
-        "AND o.status='active' AND c.trust_status='trusted' "
-        "ORDER BY c.id"
-    ))
-
-
-def ensure_operator_approved_mcp_owner_access(plane_db, principal_id: str) -> dict:
-    """One bounded owner bootstrap after genuine operator consent + PKCE.
-
-    Creation of this privileged profile is allowed only from the first OAuth
-    identity that an operator explicitly approved through the first-identity
-    pending ceremony. Normal OAuth refresh/login never calls it. Other AI
-    identities remain protected by the original default-deny contract.
-    """
-    ensure_v2_schema(plane_db.conn)
-    owner = plane_db.conn.execute(
-        "SELECT value FROM system_meta WHERE key=?",
-        (MCP_OWNER_PRINCIPAL_META,),
-    ).fetchone()
-    if owner is not None:
-        return {"operation": "noop", "owner_exists": True}
-    principal = plane_db.conn.execute(
-        "SELECT * FROM ai_principals WHERE id=?", (principal_id,),
-    ).fetchone()
-    if not principal or not principal["enabled"] or str(
-        principal["credential_status"] or ""
-    ).lower() != "verified" or str(principal["auth_mode"] or "").lower() != "oauth":
-        raise ControlPlaneError("Operator-approved owner identity must be VERIFIED via OAuth")
-    # Fail closed on resource-name collisions; do not silently alter owner
-    # resources or any pre-existing user-authored rules/groups/permissions.
-    for table, name in (
-        ("permission_objects", MCP_OWNER_PERMISSION),
-        ("object_groups", MCP_OWNER_HOST_GROUP),
-        ("ai_policy_rules", MCP_OWNER_RULE),
-    ):
-        if plane_db.conn.execute(
-            "SELECT 1 FROM %s WHERE name=? COLLATE NOCASE" % table, (name,)
-        ).fetchone():
-            raise ControlPlaneError("Reserved MCP owner resource name conflicts with existing configuration")
-
-    def write():
-        current = plane_db.conn.execute(
-            "SELECT value FROM system_meta WHERE key=?", (MCP_OWNER_PRINCIPAL_META,)
-        ).fetchone()
-        if current is not None:
-            return {"operation": "noop", "owner_exists": True}
-        pol = get_access_policy(plane_db, "ai")
-        if pol["mode"] not in (None, "whitelist"):
-            raise ControlPlaneError("AI Access policy is incompatible with owner MCP whitelist")
-        now = utc_now_iso()
-        if pol["mode"] is None:
-            plane_db.conn.execute(
-                "UPDATE access_policies SET mode='whitelist', enforcement='enabled', "
-                "row_version=row_version+1, updated_at=? WHERE plane='ai'",
-                (now,),
-            )
-        permission_id = _new_id("perm")
-        group_id = _new_id("ogp")
-        rule_id = _new_id("air")
-        plane_db.conn.execute(
-            "INSERT INTO permission_objects(id,name,description,row_version,created_at,updated_at) "
-            "VALUES(?,?,?,1,?,?)",
-            (permission_id, MCP_OWNER_PERMISSION, "Operator-approved owner MCP rights", now, now),
-        )
-        for permission in PERMISSIONS:
-            plane_db.conn.execute(
-                "INSERT INTO permission_object_members(permission_object_id,permission) VALUES(?,?)",
-                (permission_id, permission),
-            )
-        plane_db.conn.execute(
-            "INSERT INTO object_groups(id,name,description,row_version,created_at,updated_at) "
-            "VALUES(?,?,?,1,?,?)",
-            (group_id, MCP_OWNER_HOST_GROUP, "Signed enrolled Managed Hosts only", now, now),
-        )
-        for endpoint in _owner_managed_endpoint_rows(plane_db):
-            plane_db.conn.execute(
-                "INSERT INTO object_group_members(group_id,member_kind,member_id) "
-                "VALUES(?,'object',?)", (group_id, endpoint["object_id"]),
-            )
-        plane_db.conn.execute(
-            "INSERT INTO ai_policy_rules"
-            "(id,name,enabled,source_identity_id,destination_ref_kind,destination_ref_id,"
-            "permission_ref_kind,permission_ref_id,description,row_version,created_at,updated_at)"
-            " VALUES(?, ?,1,?,'group',?,'permission_object',?,?,1,?,?)",
-            (rule_id, MCP_OWNER_RULE, principal_id, group_id, permission_id,
-             "Owner consent + PKCE; any other identity remains deny-by-default", now, now),
-        )
-        plane_db.conn.execute(
-            "INSERT INTO ai_policy_path_scopes(rule_id,pattern) VALUES(?,'/*')",
-            (rule_id,),
-        )
-        plane_db.conn.execute(
-            "INSERT INTO system_meta(key,value) VALUES(?,?)",
-            (MCP_OWNER_PRINCIPAL_META, principal_id),
-        )
-        return {
-            "entity": {"type": "ai-access", "id": rule_id, "name": MCP_OWNER_RULE},
-            "operation": "create",
-            "after": "first operator-approved OAuth owner, enrolled Managed Hosts only",
-        }
-
-    return plane_db._mutate(
-        "bootstrap operator-approved MCP owner",
-        "first operator-approved MCP owner access",
-        write,
-    )
 
 
 def enroll_managed_host_in_owner_mcp_access(plane_db, client_id: str) -> dict:
@@ -4856,9 +4743,6 @@ def set_ai_access_rule(
             missing.append("permission")
         if enabled is None:
             missing.append("enabled|disabled")
-        pol = get_access_policy(plane_db, "ai")
-        if pol["mode"] is None and mode is None:
-            missing.append("mode whitelist")
         if missing:
             raise ControlPlaneError(
                 "ERROR:\nAI Access rule is incomplete.\n\nMissing:\n%s\n\nNo changes were applied."
@@ -4897,7 +4781,7 @@ def set_ai_access_rule(
         expand_permissions(plane_db, permission)
 
     def write():
-        ensure_policy_mode(plane_db, "ai", mode, oneshot=oneshot and existing is None)
+        ensure_policy_mode(plane_db, "ai", mode or "whitelist", oneshot=oneshot and existing is None)
         now = utc_now_iso()
         if existing is None:
             rid = _new_id("air")

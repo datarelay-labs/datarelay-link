@@ -188,7 +188,6 @@ CONTROL_PLANE_SYSTEM = frozenset(
         "revision",
         "diff",
         "rollback",
-        "credential",
         "export",
         "apply",
         "certificate",
@@ -344,22 +343,9 @@ def reject_obsolete_surface(tokens):
     # Reject retired nested forms before help or legacy system fallthrough
     # can turn them into an executable operation or successful discovery.
     focus = raw[1:] if verb == "help" else raw
-    if (
-        focus[:2] == ["system", "credential"]
-        and len(focus) >= 4
-        and focus[2] in ("rotate", "revoke", "configure")
-        and focus[3] == "ai-principal"
-    ):
-        return {
-            "status": "error", "exit_code": 2,
-            "message": "Retired AI Principal credential noun is not public grammar.\n"
-                       "On the DRLink Server, use system credential %s ai-identity <NAME>%s.\n"
-                       "See: help system credential %s" % (
-                           focus[2],
-                           " authentication <static-bearer|oauth>" if focus[2] == "configure" else "",
-                           focus[2],
-                       ),
-        }
+    if focus[:2] == ["system", "credential"]:
+        return {"status": "error", "exit_code": 2,
+                "message": "Retired credential command. On the DRLink Server, use set ai-identity <IDENTITY> and help ai-identity."}
     if focus[:3] == ["system", "audit", "ai-principal"]:
         return {
             "status": "error", "exit_code": 2,
@@ -1261,6 +1247,11 @@ def _catalog_context_help(tokens, role, names=None, clients=None):
         role_cmd["examples"] = ["system diagnostics", "system diagnostics runtime"]
         return CATALOG.command_help(role_cmd)
 
+    # Named Identity actions have their own risk/approval contract even
+    # when the next positional operand has enumerated choices.
+    if probe[:2] == ["set", "ai-identity"] and len(probe) >= 4 and probe[3] in CATALOG.AI_IDENTITY_ACTIONS:
+        return CATALOG.command_help(cmd)
+
     # Some valid parent commands are executable lifecycle operations and also
     # have longer child forms. Their own usage/risk/confirmation contract must
     # remain visible; child discovery is supplemental, never a replacement.
@@ -1399,7 +1390,7 @@ def context_help(tokens, role, names=None, clients=None):
             "Use:\n"
             "  unset enrollment <ENROLLMENT>\n"
             "  unset managed-host <HOST>\n"
-            "  system credential revoke ai-identity <IDENTITY>\n\n"
+            "  set ai-identity <IDENTITY> revoke\n\n"
             "See: help commands\n"
         ),
         "release": (

@@ -1596,18 +1596,19 @@
     "roles": "server",
     "category": "AI Access",
     "summary": "Create or edit an AI Access rule",
-    "detail": "Create or edit an AI Access rule. The calculated security impact of an edit is checked before mutation. A y/N confirmation is required when that impact broadens or materially narrows access; safe creation and no-change paths need no additional confirmation.",
+    "detail": "Create or edit an AI Access rule. The calculated security impact of an edit is checked before mutation. A y/N confirmation is required when that impact broadens or materially narrows access; safe creation and no-change paths need no additional confirmation. AI Access is WHITELIST-only; the first rule initializes this mode without a mode field.",
     "examples": [
+      "set ai-access",
       "set ai-access <RULE>",
-      "set ai-access allow-ops mode whitelist source automation-ai destination production-servers permission operations enabled",
-      "set ai-access allow-read mode whitelist source automation-ai destination ubuntu-prod permission read-only paths '/var/lib/vendor/**' enabled",
+      "set ai-access allow-ops source automation-ai destination production-servers permission operations enabled",
+      "set ai-access allow-read source automation-ai destination ubuntu-prod permission read-only paths '/var/lib/vendor/**' enabled",
       "set ai-access enabled",
       "set ai-access disabled"
     ],
     "args": [
       {
         "name": "RULE",
-        "required": true
+        "required": false
       }
     ],
     "tail": "any",
@@ -1620,9 +1621,6 @@
     "surface": "",
     "flags": [],
     "tail_fields": {
-      "mode": [
-        "whitelist"
-      ],
       "source": null,
       "destination": null,
       "permission": null,
@@ -2020,180 +2018,6 @@
     "hidden": false,
     "risk": "outage",
     "confirmation": "y_n",
-    "surface": "",
-    "flags": []
-  },
-  {
-    "path": [
-      "system",
-      "credential",
-      "rotate",
-      "ai-identity"
-    ],
-    "roles": "server",
-    "category": "AI Access",
-    "summary": "Rotate an AI Identity credential",
-    "detail": "Rotate invalidates the previous active credential and issues a replacement secret once. The explicit command is the operator approval; no additional confirmation prompt is used.",
-    "examples": [
-      "system credential rotate ai-identity automation-ai"
-    ],
-    "args": [
-      {
-        "name": "<IDENTITY>",
-        "complete": "ai-principals",
-        "required": true
-      }
-    ],
-    "tail": null,
-    "internal": null,
-    "aliases": [],
-    "destructive": true,
-    "hidden": false,
-    "risk": "security_change",
-    "confirmation": "none",
-    "surface": "",
-    "flags": []
-  },
-  {
-    "path": [
-      "system",
-      "credential",
-      "revoke",
-      "ai-identity"
-    ],
-    "roles": "server",
-    "category": "AI Access",
-    "summary": "Revoke an AI Identity credential",
-    "detail": "Revoke removes active credential material and can immediately interrupt clients using it. The explicit command is the operator approval; no additional confirmation prompt is used.",
-    "examples": [
-      "system credential revoke ai-identity automation-ai"
-    ],
-    "args": [
-      {
-        "name": "<IDENTITY>",
-        "complete": "ai-principals",
-        "required": true
-      }
-    ],
-    "tail": null,
-    "internal": null,
-    "aliases": [],
-    "destructive": true,
-    "hidden": false,
-    "risk": "outage",
-    "confirmation": "none",
-    "surface": "",
-    "flags": []
-  },
-  {
-    "path": [
-      "system",
-      "credential",
-      "configure",
-      "ai-identity"
-    ],
-    "roles": "server",
-    "category": "AI Access",
-    "summary": "Configure AI Identity authentication",
-    "detail": "Change the authentication mode or OAuth redirect configuration for an existing AI Identity. This can change which clients can authenticate. The explicit command is the operator approval; no additional confirmation prompt is used.",
-    "examples": [
-      "system credential configure ai-identity automation-ai authentication static-bearer",
-      "system credential configure ai-identity interactive-ai authentication oauth",
-      "system credential configure ai-identity interactive-ai oauth-redirect https://localhost/callback"
-    ],
-    "args": [
-      {
-        "name": "<IDENTITY>",
-        "complete": "ai-principals",
-        "required": true
-      },
-      {
-        "name": "<FIELD>",
-        "complete": [
-          "authentication",
-          "oauth-redirect"
-        ],
-        "required": true
-      },
-      {
-        "name": "<VALUE>",
-        "complete": null,
-        "required": true
-      }
-    ],
-    "tail": null,
-    "internal": null,
-    "aliases": [],
-    "destructive": true,
-    "hidden": false,
-    "risk": "security_change",
-    "confirmation": "none",
-    "surface": "",
-    "flags": []
-  },
-  {
-    "path": [
-      "system",
-      "credential",
-      "deny-oauth"
-    ],
-    "roles": "server",
-    "category": "AI Access",
-    "summary": "Deny a pending OAuth authorization request",
-    "detail": "Deny operator consent for one pending OAuth authorization request. The browser continuation receives access_denied. The explicit deny command is the operator decision; no additional confirmation prompt is used.",
-    "examples": [
-      "system credential deny-oauth <PENDING-ID>"
-    ],
-    "args": [
-      {
-        "name": "<PENDING-ID>",
-        "complete": null,
-        "required": true
-      }
-    ],
-    "tail": null,
-    "internal": null,
-    "aliases": [],
-    "destructive": false,
-    "hidden": false,
-    "risk": "security_change",
-    "confirmation": "none",
-    "surface": "",
-    "flags": []
-  },
-  {
-    "path": [
-      "system",
-      "credential",
-      "approve-oauth"
-    ],
-    "roles": "server",
-    "category": "AI Access",
-    "summary": "Approve a pending OAuth authorization request",
-    "detail": "Approve operator consent for one pending OAuth authorization request and issue a one-time authorization code through the browser continuation. The explicit approve command is the operator decision; no additional confirmation prompt is used.",
-    "examples": [
-      "system credential approve-oauth <PENDING-ID>",
-      "system credential approve-oauth <PENDING-ID> <AI-IDENTITY>"
-    ],
-    "args": [
-      {
-        "name": "<PENDING-ID>",
-        "complete": null,
-        "required": true
-      },
-      {
-        "name": "AI-IDENTITY",
-        "complete": "ai-principals",
-        "required": false
-      }
-    ],
-    "tail": null,
-    "internal": null,
-    "aliases": [],
-    "destructive": false,
-    "hidden": false,
-    "risk": "security_widening",
-    "confirmation": "none",
     "surface": "",
     "flags": []
   },
@@ -3500,18 +3324,38 @@
     ],
     "roles": "server",
     "category": "AI Access",
-    "summary": "Connect / bind an AI Identity",
-    "detail": "Connect / bind an AI Identity",
+    "summary": "Connect or manage an AI Identity",
+    "detail": "Connect and verify an AI client, or explicitly manage an existing Identity. Authentication never grants Managed Host access. Review the selected credential or OAuth action.",
     "examples": [
-      "set ai-identity <IDENTITY>"
+      "set ai-identity",
+      "set ai-identity chatgpt",
+      "set ai-identity chatgpt approve <PENDING-ID>",
+      "set ai-identity chatgpt deny <PENDING-ID>",
+      "set ai-identity chatgpt rotate",
+      "set ai-identity chatgpt revoke",
+      "set ai-identity chatgpt authentication oauth",
+      "set ai-identity chatgpt oauth-redirect https://localhost/callback"
     ],
     "args": [
       {
-        "name": "IDENTITY",
-        "required": true
+        "name": "<IDENTITY>",
+        "complete": "ai-principals",
+        "required": false
+      },
+      {
+        "name": "ACTION",
+        "complete": [
+          "rotate",
+          "revoke",
+          "authentication",
+          "oauth-redirect",
+          "approve",
+          "deny"
+        ],
+        "required": false
       }
     ],
-    "tail": null,
+    "tail": "any",
     "internal": null,
     "aliases": [],
     "destructive": false,

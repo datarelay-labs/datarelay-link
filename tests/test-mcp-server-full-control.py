@@ -387,7 +387,7 @@ class FullControlBridgeAuthorizationTests(unittest.TestCase):
         self.bridge = MCPBridge(root=str(self.root), plane=self.plane)
         self.principal = {"name": "native-full-fixture", "id": "fixture-identity"}
         self.plane.set_ai_principal(self.principal["name"], enabled=True)
-        self.cli("system", "credential", "rotate", "ai-identity", self.principal["name"])
+        self.cli("set", "ai-identity", self.principal["name"], "rotate")
 
     def tearDown(self):
         self.bridge.close()
@@ -404,7 +404,7 @@ class FullControlBridgeAuthorizationTests(unittest.TestCase):
     def authorize(self):
         self.cli("set", "permission-object", "fixture-all", "permissions",
                  "host-info,process-read,file-read,file-write,file-upload,file-download,command-exec")
-        self.cli("set", "ai-access", "fixture-server", "mode", "whitelist", "source",
+        self.cli("set", "ai-access", "fixture-server", "source",
                  self.principal["name"], "destination", "server:self", "permission",
                  "fixture-all", "paths", str(self.root) + "/**", "enabled")
 

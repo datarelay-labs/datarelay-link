@@ -75,16 +75,12 @@ class OAuthPendingBoundsTests(unittest.TestCase):
     def _stage(self, name: str) -> None:
         self.plane.set_ai_principal(name, enabled=True)
         dispatch(
-            ["system", "credential", "configure", "ai-identity", name, "authentication", "oauth"],
+            ["set", "ai-identity", name, "authentication", "oauth"],
             root=self.tmp,
         )
         dispatch(
             [
-                "system",
-                "credential",
-                "configure",
-                "ai-identity",
-                name,
+                "set", "ai-identity", name,
                 "oauth-redirect",
                 REDIRECT,
             ],

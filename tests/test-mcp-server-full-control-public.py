@@ -55,14 +55,13 @@ class NativeFullControlPublicTests(unittest.TestCase):
         self.identities = {"owner": "native-public-owner", "other": "native-public-other"}
         for key, name in self.identities.items():
             self.plane.set_ai_principal(name, enabled=True)
-            output = self.cli("system", "credential", "rotate", "ai-identity", name)
+            output = self.cli("set", "ai-identity", name, "rotate")
             self.tokens[key] = next(line.split(" ", 1)[1].strip()
                                     for line in output.splitlines() if line.startswith("Token: "))
         self.cli("set", "permission-object", "native-public-permissions", "permissions",
                  "host-info,process-read,file-read,file-write,file-upload,file-download,command-exec")
         for key, name in self.identities.items():
-            self.cli("set", "ai-access", self.rule(key), "mode", "whitelist",
-                     "source", name, "destination", "server:self", "permission",
+            self.cli("set", "ai-access", self.rule(key), "source", name, "destination", "server:self", "permission",
                      "native-public-permissions", "paths", str(self.root) + "/**", "enabled")
         config = self.root / "etc" / "drlink" / "config.json"
         config.parent.mkdir(parents=True, exist_ok=True)

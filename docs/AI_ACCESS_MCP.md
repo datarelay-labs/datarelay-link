@@ -87,6 +87,7 @@ Operator credential / OAuth lifecycle:
 set ai-identity <IDENTITY> rotate
 set ai-identity <IDENTITY> revoke
 set ai-identity <IDENTITY> authentication <static-bearer|oauth>
+set ai-identity <IDENTITY> oauth-redirect <URI>
 set ai-identity <IDENTITY> approve <PENDING-ID>
 set ai-identity <IDENTITY> deny <PENDING-ID>
 ```

@@ -147,7 +147,7 @@ class ControlPlaneAITests(unittest.TestCase):
         return out
 
     def token_for(self, principal):
-        out = self.cli("system", "credential", "rotate", "ai-identity", principal)
+        out = self.cli("set", "ai-identity", principal, "rotate")
         self.assertIn("Fingerprint:", out)
         self.assertIn("Token:", out)
         line = [ln for ln in out.splitlines() if ln.startswith("Token: ")][0]
@@ -223,8 +223,6 @@ class ControlPlaneAITests(unittest.TestCase):
             "set",
             "ai-access",
             "readonly-support",
-            "mode",
-            "whitelist",
             "source",
             "chatgpt-support",
             "destination",
@@ -300,8 +298,6 @@ class ControlPlaneAITests(unittest.TestCase):
             "set",
             "ai-access",
             "lab-maintenance",
-            "mode",
-            "whitelist",
             "source",
             "cursor-dev",
             "destination",
@@ -379,8 +375,6 @@ class ControlPlaneAITests(unittest.TestCase):
             "set",
             "ai-access",
             "support-exec",
-            "mode",
-            "whitelist",
             "source",
             "cursor-dev",
             "destination",
@@ -604,7 +598,7 @@ class MCPBridgeE2ETests(unittest.TestCase):
             self.fail("; ".join(failures))
 
     def _token(self, principal):
-        rc, out, err = run_cli(self.tmp, ["system", "credential", "rotate", "ai-identity", principal])
+        rc, out, err = run_cli(self.tmp, ["set", "ai-identity", principal, "rotate"])
         self.assertEqual(rc, 0, err)
         return [ln.split(" ", 1)[1] for ln in out.splitlines() if ln.startswith("Token: ")][0]
 
@@ -873,7 +867,7 @@ class MCPBridgeE2ETests(unittest.TestCase):
         status, payload = self.call(self.cursor, "exec", {"endpoint": "lab1", "command": "true"})
         self.assertIn("DENY", self.text_of(payload))
         v24.set_ai_access_rule(self.plane, "mcp-lab-maintenance", enabled=True)
-        run_cli(self.tmp, ["system", "credential", "revoke", "ai-identity", "chatgpt-support"])
+        run_cli(self.tmp, ["set", "ai-identity", "chatgpt-support", "revoke"])
         status, payload = self.call(
             self.chatgpt,
             "get_system_info",
@@ -1103,8 +1097,6 @@ class MCPBridgeE2ETests(unittest.TestCase):
                 "set",
                 "ai-access",
                 "readonly-support",
-                "mode",
-                "whitelist",
                 "source",
                 "chatgpt-support",
                 "destination",
@@ -1126,13 +1118,9 @@ class MCPBridgeE2ETests(unittest.TestCase):
             ["show", "ai-access"],
             ["show", "ai-access", "readonly-support"],
             ["show", "ai-access-log", "identity", "chatgpt-support"],
-            ["system", "credential", "rotate", "ai-identity", "chatgpt-support"],
+            ["set", "ai-identity", "chatgpt-support", "rotate"],
             [
-                "system",
-                "credential",
-                "configure",
-                "ai-identity",
-                "chatgpt-support",
+                "set", "ai-identity", "chatgpt-support",
                 "authentication",
                 "static-bearer",
             ],

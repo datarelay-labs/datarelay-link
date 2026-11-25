@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""First operator-approved OAuth owner gets all MCP capabilities; others stay deny-by-default."""
+"""Verified OAuth identities remain denied until a separate access rule is applied."""
 from __future__ import annotations
 import base64
 import hashlib
@@ -25,7 +25,7 @@ ALL_CAPABILITIES = (
 )
 
 
-class FirstOwnerMcpDefaults(unittest.TestCase):
+class OAuthAuthenticationSeparation(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory(prefix="drlink-mcp-owner-")
         self.addCleanup(self.tmp.cleanup)
@@ -118,79 +118,51 @@ class FirstOwnerMcpDefaults(unittest.TestCase):
                 )
                 self.assertEqual(decision["action"], expectation, decision)
 
-    def test_operator_approved_first_mcp_owner_receives_all_seven_rights(self):
-        self.approve_and_exchange("chatgpt", "owner")
-        self.assertEqual(
-            self.plane.conn.execute(
-                "SELECT value FROM system_meta WHERE key=?",
-                (v24.MCP_OWNER_PRINCIPAL_META,),
-            ).fetchone()["value"],
-            self.plane.get_principal("chatgpt")["id"],
-        )
-        self.assertEqual(
-            self.plane.conn.execute("SELECT mode FROM access_policies WHERE plane='ai'"
-                                    ).fetchone()["mode"], "whitelist"
-        )
-        self.check_caps("chatgpt", "First Test Agent", "ALLOW")
-        self.plane.set_ai_principal("other-oauth-client", enabled=True)
-        self.plane.conn.execute(
-            "UPDATE ai_principals SET credential_status='verified',auth_mode='oauth' "
-            "WHERE name='other-oauth-client'"
-        )
-        self.check_caps("other-oauth-client", "First Test Agent", "DENY")
+    def assert_no_implicit_policy(self):
+        self.assertIsNone(v24.get_access_policy(self.plane, "ai")["mode"])
+        self.assertEqual(self.plane.conn.execute("SELECT COUNT(*) FROM ai_policy_rules").fetchone()[0], 0)
+        self.assertIsNone(self.plane.conn.execute(
+            "SELECT value FROM system_meta WHERE key=?", (v24.MCP_OWNER_PRINCIPAL_META,)
+        ).fetchone())
 
-    def test_enrolling_another_authenticated_agent_extends_only_owner(self):
-        self.approve_and_exchange("chatgpt", "owner-later-host")
-        rp.sync_enrolled_client(
-            self.plane, client_id="b" * 32, hostname="agent-02",
-            label="Second Test Agent", services={},
-        )
-        self.check_caps("chatgpt", "Second Test Agent", "ALLOW")
-        self.plane.set_ai_principal("other", enabled=True)
-        self.plane.conn.execute(
-            "UPDATE ai_principals SET credential_status='verified',auth_mode='oauth' "
-            "WHERE name='other'"
-        )
-        self.check_caps("other", "Second Test Agent", "DENY")
-        # Repeat enrollment does not mint a second rule or duplicate membership.
-        rp.sync_enrolled_client(
-            self.plane, client_id="b" * 32, hostname="agent-02",
-            label="Second Test Agent", services={},
-        )
-        self.assertEqual(
-            self.plane.conn.execute("SELECT COUNT(*) FROM ai_policy_rules"
-                                    ).fetchone()[0], 1
-        )
-        self.assertEqual(
-            self.plane.conn.execute(
-                "SELECT COUNT(*) FROM object_group_members"
-            ).fetchone()[0], 2
-        )
-        self.plane.conn.execute(
-            "UPDATE ai_principals SET credential_status='revoked' WHERE name='chatgpt'"
-        )
+    def test_first_and_second_verified_identity_are_denied_without_rule(self):
+        self.approve_and_exchange("chatgpt", "first")
+        self.assert_no_implicit_policy()
+        self.check_caps("chatgpt", "First Test Agent", "DENY")
+        self.approve_and_exchange("claude", "second")
+        self.assert_no_implicit_policy()
+        self.check_caps("claude", "First Test Agent", "DENY")
+
+    def test_new_enrollment_does_not_implicitly_authorize_verified_identity(self):
+        self.approve_and_exchange("chatgpt", "first")
+        rp.sync_enrolled_client(self.plane, client_id="b" * 32, hostname="agent-02",
+                                label="Second Test Agent", services={})
+        self.assert_no_implicit_policy()
         self.check_caps("chatgpt", "Second Test Agent", "DENY")
 
-    def test_owner_profile_does_not_rewrite_existing_operator_resource(self):
-        self.plane.set_ai_principal("owner", enabled=True)
-        self.plane.conn.execute(
-            "UPDATE ai_principals SET credential_status='verified', auth_mode='oauth' "
-            "WHERE name='owner'"
-        )
-        # An explicitly user-configured reserved name must never be overwritten.
-        v24.set_permission_object(
-            self.plane, v24.MCP_OWNER_PERMISSION,
-            permissions=["host-info"], oneshot=True,
-        )
-        with self.assertRaisesRegex(Exception, "conflicts"):
-            v24.ensure_operator_approved_mcp_owner_access(
-                self.plane, self.plane.get_principal("owner")["id"]
-            )
-        self.assertEqual(
-            self.plane.conn.execute(
-                "SELECT COUNT(*) FROM ai_policy_rules"
-            ).fetchone()[0], 0
-        )
+    def test_explicit_rule_and_existing_dynamic_group_are_preserved(self):
+        self.approve_and_exchange("chatgpt", "first")
+        v24.set_permission_object(self.plane, v24.MCP_OWNER_PERMISSION,
+                                  permissions=list(v24.PERMISSIONS), oneshot=True)
+        # Recreate the persisted pre-upgrade owner state in this disposable
+        # fixture; production OAuth no longer creates any of these resources.
+        host = self.plane.conn.execute(
+            "SELECT o.name FROM objects o JOIN managed_endpoints e ON e.object_id=o.id WHERE e.client_id=?",
+            ("a" * 32,),
+        ).fetchone()["name"]
+        v24.set_network_group(self.plane, v24.MCP_OWNER_HOST_GROUP, members=[host], oneshot=True)
+        v24.set_ai_access_rule(self.plane, v24.MCP_OWNER_RULE, mode="whitelist",
+                               source="chatgpt", destination=v24.MCP_OWNER_HOST_GROUP,
+                               permission=v24.MCP_OWNER_PERMISSION, paths=["/*"], enabled=True, oneshot=True)
+        self.plane.conn.execute("INSERT INTO system_meta(key,value) VALUES(?,?)",
+                                (v24.MCP_OWNER_PRINCIPAL_META, self.plane.get_principal("chatgpt")["id"]))
+        self.check_caps("chatgpt", "First Test Agent", "ALLOW")
+        rp.sync_enrolled_client(self.plane, client_id="b" * 32, hostname="agent-02",
+                                label="Second Test Agent", services={})
+        self.check_caps("chatgpt", "Second Test Agent", "ALLOW")
+        self.assertEqual(self.plane.conn.execute("SELECT COUNT(*) FROM ai_policy_rules").fetchone()[0], 1)
+        self.plane.conn.execute("UPDATE ai_principals SET credential_status='revoked' WHERE name='chatgpt'")
+        self.check_caps("chatgpt", "Second Test Agent", "DENY")
 
 
 if __name__ == "__main__":

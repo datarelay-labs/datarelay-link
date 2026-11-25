@@ -125,18 +125,22 @@ def oauth_operator_approval_command(plane: ControlPlane, pending_id: str, *, unb
     it. An explicit deployment hint is accepted only for an enabled, verified
     Identity, and is never taken from the untrusted OAuth client request.
     """
-    if not pending_id:
-        return "sudo drlink system credential approve-oauth <PENDING-ID> <AI-IDENTITY>"
-    command = "sudo drlink system credential approve-oauth %s" % pending_id
-    if not unbound:
-        return command  # Already bound: an Identity argument is unnecessary.
-    name = os.environ.get("DRLINK_MCP_OAUTH_OPERATOR_IDENTITY", "").strip()
-    if re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}", name):
-        principal = plane.get_principal(name)
-        if (principal is not None and int(principal["enabled"] or 0)
-                and str(principal["credential_status"] or "").lower() in ("verified", "active")):
-            return command + " " + principal["name"]
-    return command + " <AI-IDENTITY>"  # No safe default: operator must choose.
+    name = "<AI-IDENTITY>"
+    if pending_id and not unbound:
+        bound = plane.conn.execute(
+            "SELECT p.name FROM ai_oauth_pending r JOIN ai_principals p ON p.id=r.principal_id WHERE r.id=?",
+            (pending_id,),
+        ).fetchone()
+        if bound is not None and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}", bound["name"]):
+            name = bound["name"]
+    elif pending_id:
+        candidate = os.environ.get("DRLINK_MCP_OAUTH_OPERATOR_IDENTITY", "").strip()
+        if re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}", candidate):
+            principal = plane.get_principal(candidate)
+            if (principal is not None and int(principal["enabled"] or 0)
+                    and str(principal["credential_status"] or "").lower() in ("verified", "active")):
+                name = principal["name"]
+    return "sudo drlink set ai-identity %s approve %s" % (name, pending_id or "<PENDING-ID>")
 
 
 # name, title, description, props, annotations

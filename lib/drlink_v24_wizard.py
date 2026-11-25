@@ -332,6 +332,15 @@ def _apply_inline_then(plane: ControlPlane, session: WizardSession, apply_fn: Ca
                 v24.set_service_group(
                     plane, draft.name, members=list(draft.fields.get("members") or []), oneshot=True
                 )
+            elif draft.kind == "builtin-permission-profile":
+                expected = set(draft.fields["permissions"])
+                if v24.get_permission_object(plane, draft.name):
+                    if v24.expand_permissions(plane, draft.name) != expected:
+                        raise ControlPlaneError("Built-in profile changed before Apply.")
+                elif v24.get_permission_group(plane, draft.name):
+                    raise ControlPlaneError("Built-in profile name conflicts with a group.")
+                else:
+                    v24.set_permission_object(plane, draft.name, permissions=sorted(expected), oneshot=True)
             elif draft.kind == "permission-object":
                 v24.set_permission_object(
                     plane,
@@ -1004,6 +1013,37 @@ def run_access_rule_wizard(plane: ControlPlane, family: str, name: str) -> int:
         return 0
 
 
+AI_PERMISSION_PROFILES = {
+    "Read-only profile": ("profile-read-only", {"host-info", "process-read", "file-read"}),
+    "Full management profile": ("profile-full-management", set(v24.PERMISSIONS)),
+}
+
+
+def _draft_permission_set(plane, session, name, seen=frozenset()):
+    if name.lower() in seen:
+        raise ControlPlaneError("Permission draft contains a cycle.")
+    for draft in session.inline:
+        if draft.name.lower() != name.lower():
+            continue
+        if draft.kind in ("permission-object", "builtin-permission-profile"):
+            return set(draft.fields["permissions"])
+        if draft.kind == "permission-group":
+            return set().union(*(_draft_permission_set(plane, session, member, seen | {name.lower()})
+                                 for member in draft.fields["members"]))
+    return v24.expand_permissions(plane, name)
+
+
+def _choose_ai_permission_profile(plane, session, choice):
+    name, permissions = AI_PERMISSION_PROFILES[choice]
+    if v24.get_permission_object(plane, name):
+        if v24.expand_permissions(plane, name) != permissions:
+            raise ControlPlaneError("Built-in profile conflicts with an existing permission object; choose Custom.")
+    elif v24.get_permission_group(plane, name):
+        raise ControlPlaneError("Built-in profile conflicts with an existing permission group; choose Custom.")
+    session.inline.append(DraftObject("builtin-permission-profile", name, {"permissions": sorted(permissions)}))
+    return name
+
+
 def run_ai_access_wizard(plane: ControlPlane, name: str) -> int:
     io = _io()
     existing = plane.conn.execute(
@@ -1013,6 +1053,7 @@ def run_ai_access_wizard(plane: ControlPlane, name: str) -> int:
     session = WizardSession("ai-access", name, "edit" if existing else "create")
     try:
         while True:
+            session.inline.clear()
             if pol["mode"] is None and session.policy_mode is None:
                 mode = "whitelist"
                 session.policy_mode = mode
@@ -1021,7 +1062,7 @@ def run_ai_access_wizard(plane: ControlPlane, name: str) -> int:
             identities = [
                 r["name"]
                 for r in plane.conn.execute(
-                    "SELECT name FROM ai_principals WHERE name != ? ORDER BY name",
+                    "SELECT name FROM ai_principals WHERE name != ? AND enabled=1 AND lower(credential_status) IN ('verified','active') ORDER BY name",
                     ("__oauth_unbound__",),
                 )
             ]
@@ -1030,39 +1071,44 @@ def run_ai_access_wizard(plane: ControlPlane, name: str) -> int:
                 raise ControlPlaneError(
                     "ERROR:\nNo verified AI Identity is available.\n\nNo changes were applied."
                 )
-            destination = _select_network_selector(io, plane, session, "Destination")
+            destinations = [r["name"] for r in v24.list_network_objects(plane)]
+            destinations += [r["name"] for r in plane.conn.execute("SELECT name FROM object_groups ORDER BY name")]
+            destinations.append(v24.SERVER_SELF_TARGET)
+            destination = _ask_choice(io, "Destination (existing Network Object / Group; server:self is separate)", destinations)
             perms = [r["name"] for r in plane.conn.execute("SELECT name FROM permission_objects ORDER BY name")]
             perms += [r["name"] for r in plane.conn.execute("SELECT name FROM permission_groups ORDER BY name")]
             choice = _ask_choice(
                 io,
                 "Permission",
-                perms,
+                perms + list(AI_PERMISSION_PROFILES),
                 allow_create=[
                     ("permission-object", "+ Create Permission Object"),
                     ("permission-group", "+ Create Permission Group"),
                 ],
             )
-            if choice == "+create:permission-object":
+            if choice in AI_PERMISSION_PROFILES:
+                permission = _choose_ai_permission_profile(plane, session, choice)
+            elif choice == "+create:permission-object":
                 permission = _inline_permission_object(io, session)
             elif choice == "+create:permission-group":
                 permission = _inline_permission_group(io, plane, session)
             else:
                 permission = choice
             paths: list[str] | None = None
-            try:
-                if v24.permission_includes_file_capability(plane, permission):
-                    existing_paths = []
-                    if existing is not None:
-                        existing_paths = v24.list_ai_policy_path_scopes(plane, name)
-                    default_paths = ",".join(existing_paths) if existing_paths else None
-                    raw_paths = _ask_text(
-                        io,
-                        "Path scopes (comma-separated absolute globs; required for file permissions)",
-                        default=default_paths,
-                    )
-                    paths = v24.parse_ai_paths_field(raw_paths)
-            except ControlPlaneError:
-                paths = None
+            capabilities = _draft_permission_set(plane, session, permission)
+            if capabilities & v24.FILE_PERMISSIONS:
+                existing_paths = v24.list_ai_policy_path_scopes(plane, name) if existing is not None else []
+                default_paths = ",".join(existing_paths) if existing_paths else None
+                def valid_scope(value):
+                    patterns = v24.parse_ai_paths_field(value)
+                    if not patterns or any(not p.startswith("/") or ".." in p.split("/") for p in patterns):
+                        return "Enter at least one explicit absolute path glob (no parent traversal)."
+                    return None
+                raw_paths = _ask_text(io, "Path scopes (required for file permissions)",
+                                      default=default_paths, validate=valid_scope)
+                paths = v24.parse_ai_paths_field(raw_paths)
+            if "command-exec" in capabilities:
+                _emit(io, "Command execution uses the target OS account and is not a filesystem sandbox. Review the target execution controls.")
             enabled = _ask_yes_no(io, "Enabled", default=True)
             session.draft = {
                 "Source": source,
@@ -1076,6 +1122,7 @@ def run_ai_access_wizard(plane: ControlPlane, name: str) -> int:
                 "Source      : %s" % source,
                 "Destination : %s" % destination,
                 "Permission  : %s" % permission,
+                "Capabilities: %s" % ", ".join(sorted(capabilities)),
                 "Paths       : %s" % (", ".join(paths) if paths else "-"),
                 "Enabled     : %s" % ("YES" if enabled else "NO"),
             ]
@@ -1280,7 +1327,7 @@ WIZARDS = {
 }
 
 
-def run_wizard(plane: ControlPlane, resource: str, name: str) -> int:
+def run_wizard(plane: ControlPlane, resource: str, name: Optional[str]) -> int:
     fn = WIZARDS.get(resource)
     if not fn:
         raise ControlPlaneError("No guided wizard for resource '%s'" % resource)
@@ -1290,6 +1337,12 @@ def run_wizard(plane: ControlPlane, resource: str, name: str) -> int:
             % resource.replace("-", " ").title()
         )
     try:
+        if name is None:
+            if resource not in ("ai-identity", "ai-access"):
+                raise ControlPlaneError("Name is required.")
+            name = _ask_text(_io(), "AI Identity name" if resource == "ai-identity" else "AI Access Rule name",
+                             validate=lambda n: None if n else "Name is required.")
+            v24.validate_public_name(name)
         return fn(plane, name)
     except (WizardCancelled, KeyboardInterrupt, EOFError):
         sys.stdout.write(_cancel_message())

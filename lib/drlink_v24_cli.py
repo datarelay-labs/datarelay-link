@@ -1529,20 +1529,19 @@ def handle_set(plane: ControlPlane, rest: list[str]) -> Optional[int]:
     if res == "ai-access":
         _require_server(plane, "AI Access policy")
         if len(rest) < 2:
-            raise ControlPlaneError("Usage: set ai-access <RULE> ...")
+            from drlink_v24_wizard import run_wizard
+            return run_wizard(plane, "ai-access", None)
         name = rest[1]
         extra = rest[2:]
         if not extra:
-            if not _guided_create_available():
-                return None
             from drlink_v24_wizard import run_wizard
 
             return run_wizard(plane, "ai-access", name)
         kv = v24.parse_kv_tokens(
             extra,
-            allowed={"mode", "source", "destination", "permission", "paths", "enabled"},
+            allowed={"source", "destination", "permission", "paths", "enabled"},
             resource="AI Access",
-            allowed_hint="source, destination, permission, paths, mode, enabled|disabled",
+            allowed_hint="source, destination, permission, paths, enabled|disabled",
         )
         enabled = None
         if "enabled" in kv:
@@ -1556,7 +1555,6 @@ def handle_set(plane: ControlPlane, rest: list[str]) -> Optional[int]:
             v24.set_ai_access_rule,
             plane,
             name,
-            mode=kv.get("mode"),
             source=kv.get("source"),
             destination=kv.get("destination"),
             permission=kv.get("permission"),
@@ -1570,12 +1568,11 @@ def handle_set(plane: ControlPlane, rest: list[str]) -> Optional[int]:
         return 0
     if res == "ai-identity":
         _require_server(plane, "AI Identities")
-        if len(rest) < 2:
-            raise ControlPlaneError("Usage: set ai-identity <NAME>")
-        name = rest[1]
         from drlink_v24_wizard import run_wizard
-
-        return run_wizard(plane, "ai-identity", name)
+        if len(rest) >= 3:
+            from drlink_control_cli import _ai_identity_action
+            return _ai_identity_action(plane, rest[1], rest[2:])
+        return run_wizard(plane, "ai-identity", rest[1] if len(rest) == 2 else None)
     if res == "remote-service":
         _require_agent(plane)
         if len(rest) < 2:

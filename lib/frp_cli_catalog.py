@@ -762,6 +762,35 @@ def subcommands(root, role):
     return rows
 
 
+AI_IDENTITY_ACTIONS = {
+    "rotate": (True, "security_change", (), "Rotate invalidates the previous active credential and issues a replacement secret once."),
+    "revoke": (True, "outage", (), "Revoke removes active credential material and interrupts clients using it."),
+    "authentication": (True, "security_change", (_arg("<static-bearer|oauth>", ("static-bearer", "oauth")),), "Configure the authentication method."),
+    "oauth-redirect": (True, "security_change", (_arg("<URI>"),), "Register an OAuth redirect URI."),
+    "approve": (False, "security_widening", (_arg("<PENDING-ID>"),), "Approve one pending OAuth request for this Identity. Browser continuation delivers the code once."),
+    "deny": (False, "security_change", (_arg("<PENDING-ID>"),), "Deny one pending OAuth request for this Identity."),
+}
+
+
+def ai_identity_action_error(tokens):
+    if list(tokens[:2]) != ["set", "ai-identity"] or len(tokens) < 4:
+        return None
+    action = tokens[3]
+    if action not in AI_IDENTITY_ACTIONS:
+        return "Unknown AI Identity operation: %s" % action
+    operands = AI_IDENTITY_ACTIONS[action][2]
+    expected = 4 + len(operands)
+    if len(tokens) > expected:
+        return "unexpected argument: %s" % tokens[expected]
+    if len(tokens) < expected:
+        return "Missing argument: %s" % operands[len(tokens) - 4]["name"]
+    for arg, value in zip(operands, tokens[4:]):
+        choices = arg["complete"]
+        if isinstance(choices, (list, tuple)) and value not in choices:
+            return "invalid value: expected %s" % "|".join(choices)
+    return None
+
+
 def find(tokens, role=None, include_aliases=False):
     """Longest canonical command whose path is a prefix of ``tokens``.
 
@@ -795,6 +824,15 @@ def find(tokens, role=None, include_aliases=False):
         )
         best["help_args"] = tuple(dict(arg, required=True) for arg in best["args"])
         best["examples"] = ("unset managed-host ubuntu-prod group edge",)
+    if best is not None and best["path"] == ("set", "ai-identity") and len(tokens) >= 4:
+        action = tokens[3]
+        if action in AI_IDENTITY_ACTIONS:
+            destructive, risk, operands, detail = AI_IDENTITY_ACTIONS[action]
+            args = (_arg("<IDENTITY>", "ai-principals"), _arg(action), *operands)
+            best = dict(best, destructive=destructive, risk=risk, confirmation="none",
+                        summary="Manage AI Identity: %s" % action, args=args, tail=None,
+                        detail=detail + " The explicit command is the operator decision.",
+                        examples=("set ai-identity example-ai " + action + "".join(" " + a["name"] for a in operands),))
     return best
 
 
@@ -899,8 +937,6 @@ def to_internal(tokens):
         "configuration",
     }
     if len(path) >= 2 and path[0] in ("show", "set", "unset", "test") and path[1] in CONTROL_PLANE_RES:
-        return list(work)
-    if path[:3] == ("system", "credential", "rotate") or path[:3] == ("system", "credential", "revoke"):
         return list(work)
     if path[:3] in (
         ("system", "export", "configuration"),
@@ -1251,6 +1287,9 @@ def strict_error(tokens):
 
     Returns an error message, or ``None`` when the token list is acceptable.
     """
+    error = ai_identity_action_error(tokens)
+    if error:
+        return error
     cmd = find(tokens, include_aliases=True)
     if cmd is None:
         return None
@@ -1560,17 +1599,19 @@ def domain_help(topic, role):
             "Display name alone is not a verified identity.\n\n"
             "Lifecycle:\n"
             "  1. Create and authenticate an AI Identity\n"
-            "  2. Create Permission Object(s) and optional Permission Group(s)\n"
+            "  2. Choose built-in or custom permissions\n"
             "  3. Create an AI Access Rule binding Identity → Destination → Permission\n"
             "  4. Test / explain, then review the Access Log\n\n"
             "Guided path:\n"
             "  menu → AI Access\n\n"
             "Everyday commands:\n"
+            "  set ai-identity\n"
             "  set ai-identity <NAME>\n"
+            "  set ai-access\n"
             "  show ai-identities\n"
             "  set permission-object <NAME> permissions <PERM>[,PERM...]\n"
             "  set permission-group <NAME> members <PO>[,PO...]\n"
-            "  set ai-access <RULE> mode whitelist source <IDENTITY> \\\n"
+            "  set ai-access <RULE> source <IDENTITY> \\\n"
             "      destination <DEST> permission <PERM|GROUP> enabled\n"
             "  set ai-access <RULE> enabled|disabled\n"
             "  set ai-access enabled|disabled\n"
@@ -1623,12 +1664,12 @@ def domain_help(topic, role):
                     "  test configuration <PATH|->",
                     "  system diff configuration <PATH|->",
                     "  system apply configuration <PATH|->",
-                    "  system credential rotate ai-identity <NAME>",
-                    "  system credential revoke ai-identity <NAME>",
-                    "  system credential configure ai-identity <NAME> authentication static-bearer",
-                    "  system credential configure ai-identity <NAME> authentication oauth",
-                    "  system credential approve-oauth <PENDING-ID> [AI-IDENTITY]",
-                    "  system credential deny-oauth <PENDING-ID>",
+                    "  set ai-identity <NAME> rotate",
+                    "  set ai-identity <NAME> revoke",
+                    "  set ai-identity <NAME> authentication static-bearer",
+                    "  set ai-identity <NAME> authentication oauth",
+                    "  set ai-identity <IDENTITY> approve <PENDING-ID>",
+                    "  set ai-identity <IDENTITY> deny <PENDING-ID>",
                     "  system diagnostics mcp",
                     "  set server mcp",
                     "  set server mcp hostname <FQDN>",
@@ -1817,18 +1858,6 @@ _IMPACT_BY_PATH = {
     ("system", "apply", "configuration"): (
         "Validates and atomically applies the ConfigurationBundle after diff "
         "and y/N confirmation; the applied configuration can broaden access."
-    ),
-    ("system", "credential", "rotate", "ai-identity"): (
-        "Invalidates the previous active credential and issues a replacement "
-        "secret once."
-    ),
-    ("system", "credential", "revoke", "ai-identity"): (
-        "Removes active credential material; clients using it are interrupted "
-        "immediately."
-    ),
-    ("system", "credential", "configure", "ai-identity"): (
-        "Changes the authentication mode or OAuth redirect settings of the "
-        "AI Identity; this can change which clients can authenticate."
     ),
     ("unset", "server", "mcp"): (
         "Clears the MCP TLS intent and removes the public MCP route; the "
@@ -2042,7 +2071,7 @@ WORKFLOWS = (
         (
             "set ai-identity automation-bot",
             "set permission-object exec-only permissions command-exec",
-            "set ai-access allow-exec mode whitelist source automation-bot destination ubuntu-prod permission exec-only enabled",
+            "set ai-access allow-exec source automation-bot destination ubuntu-prod permission exec-only enabled",
             "test ai-access source automation-bot destination ubuntu-prod permission command-exec",
             "show ai-access",
             "show ai-access-log",
@@ -2340,14 +2369,20 @@ NAVIGATION_TREE = {
         ("back", "Back", "", "back", None),
     ),
     "server.ai": (
-        ("server_ai_identities", "Connect AI / AI Identities", "", "command", "show ai-identities"),
-        ("server_ai_perm", "Permission Objects", "", "command", "show permission-objects"),
-        ("server_ai_perm_groups", "Permission Groups", "", "command", "show permission-groups"),
-        ("server_ai_rules", "Rules", "", "command", "show ai-access"),
+        ("server_ai_connect", "Connect AI", "", "command", "set ai-identity"),
+        ("server_ai_identities", "Connected AI", "", "command", "show ai-identities"),
+        ("server_ai_permissions", "Advanced Permissions", "", "submenu", "server.ai.permissions"),
+        ("server_ai_rules", "Access Rules", "", "command", "show ai-access"),
+        ("server_ai_create_rule", "Create or edit Access Rule", "", "command", "set ai-access"),
         ("server_ai_enable", "Enable Enforcement", "", "command", "set ai-access enabled"),
         ("server_ai_disable", "Disable Enforcement", "", "command", "set ai-access disabled"),
         ("server_ai_log", "Access Log", "", "command", "show ai-access-log"),
         ("server_ai_test", "Test / Explain", "", "command", "test ai-access"),
+        ("back", "Back", "", "back", None),
+    ),
+    "server.ai.permissions": (
+        ("server_ai_perm", "Permission Objects", "", "command", "show permission-objects"),
+        ("server_ai_perm_groups", "Permission Groups", "", "command", "show permission-groups"),
         ("back", "Back", "", "back", None),
     ),
     "server.clients.enrollments": (

@@ -189,10 +189,9 @@ class RoleParserRegression(unittest.TestCase):
 
     def test_retired_noun_guard_preserves_current_identity_selector(self):
         for operation in ('rotate', 'revoke', 'configure'):
-            command = ['system', 'credential', operation, 'ai-identity',
-                       'ai-principal']
+            command = ['set', 'ai-identity', 'ai-principal', operation]
             if operation == 'configure':
-                command += ['authentication', 'oauth']
+                command[-1:] = ['authentication', 'oauth']
             self.assertIsNone(grammar.reject_obsolete_surface(command))
             self.assertNotIn('Unknown help topic', grammar.help_text(command, 'server'))
 

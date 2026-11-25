@@ -996,43 +996,6 @@ def _set(plane: ControlPlane, rest, client_sel):
             _run(plane.set_ai_principal, rest[1], enabled=True)
             return 0
         raise SystemExit("Unknown ai-principal setting")
-    if res == "ai-access":
-        _need(rest, 2, "set ai-access <RULE>")
-        if len(rest) == 2:
-            _run(plane.set_ai_rule, rest[1])
-            return 0
-        prop = rest[2]
-        if prop == "principal":
-            _run(plane.set_ai_rule_principal, rest[1], rest[3])
-            return 0
-        if prop == "target":
-            _run(plane.set_ai_rule_target, rest[1], rest[3], rest[4])
-            return 0
-        if prop == "capability":
-            _run(plane.set_ai_rule_capability, rest[1], rest[3])
-            return 0
-        if prop == "path":
-            _run(plane.set_ai_rule_path, rest[1], rest[3])
-            return 0
-        if prop == "exec-timeout":
-            _run(plane.set_ai_rule_exec_timeout, rest[1], int(rest[3]))
-            return 0
-        if prop == "action":
-            _run(plane.set_ai_rule_action, rest[1], rest[3])
-            return 0
-        if prop == "description":
-            _run(plane.set_ai_rule_description, rest[1], " ".join(rest[3:]))
-            return 0
-        if prop == "enabled":
-            _run(plane.set_ai_rule_enabled, rest[1], True)
-            return 0
-        if prop == "before":
-            _run(plane.move_ai_rule, rest[1], before=rest[3])
-            return 0
-        if prop == "after":
-            _run(plane.move_ai_rule, rest[1], after=rest[3])
-            return 0
-        raise SystemExit("Unknown ai-access setting")
     if res == "enrollment":
         kind = rest[1] if len(rest) > 1 else "manual"
         def write():
@@ -1567,83 +1530,43 @@ def _system(plane: ControlPlane, rest):
     if rest[0] == "revoke" and len(rest) >= 3 and rest[1] == "client":
         _run(plane.remove_client, rest[2], revoke_only=True)
         return 0
-    if rest[0] == "credential":
-        if len(rest) < 2:
-            raise SystemExit(
-                "usage: system credential rotate|revoke|configure|approve-oauth|deny-oauth ..."
-            )
-        if rest[1] == "approve-oauth":
-            # system credential approve-oauth <PENDING-ID> [AI-IDENTITY]
-            args = rest[2:]
-            if not args:
-                raise SystemExit(
-                    "usage: system credential approve-oauth <PENDING-ID> [AI-IDENTITY]\n"
-                    "DCR/CIMD requests require AI-IDENTITY."
-                )
-            if len(args) > 2:
-                raise SystemExit(
-                    "unexpected argument: %s\n"
-                    "usage: system credential approve-oauth <PENDING-ID> [AI-IDENTITY]" % args[2]
-                )
-            pending_id = args[0]
-            principal = args[1] if len(args) > 1 else None
-            _run(plane.approve_oauth_pending, pending_id, principal)
-            sys.stdout.write(
-                "Authorization approved. The browser continues via /oauth/continue to the registered redirect.\n"
-            )
-            sys.stdout.write(
-                "The authorization code is delivered only through the one-time browser continuation redirect.\n"
-            )
-            return 0
-        if rest[1] == "deny-oauth":
-            args = rest[2:]
-            if len(args) != 1:
-                raise SystemExit("usage: system credential deny-oauth <PENDING-ID>")
-            pending_id = args[0]
-            _run(plane.deny_oauth_pending, pending_id)
-            sys.stdout.write(
-                "Authorization denied. The browser continues via /oauth/continue with access_denied.\n"
-            )
-            return 0
-        if len(rest) < 4:
-            raise SystemExit(
-                "usage: system credential rotate|revoke|configure ai-identity <NAME> ..."
-            )
-        noun = rest[2]
-        if noun != "ai-identity":
-            raise SystemExit(
-                "usage: system credential rotate|revoke|configure ai-identity <NAME> ..."
-            )
-        if rest[1] == "rotate":
-            result = _run(plane.rotate_ai_credential, rest[3])
-            token = result.get("token") if isinstance(result, dict) else None
-            if token:
-                sys.stdout.write("Credential issued once. Store it now; it will not be shown again.\n")
-                sys.stdout.write("Fingerprint: %s\n" % result.get("fingerprint"))
-                sys.stdout.write("Token: %s\n" % token)
-            return 0
-        if rest[1] == "revoke":
-            _run(plane.revoke_ai_credential, rest[3])
-            sys.stdout.write("Credential revoked.\n")
-            return 0
-        if rest[1] == "configure":
-            principal = rest[3]
-            if len(rest) >= 6 and rest[4] == "authentication":
-                _run(plane.configure_ai_auth, principal, rest[5])
-                sys.stdout.write("Authentication configured.\n")
-                return 0
-            if len(rest) >= 6 and rest[4] == "oauth-redirect":
-                _run(plane.add_oauth_redirect, principal, rest[5])
-                sys.stdout.write("OAuth redirect registered.\n")
-                return 0
-            raise SystemExit(
-                "usage: system credential configure ai-identity <NAME> authentication <static-bearer|oauth>\n"
-                "       system credential configure ai-identity <NAME> oauth-redirect <URI>"
-            )
-        raise SystemExit("Unknown credential operation.")
     if rest[0] == "certificate":
         return _system_certificate(plane, rest[1:])
     raise SystemExit("Unknown system operation.")
+
+
+def _ai_identity_action(plane: ControlPlane, name: str, args: list[str]) -> int:
+    from frp_cli_catalog import ai_identity_action_error
+    error = ai_identity_action_error(["set", "ai-identity", name, *args])
+    if error:
+        raise SystemExit(error)
+    action = args[0]
+    if action == "approve":
+        _run(plane.approve_oauth_pending, args[1], name)
+        sys.stdout.write("Authorization approved. The browser continues via /oauth/continue to the registered redirect.\n")
+        sys.stdout.write("The authorization code is delivered only through the one-time browser continuation redirect.\n")
+    elif action == "deny":
+        _run(plane.deny_oauth_pending, args[1], principal_name=name)
+        sys.stdout.write("Authorization denied. The browser continues via /oauth/continue with access_denied.\n")
+    elif action == "rotate":
+        result = _run(plane.rotate_ai_credential, name)
+        token = result.get("token") if isinstance(result, dict) else None
+        if token:
+            sys.stdout.write("Credential issued once. Store it now; it will not be shown again.\n")
+            sys.stdout.write("Fingerprint: %s\n" % result.get("fingerprint"))
+            sys.stdout.write("Token: %s\n" % token)
+    elif action == "revoke":
+        _run(plane.revoke_ai_credential, name)
+        sys.stdout.write("Credential revoked.\n")
+    elif action == "authentication":
+        _run(plane.configure_ai_auth, name, args[1])
+        sys.stdout.write("Authentication configured.\n")
+    elif action == "oauth-redirect":
+        _run(plane.add_oauth_redirect, name, args[1])
+        sys.stdout.write("OAuth redirect registered.\n")
+    else:
+        raise SystemExit("Unknown AI Identity operation")
+    return 0
 
 
 def _system_certificate(plane: ControlPlane, rest):
