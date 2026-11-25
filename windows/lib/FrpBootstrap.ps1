@@ -111,7 +111,9 @@ function Get-FrpUnclaimedWindowsCaResidue {
                 }
                 if ($dir.Name -eq 'certs' -and -not $entry.PSIsContainer -and
                     ($entry.Name -eq 'allocator-ca.crt' -or $entry.Name -cmatch '^allocator-ca\.crt\.[0-9a-f]{32}\.tmp$')) {
-                    $residue += $entry.FullName
+                    # Compare validated names inside the same certs directory, not
+                    # FullName strings: native Windows can expand 8.3 path aliases.
+                    $residue += $entry.Name
                     continue
                 }
                 Write-Verbose "Residue protected: unexpected entry in $($dir.Name): $($entry.Name)"
@@ -137,7 +139,9 @@ function Repair-FrpUnclaimedWindowsCaResidue {
         -not $env:FRP_ALLOCATOR_CA_FILE -or -not $env:FRP_WINDOWS_BOOTSTRAP_PATH) { return }
     $before = @(Get-FrpUnclaimedWindowsCaResidue)
     if ($before.Count -eq 0) { return }
-    $ca = Get-FrpAllocatorCaPath
+    $caName = "allocator-ca.crt"
+    $certs = Get-FrpCertsDir
+    $ca = Join-Path $certs $caName
     $expected = Normalize-FrpCaSha256 -Value $CaSha256
     $same = $false
     if (Test-Path -LiteralPath $ca) {
@@ -148,14 +152,16 @@ function Repair-FrpUnclaimedWindowsCaResidue {
         } catch { }
     }
     if ($same -and $before.Count -eq 1) { return }
-    $staged = Join-Path (Get-FrpCertsDir) ("allocator-ca.crt." + [guid]::NewGuid().ToString('N') + '.tmp')
-    $backup = Join-Path (Get-FrpCertsDir) ("allocator-ca.crt." + [guid]::NewGuid().ToString('N') + '.tmp')
+    $stagedName = "allocator-ca.crt." + [guid]::NewGuid().ToString('N') + '.tmp'
+    $backupName = "allocator-ca.crt." + [guid]::NewGuid().ToString('N') + '.tmp'
+    $staged = Join-Path $certs $stagedName
+    $backup = Join-Path $certs $backupName
     try {
         Get-FrpCaCertificate -AllocatorUrl $AllocatorUrl -ExpectedSha256 $expected -DestinationPath $staged | Out-Null
         Confirm-FrpWindowsSourceProvenance -AllocatorUrl $AllocatorUrl -CaPath $staged -VerifyOnly
         $after = @(Get-FrpUnclaimedWindowsCaResidue)
-        if ($after.Count -ne ($before.Count + 1) -or $staged -notin $after -or
-            @(Compare-Object -ReferenceObject @($before | Sort-Object) -DifferenceObject @($after | Where-Object { $_ -ne $staged } | Sort-Object)).Count -ne 0) {
+        if ($after.Count -ne ($before.Count + 1) -or $stagedName -notin $after -or
+            @(Compare-Object -ReferenceObject @($before | Sort-Object) -DifferenceObject @($after | Where-Object { $_ -ne $stagedName } | Sort-Object)).Count -ne 0) {
             throw 'ERROR: Windows Agent residue changed during verification'
         }
         if (Test-Path -LiteralPath $ca) {
@@ -163,7 +169,10 @@ function Repair-FrpUnclaimedWindowsCaResidue {
         } else {
             [IO.File]::Move($staged, $ca)
         }
-        foreach ($scratch in @($before | Where-Object { $_ -ne $ca }) + @($backup)) {
+        foreach ($scratchName in @($before | Where-Object { $_ -ne $caName }) + @($backupName)) {
+            # Every name originates from the classified directory or a
+            # generated GUID, never from a caller or an absolute path.
+            $scratch = Join-Path $certs $scratchName
             if (Test-Path -LiteralPath $scratch) {
                 $item = Get-Item -LiteralPath $scratch -Force -ErrorAction Stop
                 if ($item.PSIsContainer -or ($item.Attributes -band [IO.FileAttributes]::ReparsePoint)) {

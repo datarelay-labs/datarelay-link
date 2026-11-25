@@ -67,6 +67,8 @@ try {
                 # the verbose refusal reason is retained if a Windows runner differs.
                 $classified = @(Get-FrpUnclaimedWindowsCaResidue -Verbose)
                 Assert-FrpEqual $(if ($case -eq 'scratch-only') {1} else {2}) $classified.Count "$case unclaimed classification"
+                Assert-FrpTrue ((Split-Path -Leaf $scratch) -in $classified) "$case relative scratch name"
+                Assert-FrpTrue (@($classified | Where-Object { $_ -ne (Split-Path -Leaf $_) }).Count -eq 0) "$case no absolute path comparison"
             }
             $failed = $false
             try { Repair-FrpUnclaimedWindowsCaResidue -AllocatorUrl 'https://example.test/enroll' -CaSha256 $casePin -BootstrapLocator 'fixture' }
