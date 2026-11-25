@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
 import base64
+import gzip
+import hashlib
+import io
+import tarfile
 import json
 import sys
 from pathlib import Path
@@ -135,10 +139,12 @@ def write_server_bundle(rels):
         'echo "Downloading qualified Data Relay Link installer..."',
         'TMP="$(mktemp -d)"',
         'trap \'rm -rf "$TMP"\' EXIT',
-        'echo "Validating installer..."',
+        'echo "Reading and restoring installer payload (download may still be running)..."',
     ]
     for rel in rels:
         data=base64.b64encode(bundle_payload(rel)).decode()
+        if '/binaries/' in rel or rel.startswith('dist/bootstrap-client.'):
+            out.append(f'echo "Restoring installer payload: {Path(rel).name}" >&2')
         parent=str(Path(rel).parent)
         if parent!='.': out.append(f'mkdir -p "$TMP/{parent}"')
         out.append(f"base64 -d >\"$TMP/{rel}\" <<'B64'")
@@ -300,9 +306,45 @@ for path in sorted((root / 'third_party' / 'frp').rglob('*')):
 server_rels.extend(['dist/bootstrap-client.sh', 'dist/bootstrap-client.ps1'])
 lines = write_server_bundle(server_rels)
 lines.append(SERVER_BOOTSTRAP_REF_SNIPPET)
-lines.append('exec "$TMP/install-server.sh" "$@"')
+lines.append('"$TMP/install-server.sh" "$@"')
 (dist/'bootstrap-server.sh').write_text('\n'.join(lines)+'\n')
 (dist/'bootstrap-server.sh').chmod(0o755)
+
+# Online transport: compact, verified common payload plus the original
+# compressed platform archives. Reconstruct the exact standalone installer
+# before execution so installed bundle identity remains unchanged.
+binary_rels = [rel for rel in server_rels if '/binaries/' in rel]
+segments = []
+offset = 0
+for rel in binary_rels:
+    start = lines.index(f"base64 -d >\"$TMP/{rel}\" <<'B64'", offset)
+    end = lines.index('B64', start + 1)
+    segments.append(('\n'.join(lines[offset:start + 1]) + '\n').encode())
+    offset = end
+segments.append(('\n'.join(lines[offset:]) + '\n').encode())
+core = dist / 'bootstrap-server-core.tar.gz'
+with core.open('wb') as raw:
+    with gzip.GzipFile(filename='', mode='wb', fileobj=raw, mtime=0) as gz:
+        with tarfile.open(fileobj=gz, mode='w', format=tarfile.USTAR_FORMAT) as archive:
+            for index, data in enumerate(segments):
+                item = tarfile.TarInfo(f'part-{index}')
+                item.size, item.mode, item.mtime = len(data), 0o600, 0
+                archive.addfile(item, io.BytesIO(data))
+
+def file_sha(path):
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+template = (root / 'scripts/bootstrap-server-online.sh').read_text()
+rows = '\n'.join(
+    f'    "{rel}|{file_sha(root / rel)}|{(root / rel).stat().st_size}"'
+    for rel in binary_rels
+)
+online = (template.replace('@CORE_SHA256@', file_sha(core))
+          .replace('@CORE_SIZE@', str(core.stat().st_size))
+          .replace('@BUNDLE_SHA256@', file_sha(dist / 'bootstrap-server.sh'))
+          .replace('@BINARY_ROWS@', rows))
+(dist / 'bootstrap-server-online.sh').write_text(online)
+(dist / 'bootstrap-server-online.sh').chmod(0o755)
 
 for src,dst in [('uninstall-client.sh','uninstall-client.sh'),('uninstall-server.sh','uninstall-server.sh')]:
     (dist/dst).write_bytes((root/src).read_bytes())

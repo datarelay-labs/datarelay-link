@@ -21,6 +21,8 @@ PROVENANCE_PATHS = frozenset({
     "release-manifest.json",
     "dist/bootstrap-client.sh",
     "dist/bootstrap-server.sh",
+    "dist/bootstrap-server-online.sh",
+    "dist/bootstrap-server-core.tar.gz",
     "dist/bootstrap-client.ps1",
     "dist/uninstall-client.sh",
     "dist/uninstall-server.sh",

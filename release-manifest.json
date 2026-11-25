@@ -87,6 +87,14 @@
       "path": "dist/uninstall-server.sh",
       "url_path": "dist/uninstall-server.sh",
       "sha256": "e49f8fbf55301fb00ce456cb880fb0e3083e216f7e44404f406e9de8362671c7"
+    },
+    "bootstrap-server-online.sh": {
+      "path": "dist/bootstrap-server-online.sh",
+      "url_path": "dist/bootstrap-server-online.sh"
+    },
+    "bootstrap-server-core.tar.gz": {
+      "path": "dist/bootstrap-server-core.tar.gz",
+      "url_path": "dist/bootstrap-server-core.tar.gz"
     }
   },
   "source_head": "b4d09ee8d371dc4283a4bbdb0b1d6346065da2a2",

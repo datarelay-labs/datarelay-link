@@ -34,6 +34,7 @@ python3 tests/test-cli-inventory-selection-journey.py
 python3 tests/test-enrolled-routed-target-parity.py
 python3 tests/test-mcp-owner-default-access.py
 python3 tests/test-client-installer-url-hostname.py
+python3 tests/test-server-online-bootstrap.py
 python3 tests/test-zero-touch-entry-fields.py
 python3 tests/test-zero-touch-locator-index.py
 # The real Stage-1 root check and Server-local approval must also be

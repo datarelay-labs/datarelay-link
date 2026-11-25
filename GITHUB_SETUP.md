@@ -37,7 +37,8 @@ curl -fsSL https://raw.githubusercontent.com/datarelay-labs/datarelay-link/v2.3.
 Candidate server install:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/datarelay-labs/datarelay-link/<40-char-sha>/dist/bootstrap-server.sh | sudo bash
+REF='<40-char-sha>'
+curl -fL --connect-timeout 10 --max-time 30 "https://raw.githubusercontent.com/datarelay-labs/datarelay-link/$REF/dist/bootstrap-server-online.sh" | sudo bash -s -- "$REF"
 ```
 
 Client one-liner after the server prints an enrollment (replace the allocator URL with the value from your runtime config, and use the same immutable ref as the server install):

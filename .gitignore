@@ -43,3 +43,6 @@ frps.toml.pre-drlink-*
 frps.toml.pre-frp-auto-deploy-*
 registry.json.pre-frp-auto-deploy-*
 !server/config.example.json
+
+# Generated, qualified compressed Server bootstrap core.
+!dist/bootstrap-server-core.tar.gz

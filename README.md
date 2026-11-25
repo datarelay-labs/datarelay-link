@@ -146,6 +146,13 @@ Remote Service mutation is local to the Agent Host that owns it. Server inspecti
 
 Until an immutable `v2.4.0` tag exists, install only from an exact SHA or owner-directed candidate artifact. A future-looking tag URL such as `v2.4.0/dist/bootstrap-server.sh` would 404 until that tag is created.
 
+For online Server installation, use the small entry script with the verified exact SHA. It downloads the compressed core and required platform archives with progress, bounded timeouts and SHA256 verification. The original `dist/bootstrap-server.sh` remains available for offline installation.
+
+```bash
+REF='<EXACT_SHA>'
+curl -fL --connect-timeout 10 --max-time 30 "https://raw.githubusercontent.com/datarelay-labs/datarelay-link/$REF/dist/bootstrap-server-online.sh" | sudo bash -s -- "$REF"
+```
+
 After install, prefer discovery commands that do not mutate state:
 
 ```bash
