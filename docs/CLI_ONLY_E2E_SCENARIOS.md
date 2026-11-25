@@ -4,7 +4,7 @@
 > **Source:** `docs/FULL_USER_E2E_SCENARIOS.md` (all 116 original IDs and headings preserved in its canonical document).
 > **Product baseline:** v2.4.0 **includes** AI Access and MCP Bridge; they are excluded **only from this test profile**, not removed from the product.
 > **Executor:** current owner-selected runtime (default `CHATGPT_CHAT`); current explicit instruction overrides historical Codex-only text.
-> **Canonical Full User E2E SHA256:** `c4f083bef4d11dd748ee537a65ba0c7f6288e41f56a2117facdacb28b24603bc`
+> **Canonical Full User E2E SHA256:** `39baab4a0a02d5d585134e54215ae1a6db225767dcdad2508fb96607a06167a8`
 > **Generation:** `python3 tools/generate_cli_only_e2e_contract.py --write`; `--check` verifies no source drift.
 > **Safety:** preserve current authorization, exact live platform/tool refusals, other actors, host ownership and management access; never reroute a denied effect.
 > **Candidate:** do not infer installed Source HEAD from a Git checkout; record each installed Server/Agent's provenance.

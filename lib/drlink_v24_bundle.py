@@ -1139,7 +1139,7 @@ def parse_v24_bundle(raw_text: str) -> dict:
                 "No changes were applied."
             )
         return {"context": context, "body": body, "format": "v24"}
-    # Reject the retired apiVersion/kind form explicitly;
+    # Legacy apiVersion/kind form — still accepted for transition, mapped poorly;
     # fail closed if neither schema is present.
     if data.get("kind") == "ConfigurationBundle":
         raise BundleError(
