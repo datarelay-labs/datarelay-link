@@ -619,6 +619,27 @@ class RemainingP2UxClosureTests(unittest.TestCase):
         finally:
             shutil.rmtree(tmp)
 
+    def test_bare_noninteractive_access_rule_is_atomic(self):
+        import io
+        from contextlib import redirect_stdout, redirect_stderr
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg = Path(tmp) / "etc/drlink/config.json"
+            cfg.parent.mkdir(parents=True)
+            cfg.write_text("{}")
+            plane = ControlPlane(tmp)
+            try:
+                rev = plane.current_revision()
+                for resource, kind in (("remote-access", "remote"), ("internet-access", "internet")):
+                    out, err = io.StringIO(), io.StringIO()
+                    with mock.patch("drlink_v24_cli._guided_create_available", return_value=False), redirect_stdout(out), redirect_stderr(err):
+                        rc = control_cli.dispatch(["set", resource, "incomplete-test"], root=tmp, plane=plane)
+                    self.assertEqual(rc, 1, err.getvalue())
+                    self.assertIn("interactive terminal", err.getvalue())
+                    self.assertIsNone(plane._get_rule(kind, "incomplete-test"))
+                    self.assertEqual(plane.current_revision(), rev)
+            finally:
+                plane.close()
+
     def test_broken_pipe_is_normal_cli_termination(self):
         class FlushBrokenPipe:
             def write(self, text):

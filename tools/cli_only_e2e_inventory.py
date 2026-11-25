@@ -85,10 +85,10 @@ def serialized(fn):
             os.close(fd)
     return wrapper
 
-def criteria_catalog():
+def criteria_catalog(canonical_text=None):
     pairs = re.findall(r"(?m)^\| ([UOASCP]-\d{3}\.\d{2}) \| (.+?) \|$", CRITERIA.read_text(encoding="utf-8"))
     result = dict(pairs)
-    expected = {r["SCENARIO_ID"] for r in scopes(CANONICAL.read_text(encoding="utf-8")) if r["SCOPE"] != "EXCLUDED_AI_MCP"}
+    expected = {r["SCENARIO_ID"] for r in scopes(canonical_text if canonical_text is not None else CANONICAL.read_text(encoding="utf-8")) if r["SCOPE"] != "EXCLUDED_AI_MCP"}
     if len(result) != len(pairs) or {key.split(".")[0] for key in result} != expected:
         raise ValueError("criterion catalog coverage drift")
     return result
@@ -126,6 +126,12 @@ def read_criteria(root):
     frozen = data["catalog"]
     if set(frozen) != set(data["results"]) or hashlib.sha256(json.dumps(frozen,sort_keys=True).encode()).hexdigest() != meta["criteria_sha256"]:
         raise ValueError("frozen criterion catalog changed")
+    for cid, item in data["results"].items():
+        if item["result"] == "PASS":
+            receipt = item.get("evidence", "")
+            if (not evidence_file(root, receipt)
+                    or hashlib.sha256((root / receipt).read_bytes()).hexdigest() != item.get("receipt_sha256")):
+                raise ValueError("frozen criterion evidence changed or missing: %s" % cid)
     return data
 
 @serialized
@@ -250,7 +256,7 @@ def initialize(root: Path, canonical_text: str, source_head: str, *, extended_so
     if dst.exists() or meta.exists() or criterion_path(root).exists():
         raise FileExistsError("current-run CLI-only inventory already initialized")
     inventory = scopes(canonical_text)
-    catalog = criteria_catalog()
+    catalog = criteria_catalog(canonical_text)
     run_id = root.name
     rows = []
     for scenario in inventory:
@@ -375,7 +381,14 @@ def evidence_file(root: Path, relative: str):
     if not relative or Path(relative).is_absolute():
         return False
     base = safe_root(root)
-    path = (base / relative).resolve()
+    rel = Path(relative)
+    if ".." in rel.parts:
+        return False
+    path = base
+    for part in rel.parts:
+        path /= part
+        if path.is_symlink():
+            return False
     return path.is_relative_to(base) and path.is_file() and path.stat().st_size > 0
 
 

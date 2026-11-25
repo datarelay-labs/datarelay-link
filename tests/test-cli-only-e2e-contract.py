@@ -175,6 +175,14 @@ class CLIE2EContractTest(unittest.TestCase):
                 (root/"receipt.txt").write_text("test-only fixture")
                 m.record(root, "P-013", **args)
             self.assertEqual(m.summary(m.read_ledger(root))["FUNCTIONAL_PASS_NUMERIC_UNQUALIFIED"], 1)
+            (root/"receipt.txt").unlink()
+            with self.assertRaisesRegex(ValueError, "evidence changed or missing"):
+                m.read_criteria(root)
+            proc = subprocess.run([sys.executable, str(GEN), "remaining", "--run-root", str(root)],
+                                  capture_output=True, text=True)
+            self.assertNotEqual(proc.returncode, 0)
+            self.assertIn("evidence changed or missing", proc.stderr)
+
 
     def test_distinct_gates_and_optional_soak(self):
         m = load()
