@@ -7,7 +7,7 @@ pass() { echo "PASS $1"; }
 fail() { echo "FAIL $1" >&2; exit 1; }
 
 entry_locator() {
-  sed -nE 's~^curl -kfsS https://[^/]+/([A-Za-z0-9_-]{6})\|sudo bash$~\1~p' "$1"
+  sed -nE 's~^curl -kfsS https://[^/]+/([A-Za-z0-9_-]{8})\|sudo bash$~\1~p' "$1"
 }
 entry_id() {
   awk '/^Enrollment ID:/{print $3;exit}' "$1"
@@ -109,7 +109,7 @@ pass "BOOTSTRAP_HOSTNAME_SET"
 
 python3 "$ROOT/tools/frp-server-set" bootstrap-hostname --unset >/dev/null
 python3 "$ROOT/tools/frp-create-client" --one-line --client-name no-override >"$WORKDIR/ip.out"
-grep -Eq '^curl -kfsS https://203\.0\.113\.10:[0-9]+/[A-Za-z0-9_-]{6}\|sudo bash$' "$WORKDIR/ip.out" || fail "numeric IP command"
+grep -Eq '^curl -kfsS https://203\.0\.113\.10:[0-9]+/[A-Za-z0-9_-]{8}\|sudo bash$' "$WORKDIR/ip.out" || fail "numeric IP command"
 pass "DEFAULT_NO_SILENT_LONG_COMMAND"
 if python3 "$ROOT/tools/frp-create-client" --one-line --long-bootstrap --client-name rejected-old-mode >"$WORKDIR/legacy.out" 2>"$WORKDIR/legacy.err"; then
   fail "removed long-form issuance option was accepted"
@@ -131,7 +131,7 @@ JSON
 OUT_MULTI="$WORKDIR/multi.out"
 issue --services-file "$SERVICES" --client-name short-multi >"$OUT_MULTI"
 for f in "$OUT_MGMT" "$OUT_SSH" "$OUT_MULTI"; do
-  grep -Eq '^curl -kfsS https://bootstrap\.example\.com/[A-Za-z0-9_-]{6}\|sudo bash$' "$f"
+  grep -Eq '^curl -kfsS https://bootstrap\.example\.com/[A-Za-z0-9_-]{8}\|sudo bash$' "$f"
   ! grep -Eq 'bt1\.|zt1\.|/i/' "$f"
 done
 pass "MANAGEMENT_ONLY_SHORT_URL"
@@ -139,14 +139,14 @@ pass "SSH_ONLY_SHORT_URL"
 pass "MULTI_SERVICE_SHORT_URL"
 OUT_WINDOWS="$WORKDIR/windows.out"
 issue --platform windows --rdp --client-name short-rdp >"$OUT_WINDOWS"
-grep -Eq '^iex\(curl\.exe -kfsS https://bootstrap\.example\.com/[A-Za-z0-9_-]{6}\|Out-String\)$' "$OUT_WINDOWS"
+grep -Eq '^iex\(curl\.exe -kfsS https://bootstrap\.example\.com/[A-Za-z0-9_-]{8}\|Out-String\)$' "$OUT_WINDOWS"
 ! grep -Eq 'bt1\.|zt1\.|/i/' "$OUT_WINDOWS"
-WIN_LOCATOR="$(sed -nE 's~^iex\(curl\.exe -kfsS https://[^/]+/([A-Za-z0-9_-]{6})\|Out-String\)$~\1~p' "$OUT_WINDOWS")"
+WIN_LOCATOR="$(sed -nE 's~^iex\(curl\.exe -kfsS https://[^/]+/([A-Za-z0-9_-]{8})\|Out-String\)$~\1~p' "$OUT_WINDOWS")"
 pass "WINDOWS_ONE_LINE"
 TICKET="$(entry_locator "$OUT_SSH")"
 TICKET_ID="$(entry_id "$OUT_SSH")"
 TICKET_FILE="$TREE/var/lib/drlink/bootstrap/${TICKET_ID}.json"
-[[ -f "$TICKET_FILE" && ${#TICKET} == 6 && ${#WIN_LOCATOR} == 6 ]] || fail "entry index missing"
+[[ -f "$TICKET_FILE" && ${#TICKET} == 8 && ${#WIN_LOCATOR} == 8 ]] || fail "entry index missing"
 ALLOC_LOG="$WORKDIR/alloc.log"
 python3 "$ROOT/server/frp-port-allocator.py" --config "$TREE/etc/drlink/config.json" \
   >"$ALLOC_LOG" 2>&1 &
@@ -206,7 +206,7 @@ for header in 'Cache-Control: no-store' 'Pragma: no-cache' 'X-Content-Type-Optio
   grep -qi "$header" "$HDRS"
 done
 pass "GET_NO_CONSUME"
-curl -sSk -o "$WORKDIR/bad.txt" -w '%{http_code}' "$ORIGIN/ZT0000" | grep -qx 404
+curl -sSk -o "$WORKDIR/bad.txt" -w '%{http_code}' "$ORIGIN/ZT000000" | grep -qx 404
 grep -qx 'bootstrap unavailable' "$WORKDIR/bad.txt"
 ! grep -qiE 'secret|token|private|traceback|/var/lib' "$WORKDIR/bad.txt"
 pass "GET_INVALID_SAFE"

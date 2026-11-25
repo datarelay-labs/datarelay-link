@@ -179,9 +179,6 @@ run_client() {
     if [[ -n "$ticket" ]]; then
       export FRP_BOOTSTRAP_LOCATOR="$ticket"
       unset FRP_BOOTSTRAP_TICKET
-      python3 "$ROOT/tests/lib/approve-isolated-entry.py" "$ALLOC_ROOT/config.json" "$tree" "$ticket" "$machine" &
-      approve_pid=$!
-      trap 'kill "$approve_pid" 2>/dev/null || true; wait "$approve_pid" 2>/dev/null || true' EXIT
       export FRP_ZERO_TOUCH=1
       # Enrollment recovery does not depend on a local SSH login account.
       export FRP_SSH_PORT="$SSH_PROBE_PORT"

@@ -33,9 +33,9 @@ BOOTSTRAP_ENV_RE = re.compile(r'(FRP_BOOTSTRAP_(?:TICKET|LOCATOR)\s*=\s*)\S+', r
 # high-entropy enrollment credential parser.  Do not connect these helpers
 # to the old /i/ handler, which returns a redeemable credential.
 BOOTSTRAP_LOCATOR_ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-'
-BOOTSTRAP_LOCATOR_RE = re.compile(r'[A-Za-z0-9_-]{6}')
+BOOTSTRAP_LOCATOR_RE = re.compile(r'[A-Za-z0-9_-]{8}')
 # /enroll is an existing allocator endpoint (POST).
-BOOTSTRAP_RESERVED_LOCATORS = frozenset({'enroll', 'zt0000'})
+BOOTSTRAP_RESERVED_LOCATORS = frozenset({'enroll', 'zt0000', 'zt000000', 'healthz', 'ca.crt'})
 
 # Product-local Apple Silicon interpreter, not an unpinned Homebrew/CLT
 # prerequisite. Pin the upstream release artifact rather than its mutable latest.
@@ -54,7 +54,7 @@ def is_bootstrap_locator(value):
 def new_bootstrap_locator():
     """Generate a candidate only; caller must claim it atomically in storage."""
     while True:
-        value = ''.join(secrets.choice(BOOTSTRAP_LOCATOR_ALPHABET) for _ in range(6))
+        value = ''.join(secrets.choice(BOOTSTRAP_LOCATOR_ALPHABET) for _ in range(8))
         if is_bootstrap_locator(value):
             return value
 
@@ -917,8 +917,8 @@ def redact_text(text):
         return ''
     out = str(text)
     out = SHORT_URL_PATH_RE.sub(r'\1<redacted>', out)
-    out = re.sub(r'(?P<lead>(?:https://[^/\s]+|GET |HEAD ))/(?P<locator>[A-Za-z0-9_-]{6})(?=[?\s\"\'#$|)]|$)',
-                 lambda m: m.group('lead') + '/<redacted>' if is_bootstrap_locator(m.group('locator')) else m.group(0),
+    out = re.sub(r'(?P<lead>(?:https://[^/\s]+|GET |HEAD ))/(?P<locator>[A-Za-z0-9_-]{6,8})(?=[?\s\"\'#$|)]|$)',
+                 lambda m: m.group('lead') + '/<redacted>' if len(m.group('locator')) in (6, 8) and m.group('locator').lower() not in BOOTSTRAP_RESERVED_LOCATORS else m.group(0),
                  out)
     out = BOOTSTRAP_ENV_RE.sub(r'\1<redacted>', out)
     out = BT1_TOKEN_RE.sub('bt1.<redacted>', out)

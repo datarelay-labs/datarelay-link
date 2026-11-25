@@ -214,36 +214,29 @@ function New-FrpEntryClaim {
     return (Get-FrpCanonicalJson -Object $payload)
 }
 
-function Invoke-FrpEntryApproval {
+function Invoke-FrpEntryRegistration {
     param([string]$AllocatorUrl,[string]$Locator,[string]$MachineId,
-          [string]$Hostname,[string]$PrivatePem,[string]$PublicPem)
-    if ($Locator -cnotmatch '^[A-Za-z0-9_-]{6}$') { throw 'ERROR: invalid Bootstrap locator' }
+      [string]$Hostname,[string]$PrivatePem,[string]$PublicPem)
+    if ($Locator -cnotmatch '^[A-Za-z0-9_-]{8}$') { throw 'ERROR: invalid Bootstrap locator' }
     $der = [Convert]::FromBase64String(($PublicPem -replace '-----[^-]+-----','' -replace '\s',''))
     $fingerprint = Get-FrpSha256Hex -Bytes $der
-    Write-Host "Agent identity SHA256: $fingerprint"
-    Write-Host 'Waiting for the Server operator to approve this Agent identity ...'
+    Write-Host 'Registering Agent identity ...'
     $origin = Get-FrpAllocatorOrigin -AllocatorUrl $AllocatorUrl
-    for ($attempt = 0; $attempt -lt 60; $attempt++) {
-        $body = New-FrpEntryClaim -Action request -Locator $Locator -MachineId $MachineId -Hostname $Hostname -PrivatePem $PrivatePem -PublicPem $PublicPem
-        $data = ConvertFrom-FrpJson -Json (Invoke-FrpHttpsJson -Method POST -Url "$origin/bootstrap/entry/request" -Body $body)
-        if ($data.error -or $data.fingerprint -cne $fingerprint -or
-            $data.status -cnotin @('pending','approved') -or $data.challenge -cnotmatch '^[0-9a-f]{64}$') {
-            throw 'ERROR: invalid approval response'
-        }
-        if ($data.status -ceq 'approved') {
-            $body = New-FrpEntryClaim -Action redeem -Locator $Locator -MachineId $MachineId -Hostname $Hostname -PrivatePem $PrivatePem -PublicPem $PublicPem -Nonce $data.challenge
-            $result = ConvertFrom-FrpJson -Json (Invoke-FrpHttpsJson -Method POST -Url "$origin/bootstrap/entry/redeem" -Body $body)
-            $code = [string]$result.enrollment_code
-            if ($result.error -or $code -cnotmatch '^[0-9a-f]{16}\.[0-9a-f]{64}$' -or
-                -not (Test-FrpObjectHasProperty -Object $result -Name 'services') -or $null -eq $result.services) {
-                throw 'ERROR: invalid approved enrollment response'
-            }
-            $parts = $code.Split('.', 2)
-            return @{EnrollmentId=$parts[0]; EnrollmentSecret=$parts[1]; Services=@($result.services)}
-        }
-        Start-Sleep -Seconds 5
+    $body = New-FrpEntryClaim -Action request -Locator $Locator -MachineId $MachineId -Hostname $Hostname -PrivatePem $PrivatePem -PublicPem $PublicPem
+    $data = ConvertFrom-FrpJson -Json (Invoke-FrpHttpsJson -Method POST -Url "$origin/bootstrap/entry/request" -Body $body)
+    if ($data.error -or $data.fingerprint -cne $fingerprint -or
+        $data.status -cne 'approved' -or $data.challenge -cnotmatch '^[0-9a-f]{64}$') {
+        throw 'ERROR: invalid registration response'
     }
-    throw 'Approval is still pending. After approval, rerun the same setup command.'
+    $body = New-FrpEntryClaim -Action redeem -Locator $Locator -MachineId $MachineId -Hostname $Hostname -PrivatePem $PrivatePem -PublicPem $PublicPem -Nonce $data.challenge
+    $result = ConvertFrom-FrpJson -Json (Invoke-FrpHttpsJson -Method POST -Url "$origin/bootstrap/entry/redeem" -Body $body)
+    $code = [string]$result.enrollment_code
+    if ($result.error -or $code -cnotmatch '^[0-9a-f]{16}\.[0-9a-f]{64}$' -or
+        -not (Test-FrpObjectHasProperty -Object $result -Name 'services') -or $null -eq $result.services) {
+        throw 'ERROR: invalid enrollment response'
+    }
+    $parts = $code.Split('.', 2)
+    return @{EnrollmentId=$parts[0]; EnrollmentSecret=$parts[1]; Services=@($result.services)}
 }
 
 function Invoke-FrpBootstrapRedeem {
@@ -1453,7 +1446,7 @@ function Invoke-FrpZeroTouch {
                     Save-FrpIdentityKey -PrivatePem $privatePem | Out-Null
                 }
                 Save-FrpIdentityPublic -PublicPem $publicPem | Out-Null
-                $redeem = Invoke-FrpEntryApproval -AllocatorUrl $AllocatorUrl -Locator $BootstrapLocator -MachineId $machineId -Hostname $Hostname -PrivatePem $privatePem -PublicPem $publicPem
+                $redeem = Invoke-FrpEntryRegistration -AllocatorUrl $AllocatorUrl -Locator $BootstrapLocator -MachineId $machineId -Hostname $Hostname -PrivatePem $privatePem -PublicPem $publicPem
             } else {
                 Write-Host 'Redeeming bootstrap ticket...'
                 $redeem = Invoke-FrpBootstrapRedeem -AllocatorUrl $AllocatorUrl -Ticket $BootstrapTicket `

@@ -113,7 +113,7 @@ Once the final candidate is frozen, execute the applicable complete Full User E2
 
 Delete test artifacts only from explicit manifest paths owned by the current RUN_ID and only within the authorized disposable test boundary; never wildcard-clean or delete another worker's evidence. Existing active tests remain untouched.
 
-Zero-Touch exact fixed entry shape is a PR-time structural test, not execution proof. Retain native Linux/macOS and Windows copy/paste, public/private HTTPS parity, actual installation, downstream authenticated artifact retrieval and verification, independent enrollment, reconnect, identity preservation and operator-visible retry. Validate command fields against the canonical template; initial unauthenticated execution remains an unresolved security qualification issue.
+Zero-Touch exact fixed entry shape is a PR-time structural test, not execution proof. Retain native Linux/macOS and Windows copy/paste, public/private HTTPS parity, actual installation, downstream authenticated artifact retrieval and verification, automatic first-claim enrollment, reconnect, identity preservation and operator-visible retry. Validate command fields against the canonical template; initial unauthenticated execution remains an unresolved security qualification issue.
 
 ## 11. Planning and owner decisions (seven recorded directions)
 

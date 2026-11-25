@@ -18,10 +18,10 @@ The Windows path under qualification includes installation/enrollment, SYSTEM Sc
 The fixed target for administrator PowerShell is:
 
 ```powershell
-iex(curl.exe -kfsS https://remote.xdr.ooo/A3xK9m|Out-String)
+iex(curl.exe -kfsS https://remote.xdr.ooo/A3xK9mP2|Out-String)
 ```
 
-The Server selects the OS-specific entry file. No client-side DataRelay prerequisite or inline enrollment configuration. Public/private HTTPS share the target. Downstream integrity and independent enrollment are mandatory; `-k` does not authenticate the initial peer. Native Windows and security qualification remain pending. See [canonical contract](../docs/ZERO_TOUCH_REGRESSION_CONTROL.md).
+The Server selects the OS-specific entry file. No client-side DataRelay prerequisite or inline enrollment configuration. Public/private HTTPS share the target. Downstream integrity and automatic first-claim enrollment are mandatory; `-k` does not authenticate the initial peer. Native Windows and security qualification remain pending. See [canonical contract](../docs/ZERO_TOUCH_REGRESSION_CONTROL.md).
 
 ## Lifecycle
 

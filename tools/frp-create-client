@@ -503,7 +503,7 @@ def validate_zero_touch_prerequisites(cfg, platform, installer, ca_fp):
             urllib.request.HTTPSHandler(context=ssl._create_unverified_context()),
             NoRedirect())
         try:
-            with opener.open('https://' + authority + '/ZT0000', timeout=5):
+            with opener.open('https://' + authority + '/ZT000000', timeout=5):
                 fail('unexpected Bootstrap route response; no enrollment was issued')
         except urllib.error.HTTPError as exc:
             try:
@@ -1035,11 +1035,10 @@ def print_entry_command(authority, locator, platform, ttl, ticket_id,
     print('Run this single line in elevated PowerShell.' if platform == 'windows'
           else 'Send this single line to the remote user.')
     print('The initial HTTPS fetch does not authenticate the TLS peer.')
-    print('The locator is not an enrollment credential. Verify the Agent key fingerprint through your established trusted support channel.')
+    print('This command grants one automatic registration to the first valid Agent claim. Share it privately.')
     print('No additional customer command or Enrollment Code is required.')
     prefix = '' if os.environ.get('FRP_CTL_REPL') == '1' else 'sudo drlink '
     print('  %sshow enrollment %s' % (prefix, ticket_id))
-    print('  %sset enrollment approve %s <MACHINE-ID> <SHA256>' % (prefix, ticket_id))
     if management_only:
         print('Management identity only; no service or public port is created.')
     for line in _enrollment_track_hints(ticket_id):

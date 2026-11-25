@@ -24,8 +24,8 @@ def sanitize(text: str) -> str:
     out = text or ""
     for pat, repl in _SECRET_PATTERNS:
         out = pat.sub(repl, out)
-    return re.sub(r"(?P<lead>https://[^/\s]+|GET |HEAD )/(?P<locator>[A-Za-z0-9_-]{6})(?=[?\s\"'#$|)]|$)",
-                  lambda m: m.group("lead") + "/<REDACTED>" if m.group("locator").lower() not in ("enroll", "zt0000") else m.group(0), out)
+    return re.sub(r"(?P<lead>https://[^/\s]+|GET |HEAD )/(?P<locator>[A-Za-z0-9_-]{6,8})(?=[?\s\"'#$|)]|$)",
+                  lambda m: m.group("lead") + "/<REDACTED>" if m.group("locator").lower() not in ("enroll", "zt0000", "zt000000", "healthz") else m.group(0), out)
 
 
 @dataclass

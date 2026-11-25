@@ -9,7 +9,6 @@ import argparse
 import json
 import os
 import re
-import importlib.util
 import time
 import unicodedata
 from pathlib import Path
@@ -145,11 +144,7 @@ def main(argv=None):
         '--state-only', action='store_true',
         help='print only the normalized state for one enrollment ID',
     )
-    parser.add_argument('--approve', nargs=2, metavar=('MACHINE-ID', 'SHA256'),
-                        help=argparse.SUPPRESS)
     args = parser.parse_args(argv)
-    if args.approve and (not args.id or args.state_only):
-        parser.error('approval requires an enrollment ID, machine ID and full key fingerprint')
     if args.state_only and not args.id:
         parser.error('--state-only requires an enrollment ID')
     cfg = json.loads(CONFIG.read_text(encoding='utf-8'))
@@ -158,45 +153,6 @@ def main(argv=None):
         cfg.get('bootstrap_dir')
         or str(Path(cfg['enrollments_dir']).parent / 'bootstrap')
     )
-    if args.approve:
-        if os.geteuid() != 0:
-            raise SystemExit('ERROR: Server operator approval requires root')
-        if not re.fullmatch(r'[0-9a-f]{16}', args.id):
-            raise SystemExit('ERROR: invalid enrollment ID')
-        machine, fingerprint = args.approve
-        if not re.fullmatch(r'[0-9a-f]{64}', fingerprint):
-            raise SystemExit('ERROR: full Agent SHA256 fingerprint is required')
-        here = Path(__file__).resolve()
-        allocator_module = None
-        for path in (here.parent.parent / 'server' / 'frp-port-allocator.py',
-                     Path('/usr/local/lib/drlink/frp-port-allocator.py')):
-            if path.is_file():
-                spec = importlib.util.spec_from_file_location('frp_port_allocator', path)
-                allocator_module = importlib.util.module_from_spec(spec)
-                spec.loader.exec_module(allocator_module)
-                break
-        if allocator_module is None:
-            raise SystemExit('ERROR: allocator module unavailable')
-        # No network approval endpoint: only the Server-local operator can
-        # authorize the independently verified key under the registry lock.
-        if ROOT:
-            cfg = dict(cfg)
-            cfg['enrollments_dir'] = str(enrollments)
-            cfg['bootstrap_dir'] = str(bootstrap)
-            cfg['registry_file'] = str(remap(cfg.get('registry_file') or str(bootstrap.parent / 'registry.json')))
-        allocator = allocator_module.Allocator(str(CONFIG), initial_cfg=cfg)
-        code, response = allocator.approve_entry_request(args.id, machine, fingerprint)
-        if code != 200:
-            raise SystemExit('ERROR: approval rejected; verify enrollment, machine and exact key fingerprint')
-        print('Agent identity approved: %s' % fingerprint)
-        try:
-            emit = allocator_module.ELC.load_audit_emit()
-            if emit is not None:
-                emit('enrollment.entry.approved',
-                     details={'ticket_id':args.id,'machine_id':machine,'key_fingerprint':fingerprint})
-        except Exception:
-            pass
-        return 0
     rows = collect_rows(enrollments, bootstrap, int(time.time()))
     if args.id:
         target = str(args.id).strip().lower()
@@ -220,18 +176,19 @@ def main(argv=None):
                 approval = record.get('entry_approval')
                 if isinstance(approval, dict):
                     print('Platform: %s' % terminal_safe(approval.get('platform')))
-                    print('Approval: %s' % ('approved' if approval.get('approved') else 'pending'))
+                    automatic = approval.get('authorization') == 'first-claim'
+                    if automatic:
+                        print('Registration: %s' % ('bound' if approval.get('approved') else 'awaiting Agent'))
+                    else:
+                        print('Registration: legacy ticket; revoke and reissue if unused')
                     for fingerprint, candidate in sorted(approval.get('candidates', {}).items()):
                         if not isinstance(candidate, dict) or not re.fullmatch(r'[0-9a-f]{64}', fingerprint):
                             continue
                         print('  Machine ID: %s' % terminal_safe(candidate.get('machine_id')))
                         print('  Hostname: %s' % terminal_safe(candidate.get('hostname')))
                         print('  Agent SHA256: %s' % fingerprint)
-                    if row['state'] in ('pending','bound') and not approval.get('approved'):
-                        print('Verify the full Agent fingerprint through your trusted support channel before approval.')
-                        print('  sudo drlink set enrollment approve %s <MACHINE-ID> <SHA256>' % target)
             except (OSError, ValueError, TypeError, AttributeError):
-                print('Approval state unavailable; do not approve.')
+                print('Registration details unavailable.')
         return 0
     print(f'{"ID":<16} {"TYPE":<11} {"LABEL":<12} {"CREATED":<21} {"EXPIRES":<21} STATE')
     print('-' * 96)

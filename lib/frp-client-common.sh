@@ -2922,46 +2922,36 @@ p.chmod(0o600)
 PYCLAIM
 }
 
-frp_entry_approved_response() {
+frp_entry_registration_response() {
   local origin="$1" locator="$2" machine="$3" hostname_value="$4" request_file="$5"
-  local response parsed status challenge fingerprint attempt
-  [[ "$locator" =~ ^[A-Za-z0-9_-]{6}$ ]] || return 1
+  local response parsed challenge fingerprint
+  [[ "$locator" =~ ^[A-Za-z0-9_-]{8}$ ]] || return 1
   fingerprint="$(frp_identity_public_fingerprint)" || return 1
-  # Server operator verifies this fingerprint through the established support
-  # channel. The customer never enters a second command or enrollment code.
-  echo "Agent identity SHA256: $fingerprint" >&2
-  echo "Waiting for the Server operator to approve this Agent identity ..." >&2
-  for ((attempt=0; attempt<60; attempt++)); do
-    frp_entry_claim_payload request "$locator" "$machine" "$hostname_value" '' "$request_file" || return 1
-    response="$(frp_allocator_curl --connect-timeout 5 --max-time 15 -X POST -H 'Content-Type: application/json' \
+  # Identity proof and enrollment are handled internally.
+  echo "Registering Agent identity ..." >&2
+  frp_entry_claim_payload request "$locator" "$machine" "$hostname_value" '' "$request_file" || return 1
+  response="$(frp_allocator_curl --connect-timeout 5 --max-time 15 -X POST -H 'Content-Type: application/json' \
       --data-binary @"$request_file" "$origin/bootstrap/entry/request")" || return 1
-    parsed="$(ENTRY_RESPONSE="$response" python3 - "$fingerprint" <<'PYRESP'
+  parsed="$(ENTRY_RESPONSE="$response" python3 - "$fingerprint" <<'PYRESP'
 import json, os, re, sys
 d=json.loads(os.environ['ENTRY_RESPONSE'])
 if d.get('error'):
     cls=d.get('error_class')
-    if cls not in ('BOOTSTRAP_TICKET_INVALID','BOOTSTRAP_APPROVAL_CAPACITY','SERVER_MUTATION_FAILED'):
+    if cls not in ('BOOTSTRAP_TICKET_INVALID','BOOTSTRAP_RATE_LIMIT','SERVER_MUTATION_FAILED'):
         cls='BOOTSTRAP_REDEEM_FAILED'
-    print('ERROR: Bootstrap approval rejected (%s). Verify the active locator and Agent approval on the Server.' % cls,file=sys.stderr)
+    print('ERROR: Bootstrap registration rejected (%s). Check the active one-time command or request a new one.' % cls,file=sys.stderr)
     raise SystemExit(1)
-if d.get('fingerprint') != sys.argv[1] or d.get('status') not in ('pending','approved'):
+if d.get('fingerprint') != sys.argv[1] or d.get('status') != 'approved':
     raise SystemExit(1)
 if not re.fullmatch('[0-9a-f]{64}', str(d.get('challenge',''))):
     raise SystemExit(1)
-print(d['status']+' '+d['challenge'])
+print(d['challenge'])
 PYRESP
 )" || return 1
-    read -r status challenge <<< "$parsed"
-    if [[ "$status" == approved ]]; then
-      frp_entry_claim_payload redeem "$locator" "$machine" "$hostname_value" "$challenge" "$request_file" || return 1
-      frp_allocator_curl --connect-timeout 5 --max-time 15 -X POST -H 'Content-Type: application/json' \
-        --data-binary @"$request_file" "$origin/bootstrap/entry/redeem"
-      return $?
-    fi
-    sleep 5
-  done
-  echo "Approval is still pending. After approval, rerun the same setup command." >&2
-  return 1
+  challenge="$parsed"
+  frp_entry_claim_payload redeem "$locator" "$machine" "$hostname_value" "$challenge" "$request_file" || return 1
+  frp_allocator_curl --connect-timeout 5 --max-time 15 -X POST -H 'Content-Type: application/json' \
+    --data-binary @"$request_file" "$origin/bootstrap/entry/redeem"
 }
 
 frp_redeem_bootstrap_ticket() {
@@ -2989,7 +2979,7 @@ frp_redeem_bootstrap_ticket() {
   chmod 700 "$req_dir"
 
   if [[ -n "${FRP_BOOTSTRAP_LOCATOR:-}" ]]; then
-    if ! response="$(frp_entry_approved_response "$origin" "$FRP_BOOTSTRAP_LOCATOR" "$machine_id" "$hostname_value" "$req_file")"; then
+    if ! response="$(frp_entry_registration_response "$origin" "$FRP_BOOTSTRAP_LOCATOR" "$machine_id" "$hostname_value" "$req_file")"; then
       rm -rf "$req_dir"
       frp_emit_failure_class BOOTSTRAP_REDEEM_FAILED
       return 1

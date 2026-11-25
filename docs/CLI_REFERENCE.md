@@ -107,13 +107,12 @@ show ai-access-log permission <PERMISSION>
 per batch and 10 active unused codes. UTF-8 CSV uses the header
 `label,note`; for example `agent-a,lab`. Label and note may be
 blank; bulk creates management-only enrollments. The default lifetime
-is 1 hour and the maximum is 24 hours. The entry locator is not an enrollment credential. For Zero-Touch, verify the full Agent key fingerprint through the established support channel before approving the matching pending machine/key. See [Zero-Touch Bootstrap](ZERO_TOUCH_SHORT_URL.md).
+is 1 hour and the maximum is 24 hours. Zero-Touch issuance authorizes automatic first-claim registration. Share the sensitive eight-character command privately. Outstanding six-character links must be reissued; already enrolled Agents are unaffected. See [Zero-Touch Bootstrap](ZERO_TOUCH_SHORT_URL.md).
 
 ```text
 set enrollment zero-touch
 set enrollment manual
 set enrollment bulk
-set enrollment approve <ENROLLMENT> <MACHINE-ID> <SHA256>
 
 set server public-hostname <FQDN>
 set server bootstrap-hostname <FQDN>
@@ -153,7 +152,7 @@ set mcp-tls acme-environment <production|staging>
 set mcp-tls acme-directory <URL>
 ```
 
-**ZT-P0-CONTRACT-20261026 — fixed six-character entry target (owner revision 2026-11-24).** The customer starts with one OS-native command, one HTTPS authority (FQDN or IP), and one six-character root-path file locator. Public and private HTTPS use the same target form. No preinstalled DataRelay software, inline configuration, separate enrollment ID, fingerprint, artifact hash, or installer body in the customer command. All subsequent configuration, downloads, verification, installation, recovery and enrollment belong to the multi-stage Bootstrap; their size and count are unrestricted. The locator is not an enrollment credential. See `docs/ZERO_TOUCH_REGRESSION_CONTROL.md` for exact target templates, the independent enrollment requirement, the explicit initial-transport risk and actual acceptance status. This is a design target, not installed-product qualification.
+**ZT-P0-CONTRACT-20261026 — fixed eight-character entry target (owner revision 2026-11-25).** The customer starts with one OS-native command, one HTTPS authority (FQDN or IP), and one eight-character root-path file locator. Public and private HTTPS use the same target form. No preinstalled DataRelay software, inline configuration, separate enrollment ID, fingerprint, artifact hash, or installer body in the customer command. All subsequent configuration, downloads, verification, installation, recovery and enrollment belong to the multi-stage Bootstrap; their size and count are unrestricted. Issuing the command authorizes one automatic registration by the first valid signed Agent claim. Treat the short locator as a sensitive, expiring bearer capability; it is not the downstream enrollment code. See `docs/ZERO_TOUCH_REGRESSION_CONTROL.md` for exact target templates, the automatic first-claim policy, the explicit initial-transport risk and actual acceptance status. This is a design target, not installed-product qualification.
 
 Bare named `set` enters Guided Create/Edit. A complete one-shot form skips the Wizard. Server settings remain action-first under `set server ...` / `unset server ...`; the guided menu places the same settings under System → Server Settings.
 

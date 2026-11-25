@@ -52,7 +52,7 @@ class WindowsCommandParse(unittest.TestCase):
 
     def test_fixed_windows_entry_is_accepted(self):
         for authority in ("192.0.2.20:6099","remote.example.test"):
-            script=zt.render_entry_command(authority,"A3xK9m","windows")
+            script=zt.render_entry_command(authority,"A3xK9mP2","windows")
             self.assertEqual(decode(parser.extract_encoded_command(cli_output(script))),script)
 
     def test_encoded_command_form_passes_through_validated(self):

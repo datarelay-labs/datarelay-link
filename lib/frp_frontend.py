@@ -449,7 +449,7 @@ def allocator_proxy_locations(allocator_listen_port, ca_cert):
     )
     return (
         _allocator_https_proxy_location(
-            'location ~ "^/(?:[A-Za-z0-9_-]{6}|bootstrap/entry/(?:request|redeem))$"',
+            'location ~ "^/(?:[A-Za-z0-9_-]{8}|bootstrap/entry/(?:request|redeem))$"',
             allocator_listen_port, ca_cert, redact_access=True,
         )
         + _allocator_https_proxy_location(

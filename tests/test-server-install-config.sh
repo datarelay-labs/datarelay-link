@@ -522,7 +522,7 @@ spec.loader.exec_module(mod)
 
 domain_cfg = json.loads(Path(sys.argv[2]).read_text())
 ip_cfg = json.loads(Path(sys.argv[3]).read_text())
-locator = 'A3xK9m'
+locator = 'A3xK9mP2'
 from urllib.parse import urlparse
 for cfg in (domain_cfg, ip_cfg):
     expected = urlparse(cfg['allocator_public_url']).netloc
@@ -533,7 +533,7 @@ assert ip_cfg.get('public_hostname') == 'remote.xdr.ooo'
 override = dict(ip_cfg, bootstrap_hostname='bootstrap.example.com')
 assert mod.entry_authority_for_cfg(override) == 'bootstrap.example.com'
 assert zt.render_entry_command('bootstrap.example.com', locator, 'windows') == (
-    'iex(curl.exe -kfsS https://bootstrap.example.com/A3xK9m|Out-String)')
+    'iex(curl.exe -kfsS https://bootstrap.example.com/A3xK9mP2|Out-String)')
 print('ok')
 PY
 pass "ZT_ENTRY_AUTHORITY_PARITY"

@@ -171,7 +171,7 @@ class WindowsPinnedCaCommandTests(unittest.TestCase):
             # Do not execute a real product installer or alter OS trust.
             installer = (
                 "param([switch]$ZeroTouch)\n"
-                "if (-not $ZeroTouch -or $env:FRP_BOOTSTRAP_LOCATOR -ne 'A3xK9m' "
+                "if (-not $ZeroTouch -or $env:FRP_BOOTSTRAP_LOCATOR -ne 'A3xK9mP2' "
                 "-or -not (Test-Path -LiteralPath $env:FRP_ALLOCATOR_CA_FILE)) { exit 19 }\n"
                 "if ($env:OS -eq 'Windows_NT') { Get-Acl -LiteralPath $env:TEMP -ErrorAction Stop | Out-Null }\n"
                 "Write-Output 'INERT_INSTALLER_EXECUTED'\n"
@@ -236,7 +236,7 @@ class WindowsPinnedCaCommandTests(unittest.TestCase):
                         stage = root/'entry.ps1'
                         stage.write_text(zt.render_short_url_windows_bootstrap_script(
                             origin+'/enroll', digest, None, origin+'/fixture/bootstrap-client.ps1',
-                            entry_locator='A3xK9m', ca_pem=pem), encoding='ascii')
+                            entry_locator='A3xK9mP2', ca_pem=pem), encoding='ascii')
                         proc = subprocess.run([parent, '-NoProfile', '-NonInteractive',
                             '-ExecutionPolicy', 'Bypass', '-File', str(wrapper)],
                             env=dict(env, TEST_STAGE=str(stage)), capture_output=True,
@@ -258,12 +258,12 @@ class WindowsPinnedCaCommandTests(unittest.TestCase):
                 server.server_close()
 
     def test_current_entry_and_downstream_hash_before_execute(self):
-        command=zt.render_entry_command("remote.xdr.ooo","A3xK9m","windows")
-        self.assertEqual(command,"iex(curl.exe -kfsS https://remote.xdr.ooo/A3xK9m|Out-String)")
+        command=zt.render_entry_command("remote.xdr.ooo","A3xK9mP2","windows")
+        self.assertEqual(command,"iex(curl.exe -kfsS https://remote.xdr.ooo/A3xK9mP2|Out-String)")
         stage=zt.render_short_url_windows_bootstrap_script(
             "https://192.0.2.20/enroll","ab"*32,None,
             "https://192.0.2.20/artifacts/agent/bootstrap-client.ps1",
-            entry_locator="A3xK9m",ca_pem="fixture certificate")
+            entry_locator="A3xK9mP2",ca_pem="fixture certificate")
         self.assertLess(stage.index("CA fingerprint mismatch"),stage.index("DownloadFile"))
         self.assertLess(stage.index("Get-FileHash"),stage.index("-File $installer"))
         self.assertNotIn("--insecure",stage)

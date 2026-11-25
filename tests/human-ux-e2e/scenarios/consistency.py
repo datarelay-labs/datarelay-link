@@ -260,6 +260,6 @@ def hux_cons_008(env: ScenarioEnv) -> None:
     import frp_zero_touch as zt
 
     for authority in ("remote.xdr.ooo","203.0.113.10:6099"):
-        cmd=zt.render_entry_command(authority,"A3xK9m","linux")
-        expect_true(cmd=="curl -kfsS https://"+authority+"/A3xK9m|sudo bash",
+        cmd=zt.render_entry_command(authority,"A3xK9mP2","linux")
+        expect_true(cmd=="curl -kfsS https://"+authority+"/A3xK9mP2|sudo bash",
                     "Zero-Touch entry fields changed", evidence=cmd)

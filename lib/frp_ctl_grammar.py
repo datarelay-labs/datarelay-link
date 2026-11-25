@@ -3390,11 +3390,6 @@ def _match_create(tokens, role, names=None):
     if len(tokens) == 1:
         return incomplete("Missing resource.", ["create <resource>"], avail)
     resource = tokens[1]
-    if resource == "entry-approval":
-        if len(tokens) != 5:
-            return incomplete("Missing approval identity.", ["set enrollment approve <ENROLLMENT> <MACHINE-ID> <SHA256>"])
-        return {"status": "ok", "action": "approve_entry_enrollment",
-                "id": tokens[2], "machine_id": tokens[3], "fingerprint": tokens[4]}
     if resource == "zero-touch":
         if len(tokens) > 2:
             return incomplete(

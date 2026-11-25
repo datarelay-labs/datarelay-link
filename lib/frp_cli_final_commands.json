@@ -400,49 +400,6 @@
     "path": [
       "set",
       "enrollment",
-      "approve"
-    ],
-    "roles": "server",
-    "category": "Onboarding",
-    "summary": "Approve a verified Agent identity",
-    "detail": "Approve only after independently verifying the full Agent SHA256 key fingerprint through the established support channel. The locator alone is not authorization.",
-    "examples": [
-      "set enrollment approve <ENROLLMENT> <MACHINE-ID> <SHA256>"
-    ],
-    "args": [
-      {
-        "name": "<ENROLLMENT>",
-        "complete": null,
-        "required": true
-      },
-      {
-        "name": "<MACHINE-ID>",
-        "complete": null,
-        "required": true
-      },
-      {
-        "name": "<SHA256>",
-        "complete": null,
-        "required": true
-      }
-    ],
-    "tail": null,
-    "internal": [
-      "create",
-      "entry-approval"
-    ],
-    "aliases": [],
-    "destructive": false,
-    "hidden": false,
-    "risk": "none",
-    "confirmation": "none",
-    "surface": "",
-    "flags": []
-  },
-  {
-    "path": [
-      "set",
-      "enrollment",
       "bulk"
     ],
     "roles": "server",

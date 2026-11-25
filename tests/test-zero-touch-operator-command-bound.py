@@ -49,7 +49,7 @@ class CompactZeroTouchContract(unittest.TestCase):
         ca/stage are inputs to the existing renderer fixtures, never allowed
         customer command fields. A failure is a runtime migration finding.
         """
-        url = re.escape("https://" + authority + "/") + r"[A-Za-z0-9_-]{6}"
+        url = re.escape("https://" + authority + "/") + r"[A-Za-z0-9_-]{8}"
         if windows:
             pattern = r"iex\(curl\.exe -kfsS " + url + r"\|Out-String\)"
         else:
@@ -60,7 +60,7 @@ class CompactZeroTouchContract(unittest.TestCase):
     def test_short_only_template_rejects_extra_information(self):
         for authority in (HOST, "192.0.2.20:6099"):
             for windows in (False, True):
-                url = "https://" + authority + "/A3xK9m"
+                url = "https://" + authority + "/A3xK9mP2"
                 cmd = ("iex(curl.exe -kfsS " + url + "|Out-String)" if windows else
                        "curl -kfsS " + url + "|sudo bash")
                 self.assert_short_only(cmd, windows=windows, authority=authority)
@@ -69,9 +69,9 @@ class CompactZeroTouchContract(unittest.TestCase):
                               " --platform linux", "; echo ok", "?port=22", " " + HANDLE):
                     with self.subTest(extra=extra), self.assertRaises(AssertionError):
                         self.assert_short_only(cmd + extra, windows=windows, authority=authority)
-                for bad in ("A3xK9", "A3xK9mm", "i/A3xK9m", "A3xK9?", HANDLE):
+                for bad in ("A3xK9m", "A3xK9mP2m", "i/A3xK9mP2", "A3xK9?", HANDLE):
                     with self.subTest(locator=bad), self.assertRaises(AssertionError):
-                        self.assert_short_only(cmd.replace("A3xK9m", bad), windows=windows,
+                        self.assert_short_only(cmd.replace("A3xK9mP2", bad), windows=windows,
                                                authority=authority)
 
 
@@ -133,14 +133,15 @@ class CompactZeroTouchContract(unittest.TestCase):
                 with self.subTest(authority=authority, platform=platform):
                     output = io.StringIO()
                     with redirect_stdout(output):
-                        cli.print_entry_command(authority, "A3xK9m", platform, 600, "a"*16)
+                        cli.print_entry_command(authority, "A3xK9mP2", platform, 600, "a"*16)
                     commands = [line for line in output.getvalue().splitlines()
                                 if line.startswith(("curl ", "iex("))]
                     self.assertEqual(len(commands), 1)
                     self.assert_short_only(commands[0], windows=platform=="windows", authority=authority)
                     self.assertNotIn("bt1.", output.getvalue())
                     self.assertNotIn("/i/", output.getvalue())
-                    self.assertIn("set enrollment approve", output.getvalue())
+                    self.assertNotIn("set enrollment approve", output.getvalue())
+                    self.assertIn("automatic registration", output.getvalue())
                     self.assertEqual(cli.parse_args(["--one-line","--platform",platform]).platform, platform)
 
     def test_missing_renderer_or_invalid_locator_does_not_emit_fallback(self):
@@ -151,7 +152,7 @@ class CompactZeroTouchContract(unittest.TestCase):
                     cli.print_entry_command(HOST, locator, platform, 600, "a"*16)
                 self.assertNotIn("Zero-touch Agent command", out.getvalue())
             with mock.patch.object(cli, "_zt", return_value=None), self.assertRaises(SystemExit):
-                cli.print_entry_command(HOST, "A3xK9m", platform, 600, "a"*16)
+                cli.print_entry_command(HOST, "A3xK9mP2", platform, 600, "a"*16)
 
     def test_new_stage_download_integrity_and_separate_credentials(self):
         ca = "fixture certificate"
@@ -159,12 +160,12 @@ class CompactZeroTouchContract(unittest.TestCase):
         for platform in ("linux","macos","windows"):
             if platform == "windows":
                 script = zt.render_short_url_windows_bootstrap_script(origin+"/enroll", HASH, None,
-                    origin+"/fixture/bootstrap-client.ps1", entry_locator="A3xK9m", ca_pem=ca)
+                    origin+"/fixture/bootstrap-client.ps1", entry_locator="A3xK9mP2", ca_pem=ca)
                 self.assertLess(script.index("CA fingerprint mismatch"),script.index(".DownloadFile"))
                 self.assertLess(script.index("Get-FileHash"),script.index("-File $installer"))
             else:
                 script = zt.render_short_url_bootstrap_script(origin+"/enroll", HASH, None,
-                    origin+"/fixture/bootstrap-client.sh", entry_locator="A3xK9m", ca_pem=ca)
+                    origin+"/fixture/bootstrap-client.sh", entry_locator="A3xK9mP2", ca_pem=ca)
                 # A helper definition is not a download. Check the actual
                 # artifact retrieval and runtime preparation invocation order.
                 self.assertLess(script.index("CA fingerprint mismatch"),script.index('curl -fsSL --proto "=https"'))

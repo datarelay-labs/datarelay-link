@@ -44,9 +44,9 @@ broad vendor destination catalogs
 
 ### P0 — fixed short Zero-Touch entry (OPEN)
 
-1. Replace customer-facing commands with the fixed six-character root-path entry templates in `ZERO_TOUCH_REGRESSION_CONTROL.md`; same form for public/private HTTPS, no prerequisite or extra fields.
+1. Replace customer-facing commands with the fixed eight-character root-path entry templates in `ZERO_TOUCH_REGRESSION_CONTROL.md`; same form for public/private HTTPS, no prerequisite or extra fields.
 2. Implement locator lifecycle, platform selection, multi-stage downloads and idempotent retry. Keep configuration and all later-stage verification outside the customer command.
-3. Establish independent enrollment authorization and preserve downstream authentication, artifact integrity and signed service destinations. The initial unauthenticated execution risk is recorded, not a passed security gate.
+3. Establish automatic first-claim enrollment and preserve downstream authentication, artifact integrity and signed service destinations. The initial unauthenticated execution risk is recorded, not a passed security gate.
 4. Regenerate artifacts, update structural tests, validate native Linux/macOS/Windows, exact-HEAD CI and real external enrollment/service E2E before qualification.
 
 ## 2. Phase DL-0 — proven relay foundation

@@ -87,10 +87,10 @@ class WizardWrongInputTests(unittest.TestCase):
 class ZeroTouchCommandSecurityTests(unittest.TestCase):
     def test_entry_command_public_and_private_share_fields(self):
         for host in ("remote.xdr.ooo","203.0.113.10:6099"):
-            self.assertEqual(zt.render_entry_command(host,"A3xK9m","linux"),
-                             "curl -kfsS https://"+host+"/A3xK9m|sudo bash")
-            self.assertEqual(zt.render_entry_command(host,"A3xK9m","windows"),
-                             "iex(curl.exe -kfsS https://"+host+"/A3xK9m|Out-String)")
+            self.assertEqual(zt.render_entry_command(host,"A3xK9mP2","linux"),
+                             "curl -kfsS https://"+host+"/A3xK9mP2|sudo bash")
+            self.assertEqual(zt.render_entry_command(host,"A3xK9mP2","windows"),
+                             "iex(curl.exe -kfsS https://"+host+"/A3xK9mP2|Out-String)")
         with self.assertRaises(ValueError):
             zt.render_entry_command("remote.xdr.ooo","A"*22,"linux")
 

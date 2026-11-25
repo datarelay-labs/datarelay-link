@@ -16,7 +16,7 @@ Assert-FrpTrue ($text -match 'CaSha256') 'CaSha256 param'
 Assert-FrpTrue ($text -match 'BootstrapLocator') 'BootstrapLocator param'
 Assert-FrpTrue ($text -match 'FRP_ZERO_TOUCH') 'honors FRP_ZERO_TOUCH env from generated one-liners'
 Assert-FrpTrue ($text -notmatch '(?i)Invoke-RestMethod\s*\|\s*Invoke-Expression') 'no irm|iex invocation'
-Assert-FrpTrue ($text -match 'initial entry HTTPS does not authenticate' -and $text -match 'iex\(curl\.exe -kfsS https://[^/]+/[A-Za-z0-9_-]{6}\|Out-String\)') 'documents fixed entry and initial TLS risk'
+Assert-FrpTrue ($text -match 'initial entry HTTPS does not authenticate' -and $text -match 'iex\(curl\.exe -kfsS https://[^/]+/[A-Za-z0-9_-]{8}\|Out-String\)') 'documents fixed entry and initial TLS risk'
 
 $boot = Get-Content -LiteralPath (Join-Path (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path 'windows\lib\FrpBootstrap.ps1') -Raw
 Assert-FrpTrue ($boot -match 'already enrolled') 'enroll once messaging'

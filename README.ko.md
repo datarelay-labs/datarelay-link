@@ -163,7 +163,7 @@ set enrollment zero-touch
 
 (또는 Guided menu → Managed Hosts → Connect a Managed Host)
 
-고정 6자리 진입 목표는 Linux/macOS `curl -kfsS https://remote.xdr.ooo/A3xK9m|sudo bash` 및 Windows 관리자 PowerShell `iex(curl.exe -kfsS https://remote.xdr.ooo/A3xK9m|Out-String)`입니다. 공인·사설 HTTPS 동일 구문, 고객 장비 사전 설치 불필요. 파일명은 등록 자격증명이 아니며 후속 Bootstrap이 다운로드·검증·등록·재실행 처리를 수행합니다. 최초 `-k`는 서버 인증을 제공하지 않습니다. [표준 설계](docs/ZERO_TOUCH_REGRESSION_CONTROL.md)를 참조하십시오. 실제 제품 검증은 미완료입니다.
+고정 8자리 진입 목표는 Linux/macOS `curl -kfsS https://remote.xdr.ooo/A3xK9mP2|sudo bash` 및 Windows 관리자 PowerShell `iex(curl.exe -kfsS https://remote.xdr.ooo/A3xK9mP2|Out-String)`입니다. 공인·사설 HTTPS 동일 구문, 고객 장비 사전 설치 불필요. 명령 발급 시 최초 유효 Agent의 자동 등록이 승인됩니다. 명령은 비공개로 전달하며 후속 Bootstrap이 다운로드·검증·등록·재실행 처리를 수행합니다. 최초 `-k`는 서버 인증을 제공하지 않습니다. [표준 설계](docs/ZERO_TOUCH_REGRESSION_CONTROL.md)를 참조하십시오. 실제 제품 검증은 미완료입니다.
 
 Managed Host가 enroll되고 Remote Service가 enabled되면 예약된 public endpoint로 연결합니다:
 

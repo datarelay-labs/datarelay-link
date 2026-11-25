@@ -22,7 +22,7 @@ class CommandExit(unittest.TestCase):
                 (root / name).chmod(0o755)
             env = dict(os.environ, PATH=tmp + ':' + os.environ['PATH'],
                        CASE_ROOT=tmp, DOWNLOAD_EXIT=str(download_exit))
-            result = subprocess.run(['sh', '-c', render_entry_command('bootstrap.example.com', 'A3xK9m', 'linux')],
+            result = subprocess.run(['sh', '-c', render_entry_command('bootstrap.example.com', 'A3xK9mP2', 'linux')],
                                     env=env, capture_output=True, text=True)
             return result.returncode, (root / 'installer-started').exists()
 
