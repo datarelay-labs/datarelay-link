@@ -224,10 +224,12 @@ function Clear-FrpStalePid {
 
 function Start-FrpDetachedProcess {
     param([string]$CommandLine, [string]$WorkingDirectory)
-    # Keep WMI launch outside the SSH/WinRM job object. CREATE_NO_WINDOW
-    # prevents a console allocation even in an interactive desktop session.
-    $startup = New-CimInstance -ClassName Win32_ProcessStartup -ClientOnly -Property @{
-        CreateFlags = [uint32]0x08000000
+    # Keep WMI launch outside the SSH/WinRM job object. The WMI provider
+    # accepts DETACHED_PROCESS (8); native CI rejected CREATE_NO_WINDOW
+    # with Win32_Process.Create return 21. A detached console executable
+    # has no parent console, and ShowWindow=0 requests hidden startup.
+    $startup = New-CimInstance -Namespace root/cimv2 -ClassName Win32_ProcessStartup -ClientOnly -Property @{
+        CreateFlags = [uint32]8
         ShowWindow  = [uint16]0
     }
     return (Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{

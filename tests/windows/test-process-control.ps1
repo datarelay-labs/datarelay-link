@@ -46,7 +46,7 @@ Add-Type -Name ConsoleProbe -Namespace DRLinkTest -MemberDefinition '[System.Run
     }
 
     $procSrc = Get-Content -LiteralPath (Join-Path $script:WindowsLib 'FrpProcess.ps1') -Raw
-    Assert-FrpTrue ($procSrc -match 'ProcessStartupInformation' -and $procSrc -match '0x08000000') 'CIM startup prevents console creation'
+    Assert-FrpTrue ($procSrc -match 'ProcessStartupInformation' -and $procSrc -match 'CreateFlags\s*=\s*\[uint32\]8') 'CIM startup prevents console creation'
     Assert-FrpTrue ($procSrc -match 'Win32_Process') 'starts frpc via Win32_Process.Create so SSH sessions do not reap it'
     Assert-FrpTrue ($procSrc -notmatch 'RedirectStandardOutput') 'does not redirect frpc stdio through Start-Process'
 } finally {
