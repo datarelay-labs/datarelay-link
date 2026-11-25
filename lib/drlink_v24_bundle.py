@@ -1133,6 +1133,12 @@ def parse_v24_bundle(raw_text: str) -> dict:
             "No changes were applied."
         )
     if "configurationBundle" in data:
+        if set(data) != {"configurationBundle"}:
+            raise BundleError(
+                "ERROR:\nConfigurationBundle must contain only the top-level key configurationBundle.\n\n"
+                "Remove legacy apiVersion/kind or other unexpected top-level keys.\n\n"
+                "No changes were applied."
+            )
         body = data["configurationBundle"]
         if not isinstance(body, dict):
             raise BundleError("configurationBundle must be a mapping")
@@ -1143,8 +1149,7 @@ def parse_v24_bundle(raw_text: str) -> dict:
                 "No changes were applied."
             )
         return {"context": context, "body": body, "format": "v24"}
-    # Legacy apiVersion/kind form — still accepted for transition, mapped poorly;
-    # fail closed if neither schema is present.
+    # Recognize the retired envelope only to return an explicit rejection.
     if data.get("kind") == "ConfigurationBundle":
         raise BundleError(
             "ERROR:\nLegacy ConfigurationBundle apiVersion/kind form is not the canonical v2.4 schema.\n\n"
