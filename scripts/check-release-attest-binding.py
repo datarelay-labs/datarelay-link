@@ -40,7 +40,7 @@ PROVENANCE_PATHS = frozenset(
         "dist/bootstrap-client.sh",
         "dist/bootstrap-server.sh",
         "dist/bootstrap-server-online.sh",
-        "dist/bootstrap-server-core.tar.gz",
+        "dist/bootstrap-server-core.tar",
         "dist/bootstrap-client.ps1",
         "dist/uninstall-client.sh",
         "dist/uninstall-server.sh",

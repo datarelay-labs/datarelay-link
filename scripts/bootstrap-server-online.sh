@@ -44,9 +44,9 @@ drlink_online_install() (
 @BINARY_ROWS@
   )
   echo "Data Relay Link Server online installation: $(uname -m), $ref"
-  fetch 'dist/bootstrap-server-core.tar.gz' '@CORE_SHA256@' '@CORE_SIZE@' "$work/core.tar.gz"
+  fetch 'dist/bootstrap-server-core.tar' '@CORE_SHA256@' '@CORE_SIZE@' "$work/core.tar"
   mkdir "$work/core"
-  tar -xzf "$work/core.tar.gz" -C "$work/core" || fail 'Core extraction failed.'
+  tar -xf "$work/core.tar" -C "$work/core" || fail 'Core extraction failed.'
   # Native FRP first. The other three archives are required by the existing
   # Server-local Agent distribution contract, not by the Server CPU.
   for phase in native agent; do

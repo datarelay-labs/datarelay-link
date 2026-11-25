@@ -93,9 +93,9 @@
       "url_path": "dist/bootstrap-server-online.sh",
       "sha256": "ce45398dff878665699c677d42d103725aacc1d88509a7e213a6562ede1640a2"
     },
-    "bootstrap-server-core.tar.gz": {
-      "path": "dist/bootstrap-server-core.tar.gz",
-      "url_path": "dist/bootstrap-server-core.tar.gz",
+    "bootstrap-server-core.tar": {
+      "path": "dist/bootstrap-server-core.tar",
+      "url_path": "dist/bootstrap-server-core.tar",
       "sha256": "6c4eb727ad6cd5a9a6f986d33754c8d9b48841af4ec43211afcbe5d984e783fa"
     }
   },

@@ -143,7 +143,7 @@ Remote Service mutation은 소유 Agent Host에서만 수행됩니다. Server의
 
 immutable `v2.4.0` 태그가 생기기 전에는 exact SHA 또는 owner가 지정한 candidate artifact로만 설치하십시오. `v2.4.0/dist/bootstrap-server.sh` 형태의 태그 URL은 태그가 생성되기 전까지 404입니다.
 
-온라인 Server 설치는 아래 방식을 권장합니다. 승인된 exact SHA를 지정하면 작은 Bootstrap이 압축된 공통 파일과 플랫폼별 필수 아카이브를 진행률·타임아웃·SHA256 검증과 함께 다운로드합니다. 기존 `dist/bootstrap-server.sh`는 오프라인 설치용으로 유지합니다.
+온라인 Server 설치는 아래 방식을 권장합니다. 승인된 exact SHA를 지정하면 작은 Bootstrap이 공통 파일과 플랫폼별 필수 아카이브를 진행률·타임아웃·SHA256 검증과 함께 다운로드합니다. 기존 `dist/bootstrap-server.sh`는 오프라인 설치용으로 유지합니다.
 
 ```bash
 REF='<EXACT_SHA>'

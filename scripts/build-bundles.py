@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 import base64
-import gzip
 import hashlib
 import io
 import tarfile
@@ -356,14 +355,14 @@ for rel in binary_rels:
     segments.append(('\n'.join(lines[offset:start + 1]) + '\n').encode())
     offset = end
 segments.append(('\n'.join(lines[offset:]) + '\n').encode())
-core = dist / 'bootstrap-server-core.tar.gz'
-with core.open('wb') as raw:
-    with gzip.GzipFile(filename='', mode='wb', fileobj=raw, mtime=0) as gz:
-        with tarfile.open(fileobj=gz, mode='w', format=tarfile.USTAR_FORMAT) as archive:
-            for index, data in enumerate(segments):
-                item = tarfile.TarInfo(f'part-{index}')
-                item.size, item.mode, item.mtime = len(data), 0o600, 0
-                archive.addfile(item, io.BytesIO(data))
+core = dist / 'bootstrap-server-core.tar'
+# USTAR metadata and uncompressed bytes are platform independent. gzip
+# deflate output differs between Linux and macOS zlib implementations.
+with tarfile.open(core, mode='w', format=tarfile.USTAR_FORMAT) as archive:
+    for index, data in enumerate(segments):
+        item = tarfile.TarInfo(f'part-{index}')
+        item.size, item.mode, item.mtime = len(data), 0o600, 0
+        archive.addfile(item, io.BytesIO(data))
 
 def file_sha(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()

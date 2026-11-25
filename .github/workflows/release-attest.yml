@@ -394,7 +394,7 @@ jobs:
           set -euo pipefail
           mkdir -p release-subjects
           cp dist/bootstrap-client.sh dist/bootstrap-server.sh \
-             dist/bootstrap-server-online.sh dist/bootstrap-server-core.tar.gz \
+             dist/bootstrap-server-online.sh dist/bootstrap-server-core.tar \
              dist/bootstrap-client.ps1 dist/uninstall-client.sh dist/uninstall-server.sh \
              dist/sbom.spdx.json SHA256SUMS release-manifest.json \
              release-subjects/
@@ -448,7 +448,7 @@ jobs:
             release-subjects/bootstrap-client.sh
             release-subjects/bootstrap-server.sh
             release-subjects/bootstrap-server-online.sh
-            release-subjects/bootstrap-server-core.tar.gz
+            release-subjects/bootstrap-server-core.tar
             release-subjects/bootstrap-client.ps1
             release-subjects/uninstall-client.sh
             release-subjects/uninstall-server.sh

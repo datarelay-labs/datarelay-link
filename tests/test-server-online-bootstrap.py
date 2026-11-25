@@ -107,7 +107,7 @@ echo EXACT_OFFLINE_BUNDLE_EXECUTION=PASS
 
     def test_small_entry_and_transfer_reduction(self):
         self.assertLess(ONLINE.stat().st_size, 8192)
-        core = ROOT / 'dist/bootstrap-server-core.tar.gz'
+        core = ROOT / 'dist/bootstrap-server-core.tar'
         assets = list((ROOT/'third_party/frp').glob('*/binaries/*'))
         self.assertEqual(len(assets), 4)
         self.assertLess(ONLINE.stat().st_size+core.stat().st_size+sum(x.stat().st_size for x in assets),
@@ -118,7 +118,7 @@ echo EXACT_OFFLINE_BUNDLE_EXECUTION=PASS
         self.assertIn('EXACT_OFFLINE_BUNDLE_EXECUTION=PASS',result.stdout)
         requests=self.log.read_text().splitlines()
         self.assertEqual(len(requests),5)
-        self.assertEqual(requests[0],'dist/bootstrap-server-core.tar.gz')
+        self.assertEqual(requests[0],'dist/bootstrap-server-core.tar')
         self.assertTrue(requests[1].endswith(native),requests)
         self.assertEqual(len(set(requests)),5)
         self.assertEqual(self.marker.read_text().splitlines(),['--upgrade','--check'])
@@ -127,13 +127,13 @@ echo EXACT_OFFLINE_BUNDLE_EXECUTION=PASS
     def test_arm64(self):
         self.assert_success('aarch64','linux_arm64.tar.gz')
     def test_corrupted_core_never_executes(self):
-        result=self.run_installer(TEST_CORRUPT='dist/bootstrap-server-core.tar.gz')
+        result=self.run_installer(TEST_CORRUPT='dist/bootstrap-server-core.tar')
         self.assertNotEqual(result.returncode,0)
         self.assertIn('SHA256 mismatch',result.stderr)
         self.assertFalse(self.marker.exists())
         self.assertEqual(len(self.log.read_text().splitlines()),1)
     def test_timeout_never_executes(self):
-        result=self.run_installer(TEST_FAIL='dist/bootstrap-server-core.tar.gz')
+        result=self.run_installer(TEST_FAIL='dist/bootstrap-server-core.tar')
         self.assertNotEqual(result.returncode,0)
         self.assertIn('Download failed or timed out',result.stderr)
         self.assertFalse(self.marker.exists())
