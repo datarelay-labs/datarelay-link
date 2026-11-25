@@ -108,6 +108,74 @@ frp_allocator_ca_path() {
   frp_client_path /etc/drlink/allocator-ca.crt
 }
 
+# Only the unclaimed CA-only residue is unambiguously safe to replace.
+# Do not classify an enrolled, interrupted, dual-role, or unknown installation
+# as disposable merely because the CLI is missing. The fresh installer has
+# already created client-id, which is the OS machine identifier, not a claim.
+frp_client_has_orphan_allocator_ca_only() {
+  local ca dir etc_frp entry path
+  ca="$(frp_allocator_ca_path)"
+  [[ -f "$ca" && ! -L "$ca" ]] || return 1
+  dir="${ca%/*}"
+  [[ -d "$dir" && ! -L "$dir" ]] || return 1
+  for entry in "$dir"/* "$dir"/.[!.]* "$dir"/..?*; do
+    [[ -e "$entry" || -L "$entry" ]] || continue
+    [[ "$entry" == "$ca" ]] || return 1
+  done
+  etc_frp="$(frp_client_path /etc/frp)"
+  [[ ! -L "$etc_frp" ]] || return 1
+  if [[ -e "$etc_frp" ]]; then
+    [[ -d "$etc_frp" ]] || return 1
+    for entry in "$etc_frp"/* "$etc_frp"/.[!.]* "$etc_frp"/..?*; do
+      [[ -e "$entry" || -L "$entry" ]] || continue
+      [[ "$entry" == "$etc_frp/client-id" && -f "$entry" && ! -L "$entry" ]] || return 1
+    done
+  fi
+  for path in /var/lib/drlink /opt/drlink /usr/local/lib/drlink \
+    /usr/local/bin/drlink /usr/bin/drlink /usr/local/bin/frpctl \
+    /usr/local/bin/frpc /usr/bin/frpc /usr/local/bin/frp-client \
+    /usr/local/sbin/frp-client /etc/systemd/system/drlink-client.service \
+    /etc/systemd/system/drlink-ai-agent.service /etc/systemd/system/drlink-lifecycle.service \
+    /etc/systemd/system/drlink-server.service /etc/systemd/system/frpc.service \
+    /etc/systemd/system/frps.service /lib/systemd/system/drlink-client.service \
+    /usr/lib/systemd/system/drlink-client.service; do
+    entry="$(frp_client_path "$path")"
+    [[ ! -e "$entry" && ! -L "$entry" ]] || return 1
+  done
+  return 0
+}
+
+# Called only by first-time installation, before the ordinary CA bootstrap.
+# A qualified same-origin Zero-Touch candidate can replace an unclaimed CA,
+# never an existing Agent trust anchor. Validate the new fingerprint and
+# bundle provenance before touching the old file; replace it atomically.
+frp_client_recover_orphan_allocator_ca() {
+  local url="$1" origin ca expected actual source
+  [[ -n "${FRP_BOOTSTRAP_LOCATOR:-}" && -n "${FRP_ALLOCATOR_CA_FILE:-}" ]] || return 0
+  [[ -n "${FRP_ALLOCATOR_CA_SHA256:-}" ]] || return 0
+  if frp_is_darwin; then
+    return 0
+  fi
+  frp_client_has_orphan_allocator_ca_only || return 0
+  origin="$(frp_allocator_origin_url "$url")" || return 1
+  [[ "${FRP_INSTALLER_URL:-}" == "$origin/artifacts/agent/bootstrap-client.sh" ]] || return 0
+  source="$FRP_ALLOCATOR_CA_FILE"
+  expected="$(frp_normalize_ca_fingerprint "$FRP_ALLOCATOR_CA_SHA256")" || return 1
+  ca="$(frp_allocator_ca_path)"
+  actual="$(frp_ca_fingerprint_file "$ca" 2>/dev/null)" || actual=""
+  [[ "$actual" != "$expected" ]] || return 0
+  actual="$(frp_ca_fingerprint_file "$source")" || return 1
+  [[ "$actual" == "$expected" ]] || {
+    echo "ERROR: incoming allocator CA fingerprint mismatch" >&2
+    return 1
+  }
+  frp_client_verify_fresh_source_provenance "$source" || return 1
+  # Recheck before the atomic replacement; never remove unknown state.
+  frp_client_has_orphan_allocator_ca_only || return 1
+  frp_atomic_install_allocator_ca "$source" "$expected" || return 1
+  echo "Removed stale, unclaimed Agent CA residue; continuing fresh enrollment."
+}
+
 frp_valid_https_allocator_url() {
   local url="${1:-}"
   case "$url" in
@@ -6712,7 +6780,7 @@ frp_client_verify_fresh_source_provenance() {
     echo "ERROR: fresh Server-local install requires the downloaded bundle file" >&2
     return 1
   }
-  ca="$(frp_allocator_ca_path)"
+  ca="${1:-$(frp_allocator_ca_path)}"
   work="$(mktemp -d)" || return 1
   if ! curl -fsSL --proto '=https' --cacert "$ca" "$origin/artifacts/manifest.json" -o "$work/manifest.json" \
       || ! curl -fsSL --proto '=https' --cacert "$ca" "$origin/artifacts/SHA256SUMS" -o "$work/SHA256SUMS"; then
