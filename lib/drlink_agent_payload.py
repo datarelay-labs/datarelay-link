@@ -54,6 +54,7 @@ AGENT_LIB_FILES: tuple[str, ...] = (
     "drlink_runtime_policy.py",
     "drlink_upgrade_reconcile.py",
     "drlink_agent_payload.py",
+    "drlink_agent_residue.py",
 )
 
 # Subset used for live lineage proof. A mismatch here is a release blocker

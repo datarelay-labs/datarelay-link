@@ -107,6 +107,16 @@ def _verify_orphan_allocator_ca_recovery(tmp, origin, installer_url, installer, 
         ("identity", "etc/frp/client-identity.key", {}, False),
         ("server", "etc/drlink/config.json", {}, False),
         ("runtime", "usr/local/bin/drlink", {}, False),
+        ("empty-roots", None, {}, True),
+        ("owned-runtime", None, {}, True),
+        ("owned-service", None, {}, True),
+        ("owned-runtime-with-identity", "etc/frp/client-identity.key", {}, False),
+        ("foreign-unit", None, {}, False),
+        ("foreign-engine", "usr/local/bin/frpc", {}, False),
+        ("unknown-lib", "usr/local/lib/drlink/custom.py", {}, False),
+        ("foreign-server", "etc/systemd/system/drlink-server.service", {}, False),
+        ("mac-orphan", None, {}, True),
+        ("mac-protected", "Library/Application Support/drlink/client-state.json", {}, False),
         ("unknown", "etc/drlink/.unknown", {}, False),
         ("symlink", None, {}, False),
         ("bad-pin", None, {"FRP_ALLOCATOR_CA_SHA256": "a" * 64}, False),
@@ -114,10 +124,11 @@ def _verify_orphan_allocator_ca_recovery(tmp, origin, installer_url, installer, 
     )
     for name, marker, overrides, success in scenarios:
         root = tmp / ("case-" + name)
-        ca = root / "etc/drlink/allocator-ca.crt"
+        mac = name.startswith("mac-")
+        ca = root / ("Library/Application Support/drlink/allocator-ca.crt" if mac else "etc/drlink/allocator-ca.crt")
         ca.parent.mkdir(parents=True)
-        machine_id = root / "etc/frp/client-id"
-        machine_id.parent.mkdir(parents=True)
+        machine_id = root / ("Library/Application Support/drlink/client-id" if mac else "etc/frp/client-id")
+        machine_id.parent.mkdir(parents=True, exist_ok=True)
         machine_id.write_text("test-machine-id\n")
         if name in ("old-ca-and-scratch", "scratch-only", "same-ca-and-scratch",
                     "scratch-with-invalid-pin", "scratch-symlink"):
@@ -142,12 +153,40 @@ def _verify_orphan_allocator_ca_recovery(tmp, origin, installer_url, installer, 
             target = root / marker
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_text("preserve even incomplete or corrupt evidence\n")
+        residues = []
+        if name in ("empty-roots", "owned-runtime", "owned-service", "owned-runtime-with-identity"):
+            for rel in ("var/lib/drlink", "var/log/drlink", "opt/drlink"):
+                d = root / rel
+                d.mkdir(parents=True)
+                residues.append(d)
+        if name in ("owned-runtime", "owned-service", "owned-runtime-with-identity"):
+            for dest, source in (
+                ("usr/local/bin/drlink", "tools/drlink"),
+                ("usr/local/lib/drlink/frp-client-common.sh", "lib/frp-client-common.sh"),
+                ("usr/local/lib/drlink/frpctl", "tools/frpctl"),
+            ):
+                f = root / dest
+                f.parent.mkdir(parents=True, exist_ok=True)
+                f.write_bytes((ROOT / source).read_bytes())
+                residues.append(f)
+        if name in ("owned-service", "foreign-unit"):
+            f = root / "etc/systemd/system/drlink-client.service"
+            f.parent.mkdir(parents=True)
+            f.write_bytes((ROOT / "client/drlink-client.service").read_bytes() if name == "owned-service" else b"[Service]\nExecStart=/bin/false\n")
+            residues.append(f)
+            if name == "owned-service":
+                f = root / "usr/local/bin/frpc"
+                f.write_bytes(b"owned-engine-fixture")
+                residues.append(f)
+        if mac:
+            for subdir in ("state", "lib", "logs", "bin"):
+                (ca.parent / subdir).mkdir()
         before = ca.read_bytes() if ca.exists() else None
         scratch_before = scratch.read_bytes() if scratch is not None else None
         env = {
             **os.environ,
             "FRP_CLIENT_TEST_ROOT": str(root),
-            "FRP_TEST_UNAME_S": "Linux",
+            "FRP_TEST_UNAME_S": "Darwin" if mac else "Linux",
             "FRP_BOOTSTRAP_LOCATOR": TICKET,
             "FRP_ALLOCATOR_URL": origin + "/enroll",
             "ALLOCATOR_URL": origin + "/enroll",
@@ -181,15 +220,19 @@ def _verify_orphan_allocator_ca_recovery(tmp, origin, installer_url, installer, 
                 raise AssertionError(f"{name}: protected staging residue changed")
             if name == "scratch-symlink" and not scratch.is_symlink():
                 raise AssertionError("scratch symlink was replaced")
+        for residue in residues:
+            if residue.exists() == success:
+                raise AssertionError(f"{name}: unexpected residue state: {residue}")
         if marker and not (root / marker).exists():
             raise AssertionError(f"{name}: protected state was removed")
         if name == "symlink" and not ca.is_symlink():
             raise AssertionError("symlink was replaced")
+    print(f"ORPHAN_RESIDUE_SCENARIOS={len(scenarios)}")
     print("ORPHAN_ALLOCATOR_CA_RECOVERY=PASS")
 
 
 def main():
-    tmp = Path(tempfile.mkdtemp(prefix="drlink-fresh-ca-"))
+    tmp = Path(tempfile.mkdtemp(prefix="drlink-fresh-ca-")).resolve()
     httpd = None
     try:
         ca_pem, server_crt, server_key = _make_ca_and_leaf(tmp)

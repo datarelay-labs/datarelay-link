@@ -119,6 +119,16 @@ frp_client_has_orphan_allocator_ca_only() {
   [[ -d "$dir" && ! -L "$dir" ]] || return 1
   for entry in "$dir"/* "$dir"/.[!.]* "$dir"/..?*; do
     [[ -e "$entry" || -L "$entry" ]] || continue
+    if frp_is_darwin; then
+      # macOS maps /etc/frp and /etc/drlink into a single product root.
+      # A fresh installer may have initialized empty subdirectories.
+      case "${entry##*/}" in
+        client-id) [[ -f "$entry" && ! -L "$entry" ]] || return 1; continue ;;
+        bin|lib|state|logs)
+          [[ -d "$entry" && ! -L "$entry" && -z "$(find "$entry" -mindepth 1 -maxdepth 1 -print -quit)" ]] || return 1
+          continue ;;
+      esac
+    fi
     [[ -f "$entry" && ! -L "$entry" ]] || return 1
     if [[ "$entry" != "$ca" && ! "${entry##*/}" =~ ^allocator-ca\.crt\.[a-zA-Z0-9]{6}$ ]]; then
       return 1
@@ -132,6 +142,9 @@ frp_client_has_orphan_allocator_ca_only() {
     [[ -d "$etc_frp" ]] || return 1
     for entry in "$etc_frp"/* "$etc_frp"/.[!.]* "$etc_frp"/..?*; do
       [[ -e "$entry" || -L "$entry" ]] || continue
+      if frp_is_darwin; then
+        continue  # the shared state root was checked in full above
+      fi
       [[ "$entry" == "$etc_frp/client-id" && -f "$entry" && ! -L "$entry" ]] || return 1
     done
   fi
@@ -144,6 +157,10 @@ frp_client_has_orphan_allocator_ca_only() {
     /etc/systemd/system/frps.service /lib/systemd/system/drlink-client.service \
     /usr/lib/systemd/system/drlink-client.service; do
     entry="$(frp_client_path "$path")"
+    if frp_is_darwin && [[ "$path" == /var/lib/drlink || "$path" == /usr/local/lib/drlink ]]; then
+      [[ ! -e "$entry" || ( -d "$entry" && ! -L "$entry" && -z "$(find "$entry" -mindepth 1 -maxdepth 1 -print -quit)" ) ]] || return 1
+      continue
+    fi
     [[ ! -e "$entry" && ! -L "$entry" ]] || return 1
   done
   return 0
@@ -153,13 +170,11 @@ frp_client_has_orphan_allocator_ca_only() {
 # A qualified same-origin Zero-Touch candidate can replace an unclaimed CA,
 # never an existing Agent trust anchor. Validate the new fingerprint and
 # bundle provenance before touching the old file; replace it atomically.
-frp_client_recover_orphan_allocator_ca() {
+frp_client_recover_orphan_allocator_ca_macos() {
   local url="$1" origin ca expected actual source entry scratch=0
+  local ALLOCATOR_URL="$1"
   [[ -n "${FRP_BOOTSTRAP_LOCATOR:-}" && -n "${FRP_ALLOCATOR_CA_FILE:-}" ]] || return 0
   [[ -n "${FRP_ALLOCATOR_CA_SHA256:-}" ]] || return 0
-  if frp_is_darwin; then
-    return 0
-  fi
   frp_client_has_orphan_allocator_ca_only || return 0
   origin="$(frp_allocator_origin_url "$url")" || return 1
   [[ "${FRP_INSTALLER_URL:-}" == "$origin/artifacts/agent/bootstrap-client.sh" ]] || return 0
@@ -188,6 +203,54 @@ frp_client_recover_orphan_allocator_ca() {
     rm -f -- "$entry" || return 1
   done
   echo "Removed stale, unclaimed Agent CA residue; continuing fresh enrollment."
+}
+
+# Build a bounded deletion plan from the packaged Agent runtime inventory.
+# Generic frpc binaries require positive product ownership. A nonempty
+# configuration, identity, transaction, Server marker or unknown file vetoes
+# cleanup. The incoming CA and artifact are qualified before mutation.
+frp_client_orphan_residue_linux() {
+  local url="$1" origin source expected actual plan sandbox=0 path
+  local ALLOCATOR_URL="$1"
+  local -a args
+  [[ -n "${FRP_BOOTSTRAP_LOCATOR:-}" && -n "${FRP_ALLOCATOR_CA_FILE:-}" ]] || return 0
+  [[ -n "${FRP_ALLOCATOR_CA_SHA256:-}" ]] || return 0
+  origin="$(frp_allocator_origin_url "$url")" || return 1
+  [[ "${FRP_INSTALLER_URL:-}" == "$origin/artifacts/agent/bootstrap-client.sh" ]] || return 0
+  [[ -n "${FRP_CLIENT_TEST_ROOT:-}" ]] && sandbox=1
+  args=()
+  for path in /etc/frp /etc/drlink /var/lib/drlink /var/log/drlink /usr/local/lib/drlink /opt/drlink \
+    /etc/drlink/allocator-ca.crt /usr/local/bin/frpc \
+    /usr/local/bin/drlink /usr/bin/drlink /usr/local/bin/frp-client /usr/local/sbin/frp-client \
+    /usr/local/bin/frpctl /usr/local/sbin/frpctl /usr/local/bin/frp-support-bundle /usr/local/bin/frp-update \
+    /etc/systemd/system/drlink-client.service /etc/systemd/system/drlink-ai-agent.service \
+    /etc/systemd/system/drlink-lifecycle.service /etc/systemd/system/frpc.service \
+    /usr/local/bin/frps /usr/bin/frps /usr/bin/frpc /etc/systemd/system/frps.service \
+    /etc/systemd/system/drlink-server.service /etc/systemd/system/drlink-allocator.service \
+    /etc/systemd/system/drlink-access.service /etc/systemd/system/drlink-egress.service \
+    /etc/systemd/system/drlink-tcp-egress.service /etc/systemd/system/drlink-frontend.service \
+    /etc/systemd/system/drlink-mcp-bridge.service \
+    /lib/systemd/system/drlink-client.service /usr/lib/systemd/system/drlink-client.service; do
+    args+=("$(frp_client_path "$path")")
+  done
+  plan="$(PYTHONDONTWRITEBYTECODE=1 python3 "${_FRP_CLIENT_COMMON_DIR}/drlink_agent_residue.py" plan "$sandbox" "${args[@]}")" || return 1
+  [[ -n "$plan" ]] || return 0
+  source="$FRP_ALLOCATOR_CA_FILE"
+  expected="$(frp_normalize_ca_fingerprint "$FRP_ALLOCATOR_CA_SHA256")" || return 1
+  actual="$(frp_ca_fingerprint_file "$source")" || return 1
+  [[ "$actual" == "$expected" ]] || { echo "ERROR: incoming allocator CA fingerprint mismatch" >&2; return 1; }
+  frp_client_verify_fresh_source_provenance "$source" || return 1
+  printf '%s' "$plan" | PYTHONDONTWRITEBYTECODE=1 python3 "${_FRP_CLIENT_COMMON_DIR}/drlink_agent_residue.py" apply "$sandbox" "${args[@]}" || return 1
+  frp_atomic_install_allocator_ca "$source" "$expected" || return 1
+  echo "Removed unclaimed Agent installation residue; continuing fresh enrollment."
+}
+
+frp_client_recover_orphan_allocator_ca() {
+  if frp_is_darwin; then
+    frp_client_recover_orphan_allocator_ca_macos "$1"
+  else
+    frp_client_orphan_residue_linux "$1"
+  fi
 }
 
 frp_valid_https_allocator_url() {
