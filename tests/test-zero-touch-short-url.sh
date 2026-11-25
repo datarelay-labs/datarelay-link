@@ -146,7 +146,7 @@ pass "WINDOWS_ONE_LINE"
 TICKET="$(entry_locator "$OUT_SSH")"
 TICKET_ID="$(entry_id "$OUT_SSH")"
 TICKET_FILE="$TREE/var/lib/drlink/bootstrap/${TICKET_ID}.json"
-[[ -f "$TICKET_FILE" && ${#TICKET} == 6 && ${#WIN_LOCATOR} == 6 ]] || fail "entry index missing"
+[[ -f "$TICKET_FILE" && ${#TICKET} == 8 && ${#WIN_LOCATOR} == 8 ]] || fail "entry index missing"
 ALLOC_LOG="$WORKDIR/alloc.log"
 python3 "$ROOT/server/frp-port-allocator.py" --config "$TREE/etc/drlink/config.json" \
   >"$ALLOC_LOG" 2>&1 &
