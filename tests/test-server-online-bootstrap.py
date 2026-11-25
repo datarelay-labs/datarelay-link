@@ -5,6 +5,8 @@ import os
 from pathlib import Path
 import re
 import subprocess
+import select
+import time
 import tempfile
 import unittest
 
@@ -70,6 +72,39 @@ echo EXACT_OFFLINE_BUNDLE_EXECUTION=PASS
             cmd = ['/bin/bash', '-s', '--', ref, '--upgrade', '--check']
         return subprocess.run(cmd, input=input_text, env=values, text=True,
                               capture_output=True, timeout=60)
+    def test_offline_stream_heartbeat_and_truncated_payload(self):
+        # Feed only the initial commands, leaving Bash blocked reading stdin.
+        # No installed files or services are touched.
+        temp = self.path / 'staging'
+        temp.mkdir()
+        prefix = OFFLINE.read_text().split('base64 -d >"$TMP/VERSION"',1)[0]
+        proc = subprocess.Popen(['/bin/bash'], stdin=subprocess.PIPE,
+                                stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                env=dict(os.environ, TMPDIR=str(temp)))
+        try:
+            proc.stdin.write(prefix.encode())
+            proc.stdin.flush()
+            data = b''
+            deadline = time.monotonic() + 12
+            while b'Still receiving/restoring installer files' not in data and time.monotonic() < deadline:
+                if select.select([proc.stdout], [], [], 1)[0]:
+                    chunk = os.read(proc.stdout.fileno(), 8192)
+                    if not chunk:
+                        break
+                    data += chunk
+            self.assertIn(b'Still receiving/restoring installer files', data)
+            proc.stdin.close()
+            proc.stdin = None
+            tail, _ = proc.communicate(timeout=12)
+            self.assertNotEqual(proc.returncode, 0, data+tail)
+            self.assertIn(b'Installation has not started', tail)
+            self.assertNotIn(b'Installing Data Relay Link Server', data+tail)
+            self.assertEqual(list(temp.iterdir()), [])
+        finally:
+            if proc.poll() is None:
+                proc.terminate()
+                proc.communicate(timeout=12)
+
     def test_small_entry_and_transfer_reduction(self):
         self.assertLess(ONLINE.stat().st_size, 8192)
         core = ROOT / 'dist/bootstrap-server-core.tar.gz'

@@ -138,8 +138,40 @@ def write_server_bundle(rels):
         'set -euo pipefail',
         'echo "Downloading qualified Data Relay Link installer..."',
         'TMP="$(mktemp -d)"',
-        'trap \'rm -rf "$TMP"\' EXIT',
-        'echo "Reading and restoring installer payload (download may still be running)..."',
+        '_drlink_original_umask=$(umask)',
+        'umask 077',
+        '_drlink_started=0',
+        '_drlink_progress_pid=""',
+        '_drlink_stop_progress() {',
+        '  if [[ -n "$_drlink_progress_pid" ]]; then',
+        '    kill "$_drlink_progress_pid" 2>/dev/null || true',
+        '    wait "$_drlink_progress_pid" 2>/dev/null || true',
+        '    _drlink_progress_pid=""',
+        '  fi',
+        '}',
+        '_drlink_cleanup() {',
+        '  local rc=$?',
+        '  trap - EXIT',
+        '  _drlink_stop_progress',
+        '  rm -rf -- "$TMP"',
+        '  if [[ "$_drlink_started" != 1 ]]; then',
+        '    echo "ERROR: Installer payload reception or preparation did not finish. Installation has not started. Retry the same command." >&2',
+        '    if [[ "$rc" == 0 ]]; then rc=1; fi',
+        '  fi',
+        '  exit "$rc"',
+        '}',
+        "trap _drlink_cleanup EXIT",
+        "trap 'exit 130' INT",
+        "trap 'exit 143' TERM",
+        'echo "Receiving and restoring installer files (download may still be running)..."',
+        '_drlink_parent="$BASHPID"',
+        '(',
+        '  while sleep 5; do',
+        '    kill -0 "$_drlink_parent" 2>/dev/null || exit 0',
+        '    echo "  Still receiving/restoring installer files; please keep this session open." >&2',
+        '  done',
+        ') </dev/null &',
+        '_drlink_progress_pid=$!',
     ]
     for rel in rels:
         data=base64.b64encode(bundle_payload(rel)).decode()
@@ -153,6 +185,8 @@ def write_server_bundle(rels):
     for rel in rels:
         if rel.endswith('.sh') or rel.startswith('tools/') or rel.endswith('.py'):
             out.append(f'chmod +x "$TMP/{rel}"')
+    out.append('_drlink_stop_progress')
+    out.append('echo "Installer files received and restored."')
     out.append('echo "Preparing installation..."')
     out.append('echo "Installing Data Relay Link Server..."')
     return out
@@ -306,7 +340,7 @@ for path in sorted((root / 'third_party' / 'frp').rglob('*')):
 server_rels.extend(['dist/bootstrap-client.sh', 'dist/bootstrap-client.ps1'])
 lines = write_server_bundle(server_rels)
 lines.append(SERVER_BOOTSTRAP_REF_SNIPPET)
-lines.append('"$TMP/install-server.sh" "$@"')
+lines.append('umask "$_drlink_original_umask"; _drlink_started=1; "$TMP/install-server.sh" "$@"')
 (dist/'bootstrap-server.sh').write_text('\n'.join(lines)+'\n')
 (dist/'bootstrap-server.sh').chmod(0o755)
 
