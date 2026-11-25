@@ -381,10 +381,10 @@ Expected: clear recovery, no traceback, no unintended mutation, and return to a 
 Using namespaced resources:
 
 - create/connect an AI Identity far enough to exercise the selected auth path;
-- verify `system credential ?` discovers every supported credential lifecycle operation advertised by System help, including approve/deny OAuth and rotate/revoke/configure where supported;
+- verify `set ai-identity <IDENTITY>` discovers the single pending approval and credential lifecycle workflow, including approve/deny OAuth and rotate/revoke/authentication where supported; verify retired command paths are neither discoverable nor accepted;
 - verify credential rotate/configure/revoke on a nonexistent AI Identity fails without creating an identity or issuing a credential;
 - do not invent external OAuth approval;
-- create permission object/group;
+- create an Access Rule with a built-in permission profile without manually creating Objects; verify custom Permission Object/Group creation under Advanced Permissions;
 - attempt authorization with unverified identity and confirm fail-closed behavior;
 - test AI Access;
 - inspect AI Access log;

@@ -252,7 +252,7 @@ existing authenticated DRLink control path
 Managed Host / private target
 ```
 
-AI Access의 source는 검증된 **AI Identity**입니다. Permission Object / Permission Group으로 capability와 path 권한을 부여합니다. MCP는 별도 public identity model이 아니라 integration layer입니다.
+AI Access의 Source는 검증된 **AI Identity**입니다. [초보자 중심 UX 목표](docs/AI_ACCESS_MCP.md)는 Managed Host 등록, Connect AI(인증), 방화벽 방식의 Access Rules(Source, Destination, Permission)를 분리합니다. Connect AI에서 MCP 준비 상태를 확인하며, 기본 권한은 Object를 직접 만들지 않아도 선택할 수 있습니다. 사용자 정의 Object/Group은 고급 기능으로 유지하고 인증 자체는 접근 권한을 부여하지 않습니다. 이번 재설계는 구현·검증 전 목표 규격입니다.
 
 ## ConfigurationBundle / AI-assisted configuration
 

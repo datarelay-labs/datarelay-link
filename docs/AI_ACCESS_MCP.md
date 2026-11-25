@@ -7,11 +7,11 @@
 
 ### Beginner-first AI Access UX — target contract (2026-11-25)
 
-This is the single intended UX for the next implementation candidate, not a claim that the installed release already implements it. The this guide is the detailed normative workflow; CLI, menu, Web UI, help, completion and tests must converge on this contract. Do not retain alternate public spellings, parallel wizards or duplicate menu entry points for retired UX. Preserve persisted identities, policy, certificates and audit history; no permission widening, implicit trust or silent reconfiguration during migration.
+This is the single intended UX for the next implementation candidate, not a claim that the installed release already implements it. This guide is the detailed normative workflow; CLI, menu, Web UI, help, completion and tests must converge on this contract. Do not retain alternate public spellings, parallel wizards or duplicate menu entry points for retired UX. Preserve persisted identities, policy, certificates and audit history; no permission widening, implicit trust or silent reconfiguration during migration.
 
 - **Managed Hosts**: register/enroll and manage actual hosts. Never add a host through an AI connection screen.
 - **AI Identity**: connect, verify, inspect, reconnect and disconnect an AI client. Authentication alone is not authorization.
-- **AI Access Rules**: select Source (verified AI Identity), Destination (Managed Host-backed Network Object / Network Group), and Permission (built-in profile or reusable custom Object/Group), with explicit path and execution constraints. The firewall-style policy is separate from inventory and authentication.
+- **AI Access Rules**: select Source (verified AI Identity), Destination (Managed Host-backed Network Object / Network Group, or explicitly selected `server:self` under its separate native execution controls), and Permission (built-in profile or reusable custom Object/Group), with explicit path and execution constraints. The firewall-style policy is separate from inventory and authentication.
 - **System → MCP Server Settings / Certificates**: owns infrastructure. The Connect AI wizard detects readiness and offers the same settings workflow inline when needed, then returns to onboarding. Ready TLS is reused without issuing or reconfiguring a certificate. Direct mode must report the supported single443 prerequisite; no silent deployment-mode switch.
 - **Advanced Permissions**: custom Permission Objects/Groups only when needed; not prerequisites for routine onboarding. Read-only grants host-info, process-read and explicitly scoped file-read. Full management offers all seven capabilities only after explicit review of destination, path and OS execution constraints. No automatic root or unrestricted path grant by selecting a label.
 - AI Access is WHITELIST-only. The wizard and one-shot Rule grammar require no mode field; first reviewed rule initializes WHITELIST atomically. No Policy, disabled enforcement, unverified/revoked identity, no matching rule or unsafe/unavailable target remains DENY.
@@ -49,6 +49,8 @@ MCP Bridge
 MCP does not create a separate public identity model.
 
 ## 2. AI Identity
+
+The normal entry point is `set ai-identity` (or AI Access → Connect AI), with the named form for an existing/new identity. In the guided flow the user selects and reviews pending requests directly; the one-shot actions below serve automation, not a second wizard.
 
 Canonical public resource:
 
@@ -144,6 +146,8 @@ Machine-side OAuth discovery, token exchange, MCP initialize, tools/list, and di
 
 ## 3. Permission Objects
 
+The normal Rule wizard offers built-in Read-only, Full management, and Custom choices. Built-in choices resolve to deterministic reusable permission objects, with path scope shown and reviewed separately on the Rule. No separate Permission Object creation is required for built-ins. Custom Objects/Groups remain advanced and use the same policy engine. Do not silently change existing named objects or grants.
+
 Permission Objects contain reusable DRLink operation permissions such as:
 
 ```text
@@ -167,6 +171,8 @@ set permission-object read-only permissions host-info,process-read,file-read
 A true read-only role does not grant command execution.
 
 ## 4. AI Access Rule
+
+`set ai-access` opens guided rule selection/creation. `set ai-access <RULE>` opens create/edit for that name. Show and review Source, Destination, Permission, file paths, effective OS execution constraints, enabled state and current/future host scope. The default destination scope is explicitly selected existing hosts; no implicit wildcard. Use a verified identity and trusted host-backed selectors; native `server:self` is separately reviewed and never implied by all Managed Hosts.
 
 Canonical fields:
 

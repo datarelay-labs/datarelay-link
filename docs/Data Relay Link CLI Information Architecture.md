@@ -323,34 +323,9 @@ When a Remote Service uses it, DRLink allocates an endpoint from the separate Fi
 
 ## 12. AI Identity UX
 
-### Beginner-first AI Access UX — target contract (2026-11-25)
+### Beginner-first AI Access UX (2026-11-25 target)
 
-This is the single intended UX for the next implementation candidate, not a claim that the installed release already implements it. The [AI Access guide](AI_ACCESS_MCP.md) is the detailed normative workflow; CLI, menu, Web UI, help, completion and tests must converge on this contract. Do not retain alternate public spellings, parallel wizards or duplicate menu entry points for retired UX. Preserve persisted identities, policy, certificates and audit history; no permission widening, implicit trust or silent reconfiguration during migration.
-
-- **Managed Hosts**: register/enroll and manage actual hosts. Never add a host through an AI connection screen.
-- **AI Identity**: connect, verify, inspect, reconnect and disconnect an AI client. Authentication alone is not authorization.
-- **AI Access Rules**: select Source (verified AI Identity), Destination (Managed Host-backed Network Object / Network Group), and Permission (built-in profile or reusable custom Object/Group), with explicit path and execution constraints. The firewall-style policy is separate from inventory and authentication.
-- **System → MCP Server Settings / Certificates**: owns infrastructure. The Connect AI wizard detects readiness and offers the same settings workflow inline when needed, then returns to onboarding. Ready TLS is reused without issuing or reconfiguring a certificate. Direct mode must report the supported single443 prerequisite; no silent deployment-mode switch.
-- **Advanced Permissions**: custom Permission Objects/Groups only when needed; not prerequisites for routine onboarding. Read-only grants host-info, process-read and explicitly scoped file-read. Full management offers all seven capabilities only after explicit review of destination, path and OS execution constraints. No automatic root or unrestricted path grant by selecting a label.
-- AI Access is WHITELIST-only. The wizard and one-shot Rule grammar require no mode field; first reviewed rule initializes WHITELIST atomically. No Policy, disabled enforcement, unverified/revoked identity, no matching rule or unsafe/unavailable target remains DENY.
-
-First connection: AI Access → Connect AI → select ChatGPT/Claude/Other and name → check endpoint/TLS (fix only if needed) → show public URL and client connection instructions → verify pending OAuth request, explicit operator approval and actual PKCE exchange → optionally open the separate Access Rule wizard with the verified Source preselected. Review destination and permissions before applying; skipping policy setup leaves DENY. The first Owner shortcut is optional and explicitly reviewed: only a verified identity may receive a named audited rule for all trusted hosts, including future signed enrollments **only if the operator explicitly chooses that dynamic scope**, with explicit permissions and path bounds. Otherwise select existing host(s)/group. Never implicitly authorize a new AI because it is first. Subsequent hosts are enrolled under Managed Hosts; a matching dynamic policy needs no AI reconfiguration; other policies remain unchanged until edited. Show effective access and actual connectivity separately.
-
-Normal commands:
-```text
-set ai-identity
-set ai-identity <NAME>
-show ai-identities
-show ai-identity <NAME>
-unset ai-identity <NAME>
-set ai-access
-set ai-access <RULE>
-show ai-access
-unset ai-access <RULE>
-test ai-access source <AI_IDENTITY> destination <DESTINATION> permission <PERMISSION> [path <PATH>]
-show ai-access-log
-```
-Name-free set opens the relevant guided create/select flow. Named Identity opens onboarding or management; named Rule opens create/edit. AI Identity management contains pending requests, approve/deny, reconnect, authentication method, rotation and revocation; security-sensitive effects require the existing explicit review/authorization, never a duplicate or bypass. System owns `set server mcp` (guided setup), `unset server mcp` (remove route, retain certificate/account material), `unset server mcp purge` (interactive destructive confirmation), certificate lifecycle and `system diagnostics mcp`. The approved one-shot grammar is documented in CLI Reference. Preserve real user OAuth, positive and negative authorization, safe certificate activation/rollback, upgrade state continuity and exact-head E2E release gates.
+The single workflow specification is [AI_ACCESS_MCP.md](AI_ACCESS_MCP.md). Managed Hosts owns enrollment; AI Identity owns verified authentication and credential lifecycle; AI Access Rules own Source → Destination → Permission authorization; System owns shared MCP settings and certificates. Connect AI checks readiness and uses that same settings flow only when necessary, then optionally opens the separate Access Rule wizard. No automatic privilege grant from OAuth or first connection; explicitly reviewed Owner scope is optional. Basic permissions use built-in profiles; custom Objects/Groups are advanced. AI Access mode is fixed WHITELIST, not an operator input. Preserve existing state and all fail-closed controls. No duplicate public command/menu paths. These are target requirements, not installed-product evidence.
 
 
 ```text

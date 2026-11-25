@@ -1729,6 +1729,7 @@ Server creates/binds the AI Identity using the supported authentication workflow
 Representative CLI:
 
 ~~~text
+set ai-identity
 set ai-identity <IDENTITY>
 set permission-object read-only permissions host-info,process-read,file-read
 set ai-access ai-read source <IDENTITY> destination <DESTINATION> permission read-only enabled
@@ -2349,6 +2350,7 @@ show ai-access-log identity <IDENTITY>
 show ai-access-log destination <DESTINATION>
 show ai-access-log permission <PERMISSION>
 
+set server mcp
 set server mcp hostname <FQDN>
 set server mcp mode <auto-acme|user-certificate>
 set server mcp contact-email <EMAIL>
@@ -2357,6 +2359,7 @@ set server mcp acme-directory <URL>
 set ai-identity <IDENTITY>
 set permission-object <PERMISSION>
 set permission-group <GROUP>
+set ai-access
 set ai-access <RULE>
 set ai-access enabled
 set ai-access disabled
@@ -2378,7 +2381,7 @@ set ai-identity <IDENTITY> approve <PENDING-ID>
 set ai-identity <IDENTITY> deny <PENDING-ID>
 ~~~
 
-Verify authentication and authorization states are represented separately, reference-aware deletion works, and AI Access enforcement toggles have the documented functional effect.
+Verify authentication and authorization states are represented separately, reference-aware deletion works, and AI Access enforcement toggles have the documented functional effect. Run a clean beginner Connect AI flow with no TLS/no Identity, then a second AI with ready TLS, no-policy denial, a reviewed rule with built-in permission, selected-only versus explicit dynamic trusted-host scope, independent enrollment of a new host, explicit native server:self scope if enabled, and OAuth/credential failure recovery. Confirm retired grammar is rejected and absent from help/completion/menu; retain the existing security-negative and exact-candidate gates.
 
 ## A-007 — Reference protection — MANDATORY
 
