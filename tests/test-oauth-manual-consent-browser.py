@@ -540,6 +540,92 @@ class ManualConsentBrowserTests(unittest.TestCase):
     def _public_grammar(self, tokens):
         return match(tokens, "server")
 
+    def test_guided_approval_wrong_identity_and_cancel_leave_request_unchanged(self):
+        from drlink_v24_wizard import ScriptedIO, set_wizard_io
+        import drlink_mcp_tls as tls
+        _, challenge = self._pkce()
+        auth = self._authorize(challenge=challenge, state="wizard-bound")
+        view = {"frontend_available": True, "cloud_compatible": True,
+                "certificate": tls.STATUS_VALID, "url": auth["resource"]}
+        self.addCleanup(set_wizard_io, None)
+        with patch.object(tls, "status_view", return_value=view), patch.object(tls, "require_public_frontend"):
+            set_wizard_io(ScriptedIO(["Claude", auth["pending_id"]]))
+            with redirect_stderr(io.StringIO()):
+                self.assertEqual(dispatch(["set", "ai-identity", "claude"], root=self.tmp, plane=self.plane), 1)
+            self.assertIsNone(self.plane.get_principal("claude"))
+            set_wizard_io(ScriptedIO(["Connect / reconnect", "Claude", auth["pending_id"], "0"]))
+            self.assertEqual(dispatch(["set", "ai-identity", "agent-a"], root=self.tmp, plane=self.plane), 0)
+        self.assertEqual(self.plane.conn.execute("SELECT status FROM ai_oauth_pending WHERE id=?", (auth["pending_id"],)).fetchone()["status"], "pending")
+
+    def test_guided_approval_is_not_pkce_verification(self):
+        from drlink_v24_wizard import ScriptedIO, set_wizard_io
+        import drlink_mcp_tls as tls
+        reg = self.plane.register_oauth_client({
+            "redirect_uris": ["http://127.0.0.1/guided-pending"],
+            "token_endpoint_auth_method": "none", "grant_types": ["authorization_code"],
+            "client_name": "guided-pending",
+        })
+        _, challenge = self._pkce()
+        auth = self._authorize(challenge=challenge, client_id=reg["client_id"], redirect="http://127.0.0.1/guided-pending")
+        view = {"frontend_available": True, "cloud_compatible": True,
+                "certificate": tls.STATUS_VALID, "url": auth["resource"]}
+        scripted = ScriptedIO(["ChatGPT", auth["pending_id"], "Approve", "Check verification", "Finish later"])
+        set_wizard_io(scripted)
+        self.addCleanup(set_wizard_io, None)
+        with patch.object(tls, "status_view", return_value=view), patch.object(tls, "require_public_frontend"):
+            self.assertEqual(dispatch(["set", "ai-identity", "chatgpt"], root=self.tmp, plane=self.plane), 0)
+        output = "".join(scripted.out)
+        self.assertIn("not verified yet", output)
+        self.assertNotIn("OAuth exchange confirmed", output)
+        self.assertIn("Approval saved; connection verification not confirmed", output)
+        self.assertEqual(self.plane.get_principal("chatgpt")["credential_status"], "pending")
+
+    def test_guided_remote_client_approval_verifies_real_http_exchange(self):
+        from drlink_v24_wizard import ScriptedIO, set_wizard_io
+        from unittest.mock import patch
+        import drlink_mcp_tls as tls
+        import drlink_v24 as v24
+        reg = self.plane.register_oauth_client({
+            "redirect_uris": ["http://127.0.0.1/guided"],
+            "token_endpoint_auth_method": "none",
+            "grant_types": ["authorization_code", "refresh_token"],
+            "client_name": "guided-fixture",
+        })
+        verifier, challenge = self._pkce()
+        auth = self._authorize(challenge=challenge, client_id=reg["client_id"],
+                               redirect="http://127.0.0.1/guided")
+        outer = self
+        class BrowserIO(ScriptedIO):
+            def ask(self, prompt):
+                if prompt == "Select: " and any("Browser connection" in line for line in self.out) and not getattr(self, "exchanged", False):
+                    self.exchanged = True
+                    self.assert_pending()
+                    cont = open_no_redirect(outer.base + auth["continue_path"])
+                    code = urllib.parse.parse_qs(urllib.parse.urlparse(cont.headers["Location"]).query)["code"][0]
+                    issued = outer._exchange(code=code, verifier=verifier, resource=auth["resource"], client_id=reg["client_id"], redirect=auth["redirect"])
+                    outer.assertTrue(issued["access_token"])
+                return super().ask(prompt)
+            def assert_pending(self):
+                outer.assertEqual(outer.plane.get_principal("chatgpt")["credential_status"], "pending")
+        # This is a local HTTP fixture of the real consent/token handlers.
+        # Public certificate/route readiness is isolated, not claimed as E2E.
+        view = {"frontend_available": True, "cloud_compatible": True,
+                "certificate": tls.STATUS_VALID, "url": auth["resource"]}
+        self.assertTrue(auth["resource"].startswith("https://"), auth["resource"])
+        scripted = BrowserIO(["ChatGPT", auth["pending_id"], "Approve", "Check verification", "n"])
+        set_wizard_io(scripted)
+        self.addCleanup(set_wizard_io, None)
+        with patch.object(tls, "status_view", return_value=view), patch.object(tls, "require_public_frontend"), patch("drlink_control_cli._guide_mcp_server") as setup:
+            rc = dispatch(["set", "ai-identity", "chatgpt"], root=self.tmp, plane=self.plane)
+            setup.assert_not_called()
+        self.assertEqual(rc, 0)
+        self.assertTrue(scripted.exchanged)
+        output = "".join(scripted.out)
+        self.assertIn("OAuth exchange confirmed", output)
+        self.assertNotIn("drauth_", output)
+        self.assertEqual(self.plane.get_principal("chatgpt")["credential_status"], "verified")
+        self.assertIsNone(v24.get_access_policy(self.plane, "ai")["mode"])
+
     def test_dcr_first_time_chatgpt_connect_operator_approval_and_pkce(self):
         """The real public operator command bootstraps an identity, no DB edits."""
         reg = self.plane.register_oauth_client(

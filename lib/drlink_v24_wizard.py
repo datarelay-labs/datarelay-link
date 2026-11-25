@@ -1044,8 +1044,8 @@ def _choose_ai_permission_profile(plane, session, choice):
     return name
 
 
-def run_ai_access_wizard(plane: ControlPlane, name: str) -> int:
-    io = _io()
+def run_ai_access_wizard(plane: ControlPlane, name: str, *, source_identity=None, io=None) -> int:
+    io = io or _io()
     existing = plane.conn.execute(
         "SELECT * FROM ai_policy_rules WHERE name = ? COLLATE NOCASE", (name,)
     ).fetchone()
@@ -1066,15 +1066,22 @@ def run_ai_access_wizard(plane: ControlPlane, name: str) -> int:
                     ("__oauth_unbound__",),
                 )
             ]
-            source = _ask_choice(io, "AI Identity (source)", identities or ["(none — create identity first)"])
+            source = source_identity or _ask_choice(io, "AI Identity (source)", identities or ["(none — create identity first)"])
+            if source_identity is not None and source_identity not in identities:
+                raise ControlPlaneError("Preselected AI Identity is no longer verified.")
             if source.startswith("("):
                 raise ControlPlaneError(
                     "ERROR:\nNo verified AI Identity is available.\n\nNo changes were applied."
                 )
             destinations = [r["name"] for r in v24.list_network_objects(plane)]
             destinations += [r["name"] for r in plane.conn.execute("SELECT name FROM object_groups ORDER BY name")]
-            destinations.append(v24.SERVER_SELF_TARGET)
-            destination = _ask_choice(io, "Destination (existing Network Object / Group; server:self is separate)", destinations)
+            destinations = [d for d in destinations if d not in (v24.SERVER_SELF_TARGET, v24.TRUSTED_MANAGED_HOSTS_TARGET)]
+            destinations += [v24.SERVER_SELF_TARGET, v24.TRUSTED_MANAGED_HOSTS_TARGET]
+            _emit(io, "managed-hosts:trusted means ALL currently and subsequently trusted Managed Hosts; excludes server:self.")
+            destination = _ask_choice(io, "Destination (select existing target or explicit future-host scope)", destinations)
+            if destination == v24.TRUSTED_MANAGED_HOSTS_TARGET:
+                if not _ask_yes_no(io, "Include ALL current AND future trusted Managed Hosts in this Rule?", default=False):
+                    continue
             perms = [r["name"] for r in plane.conn.execute("SELECT name FROM permission_objects ORDER BY name")]
             perms += [r["name"] for r in plane.conn.execute("SELECT name FROM permission_groups ORDER BY name")]
             choice = _ask_choice(
@@ -1121,6 +1128,7 @@ def run_ai_access_wizard(plane: ControlPlane, name: str) -> int:
                 "Name        : %s" % name,
                 "Source      : %s" % source,
                 "Destination : %s" % destination,
+                "Host scope  : %s" % ("ALL current and future trusted Managed Hosts; excludes server:self" if destination == v24.TRUSTED_MANAGED_HOSTS_TARGET else "Selected destination only"),
                 "Permission  : %s" % permission,
                 "Capabilities: %s" % ", ".join(sorted(capabilities)),
                 "Paths       : %s" % (", ".join(paths) if paths else "-"),
@@ -1162,73 +1170,128 @@ def run_ai_access_wizard(plane: ControlPlane, name: str) -> int:
         return 0
 
 
-def run_ai_identity_wizard(plane: ControlPlane, name: str) -> int:
-    """Guided AI Identity connect → OAuth verify → VERIFIED binding.
+def _cloud_mcp_ready(view):
+    import drlink_mcp_tls as tls
+    return (view.get("frontend_available") and view.get("cloud_compatible")
+            and view.get("certificate") in (tls.STATUS_VALID, tls.STATUS_RENEWAL_DUE)
+            and str(view.get("url", "")).startswith("https://"))
 
-    All configuration remains draft until successful verification. Cancel must
-    leave configuration revision and authoritative AI Identity state unchanged.
-    """
-    from drlink_v24_ai_identity import (
-        discard_staged_ai_identity,
-        verify_authorization_code,
-        verify_client_credentials,
-        WizardAuthCancelled,
-    )
 
-    io = _io()
-    existing = plane.get_principal(name)
-    existed_before = existing is not None
-    rev_before = plane.current_revision()
+def _external_ai_connection(plane, name, io, provider):
+    """The actual remote client initiates OAuth; no CLI-created verifier or code."""
+    import drlink_mcp_tls as tls
+    from drlink_control_cli import _guide_mcp_server, _ai_identity_action
+    from drlink_control_plane import OAUTH_UNBOUND_PRINCIPAL
     try:
-        _emit(io, "Connect AI")
-        _emit(io, "==========")
-        _emit(io, "Name: %s" % name)
-        kind = _ask_choice(io, "Type", ["Interactive AI", "Automation / Custom AI"])
-        if kind.startswith("Interactive"):
-            # Staging (no config revision) happens inside begin/verify.
-            result = verify_authorization_code(plane, name, io=io, stage=True)
-        else:
-            if not existed_before:
-                # Client Credentials requires a pre-provisioned credential identity.
-                # Stage a pending principal without revision so Cancel stays atomic;
-                # verification still demands an externally supplied secret.
-                from drlink_v24_ai_identity import stage_ai_identity_oauth
-
-                stage_ai_identity_oauth(plane, name)
-            result = verify_client_credentials(plane, name, io=io)
-        sys.stdout.write(
-            "AI Identity verified: %s\nStatus: VERIFIED\nAuth: %s\n"
-            % (name, result.get("grant") or "oauth")
-        )
-        return 0
-    except (WizardCancelled, WizardAuthCancelled):
-        if not existed_before:
-            discard_staged_ai_identity(plane, name, only_if_unverified=True)
-        # Drop any leftover pending OAuth request rows (non-config).
+        tls.require_public_frontend(plane.root)
+        view = tls.status_view(plane, plane.root)
+        if not _cloud_mcp_ready(view):
+            if not _ask_yes_no(io, "Public MCP TLS is not ready. Configure MCP Server now?", default=False):
+                raise WizardCancelled()
+            if _guide_mcp_server(plane, io=io) != 0:
+                return 1
+            view = tls.status_view(plane, plane.root)
+            if not _cloud_mcp_ready(view):
+                _emit(io, "MCP Server is not ready. No AI Identity was authorized.")
+                return 1
+    except tls.McpTlsError as exc:
+        raise ControlPlaneError(str(exc)) from exc
+    resource = view["url"]
+    _emit(io, "MCP endpoint: %s" % resource)
+    _emit(io, "In %s, add this remote MCP endpoint and start OAuth. Copy the pending request ID shown on the approval page." % provider)
+    _emit(io, "The server cannot authenticate the client's display name. Check the browser request, redirect and resource before approval.")
+    pending = _ask_text(io, "Pending request ID", validate=lambda value: None if re.fullmatch(r"oap_[A-Za-z0-9_-]+", value) else "Enter the exact pending request ID from the browser.")
+    row = plane.conn.execute(
+        "SELECT r.*, p.name AS identity_name FROM ai_oauth_pending r JOIN ai_principals p ON p.id=r.principal_id WHERE r.id=?",
+        (pending,)).fetchone()
+    if (row is None or row["status"] != "pending" or row["consumed_at"]
+            or plane._oauth_pending_expired(row) or row["resource"] != resource
+            or row["identity_name"].lower() not in (name.lower(), OAUTH_UNBOUND_PRINCIPAL)):
+        raise ControlPlaneError("No matching active OAuth request for this Identity and MCP endpoint. No approval was applied.")
+    # repr prevents control characters in externally supplied metadata from
+    # rewriting the terminal review. Never display codes, verifiers or tokens.
+    for label, value in (("AI Identity", name), ("Request ID", pending),
+                         ("OAuth client ID", row["client_id"]), ("Redirect", row["redirect_uri"]),
+                         ("Resource", row["resource"]), ("Requested scope", row["scope"]),
+                         ("Expires", row["expires_at"])):
+        _emit(io, "%s: %r" % (label, value))
+    decision = _ask_choice(io, "Review OAuth request", ["Approve", "Deny"])
+    if decision == "Deny":
+        return _ai_identity_action(plane, name, ["deny", pending])
+    _ai_identity_action(plane, name, ["approve", pending])
+    _emit(io, "Approval saved. Return to the waiting browser, select Retry and finish the OAuth connection.")
+    _emit(io, "Authentication alone does not grant access. Leaving now does not undo the saved approval.")
+    while True:
         try:
-            plane.conn.execute(
-                "DELETE FROM ai_oauth_pending WHERE principal_id IN "
-                "(SELECT id FROM ai_principals WHERE name = ? COLLATE NOCASE)",
-                (name,),
-            )
-            if not existed_before:
-                discard_staged_ai_identity(plane, name, only_if_unverified=True)
-            plane.conn.commit()
-        except Exception:
-            pass
-        if plane.current_revision() != rev_before:
-            # Should never happen; surface truthfully rather than lying.
-            sys.stdout.write(
-                "ERROR:\nWizard cancel left configuration revision changed.\n\n"
-                "No trusted AI Identity binding was created.\n"
-            )
-            return 1
-        sys.stdout.write(_cancel_message())
+            choice = _ask_choice(io, "Browser connection", ["Check verification", "Finish later"])
+        except WizardCancelled:
+            choice = "Finish later"
+        if choice == "Finish later":
+            _emit(io, "Approval saved; connection verification not confirmed. Check show ai-identity %s." % name)
+            return 0
+        identity = plane.get_principal(name)
+        if identity is not None and identity["enabled"] and str(identity["credential_status"]).lower() in ("verified", "active"):
+            proof = plane.conn.execute(
+                "SELECT 1 FROM ai_oauth_codes c JOIN ai_oauth_tokens t "
+                "ON t.principal_id=c.principal_id AND t.client_id=c.client_id AND t.resource=c.resource "
+                "WHERE c.principal_id=? AND c.client_id=? AND c.resource=? AND c.redirect_uri=? "
+                "AND c.code_challenge=? AND c.created_at>=? AND c.used_at IS NOT NULL "
+                "AND t.kind='access' AND t.revoked_at IS NULL AND t.created_at>=c.used_at "
+                "AND t.expires_at>? LIMIT 1",
+                (identity["id"], row["client_id"], resource, row["redirect_uri"],
+                 row["code_challenge"], row["created_at"], v24.utc_now_iso())).fetchone()
+            if proof is not None:
+                _emit(io, "AI Identity verified: %s (OAuth exchange confirmed)" % name)
+                try:
+                    if _ask_yes_no(io, "Create a separate AI Access Rule now?", default=False):
+                        rule = _ask_text(io, "AI Access Rule name", validate=lambda x: None if x else "Name is required.")
+                        return run_ai_access_wizard(plane, rule, source_identity=name, io=io)
+                except WizardCancelled:
+                    _emit(io, "Identity verified. No new access rule was applied.")
+                return 0
+        _emit(io, "OAuth exchange not verified yet. Finish in the browser and check again.")
+
+
+def run_ai_identity_wizard(plane: ControlPlane, name: str, *, io=None) -> int:
+    """Connect or manage an AI Identity using one public lifecycle."""
+    from drlink_control_cli import _ai_identity_action
+    from drlink_v24_ai_identity import verify_client_credentials, WizardAuthCancelled
+    import drlink_mcp_tls as tls
+    io = io or _io()
+    initial_tls = tls.load_state(plane)
+    v24.validate_public_name(name, "AI Identity name")
+    existing = plane.get_principal(name)
+    _emit(io, "AI Identity: %s" % name)
+    try:
+        if existing is not None:
+            _emit(io, "Authentication: %s; enabled: %s" % (existing["credential_status"], bool(existing["enabled"])))
+            action = _ask_choice(io, "Manage AI Identity", ["Connect / reconnect", "Rotate credential", "Revoke credential", "Authentication method", "OAuth redirect"])
+            if action != "Connect / reconnect":
+                args = {
+                    "Rotate credential": ["rotate"], "Revoke credential": ["revoke"],
+                    "Authentication method": ["authentication"], "OAuth redirect": ["oauth-redirect"],
+                }[action]
+                if args[0] == "authentication":
+                    args.append(_ask_choice(io, "Authentication method", ["oauth", "static-bearer"]))
+                elif args[0] == "oauth-redirect":
+                    args.append(_ask_text(io, "OAuth redirect URI"))
+                if _ask_yes_no(io, "Apply reviewed authentication change?", default=False):
+                    return _ai_identity_action(plane, name, args)
+                raise WizardCancelled()
+        provider = _ask_choice(io, "Connect AI", ["ChatGPT", "Claude", "Other remote MCP client", "Automation (existing client credentials)"])
+        if provider.startswith("Automation"):
+            if existing is None:
+                raise ControlPlaneError("Client Credentials requires an existing provisioned AI Identity. No changes were applied.")
+            result = verify_client_credentials(plane, name, io=io)
+            _emit(io, "AI Identity verified: %s (%s)" % (name, result.get("grant") or "oauth"))
+            return 0
+        return _external_ai_connection(plane, name, io, provider)
+    except (WizardCancelled, WizardAuthCancelled):
+        if tls.load_state(plane) != initial_tls:
+            _emit(io, "AI connection cancelled. Previously applied MCP Server settings remain; no new Identity approval was applied.")
+        else:
+            sys.stdout.write(_cancel_message())
         return 0
-    except ControlPlaneError:
-        if not existed_before:
-            discard_staged_ai_identity(plane, name, only_if_unverified=True)
-        raise
 
 
 def run_remote_service_wizard(plane: ControlPlane, name: str) -> int:
@@ -1337,12 +1400,15 @@ def run_wizard(plane: ControlPlane, resource: str, name: Optional[str]) -> int:
             % resource.replace("-", " ").title()
         )
     try:
+        if resource in ("ai-identity", "ai-access"):
+            io = _io()
+            if name is None:
+                name = _ask_text(io, "AI Identity name" if resource == "ai-identity" else "AI Access Rule name",
+                                 validate=lambda n: None if n else "Name is required.")
+                v24.validate_public_name(name)
+            return fn(plane, name, io=io)
         if name is None:
-            if resource not in ("ai-identity", "ai-access"):
-                raise ControlPlaneError("Name is required.")
-            name = _ask_text(_io(), "AI Identity name" if resource == "ai-identity" else "AI Access Rule name",
-                             validate=lambda n: None if n else "Name is required.")
-            v24.validate_public_name(name)
+            raise ControlPlaneError("Name is required.")
         return fn(plane, name)
     except (WizardCancelled, KeyboardInterrupt, EOFError):
         sys.stdout.write(_cancel_message())

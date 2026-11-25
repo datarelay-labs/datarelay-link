@@ -79,6 +79,7 @@ class ReplLiveInventoryTests(unittest.TestCase):
                 ('object_groups', '', ''),
                 ('ai_principals', '', ''),
                 ('ai_access_rules', ',position', ',1'),
+                ('ai_policy_rules', '', ''),
             ):
                 conn.execute('INSERT INTO %s (id,name,created_at,updated_at%s) '
                              'VALUES (?,?,?,?%s)' % (table, extra_columns, extra_values),
@@ -88,6 +89,7 @@ class ReplLiveInventoryTests(unittest.TestCase):
             before = target.read_bytes()
             inventory = self.editor.grammar.read_only_completion_inventory('server', temp)
             self.assertEqual(target.read_bytes(), before)
+            self.assertNotIn('ai_access_rules-name', inventory['inventory'][self.editor.grammar.CATALOG.C_AI_RULE])
             config = Path(temp) / 'etc/drlink/config.json'
             config.parent.mkdir(parents=True, exist_ok=True)
             config.write_text('{"role":"server"}\n')
@@ -104,7 +106,7 @@ class ReplLiveInventoryTests(unittest.TestCase):
                 ('network-object', 'objects-name'),
                 ('network-group', 'object_groups-name'),
                 ('ai-identity', 'ai_principals-name'),
-                ('ai-access', 'ai_access_rules-name'),
+                ('ai-access', 'ai_policy_rules-name'),
             ):
                 with self.subTest(resource=resource):
                     for action in (('show',) if resource == 'ai-access'

@@ -155,6 +155,28 @@ class AiAuthConvergence(unittest.TestCase):
         content = (result.get("content") or [{}])[0]
         return str(content.get("text") or "")
 
+    def test_legacy_only_policy_is_not_current_cli_authority(self):
+        import io
+        from contextlib import redirect_stdout, redirect_stderr
+        from drlink_control_cli import dispatch
+        _seed_legacy_allow(self.plane, name="old-allow", principal="bot",
+                           endpoint="host-a", capability="exec")
+        before = self.plane.current_revision()
+        output = io.StringIO()
+        with redirect_stdout(output):
+            self.assertEqual(dispatch(["show", "ai-access"], root=self.tmp, plane=self.plane), 0)
+        self.assertIn("No Policy", output.getvalue())
+        self.assertIn("Retained pre-v2.4 records: 1", output.getvalue())
+        self.assertNotIn("old-allow", output.getvalue())
+        for cmd in (["show", "ai-access", "old-allow"],
+                    ["unset", "ai-access", "old-allow"],
+                    ["unset", "ai-access", "old-allow", "enabled"]):
+            with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+                self.assertNotEqual(dispatch(cmd, root=self.tmp, plane=self.plane), 0)
+        self.assertEqual(self.plane.current_revision(), before)
+        self.assertEqual(self.plane.conn.execute("SELECT COUNT(*) FROM ai_access_rules").fetchone()[0], 1)
+        self.assertEqual(self._auth("exec", operand="id")["action"], "DENY")
+
     def test_canonical_allow_legacy_deny(self):
         self._whitelist("allow-info", destination="host-a", permission="read-only")
         _seed_legacy_allow(

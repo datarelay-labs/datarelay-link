@@ -535,3 +535,7 @@ PUBLIC_METADATA_SCAN=PASS
 For the v2.4 stable target, Zero-Touch enrollment credentials are unique and single-use, separate from the eight-character Bootstrap filename and never included in the public entry file. Server-side persistent state stores a verifier/hash plus lifecycle metadata rather than a redisplayable raw ticket. Post-success reuse is classified as `BOOTSTRAP_TICKET_USED`, and concurrent double-use must have exactly one successful consumer.
 
 Manual Enrollment Codes are likewise not reusable as fresh-install credentials after a successful enrollment. Current clients bind crash-safe enrollment recovery to the original per-install operation plus the established management identity and service set; a new install/reinstall operation must use a newly issued Enrollment Code. The local pending-enrollment record may replay only the original request after a lost response or interruption, preserving idempotent recovery without reopening a consumed Code as authorization.
+
+### Explicit dynamic Managed Host scope
+
+An AI Access Rule with destination managed-hosts:trusted matches only a current active managed endpoint linked to a trusted enrolled Agent. The rule includes future trusted Agent enrollments only when the operator explicitly selects this destination; no automatic authorization follows OAuth. Native server:self, unknown endpoints, unrelated Network Objects and untrusted or inactive hosts are excluded. All rule permission, path, Identity and target OS boundaries still apply. Existing named groups remain separate.

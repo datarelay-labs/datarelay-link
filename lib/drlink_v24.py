@@ -58,6 +58,9 @@ FILE_PERMISSIONS = frozenset(
 )
 SERVER_SELF_TARGET = "server:self"
 SERVER_SELF_REF_ID = "local"
+TRUSTED_MANAGED_HOSTS_TARGET = "managed-hosts:trusted"
+TRUSTED_MANAGED_HOSTS_KIND = "managed-hosts"
+TRUSTED_MANAGED_HOSTS_REF_ID = "trusted"
 
 CAP_TO_PERMISSION = {}
 for _perm, _caps in PERMISSION_TO_CAPS.items():
@@ -1396,6 +1399,8 @@ def ai_access_rule_update_security_impact(
         cur_dst = row["name"] if row else None
     elif dkind == "server" and existing["destination_ref_id"] == SERVER_SELF_REF_ID:
         cur_dst = SERVER_SELF_TARGET
+    elif dkind == TRUSTED_MANAGED_HOSTS_KIND and existing["destination_ref_id"] == TRUSTED_MANAGED_HOSTS_REF_ID:
+        cur_dst = TRUSTED_MANAGED_HOSTS_TARGET
     cur_perm = None
     pkind = existing["permission_ref_kind"]
     if pkind == "permission_object":
@@ -1614,6 +1619,8 @@ def _expand_network_group_semantics(
 
 def _semantic_network_ref(conn: sqlite3.Connection, kind: str, ref_id: str) -> str:
     kind_l = str(kind or "").lower()
+    if kind_l == TRUSTED_MANAGED_HOSTS_KIND:
+        return TRUSTED_MANAGED_HOSTS_TARGET if ref_id == TRUSTED_MANAGED_HOSTS_REF_ID else _unresolvable_semantic(kind_l, ref_id)
     if kind_l == "server":
         return SERVER_SELF_TARGET if ref_id == SERVER_SELF_REF_ID else _unresolvable_semantic(kind_l, ref_id)
     if kind_l == "object":
@@ -4535,7 +4542,20 @@ def evaluate_selector_policy(
     }
 
 
+def _trusted_managed_host_matches(plane_db, name: str) -> bool:
+    # Match only an actual current, trusted, active Managed Host endpoint.
+    # No wildcard, object-group name, IP alias or native Server target.
+    return plane_db.conn.execute(
+        "SELECT 1 FROM objects o JOIN managed_endpoints e ON e.object_id=o.id "
+        "JOIN clients c ON c.id=e.client_id WHERE o.name=? COLLATE NOCASE "
+        "AND o.type='managed_endpoint' AND o.origin='managed' AND o.status='active' "
+        "AND c.trust_status='trusted' AND lower(c.status) NOT IN ('retired','removed','deleted') LIMIT 1", (name,)
+    ).fetchone() is not None
+
+
 def _ref_name_match(plane_db, ref_kind: str, ref_id: str, name: str) -> bool:
+    if ref_kind == TRUSTED_MANAGED_HOSTS_KIND:
+        return ref_id == TRUSTED_MANAGED_HOSTS_REF_ID and _trusted_managed_host_matches(plane_db, name)
     # Built-in Server target is never resolved through a user-created Network Object.
     if ref_kind == "server":
         return ref_id == SERVER_SELF_REF_ID and name == SERVER_SELF_TARGET
@@ -4676,7 +4696,14 @@ def enroll_managed_host_in_owner_mcp_access(plane_db, client_id: str) -> dict:
         return {"operation": "noop", "reason": "owner not verified"}
     group = plane_db.get_object_group(MCP_OWNER_HOST_GROUP)
     if group is None:
-        raise ControlPlaneError("Approved MCP owner group is missing")
+        return {"operation": "noop", "reason": "previous owner group no longer exists"}
+    rule = plane_db.conn.execute(
+        "SELECT 1 FROM ai_policy_rules WHERE name=? COLLATE NOCASE "
+        "AND source_identity_id=? AND destination_ref_kind='group' AND destination_ref_id=?",
+        (MCP_OWNER_RULE, owner["value"], group["id"]),
+    ).fetchone()
+    if rule is None:
+        return {"operation": "noop", "reason": "previous owner rule no longer references group"}
     endpoint = plane_db.conn.execute(
         "SELECT o.id FROM objects o JOIN managed_endpoints e ON e.object_id=o.id "
         "JOIN clients c ON c.id=e.client_id "
@@ -4764,7 +4791,7 @@ def set_ai_access_rule(
                 "Authentication is required before AI Access authorization.\n\n"
                 "No changes were applied." % source
             )
-    if destination is not None and destination != SERVER_SELF_TARGET:
+    if destination is not None and destination not in (SERVER_SELF_TARGET, TRUSTED_MANAGED_HOSTS_TARGET):
         try:
             plane_db.resolve_ref(destination)
         except ControlPlaneError:
@@ -4811,6 +4838,8 @@ def set_ai_access_rule(
         if destination is not None:
             if destination == SERVER_SELF_TARGET:
                 kind, ref_id = "server", SERVER_SELF_REF_ID
+            elif destination == TRUSTED_MANAGED_HOSTS_TARGET:
+                kind, ref_id = TRUSTED_MANAGED_HOSTS_KIND, TRUSTED_MANAGED_HOSTS_REF_ID
             else:
                 kind, ref = plane_db.resolve_ref(destination)
                 ref_id = ref["id"]
@@ -4929,12 +4958,17 @@ class _AiDestinationMatcher:
             plane_db, "object_groups",
             sorted({
                 r["destination_ref_id"] for r in rows
-                if r["destination_ref_kind"] not in ("server", "object")
+                if r["destination_ref_kind"] not in ("server", "object", TRUSTED_MANAGED_HOSTS_KIND)
             }),
         )
         self._group_members: dict = {}
+        self._trusted_host = None
 
     def matches(self, ref_kind: str, ref_id: str) -> bool:
+        if ref_kind == TRUSTED_MANAGED_HOSTS_KIND:
+            if self._trusted_host is None:
+                self._trusted_host = _trusted_managed_host_matches(self._plane_db, self._wanted)
+            return ref_id == TRUSTED_MANAGED_HOSTS_REF_ID and self._trusted_host
         if ref_kind == "object":
             name = self._objects.get(ref_id, _AI_REF_MISSING)
             return name is not _AI_REF_MISSING and name.lower() == self._wanted

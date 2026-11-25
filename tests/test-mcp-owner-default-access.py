@@ -140,6 +140,75 @@ class OAuthAuthenticationSeparation(unittest.TestCase):
         self.assert_no_implicit_policy()
         self.check_caps("chatgpt", "Second Test Agent", "DENY")
 
+    def test_explicit_dynamic_scope_is_live_trusted_inventory_not_wildcard(self):
+        self.approve_and_exchange("chatgpt", "first")
+        self.approve_and_exchange("claude", "second")
+        v24.set_permission_object(self.plane, "read-profile", permissions=["host-info", "file-read"], oneshot=True)
+        v24.set_ai_access_rule(self.plane, "dynamic", source="chatgpt",
+                               destination=v24.TRUSTED_MANAGED_HOSTS_TARGET,
+                               permission="read-profile", paths=["/tmp/**"], enabled=True, oneshot=True)
+        def decision(identity, target, capability="get_system_info", operand=None):
+            return v24.authorize_ai_capability_v24(self.plane, identity=identity,
+                       destination=target, capability=capability, operand=operand)["action"]
+        self.assertEqual(decision("chatgpt", "First Test Agent"), "ALLOW")
+        self.assertEqual(decision("claude", "First Test Agent"), "DENY")
+        self.assertEqual(decision("chatgpt", "First Test Agent", "read_file", "/tmp/foo"), "ALLOW")
+        self.assertEqual(decision("chatgpt", "First Test Agent", "read_file", "/etc/foo"), "DENY")
+        for target in ("server:self", "managed-hosts:trusted", "missing"):
+            self.assertEqual(decision("chatgpt", target), "DENY")
+        self.assertEqual(decision("chatgpt", "First Test Agent", "exec", "id"), "DENY")
+        v24.set_network_object(self.plane, "arbitrary-ip", type="ip", value="192.0.2.1", oneshot=True)
+        self.assertEqual(decision("chatgpt", "arbitrary-ip"), "DENY")
+        rp.sync_enrolled_client(self.plane, client_id="b" * 32, hostname="agent-02",
+                                label="Second Test Agent", services={})
+        self.assertEqual(decision("chatgpt", "Second Test Agent"), "ALLOW")
+        self.assertEqual(decision("claude", "Second Test Agent"), "DENY")
+        self.plane.conn.execute("UPDATE clients SET trust_status='revoked' WHERE id=?", ("b" * 32,))
+        self.assertEqual(decision("chatgpt", "Second Test Agent"), "DENY")
+        self.plane.conn.execute("UPDATE clients SET trust_status='trusted' WHERE id=?", ("b" * 32,))
+        self.plane.conn.execute("UPDATE clients SET status='retired' WHERE id=?", ("b" * 32,))
+        self.assertEqual(decision("chatgpt", "Second Test Agent"), "DENY")
+        self.plane.conn.execute("UPDATE clients SET status='disconnected' WHERE id=?", ("b" * 32,))
+        self.plane.conn.execute("UPDATE objects SET status='inactive' WHERE name='Second Test Agent'")
+        self.assertEqual(decision("chatgpt", "Second Test Agent"), "DENY")
+        self.assertEqual(v24.test_ai_access_v24(self.plane, identity="chatgpt", destination="First Test Agent", permission="host-info")["result"], "ALLOW")
+        from drlink_v24_bundle import export_configuration_v24, prepare_v24_plan
+        doc = export_configuration_v24(self.plane)
+        self.assertIn("managed-hosts:trusted", doc)
+        plan = prepare_v24_plan(self.plane, doc)
+        from drlink_v24_bundle import apply_v24_plan
+        apply_v24_plan(self.plane, plan)
+        self.assertEqual(decision("chatgpt", "First Test Agent"), "ALLOW")
+        self.assertEqual(decision("chatgpt", "Second Test Agent"), "DENY")
+        self.assertIsNone(self.plane.conn.execute("SELECT value FROM system_meta WHERE key=?", (v24.MCP_OWNER_PRINCIPAL_META,)).fetchone())
+
+    def test_dynamic_scope_requires_explicit_wizard_confirmation(self):
+        from drlink_v24_wizard import ScriptedIO, set_wizard_io
+        from drlink_control_cli import dispatch
+        self.approve_and_exchange("chatgpt", "first")
+        before = self.plane.current_revision()
+        self.addCleanup(set_wizard_io, None)
+        set_wizard_io(ScriptedIO(["chatgpt", "managed-hosts:trusted", "n", "0"]))
+        self.assertEqual(dispatch(["set", "ai-access", "dynamic"], root=self.tmp, plane=self.plane), 0)
+        self.assertEqual(self.plane.current_revision(), before)
+        self.assert_no_implicit_policy()
+        scripted = ScriptedIO(["chatgpt", "managed-hosts:trusted", "y", "Read-only profile", "/tmp/**", "y", "1"])
+        set_wizard_io(scripted)
+        self.assertEqual(dispatch(["set", "ai-access", "dynamic"], root=self.tmp, plane=self.plane), 0)
+        self.assertIn("ALL current and future trusted Managed Hosts", "".join(scripted.out))
+        self.assertEqual(v24.evaluate_ai_access_v24(self.plane, identity="chatgpt", destination="First Test Agent", permission="host-info")["result"], "ALLOW")
+        self.assertEqual(v24.evaluate_ai_access_v24(self.plane, identity="chatgpt", destination="server:self", permission="host-info")["result"], "DENY")
+
+    def test_fixed_destination_does_not_expand_after_enrollment(self):
+        self.approve_and_exchange("chatgpt", "first")
+        v24.set_permission_object(self.plane, "fixed-perm", permissions=["host-info"], oneshot=True)
+        v24.set_ai_access_rule(self.plane, "fixed", source="chatgpt",
+                               destination="First Test Agent", permission="fixed-perm", enabled=True, oneshot=True)
+        rp.sync_enrolled_client(self.plane, client_id="b" * 32, hostname="agent-02", label="Second Test Agent", services={})
+        for target, expected in (("First Test Agent", "ALLOW"), ("Second Test Agent", "DENY")):
+            result = v24.authorize_ai_capability_v24(self.plane, identity="chatgpt", destination=target, capability="get_system_info")
+            self.assertEqual(result["action"], expected)
+
     def test_explicit_rule_and_existing_dynamic_group_are_preserved(self):
         self.approve_and_exchange("chatgpt", "first")
         v24.set_permission_object(self.plane, v24.MCP_OWNER_PERMISSION,

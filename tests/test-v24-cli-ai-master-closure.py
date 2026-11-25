@@ -383,33 +383,16 @@ class AIIdentityOAuth(unittest.TestCase):
         self.assertEqual(ev["result"], "DENY")
         self.assertEqual(ev["auth"], "UNAUTHENTICATED")
 
-    def test_wizard_ai_identity_auth_code(self):
-        class ExternalApproveIO(ScriptedIO):
-            def __init__(self, plane, name, answers):
-                super().__init__(answers)
-                self.plane = plane
-                self.name = name
-
-            def ask(self, prompt):
-                text = str(prompt or "")
-                if "Authorization code" in text:
-                    row = self.plane.conn.execute(
-                        "SELECT id FROM ai_oauth_pending ORDER BY created_at DESC"
-                    ).fetchone()
-                    approved = self.plane.approve_oauth_pending(
-                        row["id"], principal_name=self.name, retain_for_browser=False
-                    )
-                    return approved["code"]
-                return super().ask(prompt)
-
-        set_wizard_io(ExternalApproveIO(self.plane, "claude", ["1", "y"]))
+    def test_wizard_ai_identity_requires_public_tls(self):
+        rev = self.plane.current_revision()
+        set_wizard_io(ScriptedIO(["Claude", "n"]))
         out = io.StringIO()
         with redirect_stdout(out):
             rc = cli.dispatch(["set", "ai-identity", "claude"], root=self.tmp, plane=self.plane)
         self.assertEqual(rc, 0)
-        self.assertIn("VERIFIED", out.getvalue())
-        self.assertEqual(str(self.plane.get_principal("claude")["credential_status"]).lower(), "verified")
-        self.assertNotIn("drauth_", out.getvalue())
+        self.assertIsNone(self.plane.get_principal("claude"))
+        self.assertEqual(self.plane.current_revision(), rev)
+        self.assertIn("No changes were applied", out.getvalue())
 
     def test_wizard_ai_identity_cancel_zero_revision(self):
         rev_before = self.plane.current_revision()

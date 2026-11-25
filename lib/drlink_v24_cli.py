@@ -890,22 +890,8 @@ def handle_show(plane: ControlPlane, rest: list[str]) -> Optional[int]:
         return _show_policy(plane, "internet", rest)
     if res == "ai-access":
         _require_server(plane, "AI Access policy")
-        if len(rest) == 1:
-            cap_n = plane.conn.execute("SELECT COUNT(*) FROM ai_access_rules").fetchone()[0]
-            v24_n = plane.conn.execute("SELECT COUNT(*) FROM ai_policy_rules").fetchone()[0]
-            if int(cap_n or 0) and not int(v24_n or 0):
-                return None
-        if len(rest) >= 3 and rest[2] in ("impact",):
-            return None
-        if len(rest) >= 2:
-            v24_row = plane.conn.execute(
-                "SELECT id FROM ai_policy_rules WHERE name = ? COLLATE NOCASE", (rest[1],)
-            ).fetchone()
-            cap_row = plane.conn.execute(
-                "SELECT id FROM ai_access_rules WHERE name = ? COLLATE NOCASE", (rest[1],)
-            ).fetchone()
-            if cap_row is not None and v24_row is None:
-                return None
+        if len(rest) > 2:
+            raise ControlPlaneError("Usage: show ai-access [RULE]")
         return _show_ai_policy(plane, rest)
     if res == "ai-access-log":
         _require_server(plane, "AI Access Log")
@@ -1168,6 +1154,9 @@ def _show_ai_policy(plane: ControlPlane, rest: list[str]) -> int:
                     "  %s (%s)\n"
                     % (row["name"], "enabled" if row["enabled"] else "disabled")
                 )
+        archived = plane.conn.execute("SELECT COUNT(*) FROM ai_access_rules").fetchone()[0]
+        if archived:
+            sys.stdout.write("Retained pre-v2.4 records: %s (not effective AI Access rules; review before recreating in current policy).\n" % archived)
         return 0
     row = plane.conn.execute(
         "SELECT * FROM ai_policy_rules WHERE name = ? COLLATE NOCASE", (rest[1],)
@@ -1190,6 +1179,8 @@ def _show_ai_policy(plane: ControlPlane, rest: list[str]) -> int:
         dest_label = dest["name"] if dest else "-"
     elif row["destination_ref_kind"] == "server" and row["destination_ref_id"] == v24.SERVER_SELF_REF_ID:
         dest_label = v24.SERVER_SELF_TARGET
+    elif row["destination_ref_kind"] == v24.TRUSTED_MANAGED_HOSTS_KIND and row["destination_ref_id"] == v24.TRUSTED_MANAGED_HOSTS_REF_ID:
+        dest_label = v24.TRUSTED_MANAGED_HOSTS_TARGET
     perm_label = "-"
     if row["permission_ref_kind"] == "permission_object" and row["permission_ref_id"]:
         perm = plane.conn.execute(
@@ -1702,16 +1693,11 @@ def handle_unset(plane: ControlPlane, rest: list[str]) -> Optional[int]:
         if len(rest) < 2:
             raise ControlPlaneError("Usage: unset ai-access <RULE>|policy")
         if len(rest) >= 3:
-            return None
+            raise ControlPlaneError("Usage: unset ai-access <RULE>|policy")
         row = plane.conn.execute(
             "SELECT * FROM ai_policy_rules WHERE name = ? COLLATE NOCASE", (rest[1],)
         ).fetchone()
         if not row:
-            cap = plane.conn.execute(
-                "SELECT id FROM ai_access_rules WHERE name = ? COLLATE NOCASE", (rest[1],)
-            ).fetchone()
-            if cap is not None:
-                return None
             raise ControlPlaneError(v24.cli_error("Rule '%s' was not found." % rest[1]))
         from drlink_control_cli import _run
 

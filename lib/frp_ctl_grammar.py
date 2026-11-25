@@ -95,7 +95,7 @@ def read_only_completion_inventory(role, root=""):
                     (CATALOG.C_OBJECT, "objects"),
                     (CATALOG.C_OBJECT_GROUP, "object_groups"),
                     (CATALOG.C_AI_PRINCIPAL, "ai_principals"),
-                    (CATALOG.C_AI_RULE, "ai_access_rules"),
+                    (CATALOG.C_AI_RULE, "ai_policy_rules"),
                 )
             }
         if client:
