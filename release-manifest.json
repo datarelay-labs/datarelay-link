@@ -66,7 +66,7 @@
     "bootstrap-client.sh": {
       "path": "dist/bootstrap-client.sh",
       "url_path": "dist/bootstrap-client.sh",
-      "sha256": "65cf4662a1b731df47ddf5205d14dc1af8ca7c92d485058a12a814325db6ce3d"
+      "sha256": "5865a58bba1b669e0bc70850b3f8c256e25ce70e4cb6903dfee016f50767c494"
     },
     "bootstrap-client.ps1": {
       "path": "dist/bootstrap-client.ps1",
@@ -76,7 +76,7 @@
     "bootstrap-server.sh": {
       "path": "dist/bootstrap-server.sh",
       "url_path": "dist/bootstrap-server.sh",
-      "sha256": "224f261e65d9fa9f3ea4bfd2f1a3761a39f8a06beb92b218d89c68087a77a9c1"
+      "sha256": "eed62d0f1b4b2933074bfff4a86e4021fc7c4c5c14c5e85f1041d4cfb6daf804"
     },
     "uninstall-client.sh": {
       "path": "dist/uninstall-client.sh",
@@ -91,12 +91,12 @@
     "bootstrap-server-online.sh": {
       "path": "dist/bootstrap-server-online.sh",
       "url_path": "dist/bootstrap-server-online.sh",
-      "sha256": "46186ce5ff57a59348bcc79857818febcb91fd7a6c429ab2b6a95e911312c58a"
+      "sha256": "5aeda7839df5acef0a600711d0412e11a8a7923ff91b6f6d8cbacf6e5db99953"
     },
     "bootstrap-server-core.tar": {
       "path": "dist/bootstrap-server-core.tar",
       "url_path": "dist/bootstrap-server-core.tar",
-      "sha256": "13467052edd03ee59e4399464422c8b265c00fc5b3113e349efb38a5a2fcc8e4"
+      "sha256": "eca7f6945f02bd21c916ad40799a5050f6fcd516cb4863094c52084954d94732"
     }
   },
   "source_head": "762038c076978acd40226ba3a1f28b83264ddef1",
