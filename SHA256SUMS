@@ -480,7 +480,7 @@ e2c17a79304bc05ad2ee1d2215d6e2ca4cffd9ea63c7a0a2d92c40df71a51274  tests/test-mcp
 77f23f13bc06217f89fd4709a048feed7924d94fa7c23989e4900265ed746866  tests/test-mcp-public-tls-lifecycle.py
 cfcaceb73a3ffb6928d946c702774bdb1e30b7a27c3aa6e179a8c5cff0ea764a  tests/test-mcp-remote-connector-interop.py
 07fbf4d941e97144ca10be2af6e4f6d77779c205fe7658fd34a5060bab12d53e  tests/test-mcp-server-full-control-public.py
-96a9699d8191a55749787b41e571d95ed2c8b2bf19cd7005f216c5f9e3614d7d  tests/test-mcp-server-full-control.py
+32f12880b4323cb7139ab85b83d3d664cdae7d28bc734a354935c668d40c5eea  tests/test-mcp-server-full-control.py
 8106dc8c6f0d8d6dc89d63b4e3fbe00243622fd23a9d5b7734a3f4540cd8c62d  tests/test-mcp-server-local-executor.py
 1737f5a313d63e29e1a9c4ca104d2b566c778890ec7b88d76ec4fd6d732bad30  tests/test-mcp-server-self.py
 969215635c259615045c72d98f330d2cce2a1a3de10793035c6abe8403eee923  tests/test-mgmt-identity-first-gen-atomicity.py
