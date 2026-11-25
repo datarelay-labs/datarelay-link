@@ -26,20 +26,20 @@ class E2EProcedureGuard(unittest.TestCase):
 
     def test_owner_assigned_dual_server_e2e_boundaries(self):
         for doc in (self.canonical, self.procedure, self.roadmap):
-            self.assertIn("MCP_DNS_SERVER", doc)
+            self.assertIn("MCP_SERVER", doc)
             self.assertIn("FUNCTION_PERFORMANCE_SERVER", doc)
         for doc in (self.procedure, self.roadmap):
             self.assertIn("B014", doc)
-        # Each check runs on exactly the owner-designated function or MCP/DNS Server.
-        self.assertIn("MCP_DNS_SERVER — MCP and DNS/hostname tests only", self.canonical)
-        self.assertIn("FUNCTION_PERFORMANCE_SERVER — every other test", self.canonical)
+        # Each check runs on exactly the owner-designated function/FQDN or MCP-only Server.
+        self.assertIn("MCP_SERVER — MCP tests only", self.canonical)
+        self.assertIn("FUNCTION_PERFORMANCE_SERVER — functional and public hostname/DNS tests", self.canonical)
         self.assertIn("Mixed-scope scenarios", self.canonical)
-        self.assertIn("only MCP and DNS/public-hostname tests", self.procedure)
-        self.assertIn("every remaining", self.procedure)
-        self.assertIn("MCP + DNS/public-hostname tests only", self.roadmap)
+        self.assertIn("only for MCP-specific public TLS/HTTPS", self.procedure)
+        self.assertIn("DNS/public/bootstrap hostname and fallback", self.procedure)
+        self.assertIn("MCP-specific tests only", self.roadmap)
         self.assertIn("everything else", self.roadmap)
         self.assertIn("does not create a new VM-detection", self.canonical)
-        self.assertIn("No new VM-kind", self.procedure)
+        self.assertIn("No new global gate or host-provisioning prerequisite", self.procedure)
         self.assertIn("not a new VM guest/snapshot/restore/host-provisioning prerequisite", self.roadmap)
         self.assertIn("single443", self.canonical)
         self.assertIn("116 scenarios", self.canonical)
@@ -49,6 +49,15 @@ class E2EProcedureGuard(unittest.TestCase):
         for doc in (self.canonical, self.procedure, self.roadmap):
             self.assertNotIn("remote.xdr.ooo", doc)
             self.assertNotIn("221.139.249.113", doc)
+
+    def test_no_separate_connection_preflight(self):
+        cli = (ROOT / "docs/CLI_ONLY_E2E_SCENARIOS.md").read_text(encoding="utf-8")
+        for doc in (self.canonical, self.procedure, self.roadmap, cli):
+            self.assertIn("No separate connection preflight", doc)
+            self.assertIn("execute the first actual scenario action directly", doc)
+            self.assertIn("Preserve normal SSH/security enforcement", doc)
+        self.assertNotIn("probe all configured test hosts", self.canonical)
+        self.assertNotIn("probing the configured hosts", self.canonical)
 
     def test_disposable_test_host_authorization_and_pretest_cleanup(self):
         # Owner approval covers assigned test hosts, not unrelated machines.
