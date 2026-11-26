@@ -1308,7 +1308,7 @@ Lane C  direct SSH/HTTP/HTTPS/Custom TCP publication + real traffic
 Lane D  Relay Host and Fixed TCP lifecycle
 Lane E  Remote Access policy lifecycle + real allow/deny traffic
 Lane F  Internet Access application use cases
-Lane G  AI Identity / Permission / AI Access / MCP
+Lane G  AI MCP Setup / Permission / AI Access / MCP
 Lane H  ConfigurationBundle / Export -> AI -> Reapply
 Lane I  backup/revision/audit/recovery on isolated state
 Lane J  Agent lifecycle/update/reconnect on spare hosts
@@ -1722,7 +1722,7 @@ Verify:
 
 ## U-007 — AI/MCP authorized and denied use — MANDATORY for v2.4.0
 
-Server creates/binds the AI Identity using the supported authentication workflow, then configures permissions and AI Access.
+Server discovers `ai-mcp` / `AI MCP Setup` with the description `Set up and manage AI MCP connections`, configures MCP and creates/binds the AI Identity using the supported authentication workflow, then configures permissions and AI Access.
 
 Representative CLI:
 
@@ -2329,7 +2329,7 @@ test internet-access source <SOURCE> destination <DESTINATION> service <SERVICE>
 
 Exercise real traffic plus the applicable failure/recovery cases in section 10. Internet Access is WHITELIST-only: prove direct Managed Host source-address match can ALLOW an approved flow, NAT/source mismatch fails closed to DENY, No Policy is DENY, BLACKLIST configuration is rejected, and Enforcement DISABLED preserves Mode/Rules while producing DENY ALL.
 
-## A-006 — AI Identity, permissions, AI Access, MCP TLS, OAuth approval, and logs — MANDATORY for v2.4.0
+## A-006 — AI MCP Setup, permissions, AI Access, MCP TLS, OAuth approval, and logs — MANDATORY for v2.4.0
 
 ~~~text
 system certificate status
