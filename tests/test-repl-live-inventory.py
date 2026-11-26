@@ -160,6 +160,22 @@ class ReplLiveInventoryTests(unittest.TestCase):
         self.editor.names = ["24cd7856"]
         self.assertNotIn("new-host", self._cands("show managed-host "))
 
+    def test_all_canonical_set_unset_resources_refresh_without_legacy_roots(self):
+        for command in self.editor.grammar.CATALOG.COMMANDS:
+            path = command["path"]
+            if len(path) >= 2 and path[0] in ("set", "unset") and not command.get("hidden"):
+                with self.subTest(path=path):
+                    self.assertTrue(REPL._should_refresh_inventory(list(path) + ["fixture"]))
+        for tokens in (
+            ["set", "ai-principal", "fixture"],
+            ["unset", "service-profile", "fixture"],
+            ["set", "object", "fixture"],
+            ["create", "service", "fixture"],
+            ["system", "import", "fixture"],
+        ):
+            with self.subTest(tokens=tokens):
+                self.assertFalse(REPL._should_refresh_inventory(tokens))
+
     def test_should_refresh_current_grammar(self):
         self.assertTrue(REPL._should_refresh_inventory(["set", "internet-access", "x"]))
         self.assertTrue(REPL._should_refresh_inventory(["unset", "remote-access", "office"]))
