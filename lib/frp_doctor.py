@@ -440,6 +440,8 @@ class Report(object):
         counts = self.counts()
         if counts[FAIL]:
             return 'FAIL'
+        if getattr(self, 'scope', '') == 'mcp' and not counts[PASS]:
+            return 'NOT_TESTED'
         if counts[WARN] or counts[NOT_TESTED]:
             return 'PASS_WITH_WARNINGS'
         return 'PASS'
@@ -3896,6 +3898,7 @@ def render_human(report, quiet=False, verbose=False):
     overall_label = {
         'PASS': 'PASS',
         'PASS_WITH_WARNINGS': 'PASS WITH WARNINGS',
+        'NOT_TESTED': 'NOT TESTED',
         'FAIL': 'FAIL',
         'ERROR': 'ERROR',
     }.get(overall, overall)
@@ -4149,7 +4152,7 @@ def run_doctor(root, facts, fmt='human', quiet=False, verbose=False, skip_networ
     overall = report.overall()
     if overall == 'ERROR':
         code = 2
-    elif overall == 'FAIL':
+    elif overall in ('FAIL', 'NOT_TESTED'):
         code = 1
     else:
         code = 0

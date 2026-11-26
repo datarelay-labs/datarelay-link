@@ -376,6 +376,15 @@ class SliceAInternetCommandTests(unittest.TestCase):
 
 
 class SliceADiagnosticsScopeTests(unittest.TestCase):
+    def test_unconfigured_mcp_scope_is_not_a_pass(self):
+        with tempfile.TemporaryDirectory(prefix='drlink-mcp-unconfigured-') as root:
+            _server_root(root)
+            text, rc, report = frp_doctor.run_doctor(root, {}, skip_network=True, scope='mcp')
+            self.assertEqual(report.counts()[frp_doctor.PASS], 0, text)
+            self.assertEqual(report.overall(), 'NOT_TESTED', text)
+            self.assertEqual(rc, 1, text)
+            self.assertIn('Overall: NOT TESTED', text)
+
     def test_scope_filter_partitions_checks(self):
         mcp = {"id": "mcp_tls_mode", "section": "security"}
         runtime = {"id": "unit_frps", "section": "runtime"}
