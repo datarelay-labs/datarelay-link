@@ -57,9 +57,9 @@ compatibility/testing mechanism rather than the normal operator workflow.
 
 ### Windows product update from verified source
 
-The Windows Agent Host currently refreshes product management software from a
-separate local source package through the existing `system update product`
-command. It does not automatically download a product update. Obtain the complete
+On an enrolled Windows Agent Host, run `drlink system update product` in an elevated shell. The installed CLI downloads the qualified manifest and SHA256SUMS from its enrolled Server over pinned HTTPS, verifies channel, immutable source and bootstrap SHA256, and invokes the verified bootstrap in upgrade mode without enrollment. `drlink system update product -Check` reads and verifies metadata without downloading or applying the executable. Missing or mismatched qualification fails closed. Native Windows qualification is required before release.
+
+For explicitly reviewed offline source refresh, obtain the complete
 repository package for the intended immutable release tag or exact 40-character
 source SHA, including its `windows/` directory and repository metadata. Before
 running it, verify the source identity, release channel and package/file SHA256

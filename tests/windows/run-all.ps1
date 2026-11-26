@@ -43,6 +43,7 @@ $tests = @(
     'test-installed-cli-persistence.ps1',
     'test-project-version.ps1',
     'test-source-provenance.ps1',
+    'test-qualified-product-update.ps1',
     'test-support-source-provenance.ps1',
     'test-bundle-stdin-reader.ps1',
     'test-v24-binding-uniqueness.ps1',

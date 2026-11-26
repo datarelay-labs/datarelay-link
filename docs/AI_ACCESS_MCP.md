@@ -46,7 +46,7 @@ MCP Bridge
 → integration/transport layer
 ```
 
-MCP does not create a separate public identity model.
+MCP does not create a separate public identity model. Managed Host tools accept the exact name or full Client ID returned by `list_hosts`; prefixes and ambiguous identifiers fail closed. Both identifiers use the same existing AI Access rules. Server-self is separately controlled and must be explicitly enabled. Agent connectivity does not imply AI executor readiness. Windows Agent lifecycle support alone does not provide a native AI job executor.
 
 ## 2. AI MCP Setup
 

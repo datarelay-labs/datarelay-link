@@ -605,9 +605,9 @@ function Test-FrpIsInstalledProductTree {
 }
 
 function Resolve-FrpProjectSourceRoot {
-    # Production installed clients do not ship a downloadable project artifact
-    # pipeline in historical pre-v2.4 installs. Only an explicit source tree (or a distinct repo
-    # checkout) may refresh management files; never copy the installed tree onto itself.
+    # Optional reviewed source tree (or a distinct developer checkout). The
+    # installed CLI otherwise fetches the qualified Server artifact; never
+    # copy the installed tree onto itself.
     if ($env:FRP_WINDOWS_PROJECT_SRC) {
         if (-not (Test-Path -LiteralPath $env:FRP_WINDOWS_PROJECT_SRC)) {
             return $null
@@ -643,10 +643,10 @@ function Write-FrpProjectUpdateCheck {
     param([string]$InstalledProject)
     Write-Host 'Data Relay Link project:'
     Write-Host ("  installed : {0}" -f $InstalledProject)
-    Write-Host '  apply path : set FRP_WINDOWS_PROJECT_SRC to the windows/ directory of a verified immutable repository package, then run drlink system update product'
+    Write-Host '  apply path : drlink system update product (qualified Server artifact); optional reviewed source: FRP_WINDOWS_PROJECT_SRC to the windows/ directory of a verified immutable repository package'
     Write-Host '  prerequisite: verify source identity, channel and checksums; keep the source package outside the installed product tree'
     Write-Host '  guide      : docs/UPGRADE.md#windows-product-update-from-verified-source'
-    Write-Host '  note       : no automatic project artifact download in this release; do not uninstall or re-enroll for a software update'
+    Write-Host '  note       : download and verify the qualified Server artifact; do not uninstall or re-enroll for a software update'
 }
 
 function Write-FrpEngineUpdateCheck {
@@ -682,12 +682,23 @@ function Invoke-FrpClientUpdate {
     }
 
     if ($mode -eq 'project') {
+        $src = Resolve-FrpProjectSourceRoot
+        if (-not $src -and -not $env:FRP_WINDOWS_PROJECT_SRC -and (Test-FrpIsEnrolled)) {
+            try {
+                Invoke-FrpQualifiedWindowsProductUpdate -CheckOnly:$CheckOnly
+                return 0
+            } catch {
+                Write-Host ("ERROR: product update failed: {0}" -f $_.Exception.Message)
+                Write-Host 'Do not uninstall or re-enroll the Agent Host. See docs/UPGRADE.md.'
+                Write-Host 'FAILURE_CLASS=INTEGRITY_FAILED'
+                return 1
+            }
+        }
         if ($CheckOnly) {
             Write-FrpProjectUpdateCheck -InstalledProject $installedProject
             Write-Host 'Identity, ports, services, CA trust, and management state are preserved.'
             return 0
         }
-        $src = Resolve-FrpProjectSourceRoot
         if (-not $src) {
             Write-Host 'ERROR: no separate Windows product source package is available for this update.'
             Write-Host 'No update changes were applied. Do not uninstall or re-enroll the Agent Host to repair this software update.'
@@ -1373,7 +1384,10 @@ switch ($Command) {
         } else {
             Write-Host 'Data Relay Link Windows Agent Host'
         }
-        foreach ($pair in @(@('Role','ROLE'), @('Release Channel','RELEASE_CHANNEL'),
+        Write-Host ('Data Relay Link: {0}' -f (Get-FrpProjectVersion))
+        Write-Host ('Relay Engine (FRP): {0}' -f (Get-FrpUpstreamVersion))
+        Write-Host 'Role: Agent Host'
+        foreach ($pair in @(@('Channel','RELEASE_CHANNEL'),
                 @('Source HEAD','SOURCE_HEAD'), @('Content Source HEAD','CONTENT_SOURCE_HEAD'))) {
             $value = [string]$values[$pair[1]]
             if (-not $value) { $value = 'UNKNOWN' }
@@ -1381,7 +1395,7 @@ switch ($Command) {
         }
         if ([string]$values['SOURCE_HEAD'] -notmatch '^[0-9a-f]{40}$') {
             Write-Host 'Source provenance is not verified. This Agent Host cannot qualify as an exact release candidate.'
-            Write-Host 'Next action: Obtain a verified immutable Windows source package and set FRP_WINDOWS_PROJECT_SRC to its windows/ directory. Run drlink system update product, then run drlink system version again. See docs/UPGRADE.md.'
+            Write-Host 'Next action: Run drlink system update product to fetch and verify the enrolled Server artifact, then run drlink system version again. For explicitly reviewed offline source, use FRP_WINDOWS_PROJECT_SRC. See docs/UPGRADE.md.'
             Write-Host 'Do not rerun Zero-Touch, re-enroll, or edit provenance files. If Source HEAD remains UNKNOWN, keep release qualification on HOLD until source provenance is independently verified.'
         }
         exit 0
