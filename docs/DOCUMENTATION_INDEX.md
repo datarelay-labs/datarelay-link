@@ -13,7 +13,7 @@ Separate intended contract from observed implementation. For intended product be
 4. Area-specific canonical documents listed below.
 5. Generated views and examples must derive from those contracts and exact-candidate code.
 
-Historical documents and internal storage names never override the public SSOT.
+Historical documents and internal storage names never override the public SSOT. Retired redirect-only documents and superseded integration snapshots are removed from the active tree; their original versions remain in Git history. Current OCI qualification uses Full User E2E and Release Validation; SQLite deployment and migration use Control Plane Architecture, Upgrade and Release Validation.
 
 External copies, Project/chat attachments, exported snapshots, and same-named documents outside the active repository are reference-only and never override the repository SSOT or exact-candidate runtime. Pre-v2.4 CLI snapshots using the retired Clients/Services root model or retired direct-command families are not valid v2.4 validation inputs.
 
@@ -65,7 +65,7 @@ These are executable audit contracts. An unqualified trigger starts execution im
 
 ## Qualification and evidence documents
 
-`MCP_BRIDGE_DISPATCH_DESIGN.md`, `ISSUE165_INTEGRATION.md`, and `F001_F007_RUNTIME_CONTINUITY_REMEDIATION.md` contain bounded investigation or candidate evidence. They are not current runtime/configuration oracles. Use exact HEAD source and the active roadmap for current behavior.
+`MCP_BRIDGE_DISPATCH_DESIGN.md` and `F001_F007_RUNTIME_CONTINUITY_REMEDIATION.md` contain bounded investigation or candidate evidence. They are not current runtime/configuration oracles. Use exact HEAD source and the active roadmap for current behavior.
 
 These documents are useful for qualification but do not redefine product semantics:
 
@@ -79,9 +79,6 @@ Together, a clean `CLI_FEATURE_SCENARIO_RECONCILIATION=PASS` and `FULL_USER_E2E=
 
 ## Internal implementation, migration and evidence documents
 
-- `OCI_ACCEPTANCE.md` — retired v2.1.1-era operator plan kept only as a tombstone for old links; it is not executable qualification and contains no current CLI contract.
-
-- `SCHEMA_V2_DEPLOYMENT.md` — redirect to the current SQLite deployment and upgrade authorities.
 - `FRP_UPGRADE.md` — Relay Engine/upstream compatibility and migration detail. FRP/internal helper names in this file are not public Data Relay Link CLI vocabulary.
 - `WINDOWS_CLIENT_DESIGN.md` — platform design notes; public command behavior remains governed by the CLI/AI Master.
 - `PRIVILEGE_SEPARATION_DEFERRED.md` — deferred privilege-separation record for the current v2.4 target. v2.3.1 was not manufactured.

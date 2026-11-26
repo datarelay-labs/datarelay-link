@@ -74,8 +74,7 @@ sudo drlink system update check-engine
 
 ## How to perform OCI E2E
 
-Follow `docs/OCI_ACCEPTANCE.md`. Do not claim production-ready until that
-operator cycle PASSes.
+Follow `docs/FULL_USER_E2E_SCENARIOS.md` and `docs/RELEASE_VALIDATION.md`. Do not claim production-ready until the required exact-candidate OCI operator cycle passes.
 
 ## How to publish a new project release
 

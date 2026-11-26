@@ -117,9 +117,9 @@ EXTRA_RUNTIME=(
   "$ROOT/tools/drlink"
   "$ROOT/tools/frpctl"
   "$ROOT/docs/DATA_RELAY_ROADMAP.md"
-  "$ROOT/docs/OCI_ACCEPTANCE.md"
+  "$ROOT/docs/FULL_USER_E2E_SCENARIOS.md"
   "$ROOT/docs/RELEASE_VALIDATION.md"
-  "$ROOT/docs/SCHEMA_V2_DEPLOYMENT.md"
+  "$ROOT/docs/CONTROL_PLANE_ARCHITECTURE.md"
   "$ROOT/docs/FRP_UPGRADE.md"
 )
 for f in "${EXTRA_RUNTIME[@]}"; do
@@ -196,7 +196,6 @@ CURRENT_MODEL_DOCS=(
   "$ROOT/docs/DEPLOYMENT_MODES.md"
   "$ROOT/docs/FULL_USER_E2E_SCENARIOS.md"
   "$ROOT/docs/MACOS_CLIENT.md"
-  "$ROOT/docs/OCI_ACCEPTANCE.md"
 )
 for doc in "${CURRENT_MODEL_DOCS[@]}"; do
   assert_not_contains "$doc" 'Managed Endpoint|Published Service|AI Principal|Service Preset'
