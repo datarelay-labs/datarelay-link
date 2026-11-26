@@ -143,6 +143,24 @@ def oauth_operator_approval_command(plane: ControlPlane, pending_id: str, *, unb
     return "sudo drlink set ai-identity %s approve %s" % (name, pending_id or "<PENDING-ID>")
 
 
+def oauth_pending_approval_page(pending_id: str, command: str, continue_path: str) -> str:
+    """One consistent, copyable operator instruction for initial and pending consent."""
+    return (
+        "<!doctype html><html><head><meta charset='utf-8'>"
+        "<title>Approve MCP connection in DRLink CLI</title></head><body>"
+        "<h1>Approve MCP connection in DRLink CLI</h1>"
+        "<p>Pending request ID:</p><pre>%s</pre>"
+        "<p>Copy this ID and paste it into the Pending request ID prompt in the "
+        "DRLink Server CLI (sudo drlink set ai-identity). Review the request and approve it.</p>"
+        "<p>Alternatively, use the following operator command (replace the Identity placeholder if shown):</p>"
+        "<pre>%s</pre>"
+        "<p>After CLI approval, select Retry to finish the connection.</p>"
+        "<p><a href='%s'>Retry</a></p>"
+        "<p>This is a consent page, not a management UI.</p>"
+        "</body></html>"
+    ) % (html_escape(pending_id), html_escape(command), html_escape(continue_path, quote=True))
+
+
 # name, title, description, props, annotations
 TOOL_DEFS = (
     (
@@ -1870,26 +1888,10 @@ def make_handler(bridge: MCPBridge):
                     self.send_header("Content-Length", "0")
                     self.end_headers()
                     return
-                hint = html_escape(oauth_operator_approval_command(
-                    bridge.plane, pending["id"], unbound=bool(pending.get("unbound"))))
+                hint = oauth_operator_approval_command(
+                    bridge.plane, pending["id"], unbound=bool(pending.get("unbound")))
                 continue_path = "/oauth/continue?%s" % urlencode({"t": pending["completion_token"]})
-                page = (
-                    "<!doctype html><html><head><meta charset='utf-8'>"
-                    "<meta http-equiv='refresh' content='2;url=%s'>"
-                    "<title>MCP OAuth consent</title></head><body>"
-                    "<p>Approve this MCP OAuth request as operator:</p>"
-                    "<pre>%s</pre>"
-                    "<p>After approval this browser continues automatically to the registered redirect.</p>"
-                    "<p><a href='%s'>Continue after approval</a></p>"
-                    "<p>This is a consent page, not a management UI.</p>"
-                    "<script>setTimeout(function(){location.replace(%s);},2000);</script>"
-                    "</body></html>"
-                ) % (
-                    continue_path,
-                    hint,
-                    continue_path,
-                    json.dumps(continue_path),
-                )
+                page = oauth_pending_approval_page(pending["id"], hint, continue_path)
                 raw = page.encode("utf-8")
                 self.send_response(200)
                 self.send_header("Content-Type", "text/html; charset=utf-8")
@@ -1910,19 +1912,9 @@ def make_handler(bridge: MCPBridge):
                 if status == "pending":
                     continue_path = "/oauth/continue?%s" % urlencode({"t": token})
                     pending_id = str(result.get("id") or "").strip()
-                    approval_hint = html_escape(oauth_operator_approval_command(
-                        bridge.plane, pending_id, unbound=bool(result.get("unbound", True))))
-                    page = (
-                        "<!doctype html><html><head><meta charset='utf-8'>"
-                        "<meta http-equiv='refresh' content='2;url=%s'>"
-                        "<title>Waiting for approval</title></head><body>"
-                        "<p>Waiting for operator approval…</p>"
-                        "<p>Approve this MCP OAuth request as operator:</p>"
-                        "<pre>%s</pre>"
-                        "<p><a href='%s'>Retry</a></p>"
-                        "<script>setTimeout(function(){location.replace(%s);},2000);</script>"
-                        "</body></html>"
-                    ) % (continue_path, approval_hint, continue_path, json.dumps(continue_path))
+                    approval_hint = oauth_operator_approval_command(
+                        bridge.plane, pending_id, unbound=bool(result.get("unbound", True)))
+                    page = oauth_pending_approval_page(pending_id, approval_hint, continue_path)
                     raw = page.encode("utf-8")
                     self.send_response(200)
                     self.send_header("Content-Type", "text/html; charset=utf-8")

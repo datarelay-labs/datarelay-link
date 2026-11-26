@@ -1596,7 +1596,7 @@
     "roles": "server",
     "category": "AI Access",
     "summary": "Create or edit an AI Access rule",
-    "detail": "Create or edit an AI Access rule. The calculated security impact of an edit is checked before mutation. A y/N confirmation is required when that impact broadens or materially narrows access; safe creation and no-change paths need no additional confirmation. AI Access is WHITELIST-only; the first rule initializes this mode without a mode field. Explicit destination managed-hosts:trusted includes all current and future trusted Managed Hosts; never server:self.",
+    "detail": "Bare set ai-access opens the guided Rule name prompt; set ai-access enabled/disabled controls the entire policy. A named Rule edits or creates one rule; selecting a new destination replaces the old one. File scope examples: /**, /home/**, /home/**,/opt/**. The calculated security impact of an edit is checked before mutation. A y/N confirmation is required when that impact broadens or materially narrows access; safe creation and no-change paths need no additional confirmation. AI Access is WHITELIST-only; the first rule initializes this mode without a mode field. Explicit destination managed-hosts:trusted includes all current and future trusted Managed Hosts; never server:self.",
     "examples": [
       "set ai-access",
       "set ai-access <RULE>",
@@ -1821,7 +1821,7 @@
     "roles": "server",
     "category": "AI Access",
     "summary": "Reset the AI Access policy",
-    "detail": "Remove the AI Access mode and all rules. Effective access becomes DENY ALL. This always requires explicit y/N confirmation.",
+    "detail": "Reset ALL AI Access Rules and the policy mode, not AI Identities or permission objects. Effective access becomes DENY ALL. This always requires explicit y/N confirmation; use unset ai-access <RULE> to remove only one rule.",
     "examples": [
       "unset ai-access policy"
     ],
@@ -3296,7 +3296,7 @@
     "roles": "server",
     "category": "AI Access",
     "summary": "Show an AI Identity",
-    "detail": "Show an AI Identity",
+    "detail": "Show authentication status, enabled state and configured AI Access Rules including destinations, permissions and path scopes. Runtime authorization is evaluated per call.",
     "examples": [
       "show ai-identity <IDENTITY>"
     ],

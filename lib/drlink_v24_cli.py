@@ -880,7 +880,16 @@ def handle_show(plane: ControlPlane, rest: list[str]) -> Optional[int]:
         status = "VERIFIED" if str(p["credential_status"] or "").lower() in ("verified", "active", "configured", "ok") else (
             p["credential_status"] or "UNBOUND"
         )
-        sys.stdout.write("AI Identity : %s\nStatus      : %s\n" % (p["name"], status))
+        sys.stdout.write("AI Identity : %s\nStatus      : %s\nEnabled     : %s\n" % (p["name"], status, "YES" if p["enabled"] else "NO"))
+        sys.stdout.write("AI Access Rules (configured for this Identity; runtime authorization is evaluated per call):\n")
+        rows = plane.conn.execute(
+            "SELECT name FROM ai_policy_rules WHERE source_identity_id=? ORDER BY name", (p["id"],)
+        ).fetchall()
+        if not rows:
+            sys.stdout.write("  No rules configured. Effective access: DENY.\n")
+        for row in rows:
+            sys.stdout.write("\n")
+            _show_ai_policy(plane, ["ai-access", row["name"]])
         return 0
     if res == "remote-access":
         _require_server(plane, "Remote Access policy")
@@ -1614,9 +1623,13 @@ def handle_unset(plane: ControlPlane, rest: list[str]) -> Optional[int]:
         _require_server(plane, _policy_resource_label(res))
         from drlink_control_cli import _run
 
+        if len(rest) != 2:
+            raise ControlPlaneError("Usage: unset %s policy" % res)
+        if res == "ai-access":
+            sys.stdout.write("Reset ALL AI Access Rules; AI Identities and permission objects are retained. To delete a single Rule, use unset ai-access <RULE>.\n")
         result = _run(v24.reset_access_policy, plane, res)
         if isinstance(result, dict) and result.get("cancelled"):
-            return 1
+            return 0 if res == "ai-access" else 1
         sys.stdout.write("%s policy reset.\nEffective access: %s\n" % (res, "DENY" if res in ("internet-access", "ai-access") else "ALLOW"))
         return 0
     if res == "network-object":

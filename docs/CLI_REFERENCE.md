@@ -539,7 +539,7 @@ Interactive AI binds through OAuth Authorization Code verification.
 
 Automation / Custom AI binds through OAuth Client Credentials verification.
 
-Authentication is distinct from AI Access authorization.
+Authentication is distinct from AI Access authorization. `show ai-identity <NAME>` includes the configured AI Access Rules for that Identity; actual authorization is evaluated per call. Copy the browser Pending request ID into the guided CLI, approve the reviewed request, then select Retry in the browser. File scope examples: `/**`, `/home/**`, `/home/**,/opt/**`. Bare `set ai-access` opens the named Rule wizard; `set ai-access enabled/disabled` controls the whole policy. A named Rule edits the existing rule and replaces its destination if changed. `unset ai-access <RULE>` removes only that rule; `unset ai-access policy` resets all rules after confirmation, leaving DENY ALL.
 
 ## 14. ConfigurationBundle
 

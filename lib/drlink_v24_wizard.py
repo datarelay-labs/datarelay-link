@@ -60,10 +60,18 @@ class TtyIO(WizardIO):
         sys.stdout.flush()
 
     def ask(self, prompt: str = "") -> str:
-        try:
-            return input(prompt)
-        except (EOFError, KeyboardInterrupt) as exc:
-            raise WizardCancelled() from exc
+        while True:
+            try:
+                value = input(prompt)
+                # Python's terminal/readline implementations can either raise
+                # UnicodeDecodeError or return surrogate-escaped partial bytes.
+                # Never silently replace bytes in a policy field.
+                value.encode("utf-8", "strict")
+                return value
+            except UnicodeError:
+                self.write("Invalid UTF-8 input. Please re-enter this value.\n")
+            except (EOFError, KeyboardInterrupt) as exc:
+                raise WizardCancelled() from exc
 
     def ask_secret(self, prompt: str = "") -> str:
         try:
@@ -193,7 +201,7 @@ def _menu_selection_error(io: WizardIO, raw: str, lo: int, hi: int) -> None:
     )
 
 
-def _ask_choice(io: WizardIO, title: str, options: list[str], *, allow_create: list[tuple[str, str]] = None) -> str:
+def _ask_choice(io: WizardIO, title: str, options: list[str], *, allow_create: list[tuple[str, str]] = None, aliases: Optional[dict[str, str]] = None) -> str:
     """Return selected option text, or '+create:<kind>' for inline create markers."""
     while True:
         _emit(io, "")
@@ -224,6 +232,9 @@ def _ask_choice(io: WizardIO, title: str, options: list[str], *, allow_create: l
             raise WizardCancelled()
         if raw in mapping:
             return mapping[raw]
+        # Keep stable typed selectors when a friendly display label is used.
+        if aliases and raw.lower() in aliases:
+            return aliases[raw.lower()]
         # allow typing the option name directly
         for opt in options:
             if raw.lower() == opt.lower():
@@ -1051,6 +1062,19 @@ def run_ai_access_wizard(plane: ControlPlane, name: str, *, source_identity=None
     ).fetchone()
     pol = v24.get_access_policy(plane, "ai")
     session = WizardSession("ai-access", name, "edit" if existing else "create")
+    _emit(io, "AI Access Rule: %s (%s)" % (name, "Edit existing" if existing else "Create new"))
+    _emit(io, "AI Identity authenticates the client; an AI Access Rule grants its destination and permission.")
+    if existing:
+        from drlink_v24_bundle import _ai_rule_view
+        before = _ai_rule_view(plane, existing)
+        session.before = {
+            "Source": before["source"],
+            "Destination": before["destination"],
+            "Permission": before["permission"],
+            "Paths": ", ".join(before["paths"]) or "-",
+            "Enabled": "YES" if before["enabled"] else "NO",
+        }
+        _emit(io, "Current destination: %s. Selecting another destination REPLACES it; create a new Rule to add another." % before["destination"])
     try:
         while True:
             session.inline.clear()
@@ -1076,9 +1100,11 @@ def run_ai_access_wizard(plane: ControlPlane, name: str, *, source_identity=None
             destinations = [r["name"] for r in v24.list_network_objects(plane)]
             destinations += [r["name"] for r in plane.conn.execute("SELECT name FROM object_groups ORDER BY name")]
             destinations = [d for d in destinations if d not in (v24.SERVER_SELF_TARGET, v24.TRUSTED_MANAGED_HOSTS_TARGET)]
-            destinations += [v24.SERVER_SELF_TARGET, v24.TRUSTED_MANAGED_HOSTS_TARGET]
-            _emit(io, "managed-hosts:trusted means ALL currently and subsequently trusted Managed Hosts; excludes server:self.")
-            destination = _ask_choice(io, "Destination (select existing target or explicit future-host scope)", destinations)
+            destinations += [v24.SERVER_SELF_TARGET]
+            trusted_label = "All trusted Managed Hosts (current and future; excludes Server)"
+            destination = _ask_choice(io, "Destination (select existing target or explicit future-host scope)", destinations + [trusted_label], aliases={v24.TRUSTED_MANAGED_HOSTS_TARGET: trusted_label})
+            if destination == trusted_label:
+                destination = v24.TRUSTED_MANAGED_HOSTS_TARGET
             if destination == v24.TRUSTED_MANAGED_HOSTS_TARGET:
                 if not _ask_yes_no(io, "Include ALL current AND future trusted Managed Hosts in this Rule?", default=False):
                     continue
@@ -1109,10 +1135,14 @@ def run_ai_access_wizard(plane: ControlPlane, name: str, *, source_identity=None
                 def valid_scope(value):
                     patterns = v24.parse_ai_paths_field(value)
                     if not patterns or any(not p.startswith("/") or ".." in p.split("/") for p in patterns):
-                        return "Enter at least one explicit absolute path glob (no parent traversal)."
+                        return "Input is not a valid absolute path scope. Use /** for all files, or /home/** (no parent traversal)."
                     return None
+                examples = "All files: /**; specific directory: /home/**; multiple directories: /home/**,/opt/**"
+                _emit(io, examples)
+                _emit(io, "Path scopes restrict file operations; OS permissions and execution controls still apply.")
                 raw_paths = _ask_text(io, "Path scopes (required for file permissions)",
-                                      default=default_paths, validate=valid_scope)
+                                      default=default_paths, validate=valid_scope,
+                                      help_text=examples)
                 paths = v24.parse_ai_paths_field(raw_paths)
             if "command-exec" in capabilities:
                 _emit(io, "Command execution uses the target OS account and is not a filesystem sandbox. Review the target execution controls.")
@@ -1198,7 +1228,8 @@ def _external_ai_connection(plane, name, io, provider):
         raise ControlPlaneError(str(exc)) from exc
     resource = view["url"]
     _emit(io, "MCP endpoint: %s" % resource)
-    _emit(io, "In %s, add this remote MCP endpoint and start OAuth. Copy the pending request ID shown on the approval page." % provider)
+    _emit(io, "In %s, add this remote MCP endpoint and start OAuth." % provider)
+    _emit(io, "Copy the Pending request ID (oap_...) shown in the browser and paste it at the CLI prompt below. Approve the reviewed request here, then select Retry in the browser.")
     _emit(io, "The server cannot authenticate the client's display name. Check the browser request, redirect and resource before approval.")
     pending = _ask_text(io, "Pending request ID", validate=lambda value: None if re.fullmatch(r"oap_[A-Za-z0-9_-]+", value) else "Enter the exact pending request ID from the browser.")
     row = plane.conn.execute(
@@ -1403,6 +1434,10 @@ def run_wizard(plane: ControlPlane, resource: str, name: Optional[str]) -> int:
         if resource in ("ai-identity", "ai-access"):
             io = _io()
             if name is None:
+                if resource == "ai-access":
+                    _emit(io, "Create or edit a named AI Access Rule. Use set ai-access enabled/disabled to control the entire AI Access policy, not an individual Rule.")
+                else:
+                    _emit(io, "AI Identity is authentication only; create a separate AI Access Rule to grant access.")
                 name = _ask_text(io, "AI Identity name" if resource == "ai-identity" else "AI Access Rule name",
                                  validate=lambda n: None if n else "Name is required.")
                 v24.validate_public_name(name)

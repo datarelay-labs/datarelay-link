@@ -415,6 +415,52 @@ configurationBundle:
         self.assertEqual(v24.expand_permissions(self.plane, "profile-read-only"), {"host-info"})
         self.assertEqual(self.plane.current_revision(), before)
 
+    def test_wizard_examples_and_identity_rule_view(self):
+        scripted = ScriptedIO(["1", "1", "2", "*", "?", "/**", "y", "1"])
+        set_wizard_io(scripted)
+        rc, _, err = self._run("set", "ai-access", "wizard-all")
+        self.assertEqual(rc, 0, err)
+        messages = "".join(scripted.out)
+        self.assertIn("All files: /**", messages)
+        self.assertIn("/home/**,/opt/**", messages)
+        self.assertIn("not a valid absolute path", messages)
+        self.assertEqual(v24.list_ai_policy_path_scopes(self.plane, "wizard-all"), ["/**"])
+        rc, out, err = self._run("show", "ai-identity", "bot")
+        self.assertEqual(rc, 0, err)
+        self.assertIn("wizard-all", out)
+        self.assertIn("ubuntu-prod", out)
+        self.assertIn("read-only", out)
+        self.assertIn("/**", out)
+
+    def test_policy_reset_cancel_is_success_without_mutation(self):
+        from unittest.mock import patch
+        self._run("set", "ai-access", "one", "source", "bot", "destination",
+                  "ubuntu-prod", "permission", "info-only", "enabled")
+        before = self.plane.current_revision()
+        os.environ.pop("DRLINK_CONFIRM", None)
+        with patch("sys.stdin", io.StringIO("n\n")):
+            rc, out, err = self._run("unset", "ai-access", "policy")
+        self.assertEqual(rc, 0, err)
+        self.assertIn("Reset ALL AI Access Rules", out)
+        self.assertIn("Cancelled", out)
+        self.assertEqual(self.plane.current_revision(), before)
+        self.assertEqual(v24.get_access_policy(self.plane, "ai")["mode"], "whitelist")
+        self.assertIsNotNone(self.plane.conn.execute(
+            "SELECT 1 FROM ai_policy_rules WHERE name='one'").fetchone())
+        rc, _, _ = self._run("unset", "ai-access", "policy", "unexpected")
+        self.assertNotEqual(rc, 0)
+        self.assertEqual(self.plane.current_revision(), before)
+
+    def test_tty_invalid_utf8_reprompts_without_accepting_corrupted_input(self):
+        from unittest.mock import patch
+        from drlink_v24_wizard import TtyIO
+        invalid = UnicodeDecodeError("utf-8", b"\xc3", 0, 1, "invalid continuation byte")
+        with patch("builtins.input", side_effect=[invalid, "\udcc3", "/**"]) as read:
+            with redirect_stdout(io.StringIO()) as out:
+                self.assertEqual(TtyIO().ask("Path: "), "/**")
+        self.assertEqual(read.call_count, 3)
+        self.assertIn("Invalid UTF-8 input", out.getvalue())
+
     def test_wizard_binds_paths_for_file_permission(self):
         # AI Access is WHITELIST-only; wizard does not ask for policy mode.
         # Choices: identity bot, dest ubuntu-prod, permission read-only

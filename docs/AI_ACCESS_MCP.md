@@ -106,8 +106,7 @@ identity (that would make initial onboarding impossible).
 
 1. Add the public `https://<MCP-HOSTNAME>/mcp` endpoint in the supported
    ChatGPT MCP connection UI; this opens an OAuth request.
-2. Confirm the client, redirect origin, requested resource and permissions
-   before taking the operator action. On the **DRLink Server** run:
+2. Copy the Pending request ID (oap_...) displayed on the browser consent page and paste it into the Pending request ID prompt in the guided AI Identity CLI. Review the client, redirect origin, requested resource and scope before approving. Alternatively, on the **DRLink Server** run:
 
    ```text
    set ai-identity chatgpt approve <PENDING-ID>
@@ -117,7 +116,7 @@ identity (that would make initial onboarding impossible).
    an **enabled PENDING** identity and binds the requested client to it. It
    does not grant VERIFIED trust or bypass consent. Existing disabled,
    revoked or otherwise unverified identities remain ineligible.
-3. Use the waiting OAuth browser page's **Retry** link. The one-time code
+3. After CLI approval, select the OAuth browser page's **Retry** link. The one-time code
    is delivered only to the originally registered redirect. Only a valid
    authorization-code exchange with matching client, redirect URI, resource
    and PKCE verifier transitions the new identity to VERIFIED. A wrong
@@ -173,7 +172,7 @@ A true read-only role does not grant command execution.
 
 ## 4. AI Access Rule
 
-`set ai-access` opens guided rule selection/creation. `set ai-access <RULE>` opens create/edit for that name. Show and review Source, Destination, Permission, file paths, effective OS execution constraints, enabled state and current/future host scope. The default destination scope is explicitly selected existing hosts; no implicit wildcard. Use a verified identity and trusted host-backed selectors; native `server:self` is separately reviewed and never implied by all Managed Hosts.
+`set ai-access` opens guided rule selection/creation. `set ai-access <RULE>` opens create/edit for that name. Show and review Source, Destination, Permission, file paths, effective OS execution constraints, enabled state and current/future host scope. The default destination scope is explicitly selected existing hosts; no implicit wildcard. Editing a named rule replaces its previous destination; create a different rule to add another destination. All trusted Managed Hosts (current and future; excludes Server) is the explicit dynamic destination. File path examples: `/**` (all files), `/home/**` (one directory), `/home/**,/opt/**` (multiple directories); `*` is not an absolute path scope. OS access restrictions still apply. `show ai-identity <IDENTITY>` lists configured rules and their destinations, permissions, paths and enabled state; runtime authorization is evaluated per call. `unset ai-access <RULE>` removes one rule, whereas `unset ai-access policy` resets all rules and fails closed after explicit confirmation. Use a verified identity and trusted host-backed selectors; native `server:self` is separately reviewed and never implied by all Managed Hosts.
 
 Canonical fields:
 
