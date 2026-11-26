@@ -17,6 +17,7 @@ client-identity.pub
 client-identity.mac
 mgmt-nonces.json
 .frp-compat-stage/
+experiments/r1-rust-egress-poc/target/
 
 # Generated at release time from the checked-out release commit. A committed
 # SBOM cannot record the hash of the commit that contains it, and checksumming

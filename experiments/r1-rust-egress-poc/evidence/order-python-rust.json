@@ -1,0 +1,222 @@
+{
+  "candidate_order": [
+    "python",
+    "rust"
+  ],
+  "experiment_files_sha256": {
+    "experiments/r1-rust-egress-poc/Cargo.lock": "a6ba974bee839200f239b580ba6d12fb741c67882ea0d4c12a857136fe10551d",
+    "experiments/r1-rust-egress-poc/Cargo.toml": "438d89ca21ba631c2a5a6142475ac5088b775505a04bfd4221321b3ac517ea0d",
+    "experiments/r1-rust-egress-poc/run.py": "e0c0bb26e5801a8112bc3ae147891826286079c60a8b87c283299ae0c4248734",
+    "experiments/r1-rust-egress-poc/src/main.rs": "972562db724d1be07a8878324d6778507cb1e7febb5531961446ef00f18e1110"
+  },
+  "head": "eaffe4c85a96084ef5f76e4f4b7ccd1f93995990",
+  "host": {
+    "machine": "x86_64",
+    "node": "dev-drlink",
+    "processor": "x86_64",
+    "release": "6.8.0-146-generic",
+    "system": "Linux",
+    "version": "#146-Ubuntu SMP PREEMPT_DYNAMIC Thu Sep  3 16:12:30 UTC 2026"
+  },
+  "method": {
+    "benchmark_payload_kib": 256,
+    "buffer_cap_per_direction_bytes": 262144,
+    "idle_ms": 1800,
+    "revalidation_ms": 1000,
+    "rounds": 3,
+    "source": "production lib/frp_egress_runtime.py relay_bidirectional for Python; isolated Tokio TCP relay for Rust; shared Python policy/audit TCP service; local loopback destination; no product code or policy authority ported"
+  },
+  "python": "3.12.3 (main, Aug 31 2026, 10:18:26) [GCC 13.3.0]",
+  "python_reference_sha256": "eb18a535e78017aae7fd0b9c3f234065ab1e2ee34af13c50687550844fbd013b",
+  "results": {
+    "python": {
+      "all_audits": {
+        "closed": 524,
+        "connect_failed": 0,
+        "connected": 526,
+        "denied": 2,
+        "revoked": 1,
+        "timeout": 1
+      },
+      "audit_sink_failure": {
+        "ack_required_for_forwarding": true,
+        "closed": true,
+        "forwarded_bytes": 0,
+        "reset_on_close": true
+      },
+      "backpressure": {
+        "bytes_each": 4194304,
+        "expected_buffer_cap_bytes_per_direction": 262144,
+        "max_elapsed_s": 0.12449298519641161,
+        "sessions": 4,
+        "verified_bytes": 16777216
+      },
+      "binary": "/usr/bin/python3",
+      "candidate": "python",
+      "cases": [
+        {
+          "aggregate_mib_s": 31.333478488976446,
+          "concurrency": 10,
+          "connections": 30,
+          "p50_ms": 47.08198457956314,
+          "p95_ms": 71.25905808061361,
+          "p99_ms": 74.50617896392941,
+          "payload_bytes": 262144,
+          "relay_cpu_s": 0.19,
+          "relay_peak_rss_bytes_sampled": 32571392,
+          "verified_payload_bytes": 7864320,
+          "wall_s": 0.23936059325933456
+        },
+        {
+          "aggregate_mib_s": 32.616141680988434,
+          "concurrency": 50,
+          "connections": 150,
+          "p50_ms": 204.0093659888953,
+          "p95_ms": 233.511698897928,
+          "p99_ms": 242.85048618912697,
+          "payload_bytes": 262144,
+          "relay_cpu_s": 0.9500000000000001,
+          "relay_peak_rss_bytes_sampled": 54145024,
+          "verified_payload_bytes": 39321600,
+          "wall_s": 1.1497374633327127
+        },
+        {
+          "aggregate_mib_s": 33.941327187486074,
+          "concurrency": 100,
+          "connections": 300,
+          "p50_ms": 380.27598382905126,
+          "p95_ms": 444.20912489295006,
+          "p99_ms": 463.9541828073561,
+          "payload_bytes": 262144,
+          "relay_cpu_s": 1.76,
+          "relay_peak_rss_bytes_sampled": 76611584,
+          "verified_payload_bytes": 78643200,
+          "wall_s": 2.2096955603919923
+        }
+      ],
+      "denial": {
+        "audits": [
+          "denied"
+        ],
+        "client_bytes": 0,
+        "upstream_connections": 0
+      },
+      "functional": "PASS",
+      "mixed_load": {
+        "allowed_streams": 40,
+        "denied_audits": 2,
+        "policy_checks": 530,
+        "revoked_audits": 1,
+        "verified_audit_connected": 526
+      },
+      "pid": 3598788,
+      "policy_checks": 530,
+      "revocation": {
+        "audit_count": 1,
+        "closed": true,
+        "unexpected_post_revoke_bytes": 0
+      },
+      "timeout": {
+        "audit_count": 1,
+        "closed": true,
+        "configured_idle_ms": 1800
+      }
+    },
+    "rust": {
+      "all_audits": {
+        "closed": 524,
+        "connect_failed": 0,
+        "connected": 526,
+        "denied": 2,
+        "revoked": 1,
+        "timeout": 1
+      },
+      "audit_sink_failure": {
+        "ack_required_for_forwarding": true,
+        "closed": true,
+        "forwarded_bytes": 0,
+        "reset_on_close": true
+      },
+      "backpressure": {
+        "bytes_each": 4194304,
+        "expected_buffer_cap_bytes_per_direction": 262144,
+        "max_elapsed_s": 0.12130841799080372,
+        "sessions": 4,
+        "verified_bytes": 16777216
+      },
+      "binary": "/home/aella/datarelay-link-lperf-resume-20261127/experiments/r1-rust-egress-poc/target/release/r1-egress-relay-poc",
+      "candidate": "rust",
+      "cases": [
+        {
+          "aggregate_mib_s": 37.671729363851924,
+          "concurrency": 10,
+          "connections": 30,
+          "p50_ms": 43.95714099518955,
+          "p95_ms": 52.45483107864857,
+          "p99_ms": 58.78621665760875,
+          "payload_bytes": 262144,
+          "relay_cpu_s": 0.15,
+          "relay_peak_rss_bytes_sampled": 12722176,
+          "verified_payload_bytes": 7864320,
+          "wall_s": 0.1990882852114737
+        },
+        {
+          "aggregate_mib_s": 37.18565530559266,
+          "concurrency": 50,
+          "connections": 150,
+          "p50_ms": 171.49044736288488,
+          "p95_ms": 209.72710894420743,
+          "p99_ms": 215.1465998031199,
+          "payload_bytes": 262144,
+          "relay_cpu_s": 0.6699999999999999,
+          "relay_peak_rss_bytes_sampled": 25935872,
+          "verified_payload_bytes": 39321600,
+          "wall_s": 1.0084533859044313
+        },
+        {
+          "aggregate_mib_s": 37.497508976548865,
+          "concurrency": 100,
+          "connections": 300,
+          "p50_ms": 333.2167132757604,
+          "p95_ms": 403.0567817389965,
+          "p99_ms": 415.90166417881846,
+          "payload_bytes": 262144,
+          "relay_cpu_s": 1.3400000000000003,
+          "relay_peak_rss_bytes_sampled": 43163648,
+          "verified_payload_bytes": 78643200,
+          "wall_s": 2.000132863409817
+        }
+      ],
+      "denial": {
+        "audits": [
+          "denied"
+        ],
+        "client_bytes": 0,
+        "upstream_connections": 0
+      },
+      "functional": "PASS",
+      "mixed_load": {
+        "allowed_streams": 40,
+        "denied_audits": 2,
+        "policy_checks": 530,
+        "revoked_audits": 1,
+        "verified_audit_connected": 526
+      },
+      "pid": 3602474,
+      "policy_checks": 530,
+      "revocation": {
+        "audit_count": 1,
+        "closed": true,
+        "unexpected_post_revoke_bytes": 0
+      },
+      "timeout": {
+        "audit_count": 1,
+        "closed": true,
+        "configured_idle_ms": 1800
+      }
+    }
+  },
+  "rust_release_binary_sha256": "3677c541d8fb93810c21f7078d72efb92302acaeff4eee5f3ad5ca8dbb7cdaa9",
+  "rustc": "rustc 1.75.0 (82e1608df 2023-12-21) (built from a source tarball)",
+  "schema": "drlink-r1-egress-poc-v1"
+}
