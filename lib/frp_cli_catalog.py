@@ -1593,7 +1593,7 @@ def domain_help(topic, role):
             return "AI MCP Setup is available on a Data Relay Link server.\n"
         return ("AI MCP Setup\n============\n\n"
                 "Set up and manage AI MCP connections.\n"
-                "set ai-mcp opens MCP Server settings, MCP Bridge diagnostics, AI service connections and connection inventory.\n"
+                "set ai-mcp opens MCP Server settings, MCP Bridge settings / diagnostics, AI service connections and connection inventory.\n"
                 "Existing AI Identity commands manage authentication. AI Access remains separate authorization.\n"
                 "menu → AI Access → AI MCP Setup\n")
     if topic in ("ai-access", "mcp", "ai-identity", "ai-identities"):

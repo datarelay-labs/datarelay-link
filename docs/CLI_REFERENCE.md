@@ -1,6 +1,6 @@
 # Data Relay Link — CLI Reference
 
-> **Status:** AI Access UX redesign target; runtime implementation and qualification pending
+> **Status:** v2.4 candidate CLI reference; installed-runtime qualification is separate
 > **Primary CLI:** `drlink`
 > **Authoritative behavior:** `docs/DATA_RELAY_LINK_CLI_AI_MASTER_v2.4_FINAL.md`
 
@@ -526,7 +526,7 @@ An existing Remote Service cannot change in place across standard TCP and Fixed 
 
 The canonical guided-menu target is `set ai-mcp` (AI MCP Setup): `Set up and manage AI MCP connections`. Use it for MCP Server, MCP Bridge and AI service connection setup. AI Access remains the authorization function. The following existing action-first commands operate on the AI Identity security resource, not the guided menu:
 
-### Beginner-first AI Access UX (2026-11-25 target)
+### AI MCP Setup and AI Access workflow
 
 The single workflow specification is [AI_ACCESS_MCP.md](AI_ACCESS_MCP.md). Managed Hosts owns enrollment; AI MCP Setup manages infrastructure and connections; AI Identity retains verified authentication and credential lifecycle; AI Access Rules own Source → Destination → Permission authorization; System owns shared MCP settings and certificates. AI MCP Setup checks readiness and uses that same settings flow only when necessary, then optionally opens the separate Access Rule wizard. No automatic privilege grant from OAuth or first connection; explicitly reviewed Owner scope is optional. Basic permissions use built-in profiles; custom Objects/Groups are advanced. AI Access mode is fixed WHITELIST, not an operator input. Preserve existing state and all fail-closed controls. No duplicate public command/menu paths. These are target requirements, not installed-product evidence.
 

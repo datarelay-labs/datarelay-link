@@ -89,6 +89,13 @@ class WizardCancelAtomicty(unittest.TestCase):
             self.assertEqual(cli.dispatch(["set", "ai-mcp"], root=self.tmp, plane=self.plane), 0)
             guide.assert_called_once()
         self.assertEqual(self._rev(), rev)
+        for answer in ("n", "y"):
+            set_wizard_io(ScriptedIO(["2", answer]))
+            with mock.patch.object(self.plane, "diagnostics_mcp", return_value="MCP diagnostic\n") as diagnostic, mock.patch.object(cli, "_guide_mcp_server", return_value=0) as guide, redirect_stdout(io.StringIO()):
+                self.assertEqual(cli.dispatch(["set", "ai-mcp"], root=self.tmp, plane=self.plane), 0)
+                diagnostic.assert_called_once()
+                self.assertEqual(guide.call_count, int(answer == "y"))
+            self.assertEqual(self._rev(), rev)
 
     def test_create_wizard_cancel_no_mutation(self):
         rev = self._rev()

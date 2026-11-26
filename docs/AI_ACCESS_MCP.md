@@ -10,9 +10,9 @@
 This is the candidate UX contract, not a claim of installed release qualification. This guide is the detailed normative workflow; CLI, menu, help, completion and tests must converge on this contract; any Web UI consuming these functions must follow the same design. Do not retain alternate public spellings, parallel wizards or duplicate menu entry points for retired UX. Preserve persisted identities, policy, certificates and audit history; no permission widening, implicit trust or silent reconfiguration during migration.
 
 - **Managed Hosts**: register/enroll and manage actual hosts. Never add a host through an AI connection screen.
-- **AI MCP Setup**: configure MCP Server, diagnose MCP Bridge, connect, verify, inspect, reconnect and disconnect AI clients using the existing AI Identity resource. Authentication alone is not authorization.
+- **AI MCP Setup**: configure MCP Server, review MCP Bridge settings and diagnostics, connect, verify, inspect, reconnect and disconnect AI clients using the existing AI Identity resource. Authentication alone is not authorization.
 - **AI Access Rules**: select Source (verified AI Identity), Destination (Managed Host-backed Network Object / Network Group, an explicit Managed Host Group, all current and future trusted Managed Hosts, or explicitly selected `server:self` under its separate native execution controls), and Permission (built-in profile or reusable custom Object/Group), with explicit path and execution constraints. The firewall-style policy is separate from inventory and authentication.
-- **AI MCP Setup → MCP Server settings / MCP Bridge diagnostics**: delegates to the same infrastructure and diagnostic commands available under System. The AI service connection detects readiness and offers settings inline when needed, then returns to onboarding. Ready TLS is reused without issuing or reconfiguring a certificate. Direct mode must report the supported single443 prerequisite; no silent deployment-mode switch.
+- **AI MCP Setup → MCP Server settings / MCP Bridge settings / diagnostics**: delegates to the same infrastructure and diagnostic commands available under System. The Bridge option displays diagnostics before offering the shared endpoint/TLS settings; native execution controls remain separately authorized. The AI service connection detects readiness and offers settings inline when needed, then returns to onboarding. Ready TLS is reused without issuing or reconfiguring a certificate. Direct mode must report the supported single443 prerequisite; no silent deployment-mode switch.
 - **Advanced Permissions**: custom Permission Objects/Groups only when needed; not prerequisites for routine onboarding. Read-only grants host-info, process-read and explicitly scoped file-read. Full management offers all seven capabilities only after explicit review of destination, path and OS execution constraints. No automatic root or unrestricted path grant by selecting a label.
 - AI Access is WHITELIST-only. The wizard and one-shot Rule grammar require no mode field; first reviewed rule initializes WHITELIST atomically. No Policy, disabled enforcement, unverified/revoked identity, no matching rule or unsafe/unavailable target remains DENY.
 
@@ -177,15 +177,16 @@ Canonical fields:
 ```text
 name
 source      → AI Identity
-destination → Network Object / Network Group
+destination → Managed Host / Network Object / Network Group / Managed Host Group / managed-hosts:trusted / server:self
 permission  → Permission Object / Permission Group
+paths       → absolute scopes for file permissions
 enabled
 ```
 
 Example first rule:
 
 ```text
-set ai-access claude-prod source claude destination production-servers permission read-only enabled
+set ai-access claude-prod source claude destination production-servers permission read-only paths /var/log/** enabled
 ```
 
 ## 5. Policy semantics

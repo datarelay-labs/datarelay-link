@@ -1299,11 +1299,17 @@ def run_ai_mcp_setup(plane: ControlPlane) -> int:
     io = _io()
     try:
         while True:
-            choice = _ask_choice(io, "AI MCP Setup", ["MCP Server settings", "MCP Bridge diagnostics", "Connect or manage AI service", "List AI connections"])
+            choice = _ask_choice(io, "AI MCP Setup", ["MCP Server settings", "MCP Bridge settings / diagnostics", "Connect or manage AI service", "List AI connections"])
             if choice == "MCP Server settings":
                 return _guide_mcp_server(plane, io=io)
-            if choice == "MCP Bridge diagnostics":
-                return dispatch(["system", "diagnostics", "mcp"], root=plane.root, plane=plane)
+            if choice == "MCP Bridge settings / diagnostics":
+                result = dispatch(["system", "diagnostics", "mcp"], root=plane.root, plane=plane)
+                if result != 0:
+                    return result
+                _emit(io, "The MCP Bridge uses the shared public MCP endpoint and TLS settings. Server-local execution controls retain their separate local operator authorization.")
+                if _ask_yes_no(io, "Review or configure the shared MCP endpoint now?", default=False):
+                    return _guide_mcp_server(plane, io=io)
+                return 0
             if choice == "List AI connections":
                 return dispatch(["show", "ai-identities"], root=plane.root, plane=plane)
             return run_wizard(plane, "ai-identity", None)

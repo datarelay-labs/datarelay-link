@@ -3325,7 +3325,7 @@
     "roles": "server",
     "category": "AI Access",
     "summary": "Set up and manage AI MCP connections",
-    "detail": "AI MCP Setup: MCP Server, MCP Bridge diagnostics and AI service connections. AI Access remains separate authorization.",
+    "detail": "AI MCP Setup: MCP Server, MCP Bridge settings / diagnostics and AI service connections. AI Access remains separate authorization.",
     "examples": [
       "set ai-mcp"
     ],

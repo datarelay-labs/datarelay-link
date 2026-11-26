@@ -325,7 +325,7 @@ When a Remote Service uses it, DRLink allocates an endpoint from the separate Fi
 
 The canonical guided menu selector is `set ai-mcp` (AI MCP Setup), with help text `Set up and manage AI MCP connections`. It covers MCP Server, MCP Bridge and AI service connection setup; AI Access continues to control authorization. AI Identity denotes the authenticated security resource, not the guided menu. Existing action-first identity commands retain their grammar:
 
-### Beginner-first AI Access UX (2026-11-25 target)
+### AI MCP Setup and AI Access workflow
 
 The single workflow specification is [AI_ACCESS_MCP.md](AI_ACCESS_MCP.md). Managed Hosts owns enrollment; AI MCP Setup manages infrastructure and connections; AI Identity retains verified authentication and credential lifecycle; AI Access Rules own Source → Destination → Permission authorization; System owns shared MCP settings and certificates. AI MCP Setup checks readiness and uses that same settings flow only when necessary, then optionally opens the separate Access Rule wizard. No automatic privilege grant from OAuth or first connection; explicitly reviewed Owner scope is optional. Basic permissions use built-in profiles; custom Objects/Groups are advanced. AI Access mode is fixed WHITELIST, not an operator input. Preserve existing state and all fail-closed controls. No duplicate public command/menu paths. These are target requirements, not installed-product evidence.
 

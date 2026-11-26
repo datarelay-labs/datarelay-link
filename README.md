@@ -255,7 +255,7 @@ existing authenticated DRLink control path
 Managed Host / private target
 ```
 
-AI Access source is a verified **AI Identity**. The [AI MCP Setup guide](docs/AI_ACCESS_MCP.md) separates Managed Host enrollment, AI MCP Setup (authentication), and firewall-style Access Rules (Source, Destination, Permission). AI MCP Setup checks shared MCP readiness; built-in permission profiles avoid manual Object creation for ordinary rules, while custom Objects/Groups remain advanced. Authentication alone grants no access. This redesign is pending implementation and qualification.
+AI Access source is a verified **AI Identity**. The [AI MCP Setup guide](docs/AI_ACCESS_MCP.md) separates Managed Host enrollment, AI MCP Setup (authentication), and firewall-style Access Rules (Source, Destination, Permission). AI MCP Setup checks shared MCP readiness; built-in permission profiles avoid manual Object creation for ordinary rules, while custom Objects/Groups remain advanced. Authentication alone grants no access. This describes the candidate workflow; installed release qualification is separate.
 
 ## ConfigurationBundle / AI-assisted configuration
 
