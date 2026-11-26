@@ -376,11 +376,11 @@ For representative Server and Agent wizards:
 
 Expected: clear recovery, no traceback, no unintended mutation, and return to a usable prompt where appropriate.
 
-### CLI-010 — AI Identity, Permission, and AI Access
+### CLI-010 — AI MCP Setup, Permission, and AI Access
 
 Using namespaced resources:
 
-- create/connect an AI Identity far enough to exercise the selected auth path;
+- discover AI MCP Setup through `ai-mcp` with the description `Set up and manage AI MCP connections`; verify the MCP setup menu/help, completion and current guidance agree with the CLI/AI Master, then create/connect an AI Identity far enough to exercise the selected auth path;
 - verify `system credential ?` discovers every supported credential lifecycle operation advertised by System help, including approve/deny OAuth and rotate/revoke/configure where supported;
 - verify credential rotate/configure/revoke on a nonexistent AI Identity fails without creating an identity or issuing a credential;
 - do not invent external OAuth approval;
