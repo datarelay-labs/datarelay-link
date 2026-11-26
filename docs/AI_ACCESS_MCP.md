@@ -1,4 +1,4 @@
-# Data Relay Link — AI Identity, AI Access, and MCP
+# Data Relay Link — AI MCP Setup and AI Access
 
 > **Status:** v2.4 development operator/developer guide
 > **Authority:** Public CLI semantics come from the CLI/AI Master; security and transport boundaries come from `SECURITY.md`.
@@ -18,9 +18,9 @@ MCP Bridge
 
 MCP does not create a separate public identity model.
 
-## 2. AI Identity
+## 2. AI MCP Setup
 
-Canonical public resource:
+The canonical guided-menu target is `ai-mcp` (AI MCP Setup): `Set up and manage AI MCP connections`. It covers MCP Server, MCP Bridge and AI service connections; AI Access controls what a connected service may do. The underlying authenticated security resource remains:
 
 ```text
 AI Identity
@@ -37,7 +37,7 @@ custom-ai
 
 A display name alone is not trusted identity.
 
-Server CLI entry:
+Existing action-first Server CLI resource command:
 
 ```text
 set ai-identity <NAME>
