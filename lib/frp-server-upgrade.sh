@@ -1679,6 +1679,9 @@ frp_server_apply_project_upgrade() {
     return 1
   fi
   restart_egress=1
+  if declare -F frp_server_prepare_mcp_executor >/dev/null 2>&1; then
+    frp_server_prepare_mcp_executor
+  fi
   # SQLite control-plane bootstrap for upgrades from pre-SQLite installs.
   # Must run before access/egress restarts so /healthz authority=sqlite succeeds.
   local control_bootstrap_out=""

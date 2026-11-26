@@ -1292,7 +1292,9 @@ class MCPBridge:
                 raise full.FullControlDenied("Unsupported full-control operation")
             decision = self._authorize(principal, target, capability, operand or None)
             if decision["action"] != "ALLOW":
-                raise full.FullControlDenied("AI Access implicit DENY")
+                raise full.FullControlDenied(
+                    "AI Access path scope denied" if decision.get("path_ok") is False and decision.get("matched_rules")
+                    else "AI Access implicit DENY")
             patterns = list(decision.get("patterns") or [])
             if capability == "exec":
                 # Initial working directory authorization is not a sandbox for
@@ -1392,7 +1394,8 @@ class MCPBridge:
                     except (ExecutorDenied, OSError, ValueError, TypeError):
                         reason = "Server-local executor denied or could not complete operation"
             else:
-                reason = "AI Access implicit DENY"
+                reason = ("AI Access path scope denied" if decision.get("path_ok") is False and decision.get("matched_rules")
+                          else "AI Access implicit DENY")
         self.plane.record_ai_activity(
             principal=principal["name"],
             endpoint=target,

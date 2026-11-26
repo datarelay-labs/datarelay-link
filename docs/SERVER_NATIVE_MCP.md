@@ -63,8 +63,22 @@ renews after access-token expiry before calling host interoperability fixed.
 
 ## Operator settings
 
-Configure settings in the existing MCP Bridge service only after source,
-security, artifact and rollback checks pass.
+The Server installer and product updater prepare an isolated non-admin
+`drlink-mcp` OS account and `/var/lib/drlink-mcp` workspace when no existing
+explicit native profile is present. Preparation does not enable remote
+execution, alter AI Access, or grant root access. Existing native profiles
+are preserved; an unsafe existing account or workspace is not overwritten.
+
+Use the existing `set ai-mcp` guided setup → Configure local Server execution
+account on the installed Server as a local administrator. Select an existing
+account and approved roots (the prepared account/workspace are defaults).
+The setup validates the selected worker, requests explicit local approval,
+restarts only the Bridge, and verifies the running profile. UID 0 requires
+an additional explicit local confirmation. A conflicting existing local
+profile is preserved; a failed activation rolls back the new drop-in. This
+configures OS execution authority only, not an additional AI policy.
+Existing `server:self` AI Access Rules remain unchanged. The existing local
+operator rollout utility and settings below remain supported.
 
 | Setting | Meaning |
 |---|---|
@@ -76,7 +90,10 @@ security, artifact and rollback checks pass.
 | `DRLINK_MCP_SERVER_DEFAULT_CWD=<absolute directory>` | Optional initial cwd for the existing `exec(endpoint=server:self)` alias |
 | `DRLINK_MCP_SERVER_ADMIN_ENABLED=1` | Separate explicit local opt-in required when the selected account has UID 0 |
 
-Use `system diagnostics mcp` to inspect the allowlisted execution gate states of the running Bridge. An unreadable or unavailable process reports Unknown, not Disabled or Enabled. The diagnostic does not disclose credentials, select an execution account, change a gate or prove effective AI Access.
+Use `system diagnostics mcp` to distinguish TLS, disabled execution gates,
+invalid/missing execution profiles and the configured state of the running
+Bridge. Configured is not proof of effective AI Access or a successful live operation.
+The detailed Bridge diagnostics inspect allowlisted gate states. An unreadable or unavailable process reports Unknown, not Disabled or Enabled. The diagnostic does not disclose credentials, select an execution account, change a gate or prove effective AI Access.
 
 All execution gates default off. The Bridge service running as root does not
 implicitly select root for commands. Existing `NoNewPrivileges=yes` remains

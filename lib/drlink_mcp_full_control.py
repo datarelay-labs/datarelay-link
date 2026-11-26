@@ -76,6 +76,38 @@ class Account:
                 "LANG": "C.UTF-8", "SHELL": "/bin/sh", "GIT_TERMINAL_PROMPT": "0"}
 
 
+def execution_profile_status(settings: dict | None) -> dict:
+    """Non-mutating readiness projection. No account/path values are returned."""
+    names = {"self": "SELF_ENABLED", "local": "LOCAL_EXEC_ENABLED",
+             "full": "FULL_CONTROL_ENABLED", "admin": "ADMIN_ENABLED"}
+    status = {key: (None if settings is None else settings.get("DRLINK_MCP_SERVER_" + suffix) == "1")
+              for key, suffix in names.items()}
+    def result(readiness, reason):
+        return dict(status, readiness=readiness, reason=reason)
+    if settings is None:
+        return result("Unknown", "Running Bridge environment not verified")
+    if not status["self"]:
+        return result("Disabled", "Server-self is disabled")
+    if not status["local"]:
+        return result("Disabled", "Server-local executor is disabled")
+    name = settings.get("DRLINK_MCP_SERVER_EXEC_USER", "")
+    raw = settings.get("DRLINK_MCP_SERVER_ALLOWED_ROOTS", "")
+    if not name or not raw:
+        return result("Not ready", "Execution account or allowed roots missing")
+    try:
+        account = pwd.getpwnam(name)
+    except KeyError:
+        return result("Not ready", "Configured execution account does not exist")
+    if account.pw_uid == 0 and (not status["full"] or not status["admin"]):
+        return result("Not ready", "Administrative account requires explicit local opt-in")
+    try:
+        if any(not p or not Path(p).is_absolute() or not Path(p).is_dir() for p in raw.split(os.pathsep)):
+            return result("Not ready", "Configured root is missing or invalid")
+    except OSError:
+        return result("Not ready", "Configured root cannot be verified")
+    return result("Configured", "Execution profile configured; effective AI Access and live operation must be verified")
+
+
 def configured_account() -> Account:
     required = ("DRLINK_MCP_SERVER_SELF_ENABLED", "DRLINK_MCP_SERVER_LOCAL_EXEC_ENABLED",
                 "DRLINK_MCP_SERVER_FULL_CONTROL_ENABLED")

@@ -84,6 +84,12 @@ class WizardCancelAtomicty(unittest.TestCase):
                 self.assertEqual(cli.dispatch(["set", "ai-mcp"], root=self.tmp, plane=self.plane), 0)
             self.assertIn("AI MCP Setup", "".join(scripted.out))
             self.assertEqual(self._rev(), rev)
+        set_wizard_io(ScriptedIO(["5"]))
+        with mock.patch("subprocess.run") as run, redirect_stderr(io.StringIO()) as err:
+            self.assertEqual(cli.dispatch(["set", "ai-mcp"], root=self.tmp, plane=self.plane), 1)
+            self.assertIn("interactive administrator", err.getvalue())
+            run.assert_not_called()
+        self.assertEqual(self._rev(), rev)
         set_wizard_io(ScriptedIO(["1"]))
         with mock.patch.object(cli, "_guide_mcp_server", return_value=0) as guide:
             self.assertEqual(cli.dispatch(["set", "ai-mcp"], root=self.tmp, plane=self.plane), 0)

@@ -518,7 +518,15 @@ namespace Drlink {
                 int remaining=Math.Max(0,timeoutMs-(int)timer.ElapsedMilliseconds);
                 bool delivered=false;
                 if(remaining>0) {
-                    var send=Task.Factory.StartNew(()=>{process.StandardInput.WriteLine(payload);process.StandardInput.Close();});
+                    var send=Task.Factory.StartNew(()=>{
+                        // Use ASCII transport bytes, independent of the parent
+                        // console code page/StreamWriter encoding on WinPS.
+                        var bytes=Encoding.ASCII.GetBytes(payload+"\n");
+                        var pipe=process.StandardInput.BaseStream;
+                        pipe.Write(bytes,0,bytes.Length);
+                        pipe.Flush();
+                        process.StandardInput.Close();
+                    });
                     delivered=send.Wait(remaining);
                 }
                 remaining=Math.Max(0,timeoutMs-(int)timer.ElapsedMilliseconds);
@@ -555,10 +563,25 @@ function Invoke-FrpNativeAiCommand {
     # after successful native containment. Inherit the selected OS account.
     $wrapper = @'
 $ErrorActionPreference='Stop'
-[Console]::OutputEncoding=[Text.Encoding]::UTF8
+[Console]::OutputEncoding=[Text.UTF8Encoding]::new($false)
 try {
-    $line=[Console]::ReadLine()
-    if (-not $line) { exit 2 }
+    # The framework may write an encoding preamble when opening the
+    # redirected StreamWriter. The protocol itself is bounded ASCII.
+    $inputStream=[Console]::OpenStandardInput()
+    $buffer=New-Object IO.MemoryStream
+    try {
+        while (($byte=$inputStream.ReadByte()) -ge 0 -and $byte -ne 10) {
+            if ($buffer.Length -ge 32772) { throw 'Native input envelope too large' }
+            $buffer.WriteByte([byte]$byte)
+        }
+        $bytes=$buffer.ToArray()
+    } finally { $buffer.Dispose() }
+    $offset=0
+    if ($bytes.Length -ge 4 -and (($bytes[0] -eq 255 -and $bytes[1] -eq 254 -and $bytes[2] -eq 0 -and $bytes[3] -eq 0) -or ($bytes[0] -eq 0 -and $bytes[1] -eq 0 -and $bytes[2] -eq 254 -and $bytes[3] -eq 255))) { $offset=4 }
+    elseif ($bytes.Length -ge 3 -and $bytes[0] -eq 239 -and $bytes[1] -eq 187 -and $bytes[2] -eq 191) { $offset=3 }
+    elseif ($bytes.Length -ge 2 -and (($bytes[0] -eq 255 -and $bytes[1] -eq 254) -or ($bytes[0] -eq 254 -and $bytes[1] -eq 255))) { $offset=2 }
+    $line=[Text.Encoding]::ASCII.GetString($bytes,$offset,$bytes.Length-$offset)
+    if ($line -cnotmatch '^[A-Za-z0-9+/]+={0,2}$') { throw 'Invalid native input envelope' }
     $command=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($line))
     & ([scriptblock]::Create($command))
     if ($null -ne $LASTEXITCODE) { exit $LASTEXITCODE }

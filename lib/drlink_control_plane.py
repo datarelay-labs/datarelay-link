@@ -6651,46 +6651,48 @@ class ControlPlane:
             "remote_ready": bool(routed and public_url != "Not configured" and st.get("mcp_configured")),
         }
 
-    def _native_mcp_diagnostics(self) -> list[str]:
-        """Read the running Bridge gates, not the caller environment or desired flags.
-
-        Report only allowlisted booleans; never emit environment contents,
-        credentials or claim that a configured gate authorizes any AI identity.
-        Test roots never inspect the host service.
-        """
+    def native_mcp_runtime_status(self) -> dict:
+        """Read only the running Bridge's execution settings; never expose raw environment."""
         import subprocess
+        from drlink_mcp_full_control import execution_profile_status
 
-        labels = {
-            b"DRLINK_MCP_SERVER_SELF_ENABLED": "Server-self",
-            b"DRLINK_MCP_SERVER_LOCAL_EXEC_ENABLED": "Local executor",
-            b"DRLINK_MCP_SERVER_FULL_CONTROL_ENABLED": "Full control",
-            b"DRLINK_MCP_SERVER_ADMIN_ENABLED": "Admin opt-in",
-        }
-        flags = None
-        if not self.root or str(self.root) == "/":
-            try:
-                def main_pid():
-                    result = subprocess.run(
-                        ["systemctl", "show", "drlink-mcp-bridge.service", "--property=MainPID", "--value"],
-                        check=True, capture_output=True, text=True, timeout=3,
-                    )
-                    return int(result.stdout.strip())
-                pid = main_pid()
-                if pid > 1:
-                    with open("/proc/%d/environ" % pid, "rb") as stream:
-                        data = stream.read(1024 * 1024 + 1)
-                    if len(data) <= 1024 * 1024 and main_pid() == pid:
-                        flags = {key: False for key in labels}
-                        for entry in data.split(b"\0"):
-                            key, sep, value = entry.partition(b"=")
-                            if sep and key in flags:
-                                flags[key] = value == b"1"
-            except (OSError, ValueError, subprocess.SubprocessError):
-                pass
+        if self.root and str(self.root) != "/":
+            return execution_profile_status(None)
+        try:
+            def main_pid():
+                result = subprocess.run(
+                    ["systemctl", "show", "drlink-mcp-bridge.service", "--property=MainPID", "--value"],
+                    check=True, capture_output=True, text=True, timeout=3,
+                )
+                return int(result.stdout.strip())
+            pid = main_pid()
+            if pid > 1:
+                with open("/proc/%d/environ" % pid, "rb") as stream:
+                    data = stream.read(1024 * 1024 + 1)
+                if len(data) <= 1024 * 1024 and main_pid() == pid:
+                    values = {}
+                    allowed = {b"DRLINK_MCP_SERVER_" + suffix for suffix in (
+                        b"SELF_ENABLED", b"LOCAL_EXEC_ENABLED", b"FULL_CONTROL_ENABLED",
+                        b"ADMIN_ENABLED", b"EXEC_USER", b"ALLOWED_ROOTS")}
+                    for item in data.split(b"\0"):
+                        key, sep, value = item.partition(b"=")
+                        if sep and key in allowed:
+                            values[key.decode("ascii")] = value.decode("utf-8")
+                    return execution_profile_status(values)
+        except (OSError, ValueError, UnicodeError, subprocess.SubprocessError):
+            pass
+        return execution_profile_status(None)
+
+    def _native_mcp_diagnostics(self) -> list[str]:
+        status = self.native_mcp_runtime_status()
         lines = ["", "Native Server MCP (running Bridge)", "---------------------------------"]
-        for key, label in labels.items():
-            value = "Unknown (not verified)" if flags is None else ("Enabled" if flags[key] else "Disabled")
-            lines.append("%-20s: %s" % (label, value))
+        for key, label in (("self", "Server-self"), ("local", "Local executor"),
+                           ("full", "Full control"), ("admin", "Admin opt-in")):
+            value = status[key]
+            text = "Unknown (not verified)" if value is None else ("Enabled" if value else "Disabled")
+            lines.append("%-20s: %s" % (label, text))
+        lines.append("Executor readiness  : %s" % status["readiness"])
+        lines.append("Reason              : %s" % status["reason"])
         lines.append("AI Access           : independently evaluated for every call")
         lines.append("Operator settings   : see docs/SERVER_NATIVE_MCP.md; explicit local opt-in required")
         return lines

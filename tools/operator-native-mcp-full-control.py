@@ -14,6 +14,8 @@ import argparse
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import hashlib
+import grp
+import shutil
 import json
 import os
 from pathlib import Path
@@ -356,12 +358,183 @@ def apply(source, head, settings, layout=Layout()):
             "service": UNIT, "installed_sha256": {name: digest(files[name]) for name in TARGETS}}
 
 
+DEFAULT_EXECUTOR = "drlink-mcp"
+DEFAULT_WORKSPACE = Path("/var/lib/drlink-mcp")
+
+
+def prepare_default_executor():
+    """Prepare an isolated non-admin OS account; never activate MCP access.
+
+    Called only by the real Server installer/updater. Existing operator
+    profiles, accounts, policy, state and service gates remain untouched.
+    """
+    require_root()
+    if state(Layout().target(TARGETS[-1]), Layout()) is not None:
+        return {"status": "existing explicit profile preserved", "remote_execution": "unchanged"}
+    safe_path(DEFAULT_WORKSPACE.parent, Layout())
+    try:
+        account = pwd.getpwnam(DEFAULT_EXECUTOR)
+    except KeyError:
+        try:
+            grp.getgrnam(DEFAULT_EXECUTOR)
+        except KeyError:
+            pass
+        else:
+            raise RolloutError("Dedicated executor group already exists without its account")
+        nologin = shutil.which("nologin") or "/sbin/nologin"
+        subprocess.run(["useradd", "--system", "--user-group", "--no-create-home",
+                        "--home-dir", str(DEFAULT_WORKSPACE), "--shell", nologin,
+                        DEFAULT_EXECUTOR], check=True, timeout=20)
+        account = pwd.getpwnam(DEFAULT_EXECUTOR)
+    if (account.pw_uid <= 0 or account.pw_gid <= 0
+            or account.pw_dir != str(DEFAULT_WORKSPACE)
+            or Path(account.pw_shell).name != "nologin"
+            or grp.getgrgid(account.pw_gid).gr_name != DEFAULT_EXECUTOR
+            or set(os.getgrouplist(account.pw_name, account.pw_gid)) != {account.pw_gid}):
+        raise RolloutError("Existing dedicated executor account does not match the isolated profile")
+    # No recursive chmod/chown, no change to existing foreign paths.
+    try:
+        DEFAULT_WORKSPACE.mkdir(mode=0o700)
+        created = True
+    except FileExistsError:
+        created = False
+    fd = os.open(DEFAULT_WORKSPACE, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    try:
+        if created:
+            os.fchown(fd, account.pw_uid, account.pw_gid)
+            os.fchmod(fd, 0o700)
+        info = os.fstat(fd)
+        if (info.st_uid, info.st_gid, stat.S_IMODE(info.st_mode)) != (account.pw_uid, account.pw_gid, 0o700):
+            raise RolloutError("Existing executor workspace ownership/mode is unsafe; left unchanged")
+    finally:
+        os.close(fd)
+    # The worker runs as the selected account, not Bridge root. Only the
+    # installed software directory may receive a narrow traversal ACL.
+    lib = Path("/usr/local/lib/drlink")
+    safe_path(lib, Layout())
+    def can_import():
+        result = subprocess.run(
+            [sys.executable, "-I", "-c",
+             "import sys;sys.path.insert(0,'/usr/local/lib/drlink');import drlink_mcp_full_control"],
+            cwd="/", env={"PATH":"/usr/bin:/bin", "HOME":str(DEFAULT_WORKSPACE), "LANG":"C.UTF-8"},
+            user=account.pw_uid, group=account.pw_gid, extra_groups=[],
+            stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            timeout=15, check=False)
+        return result.returncode == 0
+    if not can_import():
+        acl = shutil.which("setfacl")
+        if acl:
+            subprocess.run([acl, "-m", "u:"+DEFAULT_EXECUTOR+":r-x", str(lib)], check=True, timeout=10)
+        if not can_import():
+            raise RolloutError("Dedicated executor cannot load installed software; review local ACL support")
+    return {"status":"prepared", "account":DEFAULT_EXECUTOR, "workspace":str(DEFAULT_WORKSPACE),
+            "remote_execution":"unchanged; requires explicit local opt-in"}
+
+
+def verify_installed_profile(settings):
+    """Check the actual restarted process, not just the generated drop-in."""
+    def pid():
+        out = subprocess.check_output(
+            ["/usr/bin/systemctl", "show", UNIT, "--property=MainPID", "--value"],
+            text=True, timeout=5)
+        return int(out.strip())
+    current = pid()
+    if current <= 1:
+        raise RolloutError("Bridge process is not running")
+    with open("/proc/%d/environ" % current, "rb") as stream:
+        raw = stream.read(1024 * 1024 + 1)
+    if len(raw) > 1024 * 1024 or pid() != current:
+        raise RolloutError("Could not verify the active execution profile")
+    actual = dict(item.partition(b"=")[::2] for item in raw.split(b"\0") if b"=" in item)
+    wanted = {
+        "SELF_ENABLED": "1", "LOCAL_EXEC_ENABLED": "1", "FULL_CONTROL_ENABLED": "1",
+        "EXEC_USER": settings["exec_user"], "ALLOWED_ROOTS": os.pathsep.join(settings["roots"]),
+        "DEFAULT_CWD": settings["roots"][0], "ADMIN_ENABLED": "1" if settings["admin"] else "0",
+    }
+    if any(actual.get(("DRLINK_MCP_SERVER_"+key).encode()) != value.encode()
+           for key, value in wanted.items()):
+        raise RolloutError("Running Bridge profile differs from the approved profile; review existing local overrides")
+
+
+def verify_selected_worker(settings, layout=Layout()):
+    """Verify the selected account can load code and enter each approved root."""
+    account = pwd.getpwnam(settings["exec_user"])
+    if account.pw_uid != settings["uid"]:
+        raise RolloutError("Execution account changed after review")
+    library = layout.root / "usr/local/lib/drlink"
+    result = subprocess.run(
+        [sys.executable, "-I", "-c",
+         "import os,sys;sys.path.insert(0,sys.argv[1]);import drlink_mcp_full_control;sys.exit(0 if all(os.path.isdir(p) and os.access(p,os.X_OK) for p in sys.argv[2:]) else 1)",
+         str(library), *settings["roots"]],
+        cwd="/", env={"PATH":"/usr/bin:/bin", "HOME":account.pw_dir, "LANG":"C.UTF-8"},
+        user=account.pw_uid, group=account.pw_gid,
+        extra_groups=os.getgrouplist(account.pw_name, account.pw_gid),
+        stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        timeout=15, check=False)
+    if result.returncode:
+        raise RolloutError("Selected account cannot load installed code or enter the approved roots; no changes applied")
+
+
+def configure_installed(settings, layout=Layout()):
+    """Configure ONLY the existing local execution profile of installed code.
+
+    No source checkout or software replacement. Existing explicitly configured
+    native profiles are never silently overwritten. Use the previous rollout
+    workflow for an intentionally changed existing profile.
+    """
+    require_root()
+    for name in (*TARGETS[:-1], *("usr/local/lib/drlink/" + n for n in DEPENDENCIES)):
+        if state(layout.target(name) if name in TARGETS else layout.root / name, layout) is None:
+            raise RolloutError("Installed Native MCP runtime is incomplete; update the Server first")
+    target = layout.target(TARGETS[-1])
+    previous = state(target, layout)
+    # Reuse the existing profile format and location, not a second policy.
+    proposed = dropin(settings)
+    if previous is not None:
+        if previous["sha256"] != digest(proposed):
+            raise RolloutError("An existing operator execution profile differs; preserve it and review locally")
+        verify_installed_profile(settings)
+        return {"status": "already configured", "service": UNIT, "ai_access": "unchanged"}
+    verify_selected_worker(settings, layout)
+    service("is-active")
+    target.parent.mkdir(mode=0o755, parents=True, exist_ok=True)
+    safe_path(target, layout)
+    # Publish complete bytes with no overwrite. A failed write must not
+    # leave a partially active systemd profile.
+    fd, staging = tempfile.mkstemp(prefix=".native-profile-", dir=target.parent)
+    try:
+        with os.fdopen(fd, "wb") as stream:
+            os.fchmod(stream.fileno(), 0o644)
+            os.fchown(stream.fileno(), OWNER_UID, OWNER_GID)
+            stream.write(proposed)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.link(staging, target, follow_symlinks=False)
+    finally:
+        os.unlink(staging)
+    try:
+        restart_bridge()
+        verify_installed_profile(settings)
+    except Exception as failure:
+        try:
+            if state(target, layout) is None or digest(target.read_bytes()) != digest(proposed):
+                raise RolloutError("Local configuration changed during activation; manual review required")
+            target.unlink()
+            restart_bridge()
+        except Exception as restore_failure:
+            raise RolloutError("Local execution setup failed; rollback requires local review") from restore_failure
+        raise RolloutError("Local execution setup failed and was rolled back") from failure
+    return {"status": "configured", "service": UNIT, "ai_access": "unchanged"}
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument("--check", action="store_true", help="Read-only plan; the default")
     mode.add_argument("--apply", action="store_true", help="Apply the exact clean candidate as root")
     mode.add_argument("--rollback", type=Path, metavar="RECEIPT")
+    mode.add_argument("--configure-installed", action="store_true", help="Explicit local setup of the installed execution profile")
+    mode.add_argument("--prepare-default", action="store_true", help="Installer-only preparation; does not activate execution")
     parser.add_argument("--source", type=Path, default=Path(__file__).resolve().parents[1])
     parser.add_argument("--head", help="Exact 40-character candidate Git HEAD; required for apply")
     parser.add_argument("--exec-user")
@@ -372,11 +545,27 @@ def main(argv=None):
     try:
         if args.rollback:
             result = rollback(args.rollback)
+        elif args.prepare_default:
+            result = prepare_default_executor()
         else:
             settings = profile(args.exec_user, args.allowed_root, args.allow_root,
                                approval_identity=args.approval_ai_identity)
-            operation = apply if args.apply else check
-            result = operation(args.source, args.head, settings)
+            if args.configure_installed:
+                if not sys.stdin.isatty() or not sys.stdout.isatty():
+                    raise RolloutError("Installed execution setup requires a local interactive administrator")
+                print("Execution account: " + settings["exec_user"])
+                print("Allowed initial directories / file roots: " + ", ".join(settings["roots"]))
+                print("General commands have the selected account's real OS authority; not a filesystem sandbox.")
+                if input("Activate this existing execution profile? [y/N]: ").strip().lower() not in ("y", "yes"):
+                    print(json.dumps({"status": "cancelled", "ai_access": "unchanged"}))
+                    return 0
+                if settings["admin"] and input("Separately approve UID 0 administrative execution? [y/N]: ").strip().lower() not in ("y", "yes"):
+                    print(json.dumps({"status": "cancelled", "ai_access": "unchanged"}))
+                    return 0
+                result = configure_installed(settings)
+            else:
+                operation = apply if args.apply else check
+                result = operation(args.source, args.head, settings)
         print(json.dumps(result, indent=2, sort_keys=True))
         return 0
     except (RolloutError, OSError, ValueError, KeyError, SyntaxError, subprocess.SubprocessError) as exc:

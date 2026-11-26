@@ -58,9 +58,15 @@ try {
         Assert-FrpTrue (-not (Test-Path -LiteralPath (Join-Path $dir 'sample.txt'))) 'delete effect'
         Assert-FrpEqual 'DENY' (Invoke-FrpNativeAiJob (Job 'exec' @{command="Write-Output 'fixture'"}) $profile).result 'local command opt-in required'
         $profile.AllowCommandExec=$true
-        $result=Invoke-FrpNativeAiJob (Job 'exec' @{command="Write-Output 'fixture'"}) $profile
-        Assert-FrpEqual 0 $result.exit_status 'native bounded shell exit'
-        Assert-FrpTrue ($result.stdout -match 'fixture') 'native shell output'
+        $savedEncoding=[Console]::InputEncoding
+        try {
+            foreach ($encoding in @($savedEncoding,[Text.UTF8Encoding]::new($true),[Text.Encoding]::Unicode)) {
+                [Console]::InputEncoding=$encoding
+                $result=Invoke-FrpNativeAiJob (Job 'exec' @{command="Write-Output 'fixture'"}) $profile
+                Assert-FrpEqual 0 $result.exit_status ("native bounded shell exit ("+$encoding.WebName+"): "+$result.stderr)
+                Assert-FrpTrue ($result.stdout -match 'fixture') 'native shell output'
+            }
+        } finally { [Console]::InputEncoding=$savedEncoding }
         $expired=Job 'write_file' @{path=$path;content='late'}
         $expired.deadline_at=[DateTimeOffset]::UtcNow.AddSeconds(-1).ToString('o')
         Assert-FrpEqual 'DENY' (Invoke-FrpNativeAiJob $expired $profile).result 'expired job rejected'

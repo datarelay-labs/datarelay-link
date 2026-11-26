@@ -2080,6 +2080,21 @@ frp_server_end_tmp() {
   fi
 }
 
+frp_server_prepare_mcp_executor() {
+  # Test roots must never create accounts or touch real machine ACLs.
+  frp_server_test_mode && return 0
+  [[ ${EUID} -eq 0 ]] || return 0
+  local helper
+  helper="$(frp_server_fs /usr/local/lib/drlink/operator-native-mcp-full-control.py)"
+  [[ -f "$helper" ]] || return 0
+  # Preparation is independent of the operator's execution opt-in; preserve
+  # existing drop-ins and do not fail unrelated Server installation.
+  if ! python3 "$helper" --prepare-default; then
+    echo "WARNING: default local MCP execution environment not prepared; existing permissions unchanged." >&2
+  fi
+  return 0
+}
+
 frp_server_ensure_sandbox_dirs() {
   # Persistent paths listed in unit ReadWritePaths must exist before systemd
   # starts the allocator/frontend. Missing dirs cause status=226/NAMESPACE.
@@ -2945,6 +2960,7 @@ PY
   fi
 
   frp_server_ensure_sandbox_dirs
+  frp_server_prepare_mcp_executor
   if ! frp_server_skip_systemd; then
     systemctl daemon-reload || {
       frp_server_fail_after_mutation SYSTEMD_RELOAD_FAILED "systemd daemon-reload failed"

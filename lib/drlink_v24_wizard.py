@@ -1331,7 +1331,30 @@ def run_ai_mcp_setup(plane: ControlPlane) -> int:
     io = _io()
     try:
         while True:
-            choice = _ask_choice(io, "AI MCP Setup", ["MCP Server settings", "MCP Bridge settings / diagnostics", "Connect or manage AI service", "List AI connections"])
+            choice = _ask_choice(io, "AI MCP Setup", ["MCP Server settings", "MCP Bridge settings / diagnostics", "Connect or manage AI service", "List AI connections", "Configure local Server execution account"])
+            if choice == "Configure local Server execution account":
+                # A real local administrator chooses OS authority. This is not
+                # an AI Access policy, and never derives privilege from a Rule.
+                if plane.root not in (None, "", "/") or os.geteuid() != 0 or not isinstance(io, TtyIO):
+                    raise ControlPlaneError("Local execution setup requires an interactive administrator on the installed Server. No changes were applied.")
+                import subprocess
+                user = _ask_text(io, "Existing OS execution account", default="drlink-mcp")
+                default_roots = "/var/lib/drlink-mcp" if user == "drlink-mcp" else None
+                roots = _ask_text(io, "Existing absolute file roots / initial directories (colon separated)", default=default_roots)
+                argv = [sys.executable, "/usr/local/lib/drlink/operator-native-mcp-full-control.py",
+                        "--configure-installed", "--exec-user", user]
+                for path in roots.split(":"):
+                    argv.extend(["--allowed-root", path])
+                import pwd
+                try:
+                    admin = pwd.getpwnam(user).pw_uid == 0
+                except KeyError:
+                    raise ControlPlaneError("Execution account does not exist. No changes were applied.") from None
+                if admin:
+                    if not _ask_yes_no(io, "Select administrative UID 0 execution?", default=False):
+                        raise WizardCancelled()
+                    argv.append("--allow-root")
+                return subprocess.run(argv, check=False).returncode
             if choice == "MCP Server settings":
                 return _guide_mcp_server(plane, io=io)
             if choice == "MCP Bridge settings / diagnostics":

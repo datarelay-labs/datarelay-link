@@ -3860,7 +3860,16 @@ def check_mcp_tls(report, paths):
                 'security',
             )
         if plane is not None:
-            plane.close()
+            try:
+                if report.role in ('server', 'partial_server', 'dual'):
+                    native = plane.native_mcp_runtime_status()
+                    severity = {'Configured': INFO, 'Disabled': WARN, 'Not ready': WARN,
+                                'Unknown': NOT_TESTED}.get(native['readiness'], NOT_TESTED)
+                    report.add('mcp_native_executor', severity,
+                               native['readiness'] + ' — ' + native['reason'], '',
+                               'Review local execution configuration; AI Access alone does not activate an executor.', 'security')
+            finally:
+                plane.close()
     except Exception as exc:
         report.add(
             'mcp_tls_doctor',

@@ -63,6 +63,19 @@ class FullControlRuntimeTests(unittest.TestCase):
         self.assertEqual(result["state"], "completed", result)
         return result
 
+    def test_profile_diagnostics_distinguishes_gates_from_authorization(self):
+        unknown = full.execution_profile_status(None)
+        self.assertEqual(unknown["readiness"], "Unknown")
+        disabled = full.execution_profile_status({"DRLINK_MCP_SERVER_SELF_ENABLED":"1"})
+        self.assertEqual(disabled["reason"], "Server-local executor is disabled")
+        missing = full.execution_profile_status({"DRLINK_MCP_SERVER_SELF_ENABLED":"1", "DRLINK_MCP_SERVER_LOCAL_EXEC_ENABLED":"1"})
+        self.assertEqual(missing["readiness"], "Not ready")
+        configured = full.execution_profile_status(dict(os.environ))
+        self.assertEqual(configured["readiness"], "Configured")
+        self.assertNotIn(str(self.root), json.dumps(configured))
+        with patch.dict(os.environ, {"DRLINK_MCP_SERVER_EXEC_USER":"root", "DRLINK_MCP_SERVER_ADMIN_ENABLED":"0"}):
+            self.assertEqual(full.execution_profile_status(dict(os.environ))["readiness"], "Not ready")
+
     def test_default_gate_and_account_are_required(self):
         for flag in ("DRLINK_MCP_SERVER_SELF_ENABLED", "DRLINK_MCP_SERVER_LOCAL_EXEC_ENABLED",
                      "DRLINK_MCP_SERVER_FULL_CONTROL_ENABLED"):

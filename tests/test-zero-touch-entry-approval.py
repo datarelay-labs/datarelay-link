@@ -332,7 +332,7 @@ frp_entry_claim_payload request "$TEST_LOCATOR" machine-a host-a '' "$TEST_CLAIM
             env.pop("FRP_WINDOWS_FORCE_DOTNET_HTTP",None)
 
         ps="""$ErrorActionPreference='Stop'
-foreach($mod in @('FrpPaths.ps1','FrpLock.ps1','FrpCrypto.ps1','FrpTls.ps1','FrpState.ps1','FrpDraft.ps1','FrpConfig.ps1','FrpProcess.ps1','FrpShim.ps1','FrpAutostart.ps1','FrpBootstrap.ps1','FrpV24.ps1')) { . (Join-Path (Get-Location) ('windows/lib/'+$mod)) }
+foreach($mod in @('FrpPaths.ps1','FrpLock.ps1','FrpCrypto.ps1','FrpTls.ps1','FrpState.ps1','FrpDraft.ps1','FrpConfig.ps1','FrpProcess.ps1','FrpShim.ps1','FrpAutostart.ps1','FrpBootstrap.ps1','FrpV24.ps1','FrpAiExecutor.ps1')) { . (Join-Path (Get-Location) ('windows/lib/'+$mod)) }
 Initialize-FrpCryptoTypes
 Initialize-FrpDirectories
 $rc=Invoke-FrpZeroTouch -AllocatorUrl $env:TEST_ALLOCATOR -CaSha256 $env:TEST_CA -BootstrapLocator $env:FRP_BOOTSTRAP_LOCATOR -SkipStart -SkipDownload
@@ -345,9 +345,9 @@ exit $rc
                 proc.wait(timeout=40)
                 log.seek(0); output=log.read()
                 self.assertNotIn("Waiting for the Server operator", output)
+                self.assertEqual(proc.returncode,0,output)
                 machine=(client/"state/client-id").read_text().strip()
                 fp=MOD.MGMT.pubkey_fingerprint((client/"state/client-identity.pub").read_text())
-                self.assertEqual(proc.returncode,0,output)
             finally:
                 if proc.poll() is None:
                     proc.kill();proc.wait()

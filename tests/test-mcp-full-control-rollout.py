@@ -95,6 +95,57 @@ class RolloutTests(unittest.TestCase):
         for name, data in self.untouched.items():
             self.assertEqual((self.layout.root / name).read_bytes(), data, name)
 
+    def installed_runtime(self):
+        for name, data in self.files.items():
+            target = self.layout.target(name)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(data)
+
+    def test_installed_profile_only_configures_existing_runtime(self):
+        self.installed_runtime()
+        with patch.object(rollout, "verify_selected_worker"), patch.object(rollout, "verify_installed_profile") as verify:
+            result = rollout.configure_installed(self.settings, self.layout)
+            self.assertEqual(result["status"], "configured")
+            verify.assert_called_once_with(self.settings)
+            self.assertEqual(self.layout.target(rollout.TARGETS[-1]).read_bytes(), rollout.dropin(self.settings))
+            self.assertEqual(rollout.configure_installed(self.settings, self.layout)["status"], "already configured")
+            for name, data in self.files.items():
+                self.assertEqual(self.layout.target(name).read_bytes(), data)
+            self.assert_untouched()
+
+    def test_installed_profile_conflict_refused_and_failed_activation_rolls_back(self):
+        self.installed_runtime()
+        target = self.layout.target(rollout.TARGETS[-1])
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(b"# existing explicit local settings")
+        with self.assertRaisesRegex(rollout.RolloutError, "existing operator"):
+            rollout.configure_installed(self.settings, self.layout)
+        self.assertEqual(target.read_bytes(), b"# existing explicit local settings")
+        self.mocks[-1].assert_not_called()
+        target.unlink()
+        with patch.object(rollout, "verify_selected_worker"), patch.object(rollout, "verify_installed_profile", side_effect=rollout.RolloutError("fixture conflict")):
+            with self.assertRaisesRegex(rollout.RolloutError, "rolled back"):
+                rollout.configure_installed(self.settings, self.layout)
+        self.assertFalse(target.exists())
+        self.assert_untouched()
+
+    def test_unusable_selected_worker_does_not_change_profile(self):
+        self.installed_runtime()
+        with patch.object(rollout, "verify_selected_worker", side_effect=rollout.RolloutError("worker unavailable")):
+            with self.assertRaisesRegex(rollout.RolloutError, "worker unavailable"):
+                rollout.configure_installed(self.settings, self.layout)
+        self.assertFalse(self.layout.target(rollout.TARGETS[-1]).exists())
+        self.mocks[-1].assert_not_called()
+        self.assert_untouched()
+
+    def test_default_preparation_preserves_explicit_profile(self):
+        with patch.object(rollout, "state", return_value={"sha256":"existing"}), \
+             patch.object(rollout.pwd, "getpwnam") as account, \
+             patch.object(rollout.subprocess, "run") as execute:
+            self.assertEqual(rollout.prepare_default_executor()["status"], "existing explicit profile preserved")
+            account.assert_not_called()
+            execute.assert_not_called()
+
     def test_check_is_read_only_and_lists_exact_targets(self):
         before = {str(p.relative_to(self.root)): p.read_bytes() for p in self.root.rglob("*") if p.is_file()}
         result = rollout.check(self.root, self.head, self.settings, self.layout)
