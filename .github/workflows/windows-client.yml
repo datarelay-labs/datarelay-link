@@ -11,8 +11,40 @@ permissions:
   contents: read
 
 jobs:
+  windows-impact:
+    name: Detect native Windows qualification scope
+    runs-on: ubuntu-latest
+    outputs:
+      required: ${{ steps.scope.outputs.required }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          fetch-depth: 2
+      - id: scope
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_REF: ${{ github.base_ref }}
+          HEAD_REF: ${{ github.head_ref }}
+        run: |
+          set -euo pipefail
+          required=true
+          if [[ "$EVENT_NAME" == pull_request && "$BASE_REF" != feature/v2.4.0-final-product-closure && "$HEAD_REF" != qualification/* ]]; then
+            # The PR checkout is the synthetic merge commit. Compare with its
+            # first parent so all changes introduced by the PR are included.
+            # On ambiguous history, qualify instead of silently skipping.
+            if git rev-parse --verify HEAD^2 >/dev/null 2>&1; then
+              changed=$(git diff --name-only HEAD^1 HEAD)
+              if ! grep -Eq '^(windows/|tests/windows/|dist/bootstrap-client\.ps1$|scripts/build-bundles\.py$|\.github/workflows/windows-client\.yml$|VERSION$)' <<< "$changed"; then
+                required=false
+              fi
+            fi
+          fi
+          echo "required=$required" >> "$GITHUB_OUTPUT"
+
   windows-powershell51:
-    if: github.event_name != 'pull_request' || github.base_ref == 'feature/v2.4.0-final-product-closure' || (github.base_ref == 'main' && startsWith(github.head_ref, 'qualification/'))
+    needs: windows-impact
+    if: needs.windows-impact.outputs.required == 'true'
     name: Windows PowerShell 5.1
     runs-on: windows-latest
     steps:
@@ -53,7 +85,8 @@ jobs:
           & .\tests\windows\frp-binary-smoke.ps1
 
   windows-pwsh7:
-    if: github.event_name != 'pull_request' || github.base_ref == 'feature/v2.4.0-final-product-closure' || (github.base_ref == 'main' && startsWith(github.head_ref, 'qualification/'))
+    needs: windows-impact
+    if: needs.windows-impact.outputs.required == 'true'
     name: Windows PowerShell 7
     runs-on: windows-latest
     steps:

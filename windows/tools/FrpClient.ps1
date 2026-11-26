@@ -664,10 +664,14 @@ function Invoke-FrpClientUpdate {
     if (-not $mode) { $mode = 'engine' }
 
     $installedProject = Get-FrpProjectVersion
-    $engineUrl = $DownloadUrl
-    if (-not $engineUrl) { $engineUrl = Get-FrpWindowsAmd64Url }
-    $engineSha = $ExpectedSha256
-    if (-not $engineSha) { $engineSha = Get-FrpWindowsAmd64Sha256 }
+    # Product update uses its own qualified artifact; engine lookup must
+    # never block a project-only update/check.
+    if ($mode -ne 'project') {
+        $engineUrl = $DownloadUrl
+        if (-not $engineUrl) { $engineUrl = Get-FrpWindowsAmd64Url }
+        $engineSha = $ExpectedSha256
+        if (-not $engineSha) { $engineSha = Get-FrpWindowsAmd64Sha256 }
+    }
 
     # Distinct -Check semantics:
     #   update --check           -> both-check (project + engine)
@@ -939,13 +943,18 @@ function Get-FrpClientDoctorReport {
         [void]$lines.Add(("MISS {0}" -f (Get-FrpFrpcPath)))
         $issues++
     }
-    $enrolledNow = Test-FrpIsEnrolled
+    $st = Get-FrpClientStatus
+    $enrolledNow = $st.Enrolled
     $logPath = Get-FrpLogPath
     if (Test-Path -LiteralPath $logPath) {
         [void]$lines.Add(("OK  {0}" -f $logPath))
     } else {
-        [void]$lines.Add(("MISS {0} (runtime log)" -f $logPath))
-        if ($enrolledNow) { $issues++ }
+        if (-not $st.RelayRequired -or $st.RuntimeIntent -eq 'paused') {
+            [void]$lines.Add('SKIP runtime log: no active relay required')
+        } else {
+            [void]$lines.Add(("MISS {0} (runtime log)" -f $logPath))
+            if ($enrolledNow) { $issues++ }
+        }
     }
     $shim = Get-FrpCommandShimStatus
     if ($shim.ResolvesToProduct) {
@@ -957,7 +966,12 @@ function Get-FrpClientDoctorReport {
         [void]$lines.Add(("MISS drlink is not on the system PATH; run it as {0}" -f $shim.ShimPath))
         if ($enrolledNow) { $issues++ }
     }
-    $st = Get-FrpClientStatus
+    [void]$lines.Add(("Agent runtime     : {0}" -f $st.RuntimeLevel))
+    [void]$lines.Add(("Runtime detail    : {0}" -f $st.RuntimeState))
+    [void]$lines.Add(("Autostart         : {0}" -f $(if ($st.AutostartEnabled) { 'enabled' } else { 'disabled' })))
+    [void]$lines.Add(("Lifecycle task    : {0}" -f $(if ($st.LifecycleEnabled) { 'enabled' } else { 'disabled' })))
+    if ($st.RuntimeLevel -eq 'Critical') { $issues++ }
+    [void]$lines.Add('AI executor       : Not supported by this Windows Agent build')
     [void]$lines.Add(("Running: {0} pid={1}" -f $st.Running, $st.Pid))
     if ($issues -gt 0) {
         [void]$lines.Add(("Doctor found {0} issue(s)" -f $issues))
@@ -1363,10 +1377,16 @@ switch ($Command) {
         $st = Get-FrpClientStatus
         Write-Host ("enrolled={0}" -f $st.Enrolled)
         Write-Host ("running={0}" -f $st.Running)
-        Write-Host ("Runtime       : {0}" -f $st.RuntimeState)
-        Write-Host ("Runtime intent: {0}" -f $st.RuntimeIntent)
-        Write-Host ("Autostart     : {0}" -f $(if ($st.AutostartEnabled) { 'enabled' } else { 'disabled' }))
-        Write-Host ("Lifecycle task: {0}" -f $(if ($st.LifecycleEnabled) { 'enabled' } else { 'disabled' }))
+        Write-Host 'Role: Agent Host'
+        Write-Host ("Server connection : {0}" -f $(if ($st.Server) { $st.Server } else { 'not configured' }))
+        Write-Host ("Hostname          : {0}" -f $(if ($st.Hostname) { $st.Hostname } else { '-' }))
+        Write-Host ("Machine ID        : {0}" -f $(if ($st.MachineId) { $st.MachineId } else { '-' }))
+        Write-Host ("Agent runtime     : {0}" -f $st.RuntimeLevel)
+        Write-Host ("Runtime detail    : {0}" -f $st.RuntimeState)
+        Write-Host ("Runtime intent    : {0}" -f $st.RuntimeIntent)
+        Write-Host ("Autostart         : {0}" -f $(if ($st.AutostartEnabled) { 'enabled' } else { 'disabled' }))
+        Write-Host ("Lifecycle task    : {0}" -f $(if ($st.LifecycleEnabled) { 'enabled' } else { 'disabled' }))
+        Write-Host 'AI executor       : Not supported by this Windows Agent build'
         if ($null -ne $st.Pid) { Write-Host ("pid={0}" -f $st.Pid) }
         if ($st.Server) { Write-Host ("server={0}" -f $st.Server) }
         if ($st.Transport) { Write-Host ("transport={0}" -f $st.Transport) }
@@ -1377,22 +1397,46 @@ switch ($Command) {
         $verPath = Join-Path (Get-FrpWindowsRoot) 'version'
         $values = @{}
         if (Test-Path -LiteralPath $verPath) {
-            Get-Content -LiteralPath $verPath -ErrorAction SilentlyContinue | ForEach-Object { Write-Host $_ }
             foreach ($line in Get-Content -LiteralPath $verPath) {
-                if ($line -match '^([^=]+)=(.*)$') { $values[$Matches[1]] = $Matches[2] }
+                if ($line -match '^([^=]+)=(.*)$') { $values[$Matches[1]] = $Matches[2].Trim() }
             }
-        } else {
-            Write-Host 'Data Relay Link Windows Agent Host'
         }
-        Write-Host ('Data Relay Link: {0}' -f (Get-FrpProjectVersion))
-        Write-Host ('Relay Engine (FRP): {0}' -f (Get-FrpUpstreamVersion))
+        $project = [string]$values['PROJECT_VERSION']
+        $channel = [string]$values['RELEASE_CHANNEL']
+        $head = [string]$values['SOURCE_HEAD']
+        $content = [string]$values['CONTENT_SOURCE_HEAD']
+        $engine = [string]$values['FRP_VERSION']
+        if ($project -notmatch '^\d+\.\d+\.\d+$') { $project = 'unknown' }
+        if ($channel -notin @('stable','preview','development')) { $channel = 'unknown' }
+        if ($head -notmatch '^[0-9a-f]{40}$') { $head = 'UNKNOWN' }
+        if ($content -notmatch '^[0-9a-f]{40}$') { $content = 'UNKNOWN' }
+        if ($engine -notmatch '^\d+\.\d+\.\d+$') { $engine = 'unknown' }
+        $ref = ''
+        try {
+            $manifestPath = Join-Path (Get-FrpWindowsRoot) 'release-manifest.json'
+            $manifest = Get-Content -LiteralPath $manifestPath -Raw -ErrorAction Stop | ConvertFrom-Json
+            if ($manifest.channel -ceq $channel -and $manifest.project_version -ceq $project -and $head -ne 'UNKNOWN') {
+                $ref = [string]$manifest.git_ref
+            }
+        } catch { }
+        # As on Linux, a bare version or SHA cannot prove a stable tag.
+        if ($channel -eq 'stable' -and $ref -cne ('v' + $project)) { $channel = 'development' }
+        $display = $project
+        if ($project -ne 'unknown' -and $channel -eq 'development') {
+            $display = "$project-dev"
+            if ($head -ne 'UNKNOWN') { $display += '+g' + $head.Substring(0,7).ToLowerInvariant() }
+        } elseif ($project -ne 'unknown' -and $channel -eq 'preview') {
+            $rcNumber = 1
+            if ($ref -cmatch ('^v' + [regex]::Escape($project) + '-rc\.(\d+)$')) { $rcNumber = $Matches[1] }
+            $display = "$project-rc.$rcNumber"
+        }
+        Write-Host ('Data Relay Link: {0}' -f $display)
+        Write-Host ('Channel: {0}' -f $channel)
+        Write-Host ('Source HEAD: {0}' -f $head)
+        Write-Host ('Relay Engine (FRP): {0}' -f $engine)
         Write-Host 'Role: Agent Host'
-        foreach ($pair in @(@('Channel','RELEASE_CHANNEL'),
-                @('Source HEAD','SOURCE_HEAD'), @('Content Source HEAD','CONTENT_SOURCE_HEAD'))) {
-            $value = [string]$values[$pair[1]]
-            if (-not $value) { $value = 'UNKNOWN' }
-            Write-Host ('{0}: {1}' -f $pair[0], $value)
-        }
+        Write-Host ('Content Source HEAD: {0}' -f $content)
+        if (-not (Test-Path -LiteralPath $verPath)) { Write-Host 'Windows Agent Host version metadata unavailable.' }
         if ([string]$values['SOURCE_HEAD'] -notmatch '^[0-9a-f]{40}$') {
             Write-Host 'Source provenance is not verified. This Agent Host cannot qualify as an exact release candidate.'
             Write-Host 'Next action: Run drlink system update product to fetch and verify the enrolled Server artifact, then run drlink system version again. For explicitly reviewed offline source, use FRP_WINDOWS_PROJECT_SRC. See docs/UPGRADE.md.'

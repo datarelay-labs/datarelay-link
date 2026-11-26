@@ -552,6 +552,10 @@ class McpTlsLifecycleTests(unittest.TestCase):
         self.assertIn("FRP_DEPLOYMENT_MODE=single443", diag)
         self.assertIn("FRP_CONFIRM_MODE_SWITCH=yes", diag)
         self.assertIn("Public URL          : Not configured", diag)
+        self.assertIn("Native Server MCP (running Bridge)", diag)
+        self.assertIn("Server-self         : Unknown (not verified)", diag)
+        self.assertIn("AI Access           : independently evaluated for every call", diag)
+
 
         os.environ["DRLINK_MCP_PUBLIC_URL"] = "https://override.example.test/mcp"
         try:

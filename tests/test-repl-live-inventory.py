@@ -126,6 +126,16 @@ class ReplLiveInventoryTests(unittest.TestCase):
             native = subprocess.run([str(ROOT / 'tools/frpctl'), '--print-grammar-payload'],
                                     env=env, capture_output=True, text=True, check=True)
             self.assertIn('NewGroup', json.loads(native.stdout)['groups'])
+            # A corrupt group registry cannot hide healthy SQLite hosts or
+            # fall back to stale SQLite group selectors.
+            registry.write_text('{broken')
+            failed = g.read_only_completion_inventory('server', temp)
+            self.assertTrue(failed['group_inventory_warning'])
+            self.assertFalse(failed.get('inventory_warning', False))
+            self.assertEqual(failed['groups'], [])
+            self.assertIn('Example DP Master', failed['names'])
+            self.assertIn('Example DP Worker', failed['names'])
+
             self.assertEqual(g.completion_candidates('show managed-host-group New', 'server', [], {}, [],
                 groups=json.loads(native.stdout)['groups']), ['NewGroup'])
 

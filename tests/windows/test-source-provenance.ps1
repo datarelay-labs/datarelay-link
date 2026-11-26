@@ -44,9 +44,14 @@ try {
     $script:FrpWindowsSrcRoot = Get-FrpWindowsRoot
     Write-FrpInstalledVersion  # Binary-only maintenance retains identity.
     $exe = (Get-Process -Id $PID).Path
+    Add-Content -LiteralPath (Get-FrpVersionPath) -Value 'SENSITIVE_TOKEN=version-canary-do-not-print'
     $output = & $exe -NoProfile -File (Join-Path (Get-FrpToolsDir) 'FrpClient.ps1') system version 2>&1 | Out-String
     Assert-FrpEqual 0 $LASTEXITCODE 'installed version exit'
     Assert-FrpTrue ($output.Contains("Source HEAD: $candidate")) 'public exact source survives temporary payload removal'
+    Assert-FrpTrue ($output.Contains('Data Relay Link: 2.4.0-dev+gbbbbbbb')) 'Linux-equivalent development identity'
+    Assert-FrpTrue ($output.Contains('Channel: development') -and $output.Contains('Role: Agent Host') -and $output.Contains('Relay Engine (FRP): 0.71.0')) 'canonical version labels'
+    Assert-FrpTrue (-not $output.Contains('version-canary-do-not-print') -and -not $output.Contains('PROJECT_VERSION=')) 'public version uses allowlisted fields, not raw file'
+
     Assert-FrpTrue (-not $output.Contains('Source provenance is not verified')) 'verified Source HEAD does not recommend unnecessary reinstall'
 
     # Different local source content must never inherit old exact-candidate identity.

@@ -29,6 +29,11 @@ try {
     Assert-FrpEqual 0 $rc 'management-only complete succeeds'
     Assert-FrpEqual 'management_only' (Get-FrpInstallStatus) 'status management_only'
     Assert-FrpTrue (-not (Get-FrpClientStatus).Running) 'frpc not started'
+    $status = Get-FrpClientStatus
+    Assert-FrpEqual 'Healthy' $status.RuntimeLevel 'management-only relay inactivity is healthy'
+    Assert-FrpEqual 'Inactive (no enabled relay services)' $status.RuntimeState 'management-only does not report unexpected stopped relay'
+    Assert-FrpEqual $false $status.RelayRequired 'no relay log or process required'
+
 
     Write-FrpTestPass 'test-zero-service'
 } finally {

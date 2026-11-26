@@ -76,6 +76,8 @@ security, artifact and rollback checks pass.
 | `DRLINK_MCP_SERVER_DEFAULT_CWD=<absolute directory>` | Optional initial cwd for the existing `exec(endpoint=server:self)` alias |
 | `DRLINK_MCP_SERVER_ADMIN_ENABLED=1` | Separate explicit local opt-in required when the selected account has UID 0 |
 
+Use `system diagnostics mcp` to inspect the allowlisted execution gate states of the running Bridge. An unreadable or unavailable process reports Unknown, not Disabled or Enabled. The diagnostic does not disclose credentials, select an execution account, change a gate or prove effective AI Access.
+
 All execution gates default off. The Bridge service running as root does not
 implicitly select root for commands. Existing `NoNewPrivileges=yes` remains
 in force; selecting a non-root account does not promise privileged package or

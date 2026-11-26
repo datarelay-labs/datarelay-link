@@ -97,7 +97,9 @@ def read_only_completion_inventory(role, root=""):
                 result["groups"] = [value for gid, group in sorted_groups(state)
                                     for value in (group["name"], gid)]
             except (OSError, ValueError, TypeError, KeyError, AttributeError):
-                result["inventory_warning"] = True
+                # The group registry is a separate authority. Its failure
+                # must not invalidate successful SQLite host completion.
+                result["group_inventory_warning"] = True
             # Names only: completion never reads credentials or writes authority.
             result["inventory"] = {
                 kind: [str(row["name"]) for row in conn.execute(
