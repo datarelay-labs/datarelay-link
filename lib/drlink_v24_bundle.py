@@ -531,6 +531,8 @@ def _ai_rule_view(plane: ControlPlane, row) -> dict:
         dest = g["name"] if g else dest
     elif kind == v24.TRUSTED_MANAGED_HOSTS_KIND and row["destination_ref_id"] == v24.TRUSTED_MANAGED_HOSTS_REF_ID:
         dest = v24.TRUSTED_MANAGED_HOSTS_TARGET
+    elif kind == v24.MANAGED_HOST_GROUP_KIND:
+        dest = v24.MANAGED_HOST_GROUP_PREFIX + str(row["destination_ref_id"])
     elif kind == "server" and row["destination_ref_id"] == v24.SERVER_SELF_REF_ID:
         dest = v24.SERVER_SELF_TARGET
     elif kind == "client":
@@ -546,6 +548,8 @@ def _ai_rule_view(plane: ControlPlane, row) -> dict:
             "patching its AI Access Rule.")
     if dest == v24.TRUSTED_MANAGED_HOSTS_TARGET and kind != v24.TRUSTED_MANAGED_HOSTS_KIND:
         _bundle_error("Cannot serialize a Network Object using the reserved dynamic Managed Host selector.")
+    if dest.startswith(v24.MANAGED_HOST_GROUP_PREFIX) and kind != v24.MANAGED_HOST_GROUP_KIND:
+        _bundle_error("Cannot serialize a Network Object using the reserved Managed Host Group selector.")
     perm = "-"
     pkind = row["permission_ref_kind"]
     if pkind == "permission_object":
@@ -1546,7 +1550,9 @@ def prepare_v24_plan(plane: ControlPlane, raw_text: str, *, role: Optional[str] 
                                     "Create the AI Identity before applying the Rule." % rule["source"]
                                 )
                             dest = rule["destination"]
-                            if (dest not in (v24.SERVER_SELF_TARGET, v24.TRUSTED_MANAGED_HOSTS_TARGET)
+                            if dest.startswith(v24.MANAGED_HOST_GROUP_PREFIX):
+                                rule["destination"] = v24.MANAGED_HOST_GROUP_PREFIX + v24.resolve_managed_host_group_target(plane, dest)
+                            elif (dest not in (v24.SERVER_SELF_TARGET, v24.TRUSTED_MANAGED_HOSTS_TARGET)
                                     and dest.lower() not in no_names and dest.lower() not in ng_names):
                                 client = None
                                 try:

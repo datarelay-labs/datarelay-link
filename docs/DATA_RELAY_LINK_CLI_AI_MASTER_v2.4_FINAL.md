@@ -2778,6 +2778,7 @@ Example AI Access after AI Identity and Permission Object already exist:
 ```text
 set ai-access claude-prod source claude destination production-servers permission read-only enabled
 set ai-access trusted-hosts source claude destination managed-hosts:trusted permission read-only paths /var/log/** enabled
+set ai-access developers-read source claude destination managed-host-group:developers permission read-only paths /var/log/** enabled
 ```
 
 If the Resource already exists, only explicitly supplied fields change.

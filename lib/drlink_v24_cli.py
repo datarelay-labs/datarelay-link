@@ -1190,6 +1190,10 @@ def _show_ai_policy(plane: ControlPlane, rest: list[str]) -> int:
         dest_label = v24.SERVER_SELF_TARGET
     elif row["destination_ref_kind"] == v24.TRUSTED_MANAGED_HOSTS_KIND and row["destination_ref_id"] == v24.TRUSTED_MANAGED_HOSTS_REF_ID:
         dest_label = v24.TRUSTED_MANAGED_HOSTS_TARGET
+    elif row["destination_ref_kind"] == v24.MANAGED_HOST_GROUP_KIND:
+        gid = row["destination_ref_id"]
+        label = v24.list_ai_managed_host_groups(plane).get(gid, "missing / unavailable")
+        dest_label = "%s%s (%s)" % (v24.MANAGED_HOST_GROUP_PREFIX, gid, label)
     perm_label = "-"
     if row["permission_ref_kind"] == "permission_object" and row["permission_ref_id"]:
         perm = plane.conn.execute(

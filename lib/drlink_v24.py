@@ -61,6 +61,8 @@ SERVER_SELF_REF_ID = "local"
 TRUSTED_MANAGED_HOSTS_TARGET = "managed-hosts:trusted"
 TRUSTED_MANAGED_HOSTS_KIND = "managed-hosts"
 TRUSTED_MANAGED_HOSTS_REF_ID = "trusted"
+MANAGED_HOST_GROUP_KIND = "managed-host-group"
+MANAGED_HOST_GROUP_PREFIX = MANAGED_HOST_GROUP_KIND + ":"
 
 CAP_TO_PERMISSION = {}
 for _perm, _caps in PERMISSION_TO_CAPS.items():
@@ -1401,6 +1403,8 @@ def ai_access_rule_update_security_impact(
         cur_dst = SERVER_SELF_TARGET
     elif dkind == TRUSTED_MANAGED_HOSTS_KIND and existing["destination_ref_id"] == TRUSTED_MANAGED_HOSTS_REF_ID:
         cur_dst = TRUSTED_MANAGED_HOSTS_TARGET
+    elif dkind == MANAGED_HOST_GROUP_KIND:
+        cur_dst = MANAGED_HOST_GROUP_PREFIX + str(existing["destination_ref_id"])
     cur_perm = None
     pkind = existing["permission_ref_kind"]
     if pkind == "permission_object":
@@ -1621,6 +1625,8 @@ def _semantic_network_ref(conn: sqlite3.Connection, kind: str, ref_id: str) -> s
     kind_l = str(kind or "").lower()
     if kind_l == TRUSTED_MANAGED_HOSTS_KIND:
         return TRUSTED_MANAGED_HOSTS_TARGET if ref_id == TRUSTED_MANAGED_HOSTS_REF_ID else _unresolvable_semantic(kind_l, ref_id)
+    if kind_l == MANAGED_HOST_GROUP_KIND:
+        return MANAGED_HOST_GROUP_PREFIX + str(ref_id)
     if kind_l == "server":
         return SERVER_SELF_TARGET if ref_id == SERVER_SELF_REF_ID else _unresolvable_semantic(kind_l, ref_id)
     if kind_l == "object":
@@ -4542,6 +4548,55 @@ def evaluate_selector_policy(
     }
 
 
+def _managed_host_group_inventory(plane_db) -> dict:
+    # Public Managed Host Group commands own this inventory, not the legacy
+    # SQLite client_groups table. Read and validate its current atomic snapshot.
+    from frp_client_registry import load_server_registry, validate_group_invariants
+    try:
+        _, _, state = load_server_registry(plane_db.root or "")
+        if (not isinstance(state, dict) or state.get("schema_version") != 2
+                or not isinstance(state.get("clients"), dict)
+                or any(not isinstance(c, dict) for c in state["clients"].values())):
+            return {}
+        return validate_group_invariants(state)
+    except (OSError, ValueError, TypeError, KeyError):
+        return {}
+
+
+def list_ai_managed_host_groups(plane_db) -> dict:
+    return {gid: group["name"] for gid, group in
+            (_managed_host_group_inventory(plane_db).get("groups") or {}).items()}
+
+
+def resolve_managed_host_group_target(plane_db, selector: str) -> str:
+    value = selector[len(MANAGED_HOST_GROUP_PREFIX):]
+    groups = list_ai_managed_host_groups(plane_db)
+    # An immutable ID takes precedence and never falls back to a name.
+    if re.fullmatch(r"grp_[0-9a-f]{8}", value):
+        if value in groups:
+            return value
+    else:
+        matches = [gid for gid, name in groups.items() if name.lower() == value.lower()]
+        if len(matches) == 1:
+            return matches[0]
+    raise ControlPlaneError(cli_error("Managed Host Group is missing or its inventory is invalid."))
+
+
+def _managed_host_group_matches(plane_db, group_id, name, inventory) -> bool:
+    if group_id not in (inventory.get("groups") or {}):
+        return False
+    row = plane_db.conn.execute(
+        "SELECT c.id FROM objects o JOIN managed_endpoints e ON e.object_id=o.id "
+        "JOIN clients c ON c.id=e.client_id WHERE o.name=? COLLATE NOCASE "
+        "AND o.type='managed_endpoint' AND o.origin='managed' AND o.status='active' "
+        "AND c.trust_status='trusted' AND lower(c.status) NOT IN ('retired','removed','deleted') LIMIT 1",
+        (name,),
+    ).fetchone()
+    if row is None:
+        return False
+    return group_id in (inventory["clients"].get(row["id"], {}).get("group_ids") or [])
+
+
 def _trusted_managed_host_matches(plane_db, name: str) -> bool:
     # Match only an actual current, trusted, active Managed Host endpoint.
     # No wildcard, object-group name, IP alias or native Server target.
@@ -4556,6 +4611,8 @@ def _trusted_managed_host_matches(plane_db, name: str) -> bool:
 def _ref_name_match(plane_db, ref_kind: str, ref_id: str, name: str) -> bool:
     if ref_kind == TRUSTED_MANAGED_HOSTS_KIND:
         return ref_id == TRUSTED_MANAGED_HOSTS_REF_ID and _trusted_managed_host_matches(plane_db, name)
+    if ref_kind == MANAGED_HOST_GROUP_KIND:
+        return _managed_host_group_matches(plane_db, ref_id, name, _managed_host_group_inventory(plane_db))
     # Built-in Server target is never resolved through a user-created Network Object.
     if ref_kind == "server":
         return ref_id == SERVER_SELF_REF_ID and name == SERVER_SELF_TARGET
@@ -4791,7 +4848,9 @@ def set_ai_access_rule(
                 "Authentication is required before AI Access authorization.\n\n"
                 "No changes were applied." % source
             )
-    if destination is not None and destination not in (SERVER_SELF_TARGET, TRUSTED_MANAGED_HOSTS_TARGET):
+    if destination is not None and destination.startswith(MANAGED_HOST_GROUP_PREFIX):
+        destination = MANAGED_HOST_GROUP_PREFIX + resolve_managed_host_group_target(plane_db, destination)
+    elif destination is not None and destination not in (SERVER_SELF_TARGET, TRUSTED_MANAGED_HOSTS_TARGET):
         try:
             plane_db.resolve_ref(destination)
         except ControlPlaneError:
@@ -4840,6 +4899,8 @@ def set_ai_access_rule(
                 kind, ref_id = "server", SERVER_SELF_REF_ID
             elif destination == TRUSTED_MANAGED_HOSTS_TARGET:
                 kind, ref_id = TRUSTED_MANAGED_HOSTS_KIND, TRUSTED_MANAGED_HOSTS_REF_ID
+            elif destination.startswith(MANAGED_HOST_GROUP_PREFIX):
+                kind, ref_id = MANAGED_HOST_GROUP_KIND, destination[len(MANAGED_HOST_GROUP_PREFIX):]
             else:
                 kind, ref = plane_db.resolve_ref(destination)
                 ref_id = ref["id"]
@@ -4958,17 +5019,22 @@ class _AiDestinationMatcher:
             plane_db, "object_groups",
             sorted({
                 r["destination_ref_id"] for r in rows
-                if r["destination_ref_kind"] not in ("server", "object", TRUSTED_MANAGED_HOSTS_KIND)
+                if r["destination_ref_kind"] not in ("server", "object", TRUSTED_MANAGED_HOSTS_KIND, MANAGED_HOST_GROUP_KIND)
             }),
         )
         self._group_members: dict = {}
         self._trusted_host = None
+        self._inventory = None
 
     def matches(self, ref_kind: str, ref_id: str) -> bool:
         if ref_kind == TRUSTED_MANAGED_HOSTS_KIND:
             if self._trusted_host is None:
                 self._trusted_host = _trusted_managed_host_matches(self._plane_db, self._wanted)
             return ref_id == TRUSTED_MANAGED_HOSTS_REF_ID and self._trusted_host
+        if ref_kind == MANAGED_HOST_GROUP_KIND:
+            if self._inventory is None:
+                self._inventory = _managed_host_group_inventory(self._plane_db)
+            return _managed_host_group_matches(self._plane_db, ref_id, self._wanted, self._inventory)
         if ref_kind == "object":
             name = self._objects.get(ref_id, _AI_REF_MISSING)
             return name is not _AI_REF_MISSING and name.lower() == self._wanted

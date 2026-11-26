@@ -212,6 +212,7 @@ Authentication and authorization are separate. After verified OAuth, offer the r
 ```text
 set ai-access claude-prod source claude destination production-servers permission read-only enabled
 set ai-access trusted-hosts source claude destination managed-hosts:trusted permission read-only paths /var/log/** enabled
+set ai-access developers-read source claude destination managed-host-group:developers permission read-only paths /var/log/** enabled
 set ai-access allow-read source automation-ai destination ubuntu-prod permission read-only paths '/var/lib/vendor/**',/opt/app/** enabled
 ```
 

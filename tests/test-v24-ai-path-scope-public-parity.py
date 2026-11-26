@@ -461,6 +461,55 @@ configurationBundle:
         self.assertEqual(read.call_count, 3)
         self.assertIn("Invalid UTF-8 input", out.getvalue())
 
+    @unittest.skipUnless(sys.platform.startswith("linux"), "Linux PTY regression")
+    def test_tty_pty_backspace_and_invalid_utf8_recovery(self):
+        import pty
+        import select
+        import subprocess
+        import termios
+        import time
+
+        for invalid in (False, True):
+            with self.subTest(invalid=invalid):
+                master, slave = pty.openpty()
+                attrs = termios.tcgetattr(slave)
+                attrs[6][termios.VERASE] = b"\x7f"
+                termios.tcsetattr(slave, termios.TCSANOW, attrs)
+                proc = subprocess.Popen(
+                    [sys.executable, "-c",
+                     "from drlink_v24_wizard import TtyIO; print('VALUE='+TtyIO().ask('Path: '))"],
+                    stdin=slave, stdout=slave, stderr=slave,
+                    env=dict(os.environ, PYTHONPATH=str(ROOT / "lib"), PYTHONUTF8="1"),
+                )
+                os.close(slave)
+                output = bytearray()
+
+                def read_until(token):
+                    deadline = time.monotonic() + 5
+                    while token not in output:
+                        remaining = deadline - time.monotonic()
+                        self.assertGreater(remaining, 0, repr(output))
+                        if select.select([master], [], [], remaining)[0]:
+                            chunk = os.read(master, 4096)
+                            self.assertTrue(chunk, repr(output))
+                            output.extend(chunk)
+
+                try:
+                    read_until(b"Path: ")
+                    if invalid:
+                        os.write(master, b"\xc3\n")
+                        read_until(b"Invalid UTF-8 input")
+                        os.write(master, b"/**\n")
+                    else:
+                        os.write(master, b"wrong" + b"\x7f" * 5 + b"/**\n")
+                    read_until(b"VALUE=/**")
+                    self.assertEqual(proc.wait(timeout=5), 0)
+                finally:
+                    if proc.poll() is None:
+                        proc.kill()
+                        proc.wait()
+                    os.close(master)
+
     def test_wizard_binds_paths_for_file_permission(self):
         # AI Access is WHITELIST-only; wizard does not ask for policy mode.
         # Choices: identity bot, dest ubuntu-prod, permission read-only

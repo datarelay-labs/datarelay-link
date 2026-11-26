@@ -305,3 +305,5 @@ Release qualification must retain real interoperability evidence for every host 
 ### Upgrade data retention
 
 Pre-v2.4 capability/action records are not an effective authorization source and are retained for recovery and audit. The current CLI shows their count separately; it never lists them as active rules, completes their names or edits/deletes them through the current rule command. Recreate an explicitly reviewed current rule only when needed. Existing canonical rules and saved credentials remain unchanged. No old allow/deny order is automatically translated into a broader WHITELIST grant.
+
+To limit an Identity to a Managed Host Group, select its named group in the Access Rule wizard, or use the destination selector `managed-host-group:<name>` (an exact name) or `managed-host-group:<group-id>`. The rule binds the immutable group ID and follows current and future trusted members. Adding a host to the group changes its applicable permissions; removing it withdraws the group-derived permissions. Other matching rules remain independent. This is not a Network Object Group or the all-trusted-host scope.

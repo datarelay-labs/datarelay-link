@@ -1102,7 +1102,15 @@ def run_ai_access_wizard(plane: ControlPlane, name: str, *, source_identity=None
             destinations = [d for d in destinations if d not in (v24.SERVER_SELF_TARGET, v24.TRUSTED_MANAGED_HOSTS_TARGET)]
             destinations += [v24.SERVER_SELF_TARGET]
             trusted_label = "All trusted Managed Hosts (current and future; excludes Server)"
-            destination = _ask_choice(io, "Destination (select existing target or explicit future-host scope)", destinations + [trusted_label], aliases={v24.TRUSTED_MANAGED_HOSTS_TARGET: trusted_label})
+            group_choices = {v24.MANAGED_HOST_GROUP_PREFIX + gid: "Managed Host Group: %s [%s]" % (label, gid)
+                             for gid, label in v24.list_ai_managed_host_groups(plane).items()}
+            aliases = {v24.TRUSTED_MANAGED_HOSTS_TARGET: trusted_label, **group_choices}
+            destination = _ask_choice(io, "Destination (select existing target or explicit future-host scope)",
+                                      destinations + [trusted_label] + sorted(group_choices.values()), aliases=aliases)
+            if destination in group_choices.values():
+                destination = next(key for key, label in group_choices.items() if label == destination)
+                if not _ask_yes_no(io, "Allow current and future trusted members of this Managed Host Group? Membership changes change access.", default=False):
+                    continue
             if destination == trusted_label:
                 destination = v24.TRUSTED_MANAGED_HOSTS_TARGET
             if destination == v24.TRUSTED_MANAGED_HOSTS_TARGET:
@@ -1158,7 +1166,7 @@ def run_ai_access_wizard(plane: ControlPlane, name: str, *, source_identity=None
                 "Name        : %s" % name,
                 "Source      : %s" % source,
                 "Destination : %s" % destination,
-                "Host scope  : %s" % ("ALL current and future trusted Managed Hosts; excludes server:self" if destination == v24.TRUSTED_MANAGED_HOSTS_TARGET else "Selected destination only"),
+                "Host scope  : %s" % ("ALL current and future trusted Managed Hosts; excludes server:self" if destination == v24.TRUSTED_MANAGED_HOSTS_TARGET else "Current and future trusted group members" if destination.startswith(v24.MANAGED_HOST_GROUP_PREFIX) else "Selected destination only"),
                 "Permission  : %s" % permission,
                 "Capabilities: %s" % ", ".join(sorted(capabilities)),
                 "Paths       : %s" % (", ".join(paths) if paths else "-"),
