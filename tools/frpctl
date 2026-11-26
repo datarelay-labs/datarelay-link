@@ -581,7 +581,7 @@ if _is_file(cfg):
                 names.append(cid)
                 label = str(client.get("label") or "").strip()
                 host = str(client.get("hostname") or "").strip()
-                clients_meta.append({"id": cid, "label": label, "hostname": host})
+                clients_meta.append({"id": cid, "full_id": mid, "label": label, "hostname": host})
                 sids = []
                 for sid in (client.get("services") or {}):
                     sid = str(sid)
@@ -652,7 +652,7 @@ try:
     canonical = read_only_completion_inventory(role, root)
     if canonical is not None:
         payload.update(canonical)
-        payload['inventory_warning'] = False
+        payload['inventory_warning'] = bool(canonical.get('inventory_warning'))
 except Exception:
     # Never advertise stale legacy selectors after an authoritative read fails.
     payload.update(names=[], clients=[], services={}, local_services=[], groups=[], inventory={})

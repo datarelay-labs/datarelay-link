@@ -79,7 +79,7 @@
     "roles": "server",
     "category": "Inventory",
     "summary": "Show one Managed Host Group and its members",
-    "detail": "Show one Managed Host Group, its immutable group ID, description, and Managed Host membership count.",
+    "detail": "Show one Managed Host Group, its immutable group ID, description, membership count, and member HOST ID, NAME and HOSTNAME.",
     "examples": [
       "show managed-host-group edge"
     ],

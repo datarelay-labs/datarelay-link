@@ -81,12 +81,23 @@ def read_only_completion_inventory(role, root=""):
                 if hostname and hostnames[hostname.casefold()] == 1:
                     selectors.append(hostname)
                 result["names"].extend(selectors)
-                result["clients"].append({"id": short, "label": label, "hostname": hostname})
+                result["clients"].append({"id": short, "full_id": mid, "label": label,
+                                          "hostname": hostname, "selectors": selectors})
                 names = [str(row["name"]) for row in service_rows if row["client_id"] == mid]
                 for selector in selectors + [mid]:
                     result["services"][selector] = names
-            result["groups"] = [str(row["name"]) for row in conn.execute(
-                "SELECT name FROM client_groups ORDER BY name")]
+            # Public Managed Host Group CRUD and AI group targeting use the
+            # atomic registry, not the historical SQLite client_groups table.
+            from frp_client_registry import load_server_registry, validate_group_invariants, sorted_groups
+            try:
+                _, _, state = load_server_registry(root)
+                if state.get("schema_version") != 2 or not isinstance(state.get("clients"), dict):
+                    raise ValueError("invalid Managed Host Group registry")
+                validate_group_invariants(state)
+                result["groups"] = [value for gid, group in sorted_groups(state)
+                                    for value in (group["name"], gid)]
+            except (OSError, ValueError, TypeError, KeyError, AttributeError):
+                result["inventory_warning"] = True
             # Names only: completion never reads credentials or writes authority.
             result["inventory"] = {
                 kind: [str(row["name"]) for row in conn.execute(
@@ -4395,18 +4406,35 @@ def format_tab_candidates(line, matches, role, names=None, clients=None):
         return ""
     descs, style = _tab_desc_map(line, role, names=names, clients=clients)
     if style == "clients":
-        by_id = {}
+        from frp_client_registry import sanitize_display
+        # Aliases remain valid input selectors; display each matched host once.
+        # Use explicit selector ownership when available, so duplicate labels
+        # cannot accidentally select a different host.
+        matched = set(matches)
+        rows = []
+        used = set()
         for item in clients or []:
-            if isinstance(item, dict) and item.get("id"):
-                by_id[str(item["id"])] = item
-        lines = ["%-10s %-10s %s" % ("HOST ID", "LABEL", "HOSTNAME")]
-        for mid in matches:
-            item = by_id.get(mid) or {}
-            lines.append(
-                "%-10s %-10s %s"
-                % (mid, item.get("label") or "-", item.get("hostname") or "-")
-            )
-        return "\n".join(lines)
+            if not isinstance(item, dict) or not item.get("id"):
+                continue
+            aliases = set(item.get("selectors") or [item["id"]])
+            aliases.add(str(item["id"]))
+            full_id = str(item.get("full_id") or item["id"])
+            aliases.add(full_id)
+            if not (aliases & matched) or full_id in used:
+                continue
+            used.add(full_id)
+            rows.append(tuple(sanitize_display(value or "-") for value in
+                              (full_id, item.get("label"), item.get("hostname"))))
+        if not clients:
+            rows = [(sanitize_display(mid), "-", "-") for mid in dict.fromkeys(matches)]
+        if not rows:
+            return ""
+        rows.sort(key=lambda row: (row[1].casefold(), row[2].casefold(), row[0]))
+        id_width = max(10, *(len(row[0]) for row in rows))
+        label_width = max(10, *(len(row[1]) for row in rows))
+        fmt = "%-*s  %-*s  %s"
+        return "\n".join(fmt % (id_width, mid, label_width, label, host)
+                         for mid, label, host in [("HOST ID", "LABEL", "HOSTNAME")] + rows)
     # Progressive disclosure: group large resource lists by product domain.
     groups = CATALOG.group_completion_candidates(matches)
     if groups and style not in ("clients", "fields") and len(matches) >= 6:
@@ -4598,7 +4626,14 @@ def _catalog_candidates(
                 inventory=inventory,
             ).get(complete)
             if pool is not None:
-                hits = _filter(pool, prefix)
+                if complete == CATALOG.C_GROUP:
+                    # Group name resolution is case-insensitive. System groups
+                    # are valid for read-only detail, not membership mutations.
+                    if tuple(cmd["path"]) == ("show", "managed-host-group"):
+                        pool = list(dict.fromkeys(pool + ["all", "ungrouped"]))
+                    hits = [item for item in pool if item.casefold().startswith(prefix.casefold())]
+                else:
+                    hits = _filter(pool, prefix)
         longer = _longer_path_children()
         merged = []
         for item in list(hits) + list(longer or []):
