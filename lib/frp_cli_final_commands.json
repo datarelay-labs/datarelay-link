@@ -3350,7 +3350,6 @@
     "summary": "Manage AI Identity authentication",
     "detail": "Connect and verify an AI client, or explicitly manage an existing Identity. Authentication never grants Managed Host access. Review the selected credential or OAuth action.",
     "examples": [
-      "set ai-identity",
       "set ai-identity chatgpt",
       "set ai-identity chatgpt approve <PENDING-ID>",
       "set ai-identity chatgpt deny <PENDING-ID>",

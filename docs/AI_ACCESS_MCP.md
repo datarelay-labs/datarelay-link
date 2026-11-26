@@ -104,7 +104,7 @@ identity (that would make initial onboarding impossible).
 
 1. Add the public `https://<MCP-HOSTNAME>/mcp` endpoint in the supported
    ChatGPT MCP connection UI; this opens an OAuth request.
-2. Copy the Pending request ID (oap_...) displayed on the browser consent page and paste it into the Pending request ID prompt in the guided AI Identity CLI. Review the client, redirect origin, requested resource and scope before approving. Alternatively, on the **DRLink Server** run:
+2. Copy the Pending request ID (oap_...) displayed on the browser consent page and paste it into the Pending request ID prompt in `set ai-mcp` → Connect or manage AI service. Review the client, redirect origin, requested resource and scope before approving. Alternatively, on the **DRLink Server** run:
 
    ```text
    set ai-identity chatgpt approve <PENDING-ID>
