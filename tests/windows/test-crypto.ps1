@@ -53,6 +53,26 @@ try {
     catch { $rejected = $_.Exception.Message -match 'HMAC verification' }
     Assert-FrpTrue $rejected 'tampered lifecycle response rejected'
 
+    # Job operations share the enrolled management signature contract and
+    # must fail closed on unsigned, missing, or altered responses.
+    Assert-FrpEqual 'ai-job.claim' (Get-FrpV24MgmtOperation -Method POST -Path '/v1/ai-jobs/claim') 'claim operation'
+    Assert-FrpEqual 'ai-job.complete' (Get-FrpV24MgmtOperation -Method POST -Path '/v1/ai-jobs/complete') 'complete operation'
+    $script:WireResponse = '{"jobs":[]}'
+    $rejected = $false
+    try { Invoke-FrpV24MgmtRequest -Method POST -Path '/v1/ai-jobs/claim' -Body @{limit=1;wait_ms=25000} -TimeoutSec 35 | Out-Null }
+    catch { $rejected = $_.Exception.Message -match 'missing signed AI job response HMAC' }
+    Assert-FrpTrue $rejected 'unsigned AI claim rejected'
+    $jobWire = '{"jobs":[]}'
+    $jobMac = Get-FrpHmacHex -Secret ('aa' * 32) -Message $jobWire
+    $script:WireResponse = $jobWire.Substring(0,$jobWire.Length-1) + ',"response_hmac":"' + $jobMac + '"}'
+    $verified = Invoke-FrpV24MgmtRequest -Method POST -Path '/v1/ai-jobs/claim' -Body @{limit=1;wait_ms=25000} -TimeoutSec 35
+    Assert-FrpEqual 0 @($verified.jobs).Count 'verified empty claim accepted'
+    $script:WireResponse = ''
+    $rejected = $false
+    try { Invoke-FrpV24MgmtRequest -Method POST -Path '/v1/ai-jobs/complete' -Body @{id='test'} | Out-Null }
+    catch { $rejected = $_.Exception.Message -match 'missing signed AI job response' }
+    Assert-FrpTrue $rejected 'empty completion rejected'
+
     Write-FrpTestPass 'test-crypto'
 } finally {
     Remove-FrpWindowsTestRoot

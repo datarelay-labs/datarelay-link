@@ -90,6 +90,23 @@ try {
         Check-Guidance ((Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash -eq $before[$path]) ('update preserves fixture bytes: ' + [IO.Path]::GetFileName($path))
     }
     Check-Guidance (Test-Path -LiteralPath (Join-Path $installedRoot 'tools/FrpLifecycleWorker.ps1')) 'update persists management worker'
+    Check-Guidance (-not (Test-FrpAutostartTaskExists -TaskName (Get-FrpLifecycleTaskName))) 'product update preserves explicit pause and does not restart lifecycle task'
+    $versionPath = Get-FrpVersionPath
+    $versionBefore = (Get-FileHash -LiteralPath $versionPath -Algorithm SHA256).Hash
+    $cliBefore = (Get-FileHash -LiteralPath (Join-Path $installedRoot 'tools/FrpClient.ps1') -Algorithm SHA256).Hash
+    # Invalid package metadata fails after management files were copied.
+    # Verify that both previously installed bytes and pause survive rollback.
+    Add-Content -LiteralPath (Join-Path $sourcePackage 'windows/tools/FrpClient.ps1') -Value '# rollback canary'
+    Set-Content -LiteralPath (Join-Path $sourcePackage 'release-manifest.json') -Value '{broken'
+    $rollback = Run-PublicCli @('system','update','product')
+    Check-Guidance ($rollback.Rc -ne 0 -and $rollback.Text -match 'Product rollback restored') 'failed update performs product rollback'
+    Check-Guidance (((Get-FileHash -LiteralPath $versionPath -Algorithm SHA256).Hash) -eq $versionBefore) 'rollback restores version bytes'
+    Check-Guidance (((Get-FileHash -LiteralPath (Join-Path $installedRoot 'tools/FrpClient.ps1') -Algorithm SHA256).Hash) -eq $cliBefore) 'rollback restores CLI bytes'
+    foreach ($path in $preservedPaths) {
+        Check-Guidance ((Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash -eq $before[$path]) ('rollback preserves fixture bytes: ' + [IO.Path]::GetFileName($path))
+    }
+    Check-Guidance (-not (Test-FrpAutostartTaskExists -TaskName (Get-FrpLifecycleTaskName))) 'rollback preserves paused lifecycle'
+
     $installedClient = Join-Path $installedRoot 'tools/FrpClient.ps1'
     $installedHelp = & $hostExe -NoProfile -File $installedClient help 2>&1 | Out-String
     Check-Guidance ($LASTEXITCODE -eq 0 -and $installedHelp -match 'Agent Host') 'updated installed CLI remains discoverable'

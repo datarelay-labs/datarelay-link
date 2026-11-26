@@ -583,14 +583,54 @@ function Install-FrpProjectManagementFiles {
             Copy-Item -LiteralPath $_.FullName -Destination (Join-Path $destLib $_.Name) -Force
         }
     }
-    # Keep the bare `drlink` command resolvable after a tools refresh.
-    try { Install-FrpCommandShim -Quiet | Out-Null } catch { }
     # Preserve identity/ports: do not rewrite client-state or frpc.toml.
     $manifestSource = Join-Path (Split-Path -Parent $SrcRoot) 'release-manifest.json'
     if (Test-Path -LiteralPath $manifestSource) {
         Copy-Item -LiteralPath $manifestSource -Destination (Join-Path (Get-FrpWindowsRoot) 'release-manifest.json') -Force
     }
     Write-FrpInstalledVersion -SourceRoot $SrcRoot
+}
+
+function New-FrpProjectUpdateSnapshot {
+    param([Parameter(Mandatory=$true)][string]$SrcRoot)
+    $paths = [System.Collections.Generic.List[string]]::new()
+    foreach ($name in @('FrpClient.ps1','FrpLifecycleWorker.ps1','frp-client.cmd','drlink.cmd','frp-autostart.cmd')) {
+        if (Test-Path -LiteralPath (Join-Path $SrcRoot ('tools/' + $name))) {
+            $paths.Add((Join-Path (Get-FrpToolsDir) $name))
+        }
+    }
+    $sourceLib = Join-Path $SrcRoot 'lib'
+    foreach ($file in @(Get-ChildItem -LiteralPath $sourceLib -Filter '*.ps1' -File -ErrorAction Stop)) {
+        $paths.Add((Join-Path (Get-FrpLibDir) $file.Name))
+    }
+    foreach ($name in @('release-manifest.json','source-provenance.json','version')) {
+        $paths.Add((Join-Path (Get-FrpWindowsRoot) $name))
+    }
+    $backup = New-FrpBackupRoot -Prefix 'product-update'
+    $entries = @()
+    $i = 0
+    foreach ($path in $paths) {
+        $existed = Test-Path -LiteralPath $path -PathType Leaf
+        if ((Test-Path -LiteralPath $path) -and -not $existed) { throw 'ERROR: product update target is not a file' }
+        $copy = Join-Path $backup ([string]$i)
+        if ($existed) { Copy-FrpProtectedFile -Source $path -Destination $copy | Out-Null }
+        $entries += [pscustomobject]@{Path=$path;Backup=$copy;Existed=$existed;Sha=$(if ($existed) { Get-FrpSha256HexOfFile -Path $path } else { '' })}
+        $i++
+    }
+    return [pscustomobject]@{Root=$backup;Entries=$entries}
+}
+
+function Restore-FrpProjectUpdateSnapshot {
+    param($Snapshot)
+    foreach ($entry in $Snapshot.Entries) {
+        if ($entry.Existed) {
+            if ((Get-FrpSha256HexOfFile -Path $entry.Backup) -cne $entry.Sha) { throw 'ERROR: product rollback backup digest mismatch' }
+            Copy-Item -LiteralPath $entry.Backup -Destination $entry.Path -Force -ErrorAction Stop
+            if ((Get-FrpSha256HexOfFile -Path $entry.Path) -cne $entry.Sha) { throw 'ERROR: product rollback digest mismatch' }
+        } elseif (Test-Path -LiteralPath $entry.Path -PathType Leaf) {
+            Remove-Item -LiteralPath $entry.Path -Force -ErrorAction Stop
+        }
+    }
 }
 
 function Test-FrpIsInstalledProductTree {
@@ -713,7 +753,16 @@ function Invoke-FrpClientUpdate {
             return 1
         }
         if (-not (Enter-FrpClientLock)) { return 1 }
+        $snapshot = $null
+        $lifecycleTouched = $false
+        $lifecycleWasPresent = $false
         try {
+            $beforeStatus = Get-FrpClientStatus
+            $lifecycleWasPresent = $beforeStatus.LifecycleEnabled
+            if ($lifecycleWasPresent -and -not (Test-FrpLifecycleTaskHealthy)) {
+                throw 'ERROR: existing lifecycle task ownership could not be verified; no update applied'
+            }
+            $snapshot = New-FrpProjectUpdateSnapshot -SrcRoot $src
             if ($env:FRP_WINDOWS_BOOTSTRAP_PATH) {
                 # Prior-stable bridge: verify the complete outer bootstrap
                 # against the existing Server/CA before updating management
@@ -722,13 +771,30 @@ function Invoke-FrpClientUpdate {
                 Confirm-FrpWindowsSourceProvenance -AllocatorUrl ([string]$existingState.allocator_url)
             }
             Install-FrpProjectManagementFiles -SrcRoot $src
-            if (Test-FrpIsEnrolled) { Install-FrpLifecycleTask | Out-Null }
+            if ((Test-FrpIsEnrolled) -and $beforeStatus.RuntimeIntent -ne 'paused') {
+                $lifecycleTouched = $true
+                Install-FrpLifecycleTask | Out-Null
+            }
+            # PATH repair is nonfatal and only happens after the update transaction.
+            try { Install-FrpCommandShim -Quiet | Out-Null } catch { }
             Write-Host ("Project update complete from {0}" -f $src)
             Write-Host 'Identity, ports, services, and CA trust were preserved.'
             Write-Host 'Restart this PowerShell session (or re-run drlink) to load updated CLI modules.'
             return 0
         } catch {
             Write-Host ("ERROR: project update failed: {0}" -f $_.Exception.Message)
+            if ($null -ne $snapshot) {
+                try {
+                    if ($lifecycleTouched) { Uninstall-FrpLifecycleTask | Out-Null }
+                    Restore-FrpProjectUpdateSnapshot -Snapshot $snapshot
+                    if ($lifecycleTouched -and $lifecycleWasPresent) { Install-FrpLifecycleTask | Out-Null }
+                    Write-Host 'Product rollback restored prior management software and provenance.'
+                } catch {
+                    Write-Host 'ERROR: product rollback incomplete. Preserve backup and recover before retrying.'
+                    Write-Host ("Backup: {0}" -f $snapshot.Root)
+                    Write-Host 'RECOVERY_REQUIRED=YES'
+                }
+            }
             return 1
         } finally {
             Exit-FrpClientLock

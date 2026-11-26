@@ -57,7 +57,7 @@ compatibility/testing mechanism rather than the normal operator workflow.
 
 ### Windows product update from verified source
 
-On an enrolled Windows Agent Host, run `drlink system update product` in an elevated shell. The installed CLI downloads the qualified manifest and SHA256SUMS from its enrolled Server over pinned HTTPS, verifies channel, immutable source and bootstrap SHA256, and invokes the verified bootstrap in upgrade mode without enrollment. `drlink system update product -Check` reads and verifies metadata without downloading or applying the executable. Missing or mismatched qualification fails closed. Native Windows qualification is required before release.
+On an enrolled Windows Agent Host, run `drlink system update product` in an elevated shell. The installed CLI downloads the qualified manifest and SHA256SUMS from its enrolled Server over pinned HTTPS, verifies channel, immutable source and bootstrap SHA256, and invokes the verified bootstrap in upgrade mode without enrollment. `drlink system update product -Check` reads and verifies metadata without downloading or applying the executable. Missing or mismatched qualification fails closed. An explicit paused runtime remains paused; a failed software refresh restores the prior management files and provenance from a protected snapshot. A failed rollback reports RECOVERY_REQUIRED and its backup location. Native Windows qualification is required before release.
 
 For explicitly reviewed offline source refresh, obtain the complete
 repository package for the intended immutable release tag or exact 40-character
