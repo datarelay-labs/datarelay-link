@@ -1669,6 +1669,10 @@ class ThreadedTCPServer(socketserver.ThreadingTCPServer):
         self.gw = gw
         # Bound worker creation itself (not only handler-body acquire).
         self.max_concurrent = int(getattr(gw, "max_concurrent", DEFAULT_MAX_CONCURRENT) or DEFAULT_MAX_CONCURRENT)
+        # TCPServer activates/listens in its constructor, so the default backlog
+        # of 5 must be replaced before super().__init__. Keep it aligned with
+        # the bounded handler capacity while capping the kernel queue itself.
+        self.request_queue_size = min(512, max(5, self.max_concurrent))
         self.request_timeout = float(CLIENT_HEADER_TIMEOUT)
         self._slot_sem = threading.BoundedSemaphore(self.max_concurrent)
         super().__init__(server_address, None)
