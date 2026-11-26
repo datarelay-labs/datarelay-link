@@ -641,7 +641,7 @@ Remote Service     vs generic Service / Published Service
 Network Object     vs generic Object
 Service Object     vs Service Profile / Preset as public resource
 Permission Object  vs legacy capability/profile nouns
-AI MCP Setup (guided menu) vs AI Identity (authenticated resource)
+AI Identity (authenticated resource) vs AI Principal (retired noun); AI MCP Setup (guided configuration menu) vs authentication resource
 Remote Access      vs legacy ACL
 Internet Access    vs Egress / Controlled Egress
 plane-specific policy modes (Remote BLACKLIST/WHITELIST; Internet/AI WHITELIST-only) vs ordered first-match ALLOW/DENY
