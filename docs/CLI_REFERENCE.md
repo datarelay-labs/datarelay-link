@@ -523,7 +523,9 @@ The external endpoint is allocated when an Agent creates a Remote Service using 
 
 An existing Remote Service cannot change in place across standard TCP and Fixed TCP pool classes.
 
-## 13. AI Identity
+## 13. AI MCP Setup
+
+The canonical guided-menu target is `ai-mcp` (AI MCP Setup): `Set up and manage AI MCP connections`. Use it for MCP Server, MCP Bridge and AI service connection setup. AI Access remains the authorization function. The following existing action-first commands operate on the AI Identity security resource, not the guided menu:
 
 ```text
 set ai-identity <NAME>
