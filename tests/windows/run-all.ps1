@@ -20,6 +20,7 @@ $tests = @(
     'test-zero-touch-command.ps1',
     'test-windows-strict-launcher.ps1',
     'test-frpclient-entrypoint.ps1',
+    'test-interactive-cli.ps1',
     'test-rdp-service.ps1',
     'test-zero-service.ps1',
     'test-ticket-scope.ps1',
