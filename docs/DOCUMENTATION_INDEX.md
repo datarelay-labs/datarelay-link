@@ -42,7 +42,7 @@ External copies, Project/chat attachments, exported snapshots, and same-named do
 | Install Server / Agent | `INSTALLATION.md` |
 | Upgrade / release channels | `UPGRADE.md` |
 | Remote Service + Remote Access operation | `REMOTE_ACCESS.md` |
-| AI Identity / AI Access / MCP | `AI_ACCESS_MCP.md` |
+| AI MCP Setup / AI Access | `AI_ACCESS_MCP.md` |
 | Native Server-self MCP (v2.4, optional/unqualified candidate) | `SERVER_NATIVE_MCP.md` |
 | Troubleshooting | `TROUBLESHOOTING.md` |
 | Deployment topology | `DEPLOYMENT_MODES.md` |
@@ -119,7 +119,7 @@ Engineering System managed-adoption files such as `AGENTS.md` and `.engineering/
 
 ## Documentation maintenance rule
 
-A product behavior change is incomplete until the affected canonical document is updated.
+A product behavior or user-facing terminology change is incomplete until the affected canonical documents are updated in place, superseded menu wording is removed from current guidance, and CLI/AI Master, derived references, runtime help/menu and relevant regression expectations agree. AI MCP Setup is the guided configuration label; AI Identity remains the authenticated security resource.
 
 A historical/internal document may retain implementation names only when the document clearly labels them as internal or historical and does not present them as current public CLI.
 
