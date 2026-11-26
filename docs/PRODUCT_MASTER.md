@@ -310,7 +310,9 @@ For Internet Access and AI Access, authentication or network reachability alone 
 
 There is no rule ordering and no per-rule ALLOW/DENY action. Remote Access retains its existing BLACKLIST/WHITELIST behavior for v2.4 compatibility.
 
-## 15. AI Identity and AI Access
+## 15. AI MCP Setup and AI Access
+
+AI MCP Setup is the canonical user-facing entry for MCP Server, MCP Bridge and AI service connection configuration. The guided CLI menu selector is `ai-mcp`, labeled `AI MCP Setup`, with description `Set up and manage AI MCP connections`. AI Access manages authorization separately. AI Identity remains the verified security resource used by authentication and policy evaluation; existing action-first resource/credential syntax and state semantics are unchanged. The CLI/AI Master defines the guided navigation contract, and exact-HEAD runtime verification is required before declaring the UX implemented.
 
 AI Access source is a verified AI Identity.
 
