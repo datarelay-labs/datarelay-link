@@ -758,11 +758,11 @@ Review each referencing Rule with `set ai-access <RULE>` to select a replacement
 
 ---
 
-# 13. AI MCP Setup
+# 13. MCP Server Settings
 
-### AI MCP Setup and AI Access workflow
+### MCP Server Settings and AI Access workflow
 
-The single workflow specification is [AI_ACCESS_MCP.md](AI_ACCESS_MCP.md). Managed Hosts owns enrollment; AI MCP Setup manages infrastructure and connections; AI Identity retains verified authentication and credential lifecycle; AI Access Rules own Source → Destination → Permission authorization; System owns shared MCP settings and certificates. AI MCP Setup checks readiness and uses that same settings flow only when necessary, then optionally opens the separate Access Rule wizard. No automatic privilege grant from OAuth or first connection; explicitly reviewed Owner scope is optional. Basic permissions use built-in profiles; custom Objects/Groups are advanced. AI Access mode is fixed WHITELIST, not an operator input. Preserve existing state and all fail-closed controls. No duplicate public command/menu paths. These are target requirements, not installed-product evidence.
+The single workflow specification is [AI_ACCESS_MCP.md](AI_ACCESS_MCP.md). Managed Hosts owns enrollment. `set mcp-server` configures the public endpoint/TLS and, if Server control is needed, the local Server execution account and roots; `set ai-identity` connects and authenticates the AI client, checks endpoint readiness and optionally opens the separate Rule wizard after verification; `set ai-access` defines Source → Destination → Permission and Paths. Basic permissions use built-in profiles; custom Objects/Groups are optional. AI Access is WHITELIST-only, deny-by-default. The OS execution account is an independent local security boundary, not another AI policy. Preserve existing state, certificate, credentials, and all fail-closed controls. No duplicate public setup paths or implicit access grants. Installed qualification requires actual candidate evidence.
 
 
 AI Access uses an authenticated AI Identity as its source.
@@ -781,37 +781,30 @@ The user does not create trust merely by assigning a display name.
 
 ---
 
-## 13.1 AI MCP Setup
+## 13.1 MCP Server Settings and AI Identities
 
-The normal Server CLI path is:
+On the Server, configure endpoint/TLS and optional local Server execution once:
 
 ```text
+set mcp-server
+
+MCP Server Settings
+1) Public endpoint and TLS
+2) Server execution
+3) Diagnostics
+0) Cancel
+```
+
+The Server execution option requires the local administrator to select Run as User and existing local file roots / initial working directories, then explicitly approve. The default prepared account is drlink-mcp with /var/lib/drlink-mcp; preparation alone does not enable execution. UID 0 requires separate explicit approval.
+
+Connect and authenticate each AI independently:
+
+```text
+set ai-identity
 set ai-identity <NAME>
 ```
 
-or the canonical guided menu flow:
-
-```text
-AI Access
-→ AI MCP Setup
-→ Connect or manage AI service
-```
-
-The guided menu selector is `ai-mcp` with help text `Set up and manage AI MCP connections`. It is the user-facing entry for MCP Server, MCP Bridge and AI service connections. AI Access remains the separate authorization function. AI Identity is the authenticated security resource, not the setup menu name; action-first identity and credential commands retain their existing syntax and semantics.
-
-Typical guided flow:
-
-```text
-AI MCP Setup
-============
-
-Name:
-claude
-
-Type:
-1) Interactive AI
-2) Automation / Custom AI
-```
+The guided menu is AI Access → Connect or manage AI Identity. Select ChatGPT, Claude, Other remote MCP client, or supported Automation. Review the actual pending request and complete the verified OAuth exchange. After verification, the optional Access Rule wizard preselects the verified Identity. No permission is granted by authentication.
 
 Interactive AI:
 
@@ -2495,7 +2488,7 @@ set internet-access <RULE>
 set internet-access enabled
 set internet-access disabled
 
-set ai-mcp
+set mcp-server
 set ai-identity <IDENTITY>
 set ai-identity <IDENTITY> approve <PENDING-ID>
 set ai-identity <IDENTITY> deny <PENDING-ID>
@@ -2512,7 +2505,7 @@ set ai-access <RULE>
 set ai-access enabled
 set ai-access disabled
 
-set server mcp
+
 set server mcp hostname <FQDN>
 set server mcp mode <auto-acme|user-certificate>
 set server mcp contact-email <EMAIL>
@@ -2520,7 +2513,7 @@ set server mcp acme-environment <production|staging>
 set server mcp acme-directory <URL>
 ```
 
-Human invocation enters Guided Create/Edit unless a complete one-shot form is supplied. Server settings remain action-first under `set server ...` / `unset server ...`; the guided placement is System → Server Settings.
+Human invocation enters Guided Create/Edit unless a complete one-shot form is supplied. Server settings remain action-first under `set server ...` / `unset server ...`; the guided placement for ordinary Server settings is System → Server Settings. MCP Server Settings has its single guided entry under AI Access; explicit TLS intent remains under `set server mcp <SETTING> <VALUE>`.
 
 A **Managed Host Group** is an inventory grouping for registered Managed Hosts and is not a **Network Group**. Network Groups are policy selectors built from Network Objects. Managed Host Group membership changes do not retire a host, alter Remote Services, reallocate public ports, or mutate Network Group policy state.
 
@@ -2662,17 +2655,21 @@ Data Relay Link — DRLink Server
 │   └── Test / Explain
 │
 ├── 6. AI Access
-│   ├── AI MCP Setup
+│   ├── MCP Server Settings
+│   ├── AI Identities
+│   ├── Connect or manage AI Identity
 │   ├── Access Rules
+│   ├── Create or edit Access Rule
+│   ├── Permission Objects / Groups
+│   │   ├── Permission Objects
+│   │   └── Permission Groups
+│   ├── Enable Enforcement
+│   ├── Disable Enforcement
 │   ├── Access Log
-│   ├── Test / Explain
-│   └── Advanced Permissions
-│       ├── Permission Objects
-│       └── Permission Groups
+│   └── Test / Explain
 │
 ├── 7. System
 │   ├── Server Settings
-│   │   └── MCP Server Settings
 │   └── Certificates
 ├── 8. Help
 └── 9. Exit
@@ -4461,7 +4458,7 @@ A destination Network Group is likewise rejected if it contains any Managed Host
 
 ---
 
-# 88. Scenario — AI MCP Setup and AI Access
+# 88. Scenario — MCP Server Settings and AI Access
 
 Server:
 
@@ -4496,11 +4493,7 @@ Create first AI Access Rule:
 set ai-access claude-prod
 ```
 
-Choose:
-
-```text
-Whitelist
-```
+AI Access is WHITELIST-only; no mode selection is required.
 
 Rule:
 
@@ -5203,7 +5196,7 @@ A v2.4 CLI implementation is conformant only if the following can all be demonst
 - Cross-pool Service edit is rejected.
 - Server can inspect Remote Service state read-only.
 
-## AI MCP Setup / AI Access
+## MCP Server Settings / AI Access
 
 - Interactive and automation authentication can bind an AI Identity.
 - Policy evaluation occurs only after identity authentication.

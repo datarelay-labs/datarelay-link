@@ -1119,13 +1119,16 @@ def run_ai_access_wizard(plane: ControlPlane, name: str, *, source_identity=None
                 if any(member["id"] in managed for member in members):
                     destinations.append(group["name"])
             destinations = [d for d in destinations if d not in (v24.SERVER_SELF_TARGET, v24.TRUSTED_MANAGED_HOSTS_TARGET)]
-            destinations += [v24.SERVER_SELF_TARGET]
+            server_label = "This Server (server:self)"
+            destinations += [server_label]
             trusted_label = "All trusted Managed Hosts (current and future; excludes Server)"
             group_choices = {v24.MANAGED_HOST_GROUP_PREFIX + gid: "Managed Host Group: %s [%s]" % (label, gid)
                              for gid, label in v24.list_ai_managed_host_groups(plane).items()}
-            aliases = {v24.TRUSTED_MANAGED_HOSTS_TARGET: trusted_label, **group_choices}
+            aliases = {v24.SERVER_SELF_TARGET: server_label, v24.TRUSTED_MANAGED_HOSTS_TARGET: trusted_label, **group_choices}
             destination = _ask_choice(io, "Destination (select existing target or explicit future-host scope)",
                                       destinations + [trusted_label] + sorted(group_choices.values()), aliases=aliases)
+            if destination == server_label:
+                destination = v24.SERVER_SELF_TARGET
             if destination in group_choices.values():
                 destination = next(key for key, label in group_choices.items() if label == destination)
                 if not _ask_yes_no(io, "Allow current and future trusted members of this Managed Host Group? Membership changes change access.", default=False):
@@ -1323,24 +1326,24 @@ def _external_ai_connection(plane, name, io, provider):
         _emit(io, "OAuth exchange not verified yet. Finish in the browser and check again.")
 
 
-def run_ai_mcp_setup(plane: ControlPlane) -> int:
-    """One guided entry, delegating to existing authoritative workflows."""
+def run_mcp_server_setup(plane: ControlPlane) -> int:
+    """Configure MCP connectivity and local execution, never identity or policy."""
     from drlink_control_cli import _guide_mcp_server, dispatch
     if not wizard_available():
-        raise ControlPlaneError("AI MCP Setup requires a TTY session. No changes were applied.")
+        raise ControlPlaneError("MCP Server Settings requires a TTY session. No changes were applied.")
     io = _io()
     try:
         while True:
-            choice = _ask_choice(io, "AI MCP Setup", ["MCP Server settings", "MCP Bridge settings / diagnostics", "Connect or manage AI service", "List AI connections", "Configure local Server execution account"])
-            if choice == "Configure local Server execution account":
+            choice = _ask_choice(io, "MCP Server Settings", ["Public endpoint and TLS", "Server execution", "Diagnostics"])
+            if choice == "Server execution":
                 # A real local administrator chooses OS authority. This is not
                 # an AI Access policy, and never derives privilege from a Rule.
                 if plane.root not in (None, "", "/") or os.geteuid() != 0 or not isinstance(io, TtyIO):
                     raise ControlPlaneError("Local execution setup requires an interactive administrator on the installed Server. No changes were applied.")
                 import subprocess
-                user = _ask_text(io, "Existing OS execution account", default="drlink-mcp")
+                user = _ask_text(io, "Run as User", default="drlink-mcp")
                 default_roots = "/var/lib/drlink-mcp" if user == "drlink-mcp" else None
-                roots = _ask_text(io, "Existing absolute file roots / initial directories (colon separated)", default=default_roots)
+                roots = _ask_text(io, "Local file roots / initial working directories (colon separated)", default=default_roots)
                 argv = [sys.executable, "/usr/local/lib/drlink/operator-native-mcp-full-control.py",
                         "--configure-installed", "--exec-user", user]
                 for path in roots.split(":"):
@@ -1355,19 +1358,9 @@ def run_ai_mcp_setup(plane: ControlPlane) -> int:
                         raise WizardCancelled()
                     argv.append("--allow-root")
                 return subprocess.run(argv, check=False).returncode
-            if choice == "MCP Server settings":
+            if choice == "Public endpoint and TLS":
                 return _guide_mcp_server(plane, io=io)
-            if choice == "MCP Bridge settings / diagnostics":
-                result = dispatch(["system", "diagnostics", "mcp"], root=plane.root, plane=plane)
-                if result != 0:
-                    return result
-                _emit(io, "The MCP Bridge uses the shared public MCP endpoint and TLS settings. Server-local execution controls retain their separate local operator authorization.")
-                if _ask_yes_no(io, "Review or configure the shared MCP endpoint now?", default=False):
-                    return _guide_mcp_server(plane, io=io)
-                return 0
-            if choice == "List AI connections":
-                return dispatch(["show", "ai-identities"], root=plane.root, plane=plane)
-            return run_wizard(plane, "ai-identity", None)
+            return dispatch(["system", "diagnostics", "mcp"], root=plane.root, plane=plane)
     except (WizardCancelled, KeyboardInterrupt, EOFError):
         sys.stdout.write(_cancel_message())
         return 0

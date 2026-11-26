@@ -390,6 +390,12 @@ def reject_obsolete_surface(tokens):
                        "Use unset enrollment <ID> or reference-safe unset managed-host <HOST>.\n"
                        "See: help commands",
         }
+    if focus[:2] == ["set", "ai-mcp"] or focus[:2] == ["help", "ai-mcp"]:
+        return {"status": "error", "exit_code": 2,
+                "message": "Use set mcp-server for endpoint, TLS and Server execution; set ai-identity for AI connection and authentication."}
+    if focus == ["set", "server", "mcp"]:
+        return {"status": "error", "exit_code": 2,
+                "message": "Use set mcp-server for guided setup, or set server mcp <SETTING> <VALUE> for explicit TLS settings."}
     if focus[:2] == ["test", "access"]:
         return {
             "status": "error", "exit_code": 2,
@@ -2823,11 +2829,11 @@ def _match_set(tokens, role, names=None):
     if len(tokens) == 1:
         return incomplete("Missing resource.", ["set <resource> ..."], avail, tip="drlink help set")
     resource = tokens[1]
-    if resource == "ai-mcp":
+    if resource == "mcp-server":
         if not server:
-            return {"status": "role", "need": "server", "command": "set ai-mcp"}
+            return {"status": "role", "need": "server", "command": "set mcp-server"}
         if len(tokens) != 2:
-            return incomplete("Unexpected argument.", ["set ai-mcp"], [])
+            return incomplete("Unexpected argument.", ["set mcp-server"], [])
         return _control_plane_ok(tokens)
     if resource == "server" and tokens[2:3] == ["mcp"]:
         if not server:

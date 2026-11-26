@@ -427,7 +427,7 @@ Permission Object / Permission Group
 Remote Service / Fixed TCP
 Remote Access
 Internet Access
-AI MCP Setup / AI credential lifecycle / AI Access / AI Access Log
+MCP Server Settings / AI credential lifecycle / AI Access / AI Access Log
 MCP public TLS / certificate lifecycle / OAuth approval-denial
 ConfigurationBundle
 Revision / audit / diff / rollback
@@ -643,7 +643,7 @@ Remote Service     vs generic Service / Published Service
 Network Object     vs generic Object
 Service Object     vs Service Profile / Preset as public resource
 Permission Object  vs legacy capability/profile nouns
-AI Identity (authenticated resource) vs AI Principal (retired noun); AI MCP Setup (guided configuration menu) vs authentication resource
+AI Identity (authenticated resource) vs AI Principal (retired noun); MCP Server Settings (guided configuration menu) vs authentication resource
 Remote Access      vs legacy ACL
 Internet Access    vs Egress / Controlled Egress
 plane-specific policy modes (Remote BLACKLIST/WHITELIST; Internet/AI WHITELIST-only) vs ordered first-match ALLOW/DENY
@@ -878,7 +878,7 @@ Discover dependencies → mode/rule grammar → show → read-only test/explain 
 ## FCS-006 — Internet Access
 Same non-destructive workflow audit plus object/protocol validity, WHITELIST-only deny-by-default semantics, BLACKLIST rejection, disabled=DENY ALL, and absence of ordered-rule semantics. Do not modify policy.
 
-## FCS-007 — AI MCP Setup / Credential / Permission / AI Access (FCS_FULL only; FCS_CLI_ONLY=EXCLUDED_AI_MCP)
+## FCS-007 — MCP Server Settings / Credential / Permission / AI Access (FCS_FULL only; FCS_CLI_ONLY=EXCLUDED_AI_MCP)
 Discover identity/credential lifecycle → Permission/AI Access grammar → read-only show/test/log → inspect rejection/recovery contracts from parser/tests. Do not create/rotate/revoke credentials or identities.
 
 ## FCS-008 — MCP TLS / Certificate / OAuth (FCS_FULL only; FCS_CLI_ONLY=EXCLUDED_AI_MCP)

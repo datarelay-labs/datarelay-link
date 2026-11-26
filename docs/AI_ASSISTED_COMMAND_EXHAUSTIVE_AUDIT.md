@@ -230,9 +230,9 @@ Ask the AI for backup, validation, and safe restore with review/confirmation.
 
 Run the generated workflow far enough to verify the promised safety point. Internal traceback or mutation before confirmation is FAIL even if the AI answer matched documentation.
 
-### AI-009 — AI MCP Setup / Permission / AI Access
+### AI-009 — MCP Server Settings / Permission / AI Access
 
-Ask the AI to use AI MCP Setup to connect an interactive AI service, create read-only permission, authorize a Managed Host, and test. Check that guidance names the guided menu `ai-mcp` / `AI MCP Setup` while retaining the documented action-first resource commands.
+Ask the AI to use `set mcp-server` for endpoint/TLS and local execution if needed, `set ai-identity` to connect an interactive AI service, and `set ai-access` to authorize the selected Managed Host. Verify current menu/help and the actual supported authentication flow.
 
 Expected AI behavior:
 

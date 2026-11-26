@@ -68,6 +68,8 @@ Pinned allocator CA verification and hostname/IP SAN checks both apply on the .N
 
 ## Windows native AI executor (candidate)
 
+Windows install/update protects the installed product root, bin, tools, lib and identified code/provenance files against untrusted write/replace, reparse-point and multiply-linked-file substitution. It preserves existing enrollment and local profile; OS ancestor ACLs are not changed. The local status distinguishes unsafe installed code ACL from absent/invalid execution opt-in. A verified upgrade repairs the product-owned tree, not a potentially compromised operating system. Verify the installed Agent version and Server-observed readiness after updating.
+
 The installed lifecycle worker does not automatically claim AI jobs merely because an AI Access Rule grants full management. The local operator must separately authorize the existing worker account and local file roots. No installation or upgrade creates or enables `state/ai-executor.json`; existing enrollment, policy and ports are unchanged. Local activation is a separate security-sensitive operation. The profile format is:
 
 ```json

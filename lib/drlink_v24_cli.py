@@ -1657,12 +1657,12 @@ def handle_set(plane: ControlPlane, rest: list[str]) -> Optional[int]:
             return 1
         sys.stdout.write("AI Access rule set: %s\n" % name)
         return 0
-    if res == "ai-mcp":
-        _require_server(plane, "AI MCP Setup")
+    if res == "mcp-server":
+        _require_server(plane, "MCP Server Settings")
         if len(rest) != 1:
-            raise ControlPlaneError("Usage: set ai-mcp")
-        from drlink_v24_wizard import run_ai_mcp_setup
-        return run_ai_mcp_setup(plane)
+            raise ControlPlaneError("Usage: set mcp-server")
+        from drlink_v24_wizard import run_mcp_server_setup
+        return run_mcp_server_setup(plane)
     if res == "ai-identity":
         _require_server(plane, "AI Identities")
         from drlink_v24_wizard import run_wizard

@@ -137,7 +137,7 @@ set internet-access <RULE>
 set internet-access enabled
 set internet-access disabled
 
-set ai-mcp
+set mcp-server
 set ai-identity <IDENTITY>
 set ai-identity <IDENTITY> approve <PENDING-ID>
 set ai-identity <IDENTITY> deny <PENDING-ID>
@@ -154,7 +154,7 @@ set ai-access <RULE>
 set ai-access enabled
 set ai-access disabled
 
-set server mcp
+
 set server mcp hostname <FQDN>
 set server mcp mode <auto-acme|user-certificate>
 set server mcp contact-email <EMAIL>
@@ -523,13 +523,13 @@ The external endpoint is allocated when an Agent creates a Remote Service using 
 
 An existing Remote Service cannot change in place across standard TCP and Fixed TCP pool classes.
 
-## 13. AI MCP Setup
+## 13. MCP Server Settings
 
-The canonical guided-menu target is `set ai-mcp` (AI MCP Setup): `Set up and manage AI MCP connections`. Use it for MCP Server, MCP Bridge and AI service connection setup. AI Access remains the authorization function. The following existing action-first commands operate on the AI Identity security resource, not the guided menu:
+The canonical setup command is `set mcp-server` (MCP Server Settings): Configure MCP Server connectivity and execution. Authentication is managed by `set ai-identity`; authorization is managed by `set ai-access`.
 
-### AI MCP Setup and AI Access workflow
+### MCP Server Settings and AI Access workflow
 
-The single workflow specification is [AI_ACCESS_MCP.md](AI_ACCESS_MCP.md). Managed Hosts owns enrollment; AI MCP Setup manages infrastructure and connections; AI Identity retains verified authentication and credential lifecycle; AI Access Rules own Source → Destination → Permission authorization; System owns shared MCP settings and certificates. AI MCP Setup checks readiness and uses that same settings flow only when necessary, then optionally opens the separate Access Rule wizard. No automatic privilege grant from OAuth or first connection; explicitly reviewed Owner scope is optional. Basic permissions use built-in profiles; custom Objects/Groups are advanced. AI Access mode is fixed WHITELIST, not an operator input. Preserve existing state and all fail-closed controls. No duplicate public command/menu paths. These are target requirements, not installed-product evidence.
+The single workflow specification is [AI_ACCESS_MCP.md](AI_ACCESS_MCP.md). Managed Hosts owns enrollment. `set mcp-server` configures the public endpoint/TLS and, if Server control is needed, the local Server execution account and roots; `set ai-identity` connects and authenticates the AI client, checks endpoint readiness and optionally opens the separate Rule wizard after verification; `set ai-access` defines Source → Destination → Permission and Paths. Basic permissions use built-in profiles; custom Objects/Groups are optional. AI Access is WHITELIST-only, deny-by-default. The OS execution account is an independent local security boundary, not another AI policy. Preserve existing state, certificate, credentials, and all fail-closed controls. No duplicate public setup paths or implicit access grants. Installed qualification requires actual candidate evidence.
 
 
 ```text

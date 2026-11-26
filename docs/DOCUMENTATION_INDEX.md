@@ -42,7 +42,7 @@ External copies, Project/chat attachments, exported snapshots, and same-named do
 | Install Server / Agent | `INSTALLATION.md` |
 | Upgrade / release channels | `UPGRADE.md` |
 | Remote Service + Remote Access operation | `REMOTE_ACCESS.md` |
-| AI MCP Setup / AI Access | `AI_ACCESS_MCP.md` |
+| MCP Server Settings / AI Access | `AI_ACCESS_MCP.md` |
 | Native Server-self MCP (v2.4, optional/unqualified candidate) | `SERVER_NATIVE_MCP.md` |
 | Troubleshooting | `TROUBLESHOOTING.md` |
 | Zero-Touch design and acceptance | `ZERO_TOUCH_REGRESSION_CONTROL.md` |

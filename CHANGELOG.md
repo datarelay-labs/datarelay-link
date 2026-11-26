@@ -41,7 +41,9 @@ v2.4.0 remains a development target. The following is approved architecture scop
 
 ### Changed — target scope
 
-- Beginner-first AI Access: separate host enrollment, verified AI connection, and firewall-style authorization. See `docs/AI_ACCESS_MCP.md`; implementation and qualification remain pending.
+- Beginner-first AI Access: MCP Server Settings (`set mcp-server`), verified AI connection (`set ai-identity`), and firewall-style authorization (`set ai-access`) have separate canonical entries. Duplicate setup menus are removed; existing identities and rules are preserved. See `docs/AI_ACCESS_MCP.md`; installed release qualification is separate.
+- Server-wide read-only Managed Services inventory and Managed Host Group member views; exact Managed Host ID/name selectors and LAN-target exclusion from AI rule selection.
+- Windows enrolled-Agent product refresh, native AI execution opt-in and product-code ACL protection; Server execution preparation with a dedicated non-admin account and Linux named ACL without optional tools.
 
 - Control-plane authority is transferred from multiple authoritative JSON state files to embedded SQLite.
 - Public terminology is frozen around Managed Host, Network/Service/Permission Objects and Groups, AI Identity, Remote Service, Remote Access, Internet Access, and AI Access.

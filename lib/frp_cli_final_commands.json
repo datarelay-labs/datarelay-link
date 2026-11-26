@@ -2145,7 +2145,7 @@
   },
   {
     "roles": "server",
-    "detail": "Configure non-secret MCP TLS intent. Default public-cloud mode is AUTO_ACME. PRIVATE_CA is internal/test only.",
+    "detail": "Set explicit MCP TLS intent. For guided endpoint/TLS and Server execution setup, use set mcp-server.",
     "aliases": [],
     "destructive": false,
     "hidden": false,
@@ -2163,7 +2163,6 @@
     "category": "System",
     "summary": "Configure MCP Server settings",
     "examples": [
-      "set server mcp",
       "set server mcp hostname mcp.example.com",
       "set server mcp mode auto-acme",
       "set server mcp contact-email ops@example.com",
@@ -2179,7 +2178,7 @@
           "acme-environment",
           "acme-directory"
         ],
-        "required": false
+        "required": true
       }
     ]
   },
@@ -3169,7 +3168,9 @@
     "category": "Managed Hosts",
     "summary": "List all Managed Services and port mappings",
     "detail": "Read-only Server-wide Remote Service inventory, sorted by public port. Shows public endpoint, Managed Host, service name, target address and port, and status. Includes disabled and pending services; excludes released mappings.",
-    "examples": ["show managed-services"],
+    "examples": [
+      "show managed-services"
+    ],
     "args": [],
     "tail": null,
     "internal": null,
@@ -3342,14 +3343,14 @@
   {
     "path": [
       "set",
-      "ai-mcp"
+      "mcp-server"
     ],
     "roles": "server",
     "category": "AI Access",
-    "summary": "Set up and manage AI MCP connections",
-    "detail": "AI MCP Setup: MCP Server, MCP Bridge settings / diagnostics and AI service connections. AI Access remains separate authorization.",
+    "summary": "Configure MCP Server connectivity and execution",
+    "detail": "Configure the public endpoint and TLS, explicitly select the local Server execution account and roots, or run diagnostics. AI Identities own connection/authentication; AI Access Rules own authorization.",
     "examples": [
-      "set ai-mcp"
+      "set mcp-server"
     ],
     "args": [],
     "tail": null,

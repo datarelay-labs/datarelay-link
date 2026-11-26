@@ -1032,11 +1032,9 @@ def _guide_mcp_server(plane: ControlPlane, *, io=None) -> int:
 
 
 def _set_mcp_tls(plane: ControlPlane, rest):
-    if not rest and _stdin_is_interactive():
-        return _guide_mcp_server(plane)
     if not rest:
         raise SystemExit(
-            "Missing MCP Server setting.\n\n"
+            "Missing MCP Server setting. Use set mcp-server for guided setup.\n\n"
             "Usage:\n"
             "  set server mcp hostname <fqdn>\n"
             "  set server mcp mode auto-acme|user-certificate|private-ca\n"

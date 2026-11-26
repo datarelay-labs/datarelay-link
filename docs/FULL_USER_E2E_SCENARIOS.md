@@ -1310,7 +1310,7 @@ Lane C  direct SSH/HTTP/HTTPS/Custom TCP publication + real traffic
 Lane D  Relay Host and Fixed TCP lifecycle
 Lane E  Remote Access policy lifecycle + real allow/deny traffic
 Lane F  Internet Access application use cases
-Lane G  AI MCP Setup / Permission / AI Access / MCP
+Lane G  MCP Server Settings / Permission / AI Access / MCP
 Lane H  ConfigurationBundle / Export -> AI -> Reapply
 Lane I  backup/revision/audit/recovery on isolated state
 Lane J  Agent lifecycle/update/reconnect on spare hosts
@@ -1724,12 +1724,12 @@ Verify:
 
 ## U-007 — AI/MCP authorized and denied use — MANDATORY for v2.4.0
 
-Server discovers `ai-mcp` / `AI MCP Setup` with the description `Set up and manage AI MCP connections`, configures MCP and creates/binds the AI Identity using the supported authentication workflow, then configures permissions and AI Access.
+Server discovers `mcp-server` / MCP Server Settings, configures endpoint/TLS and local Server execution when needed, connects and verifies an AI Identity via `set ai-identity`, then configures permissions and AI Access. Verify that the setup wizard does not duplicate authentication or create a policy.
 
 Representative CLI:
 
 ~~~text
-set ai-mcp
+set mcp-server
 set ai-identity <IDENTITY>
 set permission-object read-only permissions host-info,process-read,file-read
 set ai-access ai-read source <IDENTITY> destination <DESTINATION> permission read-only enabled
@@ -2332,7 +2332,7 @@ test internet-access source <SOURCE> destination <DESTINATION> service <SERVICE>
 
 Exercise real traffic plus the applicable failure/recovery cases in section 10. Internet Access is WHITELIST-only: prove direct Managed Host source-address match can ALLOW an approved flow, NAT/source mismatch fails closed to DENY, No Policy is DENY, BLACKLIST configuration is rejected, and Enforcement DISABLED preserves Mode/Rules while producing DENY ALL.
 
-## A-006 — AI MCP Setup, permissions, AI Access, MCP TLS, OAuth approval, and logs — MANDATORY for v2.4.0
+## A-006 — MCP Server Settings, permissions, AI Access, MCP TLS, OAuth approval, and logs — MANDATORY for v2.4.0
 
 ~~~text
 system certificate status
@@ -2350,7 +2350,7 @@ show ai-access-log identity <IDENTITY>
 show ai-access-log destination <DESTINATION>
 show ai-access-log permission <PERMISSION>
 
-set server mcp
+
 set server mcp hostname <FQDN>
 set server mcp mode <auto-acme|user-certificate>
 set server mcp contact-email <EMAIL>
@@ -2381,7 +2381,7 @@ set ai-identity <IDENTITY> approve <PENDING-ID>
 set ai-identity <IDENTITY> deny <PENDING-ID>
 ~~~
 
-Verify authentication and authorization states are represented separately, reference-aware deletion works, and AI Access enforcement toggles have the documented functional effect. Run a clean beginner AI MCP Setup flow with no TLS/no Identity, then a second AI with ready TLS, no-policy denial, a reviewed rule with built-in permission, selected-only versus explicit dynamic trusted-host scope, independent enrollment of a new host, explicit native server:self scope if enabled, and OAuth/credential failure recovery. Confirm retired grammar is rejected and absent from help/completion/menu; retain the existing security-negative and exact-candidate gates.
+Verify authentication and authorization states are represented separately, reference-aware deletion works, and AI Access enforcement toggles have the documented functional effect. Run a clean beginner MCP Server Settings → AI Identity → AI Access flow with no TLS/no Identity, then a second AI with ready TLS, no-policy denial, a reviewed rule with built-in permission, selected-only versus explicit dynamic trusted-host scope, independent enrollment of a new host, explicit native server:self scope if enabled, and OAuth/credential failure recovery. Confirm retired grammar is rejected and absent from help/completion/menu; retain the existing security-negative and exact-candidate gates.
 
 ## A-007 — Reference protection — MANDATORY
 

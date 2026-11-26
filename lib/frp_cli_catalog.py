@@ -1597,15 +1597,14 @@ def domain_help(topic, role):
             "  set internet-access enabled|disabled\n"
             "  test internet-access source <SRC> destination <DST> service <SVC>\n"
         )
-    if topic == "ai-mcp":
+    if topic == "mcp-server":
         if not server:
-            return "AI MCP Setup is available on a Data Relay Link server.\n"
-        return ("AI MCP Setup\n============\n\n"
-                "Set up and manage AI MCP connections.\n"
-                "set ai-mcp opens MCP Server settings, MCP Bridge settings / diagnostics, AI service connections and connection inventory.\n"
-                "A local administrator can configure the Server execution account; this never creates an AI Access Rule.\n"
-                "Existing AI Identity commands manage authentication. AI Access remains separate authorization.\n"
-                "menu → AI Access → AI MCP Setup\n")
+            return "MCP Server Settings are available on a Data Relay Link server.\n"
+        return ("MCP Server Settings\n===================\n\n"
+                "set mcp-server configures the public endpoint and TLS, Server execution, and diagnostics.\n"
+                "Use set ai-identity to connect and authenticate an AI client; set ai-access to grant access.\n"
+                "Server execution requires explicit local administrator approval. It never creates an AI Access Rule.\n"
+                "menu → AI Access → MCP Server Settings\n")
     if topic in ("ai-access", "mcp", "ai-identity", "ai-identities"):
         if not server:
             return "AI Access help is available on a Data Relay Link server.\n"
@@ -1616,14 +1615,15 @@ def domain_help(topic, role):
             "AI Identity authentication is separate from AI Access authorization.\n"
             "Display name alone is not a verified identity.\n\n"
             "Lifecycle:\n"
-            "  1. Create and authenticate an AI Identity\n"
-            "  2. Choose built-in permissions, or a custom Permission Object / Permission Group\n"
-            "  3. Create an AI Access Rule binding Identity → Destination → Permission\n"
-            "  4. Test / explain, then review the Access Log\n\n"
+            "  1. Configure MCP Server connectivity and, if needed, local Server execution\n"
+            "  2. Connect and authenticate an AI Identity\n"
+            "  3. Choose built-in permissions, or a custom Permission Object / Permission Group\n"
+            "  4. Create an AI Access Rule binding Identity → Destination → Permission\n"
+            "  5. Test / explain, then review the Access Log\n\n"
             "Guided path:\n"
-            "  menu → AI Access → AI MCP Setup\n\n"
+            "  menu → AI Access → MCP Server Settings\n\n"
             "Everyday commands:\n"
-            "  set ai-mcp\n"
+            "  set mcp-server\n"
             "  set ai-identity <NAME>\n"
             "  set ai-access\n"
             "  show ai-identities\n"
@@ -1689,7 +1689,6 @@ def domain_help(topic, role):
                     "  set ai-identity <IDENTITY> approve <PENDING-ID>",
                     "  set ai-identity <IDENTITY> deny <PENDING-ID>",
                     "  system diagnostics mcp",
-                    "  set server mcp",
                     "  set server mcp hostname <FQDN>",
                     "  set server mcp mode <auto-acme|user-certificate>",
                     "  set server mcp contact-email <EMAIL>",
@@ -2094,8 +2093,7 @@ WORKFLOWS = (
             "show ai-access",
             "show ai-access-log",
         ),
-        "Authenticate the AI Identity before authorization. Permission Objects/Groups "
-        "are required for AI Access Rules.",
+        "Authenticate the AI Identity before authorization. Built-in permission profiles or custom Permission Objects/Groups are supported.",
         "server",
     ),
     (
@@ -2327,7 +2325,7 @@ NAVIGATION_TREE = {
         (
             "server_ai",
             "AI Access",
-            "AI MCP Setup, Permissions, Rules and Access Log",
+            "MCP Server, AI Identities, Access Rules, Permissions and Log",
             "submenu",
             "server.ai",
         ),
@@ -2387,10 +2385,12 @@ NAVIGATION_TREE = {
         ("back", "Back", "", "back", None),
     ),
     "server.ai": (
-        ("server_ai_mcp", "AI MCP Setup", "Set up and manage AI MCP connections", "command", "set ai-mcp"),
-        ("server_ai_permissions", "Advanced Permissions", "", "submenu", "server.ai.permissions"),
+        ("server_ai_mcp", "MCP Server Settings", "Configure MCP Server connectivity and execution", "command", "set mcp-server"),
+        ("server_ai_identities", "AI Identities", "List AI Identities and authentication status", "command", "show ai-identities"),
+        ("server_ai_connect", "Connect or manage AI Identity", "", "command", "set ai-identity"),
         ("server_ai_rules", "Access Rules", "", "command", "show ai-access"),
         ("server_ai_create_rule", "Create or edit Access Rule", "", "command", "set ai-access"),
+        ("server_ai_permissions", "Permission Objects / Groups", "", "submenu", "server.ai.permissions"),
         ("server_ai_enable", "Enable Enforcement", "", "command", "set ai-access enabled"),
         ("server_ai_disable", "Disable Enforcement", "", "command", "set ai-access disabled"),
         ("server_ai_log", "Access Log", "", "command", "show ai-access-log"),
@@ -2445,7 +2445,6 @@ NAVIGATION_TREE = {
         ("server_set_bootstrap", "Bootstrap hostname", "", "workflow", "set_bootstrap_hostname"),
         ("server_set_installer", "Linux/macOS Agent installer URL", "", "workflow", "set_installer_url"),
         ("server_set_win_installer", "Windows Agent installer URL", "", "workflow", "set_windows_installer_url"),
-        ("server_set_mcp", "MCP Server Settings", "", "command", "set server mcp"),
         ("server_cert_status", "MCP Certificate Status", "", "command", "system certificate status"),
         ("back", "Back", "", "back", None),
     ),
@@ -2515,7 +2514,7 @@ NAVIGATION_TREE["both"] = (
     (
         "both_ai",
         "AI Access",
-        "AI MCP Setup, Permissions, Rules and Access Log",
+        "MCP Server, AI Identities, Access Rules, Permissions and Log",
         "submenu",
         "server.ai",
     ),
@@ -2890,7 +2889,7 @@ COMPLETION_DOMAIN_GROUPS = (
         (
             "ai-access",
             "ai-identities",
-            "ai-mcp",
+            "mcp-server",
             "ai-identity",
             "ai-principals",
             "ai-principal",

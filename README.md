@@ -137,7 +137,7 @@ sudo drlink
 
 | Context | Owns |
 |---|---|
-| **Server** | Managed Hosts, Network/Service/Permission Objects and Groups, Access Policies, Internet Access, AI MCP Setup / AI Access, Server ConfigurationBundle |
+| **Server** | Managed Hosts, Network/Service/Permission Objects and Groups, Access Policies, Internet Access, MCP Server Settings / AI Access, Server ConfigurationBundle |
 | **Agent Host** | Local Agent lifecycle and Remote Services owned by that Agent Host, Agent ConfigurationBundle |
 
 Remote Service mutation is local to the Agent Host that owns it. Server inspection of Remote Service configuration is read-only. When a Remote Service destination is another host, the current Agent Host is the Relay Host.
@@ -255,7 +255,7 @@ existing authenticated DRLink control path
 Managed Host / private target
 ```
 
-AI Access source is a verified **AI Identity**. The [AI MCP Setup guide](docs/AI_ACCESS_MCP.md) separates Managed Host enrollment, AI MCP Setup (authentication), and firewall-style Access Rules (Source, Destination, Permission). AI MCP Setup checks shared MCP readiness; built-in permission profiles avoid manual Object creation for ordinary rules, while custom Objects/Groups remain advanced. Authentication alone grants no access. This describes the candidate workflow; installed release qualification is separate.
+AI Access source is a verified **AI Identity**. The [AI connection and access guide](docs/AI_ACCESS_MCP.md) separates Managed Host enrollment, MCP Server Settings (`set mcp-server`), AI Identity authentication (`set ai-identity`), and firewall-style authorization (`set ai-access`). Built-in permission profiles avoid custom Object creation for ordinary rules. Authentication alone grants no access; local Server execution requires separate explicit OS-account approval. Installed release qualification is separate.
 
 ## ConfigurationBundle / AI-assisted configuration
 
@@ -331,7 +331,7 @@ Start here:
 - [`docs/INSTALLATION.md`](docs/INSTALLATION.md) — Server/Agent installation and enrollment
 - [`docs/UPGRADE.md`](docs/UPGRADE.md) — upgrade channels, migration, and rollback
 - [`docs/REMOTE_ACCESS.md`](docs/REMOTE_ACCESS.md) — Remote Service and Remote Access operation
-- [`docs/AI_ACCESS_MCP.md`](docs/AI_ACCESS_MCP.md) — AI MCP Setup, permissions and AI Access
+- [`docs/AI_ACCESS_MCP.md`](docs/AI_ACCESS_MCP.md) — MCP Server Settings, permissions and AI Access
 - [`docs/TROUBLESHOOTING.md`](docs/TROUBLESHOOTING.md) — diagnosis and recovery guidance
 - [`docs/CONTROLLED_EGRESS.md`](docs/CONTROLLED_EGRESS.md) — Internet Access behavior
 - [`docs/SECURITY.md`](docs/SECURITY.md) — security boundaries

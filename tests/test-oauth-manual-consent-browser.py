@@ -247,8 +247,8 @@ class ManualConsentBrowserTests(unittest.TestCase):
         for page in (auth["page"], wait_body):
             self.assertIn("Pending request ID", page)
             self.assertIn("Copy this ID", page)
-            self.assertIn("sudo drlink set ai-mcp", page)
-            self.assertIn("Connect or manage AI service", page)
+            self.assertIn("sudo drlink set ai-identity", page)
+            self.assertIn("select or name the Identity", page)
             self.assertNotIn("DRLink Server CLI (sudo drlink set ai-identity)", page)
             self.assertIn("CLI", page)
             self.assertIn("Retry", page)
