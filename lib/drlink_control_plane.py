@@ -5529,6 +5529,20 @@ class ControlPlane:
         self.commit_if_autonomous()
         return True
 
+    def record_ai_executor_platform(self, client_id: str, platform: str) -> None:
+        """Signed Agent claim metadata is a path dialect, never a permission grant."""
+        if platform not in ("posix", "windows"):
+            raise ControlPlaneError("unsupported AI executor platform")
+        self.assert_ai_job_claimant(client_id)
+        current = self.conn.execute("SELECT ai_executor_platform FROM clients WHERE id=?", (client_id,)).fetchone()
+        if current is not None and current[0] == platform:
+            return
+        self.conn.execute(
+            "UPDATE clients SET ai_executor_platform=? WHERE id=? AND ai_executor_platform!=?",
+            (platform, client_id, platform),
+        )
+        self.commit_if_autonomous()
+
     def claim_ai_jobs(self, client_id: str, limit: int = 4) -> list[dict]:
         ensure_ai_jobs_safety_schema_once(self.conn)
         self.assert_ai_job_claimant(client_id)
@@ -7211,6 +7225,50 @@ def path_allowed(operand: str, patterns: list[str]) -> bool:
             if text == prefix or text.startswith(boundary):
                 return True
         elif text == prefix or fnmatch(text, prefix):
+            return True
+    return False
+
+
+def windows_absolute_path(operand: str) -> Optional[str]:
+    """Conservative lexical Windows drive path dialect, shared with native Agent.
+
+    No relative, UNC, device, alternate stream, encoded, wildcard, trailing
+    dot/space, DOS-device or short-name aliases. Case is intentionally exact
+    except the drive letter; never let case folding widen a scope on NTFS.
+    Filesystem/reparse/link checks are performed on the actual Windows host.
+    """
+    raw = str(operand or "").replace(chr(92), "/")
+    if not re.fullmatch(r"[A-Za-z]:/.*", raw) or len(raw) > 240:
+        return None
+    suffix = raw[3:]
+    if not suffix:
+        return raw[0].upper() + ":/"
+    parts = suffix.split("/")
+    for part in parts:
+        if (not part or part in (".", "..") or part[-1] in ". "
+                or any(ord(c) < 32 or c in '<>:"|?*%~' for c in part)
+                or re.fullmatch(r"(?i:CON|PRN|AUX|NUL|CONIN\$|CONOUT\$|CLOCK\$|COM[0-9¹²³]|LPT[0-9¹²³])", part.split(".", 1)[0].rstrip(" "))):
+            return None
+    return raw[0].upper() + ":/" + "/".join(parts)
+
+
+def windows_path_allowed(operand: str, patterns: list[str]) -> bool:
+    """Evaluate Windows path scopes without interpreting them on the Linux Server."""
+    path = windows_absolute_path(operand)
+    if not path or not patterns:
+        return False
+    for raw in patterns:
+        if raw == "/**":
+            return True
+        patt = str(raw or "").replace(chr(92), "/")
+        tree = patt.endswith("/**")
+        base = patt[:-3] if tree else patt
+        if re.fullmatch(r"[A-Za-z]:", base):
+            base += "/"
+        base = windows_absolute_path(base)
+        if not base:
+            continue
+        if path == base or (tree and path.startswith(base.rstrip("/") + "/")):
             return True
     return False
 

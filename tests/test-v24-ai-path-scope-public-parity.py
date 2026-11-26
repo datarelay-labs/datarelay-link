@@ -91,6 +91,26 @@ class AiPathScopePublicParity(unittest.TestCase):
             operand=operand,
         )
 
+    def test_windows_native_path_scope_is_bound_to_signed_executor_dialect(self):
+        from drlink_control_plane import windows_absolute_path, windows_path_allowed
+        self.assertEqual(windows_absolute_path(r"c:\Data\report.txt"), "C:/Data/report.txt")
+        for invalid in (r"C:relative", r"\\server\share\file", r"\\?\C:\Data\file", "C:/Data/../file", "C:/Data/file:stream", "C:/Data/NUL.txt", "C:/Data/COM1.log", "C:/Data/CONIN$", "C:/Data/report.", "C:/Data/report ", "C:/Data/%2e%2e/file", "C:/Data/SHORT~1", "C:/Data//file", "C:/Data/*.txt"):
+            self.assertIsNone(windows_absolute_path(invalid), invalid)
+            self.assertFalse(windows_path_allowed(invalid, ["/**"]), invalid)
+        self.assertTrue(windows_path_allowed("C:/Data/report.txt", ["C:/Data/**"]))
+        self.assertFalse(windows_path_allowed("C:/Data-other/report.txt", ["C:/Data/**"]))
+        self.assertFalse(windows_path_allowed("C:/data/report.txt", ["C:/Data/**"]))
+        self.assertFalse(windows_path_allowed("C:/Data/report.txt", ["/Data/**"]))
+        self.assertTrue(windows_path_allowed("C:/Data/report.txt", ["/**"]))
+        v24.set_ai_access_rule(self.plane, "native-path", source="bot", destination="ubuntu-prod", permission="read-only", paths=["C:/Data/**"], enabled=True, oneshot=True)
+        self.assertEqual(self._auth("read_file", operand="C:/Data/report.txt")["action"], "DENY")
+        self.plane.record_ai_executor_platform("a" * 32, "windows")
+        self.assertEqual(self._auth("read_file", operand="C:/Data/report.txt")["action"], "ALLOW")
+        self.assertEqual(self._auth("read_file", operand="C:/Elsewhere/report.txt")["action"], "DENY")
+        self.assertEqual(self._auth("read_file", operand="/Data/report.txt")["action"], "DENY")
+        self.plane.record_ai_executor_platform("a" * 32, "posix")
+        self.assertEqual(self._auth("read_file", operand="C:/Data/report.txt")["action"], "DENY")
+
     def test_cli_can_configure_path_scopes_for_file_rule(self):
         rc, _out, err = self._run(
             "set",

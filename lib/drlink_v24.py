@@ -5430,7 +5430,7 @@ def authorize_ai_capability_v24(
     then applies fail-closed canonical path-scope checks for file capabilities.
     Legacy ``ai_access_rules`` / ``ai_path_scopes`` are never consulted.
     """
-    from drlink_control_plane import AI_CAPABILITIES, FILE_CAPABILITIES, path_allowed
+    from drlink_control_plane import AI_CAPABILITIES, FILE_CAPABILITIES, path_allowed, windows_path_allowed
 
     cap = str(capability or "").strip()
     principal = plane_db.get_principal(identity)
@@ -5542,6 +5542,13 @@ def authorize_ai_capability_v24(
         reason = "implicit DENY"
 
     path_ok = True
+    # A signed Agent claim selects the native path dialect; it cannot grant
+    # any access. Server-self and old POSIX Agents keep the existing checks.
+    path_match = path_allowed
+    if cap in FILE_CAPABILITIES and endpoint is not None and destination != SERVER_SELF_TARGET:
+        client = plane_db.client_for_endpoint(endpoint["id"])
+        if client is not None and "ai_executor_platform" in client.keys() and client["ai_executor_platform"] == "windows":
+            path_match = windows_path_allowed
     if action == "ALLOW" and cap in FILE_CAPABILITIES:
         # File capabilities must not become unrestricted filesystem access.
         # Public v2.4 binds scopes via the paths field; missing scopes DENY.
@@ -5556,7 +5563,7 @@ def authorize_ai_capability_v24(
             action = "DENY"
             path_ok = False
             reason = "file capability requires a path operand"
-        elif not path_allowed(str(operand), patterns):
+        elif not path_match(str(operand), patterns):
             action = "DENY"
             path_ok = False
             reason = "path is outside allowed scope"

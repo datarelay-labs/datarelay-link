@@ -355,7 +355,7 @@ function Import-FrpWindowsModules {
     }
     foreach ($mod in @(
             'FrpPaths.ps1', 'FrpLock.ps1', 'FrpCrypto.ps1', 'FrpTls.ps1', 'FrpState.ps1', 'FrpDraft.ps1',
-            'FrpConfig.ps1', 'FrpProcess.ps1', 'FrpShim.ps1', 'FrpAutostart.ps1', 'FrpBootstrap.ps1', 'FrpV24.ps1', 'FrpInteractive.ps1'
+            'FrpConfig.ps1', 'FrpProcess.ps1', 'FrpShim.ps1', 'FrpAutostart.ps1', 'FrpBootstrap.ps1', 'FrpV24.ps1', 'FrpAiExecutor.ps1', 'FrpInteractive.ps1'
         )) {
         . (Join-Path $libDir $mod)
     }
@@ -1037,7 +1037,7 @@ function Get-FrpClientDoctorReport {
     [void]$lines.Add(("Autostart         : {0}" -f $(if ($st.AutostartEnabled) { 'enabled' } else { 'disabled' })))
     [void]$lines.Add(("Lifecycle task    : {0}" -f $(if ($st.LifecycleEnabled) { 'enabled' } else { 'disabled' })))
     if ($st.RuntimeLevel -eq 'Critical') { $issues++ }
-    [void]$lines.Add('AI executor       : Not supported by this Windows Agent build')
+    [void]$lines.Add(('AI executor       : {0}' -f (Get-FrpAiExecutorStatusText)))
     [void]$lines.Add(("Running: {0} pid={1}" -f $st.Running, $st.Pid))
     if ($issues -gt 0) {
         [void]$lines.Add(("Doctor found {0} issue(s)" -f $issues))
@@ -1452,7 +1452,7 @@ switch ($Command) {
         Write-Host ("Runtime intent    : {0}" -f $st.RuntimeIntent)
         Write-Host ("Autostart         : {0}" -f $(if ($st.AutostartEnabled) { 'enabled' } else { 'disabled' }))
         Write-Host ("Lifecycle task    : {0}" -f $(if ($st.LifecycleEnabled) { 'enabled' } else { 'disabled' }))
-        Write-Host 'AI executor       : Not supported by this Windows Agent build'
+        Write-Host ('AI executor       : {0}' -f (Get-FrpAiExecutorStatusText))
         if ($null -ne $st.Pid) { Write-Host ("pid={0}" -f $st.Pid) }
         if ($st.Server) { Write-Host ("server={0}" -f $st.Server) }
         if ($st.Transport) { Write-Host ("transport={0}" -f $st.Transport) }

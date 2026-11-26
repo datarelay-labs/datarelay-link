@@ -66,6 +66,16 @@ Pinned allocator CA verification and hostname/IP SAN checks both apply on the .N
 - After upgrading a pre-v2.4 Windows Agent, run `drlink system synchronize` once. Existing enrolled services are promoted to canonical Remote Services with their existing public ports when the Server catalog provides an unambiguous matching Service Object. ConfigurationBundle export/apply fails closed until that convergence completes.
 - A Remote Service becomes `HEALTHY` only after the owned current `frpc.exe` process logs a successful proxy start in its current Server connection and the Server acknowledges the same endpoint through the signed status API. Old log entries, a replaced process/configuration, failed integrity verification, or a mismatched endpoint cannot establish health. Stable lifecycle heartbeats report status without restarting active Remote Services.
 
+## Windows native AI executor (candidate)
+
+The installed lifecycle worker does not automatically claim AI jobs merely because an AI Access Rule grants full management. The local operator must separately authorize the existing worker account and local file roots. No installation or upgrade creates or enables `state/ai-executor.json`; existing enrollment, policy and ports are unchanged. Local activation is a separate security-sensitive operation. The profile format is:
+
+```json
+{"enabled": true, "account_sid": "S-1-5-18", "allowed_roots": ["C:/ApprovedData"], "allow_command_exec": false}
+```
+
+The example SID is the existing SYSTEM lifecycle account, not a default grant. A local administrator must review the execution account, roots and optional command authority, and protect the profile and state using the existing product ACL contract. The profile, product code and its directories must have trusted administrative ownership and no untrusted effective write/replace rights. The worker fails closed on an absent, invalid, insecure or wrong-account profile. `system diagnostics` reports local opt-in separately from Server-observed executor readiness. Set `allow_command_exec` only after expressly approving the selected account's real OS authority; it is not a filesystem sandbox. File operations are bounded to 1 MiB and both policy and local roots. Existing-file writes use an exclusive verified handle to preserve ownership/ACL, restoring bounded prior bytes on ordinary write failure; an abrupt system failure is not an atomic-overwrite guarantee. Native command execution requires containment before delivery and is bounded to 30 seconds and capped output. Candidate native OS tests and real installed-host E2E are required before qualification.
+
 ## RDP
 
 Default Windows preset exposes TCP **3389** (`preset` treated as RDP in `drlink system info`):

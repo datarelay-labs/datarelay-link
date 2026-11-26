@@ -1161,8 +1161,18 @@ def run_ai_access_wizard(plane: ControlPlane, name: str, *, source_identity=None
                 default_paths = ",".join(existing_paths) if existing_paths else None
                 def valid_scope(value):
                     patterns = v24.parse_ai_paths_field(value)
-                    if not patterns or any(not p.startswith("/") or ".." in p.split("/") for p in patterns):
-                        return "Input is not a valid absolute path scope. Use /** for all files, or /home/** (no parent traversal)."
+                    from drlink_control_plane import windows_absolute_path
+                    def valid_pattern(p):
+                        if p.startswith("/"):
+                            return ".." not in p.split("/")
+                        base = p.replace(chr(92), "/")
+                        if base.endswith("/**"):
+                            base = base[:-3]
+                        if len(base) == 2 and base[1] == ":":
+                            base += "/"
+                        return windows_absolute_path(base) is not None
+                    if not patterns or not all(valid_pattern(p) for p in patterns):
+                        return "Input is not a valid absolute path scope. Use /** for all files, /home/** or C:/Data/** (no parent traversal)."
                     return None
                 examples = "All files: /**; specific directory: /home/**; multiple directories: /home/**,/opt/**"
                 _emit(io, examples)
