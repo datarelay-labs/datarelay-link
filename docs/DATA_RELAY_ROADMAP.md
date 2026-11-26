@@ -313,9 +313,9 @@ Real interoperability is required for each client explicitly claimed supported. 
 
 ### AI Access beginner UX convergence — owner direction 2026-11-25
 
-**Status:** DESIGN; implementation and qualification outstanding.
+**Status:** Main integration completed in PR #318 (including #315); source CLI/menu/help/completion, shared MCP setup and separate AI Access Rule workflow implemented. Automated regression and exact installed-product qualification are distinct: remaining Web parity, installed upgrade/rollback and real user E2E must be verified against the exact candidate before release. No stable release qualification is claimed.
 
-Implement the canonical [AI Access workflow](AI_ACCESS_MCP.md) and [CLI information architecture](Data%20Relay%20Link%20CLI%20Information%20Architecture.md). Remove competing public command/menu paths, not security controls or persisted state. WBS: (1) reconcile catalog/parser/help/completion, (2) shared MCP setup/readiness wizard, (3) AI Identity onboarding and credential lifecycle, (4) separate AI Access Rule wizard and permission profiles, (5) CLI/Web parity, (6) persisted-state upgrade and failure/rollback, (7) focused regressions, surface reconciliation and real user E2E on exact candidate. Each item requires actual evidence, not document-only PASS.
+Maintain and qualify the canonical [AI Access workflow](AI_ACCESS_MCP.md) and [CLI information architecture](Data%20Relay%20Link%20CLI%20Information%20Architecture.md). Remove competing public command/menu paths, not security controls or persisted state. WBS: (1) reconcile catalog/parser/help/completion, (2) shared MCP setup/readiness wizard, (3) AI Identity onboarding and credential lifecycle, (4) separate AI Access Rule wizard and permission profiles, (5) CLI/Web parity, (6) persisted-state upgrade and failure/rollback, (7) focused regressions, surface reconciliation and real user E2E on exact candidate. Each item requires actual evidence, not document-only PASS.
 
 ## 12. Phase DL-10 — canonical CLI implementation
 

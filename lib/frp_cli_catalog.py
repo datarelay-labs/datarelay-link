@@ -1607,7 +1607,7 @@ def domain_help(topic, role):
             "Display name alone is not a verified identity.\n\n"
             "Lifecycle:\n"
             "  1. Create and authenticate an AI Identity\n"
-            "  2. Choose built-in or custom permissions\n"
+            "  2. Choose built-in permissions, or a custom Permission Object / Permission Group\n"
             "  3. Create an AI Access Rule binding Identity → Destination → Permission\n"
             "  4. Test / explain, then review the Access Log\n\n"
             "Guided path:\n"
