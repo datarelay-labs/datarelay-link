@@ -21,7 +21,9 @@ from drlink_control_plane import ControlPlane
 import drlink_control_cli as cli
 import drlink_v24 as v24
 from drlink_v24_bundle import apply_v24_plan, export_configuration_v24, prepare_v24_plan
-from drlink_v24_wizard import ScriptedIO, set_wizard_io
+from drlink_v24_wizard import ScriptedIO, TtyIO, set_wizard_io
+from unittest.mock import patch
+import frp_ctl_grammar as grammar
 
 
 def _server_root(tmp: str) -> None:
@@ -414,6 +416,44 @@ configurationBundle:
         self.assertIn("conflicts", err)
         self.assertEqual(v24.expand_permissions(self.plane, "profile-read-only"), {"host-info"})
         self.assertEqual(self.plane.current_revision(), before)
+
+    def test_owner_path_guidance_and_invalid_utf8_input_retry(self):
+        failure = UnicodeDecodeError("utf-8", b"\\xff", 0, 1, "invalid start byte")
+        with patch("builtins.input", side_effect=[failure, "\\udcff", "/**"]) as read:
+            output = io.StringIO()
+            with redirect_stdout(output):
+                self.assertEqual(TtyIO().ask("Path scopes: "), "/**")
+            self.assertEqual(read.call_count, 3)
+            self.assertEqual(output.getvalue().count("Invalid UTF-8 input"), 2)
+        set_wizard_io(ScriptedIO(["bot", "ubuntu-prod", "read-only", "*", "/**", "y", "1"], out=(transcript := [])))
+        rc, _, err = self._run("set", "ai-access", "owner-path")
+        self.assertEqual(rc, 0, err)
+        self.assertEqual(v24.list_ai_policy_path_scopes(self.plane, "owner-path"), ["/**"])
+        self.assertIn("Path examples: /**", "".join(transcript))
+        self.assertIn("not *", "".join(transcript))
+
+    def test_owner_rule_edit_and_identity_details(self):
+        set_wizard_io(ScriptedIO(["bot", "ubuntu-prod", "read-only", self.vendor_glob, "y", "1"]))
+        self.assertEqual(self._run("set", "ai-access", "owner-rule")[0], 0)
+        set_wizard_io(ScriptedIO(["bot", "server:self", "read-only", self.vendor_glob, "y", "0"], out=(transcript := [])))
+        self.assertEqual(self._run("set", "ai-access", "owner-rule")[0], 0)
+        self.assertIn("Editing existing AI Access Rule", "".join(transcript))
+        self.assertIn("Replace destination: ubuntu-prod -> server:self", "".join(transcript))
+        rc, out, err = self._run("show", "ai-identity", "bot")
+        self.assertEqual(rc, 0, err)
+        self.assertIn("owner-rule (enabled)", out)
+        self.assertIn("Destination: ubuntu-prod", out)
+        self.assertIn("Permission: read-only", out)
+        self.assertIn(self.vendor_glob, out)
+        self.assertIn("Unmatched access: DENY", out)
+
+    def test_owner_ai_access_tab_guidance(self):
+        set_help = grammar.format_tab_candidates("set ai-access ", ["enabled", "disabled"], "server")
+        self.assertIn("<Enter>", set_help)
+        self.assertIn("Create or configure an AI Access Rule", set_help)
+        unset_help = grammar.format_tab_candidates("unset ai-access ", ["owner-rule", "policy"], "server")
+        self.assertIn("Delete only this AI Access Rule", unset_help)
+        self.assertIn("reset ALL AI Access rules", unset_help)
 
     def test_wizard_binds_paths_for_file_permission(self):
         # AI Access is WHITELIST-only; wizard does not ask for policy mode.

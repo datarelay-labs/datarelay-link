@@ -245,6 +245,12 @@ class ManualConsentBrowserTests(unittest.TestCase):
         self.assertEqual(wait.status, 200)
         wait_body = wait.read().decode("utf-8")
         self.assertIn("Waiting for operator approval", wait_body)
+        for page in (auth["page"], wait_body):
+            self.assertIn("Copy the Pending Request ID", page)
+            self.assertIn("paste it at the Pending request ID prompt", page)
+            self.assertIn("Retry after approval", page)
+            self.assertNotIn("http-equiv='refresh'", page)
+            self.assertNotIn("setTimeout", page)
         self.assertIn(auth["pending_id"], wait_body)
         self.assertIn("set ai-identity agent-a approve", wait_body)
         expected = "sudo drlink set ai-identity agent-a approve " + auth["pending_id"]

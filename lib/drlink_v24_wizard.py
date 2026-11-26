@@ -60,10 +60,17 @@ class TtyIO(WizardIO):
         sys.stdout.flush()
 
     def ask(self, prompt: str = "") -> str:
-        try:
-            return input(prompt)
-        except (EOFError, KeyboardInterrupt) as exc:
-            raise WizardCancelled() from exc
+        while True:
+            try:
+                value = input(prompt)
+                # readline or a terminal may deliver malformed UTF-8, including
+                # surrogate-escaped bytes. Never silently repair a rule value.
+                value.encode("utf-8", errors="strict")
+                return value
+            except UnicodeError:
+                self.write("Invalid UTF-8 input. Re-enter this value. No value was accepted.\n")
+            except (EOFError, KeyboardInterrupt) as exc:
+                raise WizardCancelled() from exc
 
     def ask_secret(self, prompt: str = "") -> str:
         try:
@@ -193,7 +200,7 @@ def _menu_selection_error(io: WizardIO, raw: str, lo: int, hi: int) -> None:
     )
 
 
-def _ask_choice(io: WizardIO, title: str, options: list[str], *, allow_create: list[tuple[str, str]] = None) -> str:
+def _ask_choice(io: WizardIO, title: str, options: list[str], *, allow_create: list[tuple[str, str]] = None, option_labels: Optional[dict[str, str]] = None) -> str:
     """Return selected option text, or '+create:<kind>' for inline create markers."""
     while True:
         _emit(io, "")
@@ -202,7 +209,7 @@ def _ask_choice(io: WizardIO, title: str, options: list[str], *, allow_create: l
         idx = 1
         mapping: dict[str, str] = {}
         for opt in options:
-            _emit(io, "%d) %s" % (idx, opt))
+            _emit(io, "%d) %s" % (idx, (option_labels or {}).get(opt, opt)))
             mapping[str(idx)] = opt
             idx += 1
         for kind, label in allow_create or []:
@@ -1051,6 +1058,13 @@ def run_ai_access_wizard(plane: ControlPlane, name: str, *, source_identity=None
     ).fetchone()
     pol = v24.get_access_policy(plane, "ai")
     session = WizardSession("ai-access", name, "edit" if existing else "create")
+    _emit(io, "%s AI Access Rule: %s" % ("Editing existing" if existing else "Creating new", name))
+    _emit(io, "A Rule name is independent of the AI Identity name. Use a distinct Rule name for another destination.")
+    previous_destination = None
+    if existing is not None:
+        from drlink_v24_cli import _ai_rule_labels
+        previous_destination, _ = _ai_rule_labels(plane, existing)
+        _emit(io, "Current destination: %s. Applying changes to this Rule replaces its destination; it does not add another Rule." % previous_destination)
     try:
         while True:
             session.inline.clear()
@@ -1078,7 +1092,13 @@ def run_ai_access_wizard(plane: ControlPlane, name: str, *, source_identity=None
             destinations = [d for d in destinations if d not in (v24.SERVER_SELF_TARGET, v24.TRUSTED_MANAGED_HOSTS_TARGET)]
             destinations += [v24.SERVER_SELF_TARGET, v24.TRUSTED_MANAGED_HOSTS_TARGET]
             _emit(io, "managed-hosts:trusted means ALL currently and subsequently trusted Managed Hosts; excludes server:self.")
-            destination = _ask_choice(io, "Destination (select existing target or explicit future-host scope)", destinations)
+            destination = _ask_choice(
+                io, "Destination (select existing target or explicit future-host scope)", destinations,
+                option_labels={
+                    v24.TRUSTED_MANAGED_HOSTS_TARGET: "All Trusted Managed Hosts (current and future) [managed-hosts:trusted]",
+                    v24.SERVER_SELF_TARGET: "DRLink Server itself [server:self]",
+                },
+            )
             if destination == v24.TRUSTED_MANAGED_HOSTS_TARGET:
                 if not _ask_yes_no(io, "Include ALL current AND future trusted Managed Hosts in this Rule?", default=False):
                     continue
@@ -1109,10 +1129,12 @@ def run_ai_access_wizard(plane: ControlPlane, name: str, *, source_identity=None
                 def valid_scope(value):
                     patterns = v24.parse_ai_paths_field(value)
                     if not patterns or any(not p.startswith("/") or ".." in p.split("/") for p in patterns):
-                        return "Enter at least one explicit absolute path glob (no parent traversal)."
+                        return "Enter an explicit absolute path glob (no parent traversal). Use /** for all paths, not *."
                     return None
+                _emit(io, "Path examples: /** = all filesystem paths; /home/** = home tree; /home/**,/opt/** = multiple trees.")
                 raw_paths = _ask_text(io, "Path scopes (required for file permissions)",
-                                      default=default_paths, validate=valid_scope)
+                                      default=default_paths, validate=valid_scope,
+                                      help_text="Enter comma-separated absolute globs. /** covers all filesystem paths, subject to OS and path safety checks.")
                 paths = v24.parse_ai_paths_field(raw_paths)
             if "command-exec" in capabilities:
                 _emit(io, "Command execution uses the target OS account and is not a filesystem sandbox. Review the target execution controls.")
@@ -1134,6 +1156,9 @@ def run_ai_access_wizard(plane: ControlPlane, name: str, *, source_identity=None
                 "Paths       : %s" % (", ".join(paths) if paths else "-"),
                 "Enabled     : %s" % ("YES" if enabled else "NO"),
             ]
+            review_lines.insert(0, "Operation   : %s Rule" % ("UPDATE existing" if existing is not None else "CREATE new"))
+            if previous_destination is not None and previous_destination != destination:
+                review_lines.insert(4, "Replace destination: %s -> %s (this Rule only)" % (previous_destination, destination))
             action = _review_menu(
                 io,
                 session,
