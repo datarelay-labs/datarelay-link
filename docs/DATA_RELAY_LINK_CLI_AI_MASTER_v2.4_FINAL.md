@@ -757,7 +757,7 @@ Review each referencing Rule with `set ai-access <RULE>` to select a replacement
 
 ---
 
-# 13. AI Identity
+# 13. AI MCP Setup
 
 AI Access uses an authenticated AI Identity as its source.
 
@@ -775,7 +775,7 @@ The user does not create trust merely by assigning a display name.
 
 ---
 
-## 13.1 AI Identity onboarding
+## 13.1 AI MCP Setup
 
 The normal Server CLI path is:
 
@@ -783,18 +783,20 @@ The normal Server CLI path is:
 set ai-identity <NAME>
 ```
 
-or the menu flow:
+or the canonical guided menu flow (target UX contract):
 
 ```text
 AI Access
-→ Connect AI
+→ AI MCP Setup
 ```
+
+The guided menu selector is `ai-mcp` with help text `Set up and manage AI MCP connections`. It is the user-facing entry for MCP Server, MCP Bridge and AI service connections. AI Access remains the separate authorization function. AI Identity is the authenticated security resource, not the setup menu name; action-first identity and credential commands retain their existing syntax and semantics.
 
 Typical guided flow:
 
 ```text
-Connect AI
-==========
+AI MCP Setup
+============
 
 Name:
 claude
@@ -2649,7 +2651,7 @@ Data Relay Link — DRLink Server
 │   └── Test / Explain
 │
 ├── 6. AI Access
-│   ├── Connect AI / AI Identities
+│   ├── AI MCP Setup
 │   ├── Permission Objects
 │   ├── Permission Groups
 │   ├── Rules
@@ -4442,7 +4444,7 @@ A destination Network Group is likewise rejected if it contains any Managed Host
 
 ---
 
-# 88. Scenario — AI Identity and AI Access
+# 88. Scenario — AI MCP Setup and AI Access
 
 Server:
 
@@ -5184,7 +5186,7 @@ A v2.4 CLI implementation is conformant only if the following can all be demonst
 - Cross-pool Service edit is rejected.
 - Server can inspect Remote Service state read-only.
 
-## AI Identity / AI Access
+## AI MCP Setup / AI Access
 
 - Interactive and automation authentication can bind an AI Identity.
 - Policy evaluation occurs only after identity authentication.
