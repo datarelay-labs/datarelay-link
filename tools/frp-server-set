@@ -158,7 +158,7 @@ def main(argv):
     print('  - maintain the HTTPS certificate and authenticated downstream TLS')
     print('  - proxy the eight-character root locator and enrollment paths to the allocator')
     print()
-    print('See docs/ZERO_TOUCH_SHORT_URL.md')
+    print('See docs/ZERO_TOUCH_REGRESSION_CONTROL.md')
     print('No services were restarted.')
     return 0
 

@@ -107,7 +107,7 @@ show ai-access-log permission <PERMISSION>
 per batch and 10 active unused codes. UTF-8 CSV uses the header
 `label,note`; for example `agent-a,lab`. Label and note may be
 blank; bulk creates management-only enrollments. The default lifetime
-is 1 hour and the maximum is 24 hours. Zero-Touch issuance authorizes automatic first-claim registration. Share the sensitive eight-character command privately. Outstanding six-character links must be reissued; already enrolled Agents are unaffected. See [Zero-Touch Bootstrap](ZERO_TOUCH_SHORT_URL.md).
+is 1 hour and the maximum is 24 hours. Zero-Touch issuance authorizes automatic first-claim registration. Share the sensitive eight-character command privately. Outstanding six-character links must be reissued; already enrolled Agents are unaffected. See [Zero-Touch Bootstrap](ZERO_TOUCH_REGRESSION_CONTROL.md).
 
 ```text
 set enrollment zero-touch

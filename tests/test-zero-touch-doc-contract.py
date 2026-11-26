@@ -12,7 +12,6 @@ ROOT = Path(__file__).resolve().parents[1]
 ID = 'ZT-P0-CONTRACT-20261026'
 REQUIRED = (
     'docs/ZERO_TOUCH_REGRESSION_CONTROL.md',
-    'docs/ZERO_TOUCH_SHORT_URL.md',
     'docs/PRODUCT_MASTER.md',
     'docs/DATA_RELAY_LINK_CLI_AI_MASTER_v2.4_FINAL.md',
     'docs/CLI_REFERENCE.md',
@@ -28,7 +27,7 @@ class ZeroTouchDocContract(unittest.TestCase):
         for path in REQUIRED:
             with self.subTest(document=path):
                 self.assertIn(ID, self.read(path))
-        short = self.read('docs/ZERO_TOUCH_SHORT_URL.md')
+        short = self.read('docs/ZERO_TOUCH_REGRESSION_CONTROL.md')
         master = self.read('docs/DATA_RELAY_LINK_CLI_AI_MASTER_v2.4_FINAL.md')
         self.assertNotIn('Short URL mode is **opt-in** through `bootstrap_hostname`', short)
         self.assertNotIn('Without it, Linux/macOS and Windows Zero-Touch commands use the pinned-CA', master)
@@ -37,7 +36,7 @@ class ZeroTouchDocContract(unittest.TestCase):
 
     def test_server_install_reports_read_only_public_tls_status(self):
         install = self.read('install-server.sh')
-        doc = self.read('docs/ZERO_TOUCH_SHORT_URL.md')
+        doc = self.read('docs/ZERO_TOUCH_REGRESSION_CONTROL.md')
         self.assertIn('frp_report_zero_touch_readiness', install)
         self.assertIn('Zero-Touch HTTPS readiness: NOT_READY', install)
         self.assertIn('Zero-Touch HTTPS readiness: READY', install)
@@ -61,8 +60,7 @@ class ZeroTouchDocContract(unittest.TestCase):
 
     def test_fixed_entry_target_has_public_private_parity(self):
         for path in ('docs/ZERO_TOUCH_REGRESSION_CONTROL.md',
-                     'docs/PRODUCT_MASTER.md', 'docs/CLI_REFERENCE.md',
-                     'docs/ZERO_TOUCH_SHORT_URL.md'):
+                     'docs/PRODUCT_MASTER.md', 'docs/CLI_REFERENCE.md'):
             text = self.read(path)
             self.assertIn('FQDN or IP', text)
             self.assertIn('eight-character', text)
@@ -101,7 +99,7 @@ class ZeroTouchDocContract(unittest.TestCase):
         linux = 'curl -kfsS https://remote.xdr.ooo/A3xK9mP2|sudo bash'
         windows = 'iex(curl.exe -kfsS https://remote.xdr.ooo/A3xK9mP2|Out-String)'
         for path in ('docs/ZERO_TOUCH_REGRESSION_CONTROL.md',
-                     'docs/ZERO_TOUCH_SHORT_URL.md', 'README.md', 'README.ko.md'):
+                     'README.md', 'README.ko.md'):
             for template in (linux, windows):
                 self.assertIn(template, self.read(path), path)
         contract = self.read('docs/ZERO_TOUCH_REGRESSION_CONTROL.md')

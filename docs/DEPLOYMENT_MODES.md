@@ -22,7 +22,7 @@ TCP passthrough.
 An optional **bootstrap hostname** may be configured separately for the fixed
 eight-character Zero-Touch entry target (`GET /<locator>`). That name is not the
 Remote Service alias and is not the Private CA / FRP control identity. See
-`docs/ZERO_TOUCH_SHORT_URL.md`.
+`docs/ZERO_TOUCH_REGRESSION_CONTROL.md`.
 
 The addresses `203.0.113.10` and `192.0.2.50` are documentation-only (RFC 5737).
 
