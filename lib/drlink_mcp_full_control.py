@@ -117,6 +117,36 @@ def allowed_path(path: str, patterns: list[str], account: Account) -> str:
     return canonical
 
 
+def allowed_cwd(path: str, patterns: list[str], account: Account) -> str:
+    """Validate an initial command directory, not a file-operation operand.
+
+    Only an explicitly filesystem-wide AI rule AND operator root permit
+    resolving a directory alias. Scoped command grants and all direct file
+    operations retain the existing no-symlink policy.
+    """
+    if not isinstance(path, str) or not Path(path).is_absolute() or "\x00" in path:
+        raise FullControlDenied("An absolute working directory is required")
+    if path_allowed(path, patterns):
+        canonical = allowed_path(path, patterns, account)
+    elif "/**" in patterns and "/" in account.roots:
+        # Do not reinterpret traversal or encoded path syntax in the fallback.
+        if ".." in Path(path).parts or "%" in path:
+            raise FullControlDenied("Invalid working directory path")
+        try:
+            canonical = str(Path(path).resolve(strict=True))
+        except (OSError, RuntimeError):
+            raise FullControlDenied("Working directory cannot be resolved") from None
+        canonical = allowed_path(canonical, patterns, account)
+    else:
+        raise FullControlDenied(
+            "Working directory is outside the current AI Access rule or contains "
+            "a symbolic link; scoped execution requires a non-symlink path"
+        )
+    if not Path(canonical).is_dir():
+        raise FullControlDenied("Command working directory does not exist or is not a directory")
+    return canonical
+
+
 @dataclass
 class Output:
     data: bytearray = field(default_factory=bytearray)
@@ -249,9 +279,7 @@ class FullControlRuntime:
         account = configured_account()
         if not owner:
             raise FullControlDenied("Authenticated AI identity is required")
-        cwd = allowed_path(args.get("cwd") or account.home, patterns, account)
-        if not Path(cwd).is_dir():
-            raise FullControlDenied("Command working directory does not exist")
+        cwd = allowed_cwd(args.get("cwd") or account.home, patterns, account)
         argv = args.get("argv")
         command = args.get("command")
         if command is not None:

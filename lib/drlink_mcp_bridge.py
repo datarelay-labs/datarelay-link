@@ -1277,10 +1277,10 @@ class MCPBridge:
                 # Initial working directory authorization is not a sandbox for
                 # a general shell. Full-control grants the selected account's
                 # real OS authority; both fact and user are explicit in tools.
-                full.allowed_path(operand, patterns, account)
+                canonical_cwd = full.allowed_cwd(operand, patterns, account)
                 if name in command_tools:
                     options = dict(arguments)
-                    options["cwd"] = operand
+                    options["cwd"] = canonical_cwd
                     payload = runtime.start(owner, options, patterns, git=name == "server_git")
                 elif name == "server_job_poll":
                     payload = runtime.poll(owner, arguments["job_id"],

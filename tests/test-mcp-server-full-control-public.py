@@ -234,6 +234,26 @@ class NativeFullControlPublicTests(unittest.TestCase):
         self.assert_activity("server_run", "ALLOW")
         self.assert_activity("server_exec", "ALLOW")
 
+    def test_public_full_filesystem_cwd_alias_and_scoped_denial(self):
+        target = self.root / "actual"
+        target.mkdir()
+        alias = self.root / "current"
+        alias.symlink_to(target, target_is_directory=True)
+        args = {"cwd": str(alias), "command": "pwd -P"}
+        self.denied("server_exec", args)
+        v24.set_ai_policy_path_scopes(self.plane, self.rule("owner"), ["/**"])
+        self.denied("server_exec", args)  # Local operator roots remain scoped.
+        with patch.dict(os.environ, {"DRLINK_MCP_SERVER_ALLOWED_ROOTS": "/"}):
+            result = self.completed(self.allowed("server_exec", args))
+            self.assertEqual(result["exit_status"], 0, result)
+            self.assertEqual(result["cwd"], str(target.resolve()))
+            self.assertEqual(result["stdout"]["text"].strip(), str(target.resolve()))
+            self.denied("server_read_file", {"path": str(alias / "missing")})
+            self.assert_activity("server_exec", "ALLOW")
+            self.assert_activity("server_read_file", "DENY")
+            v24.set_ai_policy_path_scopes(self.plane, self.rule("owner"), [])
+            self.denied("server_exec", args)
+
     def test_public_file_create_read_update_delete(self):
         path = self.root / "public-file.txt"
         for content in ("created\n", "updated\n"):
