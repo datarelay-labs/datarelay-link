@@ -1100,8 +1100,24 @@ def run_ai_access_wizard(plane: ControlPlane, name: str, *, source_identity=None
                 raise ControlPlaneError(
                     "ERROR:\nNo verified AI Identity is available.\n\nNo changes were applied."
                 )
-            destinations = [r["name"] for r in v24.list_network_objects(plane)]
-            destinations += [r["name"] for r in plane.conn.execute("SELECT name FROM object_groups ORDER BY name")]
+            # AI dispatch targets an enrolled host, not a routed LAN object.
+            # Keep disconnected hosts selectable; connection is not policy.
+            # Existing static objects and rules are never deleted or rewritten.
+            managed = {row["id"]: row["name"] for row in plane.conn.execute(
+                "SELECT o.id, o.name FROM objects o "
+                "JOIN managed_endpoints e ON e.object_id=o.id "
+                "JOIN clients c ON c.id=e.client_id "
+                "WHERE o.type='managed_endpoint' AND o.origin='managed' "
+                "AND o.status!='orphaned' ORDER BY o.name"
+            )}
+            destinations = list(managed.values())
+            for group in plane.conn.execute("SELECT id, name FROM object_groups ORDER BY name"):
+                try:
+                    members = plane._expand_group_members(group["id"], set())
+                except ControlPlaneError:
+                    continue
+                if any(member["id"] in managed for member in members):
+                    destinations.append(group["name"])
             destinations = [d for d in destinations if d not in (v24.SERVER_SELF_TARGET, v24.TRUSTED_MANAGED_HOSTS_TARGET)]
             destinations += [v24.SERVER_SELF_TARGET]
             trusted_label = "All trusted Managed Hosts (current and future; excludes Server)"

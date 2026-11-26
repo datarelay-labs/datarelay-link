@@ -182,6 +182,30 @@ class OAuthAuthenticationSeparation(unittest.TestCase):
         self.assertEqual(decision("chatgpt", "Second Test Agent"), "DENY")
         self.assertIsNone(self.plane.conn.execute("SELECT value FROM system_meta WHERE key=?", (v24.MCP_OWNER_PRINCIPAL_META,)).fetchone())
 
+    def test_ai_access_wizard_only_offers_managed_host_destinations(self):
+        from drlink_v24_wizard import ScriptedIO, set_wizard_io
+        from drlink_control_cli import dispatch
+        self.approve_and_exchange("chatgpt", "first")
+        target, generated = v24.ensure_enrolled_destination_object(self.plane, "192.0.2.90")
+        v24.set_network_object(self.plane, "ordinary-network", type="cidr", value="192.0.2.0/24", oneshot=True)
+        v24.set_network_group(self.plane, "routed-only", members=[generated, "ordinary-network"], oneshot=True)
+        v24.set_network_group(self.plane, "managed-network-group", members=["First Test Agent"], oneshot=True)
+        before = self.plane.current_revision()
+        self.addCleanup(set_wizard_io, None)
+        scripted = ScriptedIO(["chatgpt", "0"])
+        set_wizard_io(scripted)
+        self.assertEqual(dispatch(["set", "ai-access", "test-rule"], root=self.tmp, plane=self.plane), 0)
+        output = "".join(scripted.out)
+        self.assertIn("First Test Agent", output)
+        self.assertIn("managed-network-group", output)
+        self.assertIn("server:self", output)
+        self.assertIn("All trusted Managed Hosts", output)
+        self.assertNotIn(generated, output)
+        self.assertNotIn("ordinary-network", output)
+        self.assertNotIn("routed-only", output)
+        self.assertEqual(self.plane.current_revision(), before)
+        self.assertEqual(self.plane._object_values(self.plane.get_object(generated)["id"]), [target])
+
     def test_dynamic_scope_requires_explicit_wizard_confirmation(self):
         from drlink_v24_wizard import ScriptedIO, set_wizard_io
         from drlink_control_cli import dispatch

@@ -62,8 +62,8 @@ class AiPathScopePublicParity(unittest.TestCase):
     def _seed(self) -> None:
         self.plane.set_ai_principal("bot", enabled=True)
         _verify(self.plane, "bot")
-        v24.set_network_object(
-            self.plane, "ubuntu-prod", type="ip", value="198.51.100.10", oneshot=True
+        self.plane.upsert_client(
+            "a" * 32, label="ubuntu-prod", hostname="ubuntu-prod", connected=True
         )
         v24.set_permission_object(
             self.plane,

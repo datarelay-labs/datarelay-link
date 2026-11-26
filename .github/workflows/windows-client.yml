@@ -35,7 +35,7 @@ jobs:
             # On ambiguous history, qualify instead of silently skipping.
             if git rev-parse --verify HEAD^2 >/dev/null 2>&1; then
               changed=$(git diff --name-only HEAD^1 HEAD)
-              if ! grep -Eq '^(windows/|tests/windows/|dist/bootstrap-client\.ps1$|scripts/build-bundles\.py$|\.github/workflows/windows-client\.yml$|VERSION$)' <<< "$changed"; then
+              if ! grep -Eq '^(windows/|tests/windows/|scripts/build-bundles\.py$|\.github/workflows/windows-client\.yml$|VERSION$)' <<< "$changed"; then
                 required=false
               fi
             fi
