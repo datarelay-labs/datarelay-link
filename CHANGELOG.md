@@ -30,27 +30,29 @@ v2.4.0 remains a development target. The following is approved architecture scop
 - Service Objects / Groups, including Fixed TCP as a Service Object subtype.
 - Permission Objects / Groups for reusable AI-operation permissions.
 - Agent-owned Remote Services binding one destination and one Service Object, with TCP and Fixed TCP support and stable endpoint allocation.
-- Remote Access, Internet Access, and AI Access using the shared BLACKLIST / WHITELIST Mode and Enforcement model.
+- Remote Access supports BLACKLIST or WHITELIST; Internet Access and AI Access are WHITELIST-only and deny-by-default.
 - AI Identity authentication plus server-side MCP Bridge and per-invocation AI Access authorization.
 - Optimistic-concurrency protection for interactive control-plane mutations.
 - Consistent SQLite backup/restore and DB-to-runtime recompilation.
-- ConfigurationBundle v1alpha1 for idempotent multi-resource change sets using the same Change Plan/control-plane engine as direct CLI.
+- Canonical ConfigurationBundle with role-specific `context` for idempotent multi-resource change sets using the same Change Plan/control-plane engine as direct CLI.
 - AI-assisted configuration contract: simple changes as canonical public CLI; dependent changes as copy/paste ConfigurationBundle via standard input.
 - Redacted configuration export plus validate/test/diff/atomic-apply workflow.
 - Zero-Touch bounded issuance: max 10 tickets per request, max 10 active unused, unique single-use tickets, default 1-hour TTL and maximum 24-hour TTL.
 
 ### Changed — target scope
 
+- Beginner-first AI Access: separate host enrollment, verified AI connection, and firewall-style authorization. See `docs/AI_ACCESS_MCP.md`; implementation and qualification remain pending.
+
 - Control-plane authority is transferred from multiple authoritative JSON state files to embedded SQLite.
 - Public terminology is frozen around Managed Host, Network/Service/Permission Objects and Groups, AI Identity, Remote Service, Remote Access, Internet Access, and AI Access.
-- Initial policy state is No Policy / No Rules with effective ALLOW; BLACKLIST denies matching enabled Rules and WHITELIST allows matching enabled Rules.
+- Remote Access starts with No Policy / No Rules and ALLOW; Internet Access and AI Access start DENY. BLACKLIST is Remote Access only; WHITELIST permits matching enabled Rules and denies unmatched traffic.
 - Rules are not ordered and do not carry per-rule ALLOW/DENY actions; Policy Reset and Enforcement disable/enable have explicit semantics.
 - Remote Service mutation is Agent Host-local; Server-side Remote Service inspection is read-only for configuration.
 - Internet Access source selectors may include Managed Hosts; destinations reject Managed Hosts directly or through a Network Group containing one.
 - Fixed TCP endpoint allocation uses a separate implementation-managed port pool and does not create a separate policy hierarchy.
 - Canonical guided Server CLI root becomes Managed Hosts / Network Objects / Service Objects / Remote Access / Internet Access / AI Access / System / Help / Exit.
-- Canonical Agent Host CLI root becomes Status / Remote Services / Agent / Configuration / Diagnostics / Help / Exit.
-- Earlier v2.4.x MCP exclusion decision is superseded: MCP/AI Access is part of the v2.4.0 target and must be qualified before stable release.
+- Canonical Agent Host CLI root becomes Remote Services / Agent / Configuration / System / Help / Exit.
+- MCP/AI Access is part of the v2.4.0 target and must be qualified before stable release.
 
 ### Security — target scope
 
@@ -61,7 +63,7 @@ v2.4.0 remains a development target. The following is approved architecture scop
 - Unsupported/corrupt DB or unsafe runtime-generation mismatch fails closed where safe enforcement cannot be proven.
 - Internet Access retains server-side DNS, DNS-rebinding resistance, SSRF/special-address protection, and validated exact-destination connection.
 - MCP operations require authenticated AI Identity and per-invocation AI Access authorization; authentication remains mandatory even when AI Access enforcement is disabled.
-- True read-only AI policy requires `exec=false`.
+- Read-only AI permissions do not grant `command-exec`, file-write, or file-upload. Direct file reads require reviewed path scope.
 - Stable v2.4.0 owner/UI evidence is no longer terminal authority by caller input alone; release attestation additionally requires the protected `stable-release-owner-ui` GitHub Environment approval signal.
 - Stable PASS1/PASS2 qualification is no longer accepted from caller-supplied HEAD strings: each Full Real E2E pass records terminal summary evidence, the two summaries are SHA256-bound into one qualification package, and release attestation revalidates that package before deriving PASS1/PASS2/final HEADs.
 - Because the qualification package is implementer-produced evidence, stable publication additionally requires the protected `stable-release-qualification` GitHub Environment; its approval is bound to the exact prevalidated package SHA256 and administrator bypass is disabled.
@@ -73,13 +75,12 @@ v2.4.0 remains a development target. The following is approved architecture scop
 - Canonical public `service-profile` resource.
 - Canonical public `internet-profile` resource.
 - Intermediate public models and nouns that conflict with the frozen v2.4 Product Master / CLI-AI Master.
-- Ordered first-match public rule semantics and per-rule ALLOW/DENY actions.
-- v2.4.x MCP-exclusion release rule.
+- No alternate public policy evaluation or command compatibility model.
 
 ### Before release
 
 - Implement all approved architecture on one exact candidate HEAD.
-- Remove/replace old MCP-exclusion code, tests, schema constraints, and release scripts.
+- Verify feature presence and qualification independently in the release schema, tests and governance.
 - Generate a candidate manifest that reflects actual included features.
 - Complete automated validation, multi-host Real E2E, MCP interoperability qualification, backup/restore/migration, and security regressions.
 - Clear the current ChatGPT owner/UI user-authentication release blocker on a currently supported full-MCP plan/surface with real OAuth Authorization Code/consent, tool discovery, one allowed operation, and one expected policy denial; record the actual plan/surface/date and do not hard-code a consumer plan name. Machine-side MCP tests alone do not clear this gate.

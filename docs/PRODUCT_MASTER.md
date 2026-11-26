@@ -64,7 +64,7 @@ AI Access          — WHITELIST only, deny-by-default
 ConfigurationBundle
 ```
 
-The earlier intermediate model based on neutral generic Objects, Managed Endpoint, Published Service, Service Preset, ordered first-match ALLOW/DENY Rules, and AI Principal is superseded.
+Only the public model described here is supported; replaced designs remain in Git history.
 
 Implementation storage or internal helper names must not redefine the public model.
 
@@ -89,7 +89,8 @@ Product version and Relay Engine version are independent.
 1–5 hosts       extremely simple
 10–30 hosts     comfortable CLI operation
 30–50 hosts     reusable Objects/Groups are sufficient
-100–1000 hosts  not the current product target
+100 hosts       MCP performance qualification target (not a proven support claim)
+1000 hosts      not the current product target
 ```
 
 Do not turn Data Relay Link into a large fleet-management or network-overlay platform merely to match competitor feature lists.
@@ -310,7 +311,9 @@ For Internet Access and AI Access, authentication or network reachability alone 
 
 There is no rule ordering and no per-rule ALLOW/DENY action. Remote Access retains its existing BLACKLIST/WHITELIST behavior for v2.4 compatibility.
 
-## 15. AI Identity and AI Access
+## 15. AI MCP Setup and AI Access
+
+AI MCP Setup is the canonical user-facing entry for MCP Server, MCP Bridge and AI service connection configuration. The guided CLI menu selector is `ai-mcp`, labeled `AI MCP Setup`, with description `Set up and manage AI MCP connections`. AI Access manages authorization separately. AI Identity remains the verified security resource used by authentication and policy evaluation; existing action-first resource/credential syntax and state semantics are unchanged. The CLI/AI Master defines the guided navigation contract, and exact-HEAD runtime verification is required before declaring the UX implemented.
 
 AI Access source is a verified AI Identity.
 
@@ -336,17 +339,9 @@ A display name alone is never authentication.
 
 Authentication and AI Access authorization are separate.
 
-**First owner MCP onboarding (operator-approved exception):** a NEW OAuth AI
-Identity approved by the Server operator through the first-identity consent
-ceremony is not authorized merely by receiving the redirect. Only after the
-same client's genuine PKCE exchange verifies that identity does the Server
-create the scoped owner profile: all seven canonical MCP permissions, explicit
-file paths `/*`, and an audited WHITELIST rule to the enrolled/trusted
-Managed Host group. Subsequent signed Agent enrollments extend that existing
-owner group. Other OAuth identities remain unmatched/DENY; credential
-revocation, endpoint retirement, runtime availability, and existing filesystem
-safety restrictions still fail closed. Do not create an implicit global ALL
-policy or skip operator OAuth approval.
+### AI MCP Setup and AI Access workflow
+
+The single workflow specification is [AI_ACCESS_MCP.md](AI_ACCESS_MCP.md). Managed Hosts owns enrollment; AI MCP Setup manages infrastructure and connections; AI Identity retains verified authentication and credential lifecycle; AI Access Rules own Source → Destination → Permission authorization; System owns shared MCP settings and certificates. AI MCP Setup checks readiness and uses that same settings flow only when necessary, then optionally opens the separate Access Rule wizard. No automatic privilege grant from OAuth or first connection; explicitly reviewed Owner scope is optional. Basic permissions use built-in profiles; custom Objects/Groups are advanced. AI Access mode is fixed WHITELIST, not an operator input. Preserve existing state and all fail-closed controls. No duplicate public command/menu paths. These are target requirements, not installed-product evidence.
 
 **v2.4.0 scope decision (current owner, 2026-10-16):** The v2.4.0 target includes the current Managed Host/Network Object/Service Object/Permission Object model, Remote Access, Controlled Internet Access, Zero-Touch enrollment, guided/direct CLI, ConfigurationBundle, revision/audit, product/Relay Engine lifecycle, multi-platform Agent, **AI Identity/AI Access and server-side MCP Bridge**. The MCP/AI-only exclusions in `CLI_ONLY_E2E_SCENARIOS.md` narrow **that test run only**. They are not an MCP deferral to 2.5.0 and do not relax the full v2.4.0 release gates. Record real implementation/candidate bytes and exact Source HEAD; documentation is not proof of feature completion.
 
@@ -616,7 +611,7 @@ No other document may redefine the public CLI/AI model independently.
 
 **Decision:** Adopt the Managed Host + Network/Service/Permission Object + AI Identity + Agent-local Remote Service model; Remote Access retains BLACKLIST/WHITELIST while Internet Access and AI Access are WHITELIST-only and deny-by-default.
 
-**Supersedes:** the intermediate Managed Endpoint / Published Service / Service Preset / ordered first-match ALLOW-DENY / AI Principal public model.
+**Authority:** the current public model and typed selectors above.
 
 ### 2026-09 — Fixed TCP
 

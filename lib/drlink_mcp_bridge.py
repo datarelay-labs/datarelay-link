@@ -125,18 +125,41 @@ def oauth_operator_approval_command(plane: ControlPlane, pending_id: str, *, unb
     it. An explicit deployment hint is accepted only for an enabled, verified
     Identity, and is never taken from the untrusted OAuth client request.
     """
-    if not pending_id:
-        return "sudo drlink system credential approve-oauth <PENDING-ID> <AI-IDENTITY>"
-    command = "sudo drlink system credential approve-oauth %s" % pending_id
-    if not unbound:
-        return command  # Already bound: an Identity argument is unnecessary.
-    name = os.environ.get("DRLINK_MCP_OAUTH_OPERATOR_IDENTITY", "").strip()
-    if re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}", name):
-        principal = plane.get_principal(name)
-        if (principal is not None and int(principal["enabled"] or 0)
-                and str(principal["credential_status"] or "").lower() in ("verified", "active")):
-            return command + " " + principal["name"]
-    return command + " <AI-IDENTITY>"  # No safe default: operator must choose.
+    name = "<AI-IDENTITY>"
+    if pending_id and not unbound:
+        bound = plane.conn.execute(
+            "SELECT p.name FROM ai_oauth_pending r JOIN ai_principals p ON p.id=r.principal_id WHERE r.id=?",
+            (pending_id,),
+        ).fetchone()
+        if bound is not None and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}", bound["name"]):
+            name = bound["name"]
+    elif pending_id:
+        candidate = os.environ.get("DRLINK_MCP_OAUTH_OPERATOR_IDENTITY", "").strip()
+        if re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}", candidate):
+            principal = plane.get_principal(candidate)
+            if (principal is not None and int(principal["enabled"] or 0)
+                    and str(principal["credential_status"] or "").lower() in ("verified", "active")):
+                name = principal["name"]
+    return "sudo drlink set ai-identity %s approve %s" % (name, pending_id or "<PENDING-ID>")
+
+
+def oauth_pending_approval_page(pending_id: str, command: str, continue_path: str) -> str:
+    """One consistent, copyable operator instruction for initial and pending consent."""
+    return (
+        "<!doctype html><html><head><meta charset='utf-8'>"
+        "<title>Approve MCP connection in DRLink CLI</title></head><body>"
+        "<h1>Approve MCP connection in DRLink CLI</h1>"
+        "<p>Pending request ID:</p><pre>%s</pre>"
+        "<p>Copy this ID. On the DRLink Server, run sudo drlink set ai-mcp (AI MCP Setup), "
+        "select Connect or manage AI service, and paste it into the Pending request ID prompt. "
+        "Review the request and approve it.</p>"
+        "<p>Alternatively, use the following operator command (replace the Identity placeholder if shown):</p>"
+        "<pre>%s</pre>"
+        "<p>After CLI approval, select Retry to finish the connection.</p>"
+        "<p><a href='%s'>Retry</a></p>"
+        "<p>This is a consent page, not a management UI.</p>"
+        "</body></html>"
+    ) % (html_escape(pending_id), html_escape(command), html_escape(continue_path, quote=True))
 
 
 # name, title, description, props, annotations
@@ -1273,10 +1296,10 @@ class MCPBridge:
                 # Initial working directory authorization is not a sandbox for
                 # a general shell. Full-control grants the selected account's
                 # real OS authority; both fact and user are explicit in tools.
-                full.allowed_path(operand, patterns, account)
+                canonical_cwd = full.allowed_cwd(operand, patterns, account)
                 if name in command_tools:
                     options = dict(arguments)
-                    options["cwd"] = operand
+                    options["cwd"] = canonical_cwd
                     payload = runtime.start(owner, options, patterns, git=name == "server_git")
                 elif name == "server_job_poll":
                     payload = runtime.poll(owner, arguments["job_id"],
@@ -1866,26 +1889,10 @@ def make_handler(bridge: MCPBridge):
                     self.send_header("Content-Length", "0")
                     self.end_headers()
                     return
-                hint = html_escape(oauth_operator_approval_command(
-                    bridge.plane, pending["id"], unbound=bool(pending.get("unbound"))))
+                hint = oauth_operator_approval_command(
+                    bridge.plane, pending["id"], unbound=bool(pending.get("unbound")))
                 continue_path = "/oauth/continue?%s" % urlencode({"t": pending["completion_token"]})
-                page = (
-                    "<!doctype html><html><head><meta charset='utf-8'>"
-                    "<meta http-equiv='refresh' content='2;url=%s'>"
-                    "<title>MCP OAuth consent</title></head><body>"
-                    "<p>Approve this MCP OAuth request as operator:</p>"
-                    "<pre>%s</pre>"
-                    "<p>After approval this browser continues automatically to the registered redirect.</p>"
-                    "<p><a href='%s'>Continue after approval</a></p>"
-                    "<p>This is a consent page, not a management UI.</p>"
-                    "<script>setTimeout(function(){location.replace(%s);},2000);</script>"
-                    "</body></html>"
-                ) % (
-                    continue_path,
-                    hint,
-                    continue_path,
-                    json.dumps(continue_path),
-                )
+                page = oauth_pending_approval_page(pending["id"], hint, continue_path)
                 raw = page.encode("utf-8")
                 self.send_response(200)
                 self.send_header("Content-Type", "text/html; charset=utf-8")
@@ -1906,19 +1913,9 @@ def make_handler(bridge: MCPBridge):
                 if status == "pending":
                     continue_path = "/oauth/continue?%s" % urlencode({"t": token})
                     pending_id = str(result.get("id") or "").strip()
-                    approval_hint = html_escape(oauth_operator_approval_command(
-                        bridge.plane, pending_id, unbound=bool(result.get("unbound", True))))
-                    page = (
-                        "<!doctype html><html><head><meta charset='utf-8'>"
-                        "<meta http-equiv='refresh' content='2;url=%s'>"
-                        "<title>Waiting for approval</title></head><body>"
-                        "<p>Waiting for operator approval…</p>"
-                        "<p>Approve this MCP OAuth request as operator:</p>"
-                        "<pre>%s</pre>"
-                        "<p><a href='%s'>Retry</a></p>"
-                        "<script>setTimeout(function(){location.replace(%s);},2000);</script>"
-                        "</body></html>"
-                    ) % (continue_path, approval_hint, continue_path, json.dumps(continue_path))
+                    approval_hint = oauth_operator_approval_command(
+                        bridge.plane, pending_id, unbound=bool(result.get("unbound", True)))
+                    page = oauth_pending_approval_page(pending_id, approval_hint, continue_path)
                     raw = page.encode("utf-8")
                     self.send_response(200)
                     self.send_header("Content-Type", "text/html; charset=utf-8")

@@ -14,7 +14,6 @@ import uuid
 ROOT = Path(__file__).resolve().parents[1]
 CANONICAL = ROOT / "docs" / "FULL_USER_E2E_SCENARIOS.md"
 PROCEDURE = ROOT / "docs" / "E2E_EXECUTION_PROCEDURE.md"
-ROADMAP = ROOT / "docs" / "E2E_LAB_READINESS_ROADMAP.md"
 
 
 class E2EProcedureGuard(unittest.TestCase):
@@ -22,37 +21,35 @@ class E2EProcedureGuard(unittest.TestCase):
     def setUpClass(cls):
         cls.canonical = CANONICAL.read_text(encoding="utf-8")
         cls.procedure = PROCEDURE.read_text(encoding="utf-8")
-        cls.roadmap = ROADMAP.read_text(encoding="utf-8")
 
     def test_owner_assigned_dual_server_e2e_boundaries(self):
-        for doc in (self.canonical, self.procedure, self.roadmap):
+        for doc in (self.canonical, self.procedure):
             self.assertIn("MCP_SERVER", doc)
             self.assertIn("FUNCTION_PERFORMANCE_SERVER", doc)
-        for doc in (self.procedure, self.roadmap):
-            self.assertIn("B014", doc)
+        self.assertIn("B014", self.procedure)
         # Each check runs on exactly the owner-designated function/FQDN or MCP-only Server.
         self.assertIn("MCP_SERVER — MCP tests only", self.canonical)
         self.assertIn("FUNCTION_PERFORMANCE_SERVER — functional and public hostname/DNS tests", self.canonical)
         self.assertIn("Mixed-scope scenarios", self.canonical)
         self.assertIn("only for MCP-specific public TLS/HTTPS", self.procedure)
         self.assertIn("DNS/public/bootstrap hostname and fallback", self.procedure)
-        self.assertIn("MCP-specific tests only", self.roadmap)
-        self.assertIn("everything else", self.roadmap)
+        self.assertIn("MCP-specific tests only", self.procedure)
+        self.assertIn("everything else", self.procedure)
         self.assertIn("does not create a new VM-detection", self.canonical)
         self.assertIn("No new global gate or host-provisioning prerequisite", self.procedure)
-        self.assertIn("not a new VM guest/snapshot/restore/host-provisioning prerequisite", self.roadmap)
+        self.assertIn("not a new VM guest/snapshot/restore/host-provisioning prerequisite", self.procedure)
         self.assertIn("single443", self.canonical)
         self.assertIn("116 scenarios", self.canonical)
         self.assertIn("60s/300s/3600s", self.procedure)
         # Concrete owner-private endpoint/SSH mapping belongs to the run inventory,
         # not to the public canonical test contract or generic lab procedure.
-        for doc in (self.canonical, self.procedure, self.roadmap):
+        for doc in (self.canonical, self.procedure):
             self.assertNotIn("remote.xdr.ooo", doc)
             self.assertNotIn("221.139.249.113", doc)
 
     def test_no_separate_connection_preflight(self):
         cli = (ROOT / "docs/CLI_ONLY_E2E_SCENARIOS.md").read_text(encoding="utf-8")
-        for doc in (self.canonical, self.procedure, self.roadmap, cli):
+        for doc in (self.canonical, self.procedure, cli):
             self.assertIn("No separate connection preflight", doc)
             self.assertIn("execute the first actual scenario action directly", doc)
             self.assertIn("Preserve normal SSH/security enforcement", doc)
@@ -75,15 +72,15 @@ class E2EProcedureGuard(unittest.TestCase):
         self.assertIn("Before the first product operation", self.procedure)
         self.assertIn("clean the prior E2E product/runtime state", self.procedure)
         self.assertIn("without waiting for extra owner approval", self.procedure)
-        self.assertIn("Owner decision — every assigned test host may be destroyed", self.roadmap)
-        self.assertIn("verify it is", self.roadmap)
-        self.assertIn("never retry such an effect under an alternate executor", self.roadmap)
+        self.assertIn("Owner's destructive test-host authorization", self.procedure)
+        self.assertIn("verify a clean start", self.procedure)
+        self.assertIn("never retry such an effect under an alternate executor", self.procedure)
         protocol = (ROOT / "docs" / "CODEX_DUAL_ROLE_TEST_PROTOCOL.md").read_text()
         self.assertIn("disposable hosts", protocol)
         self.assertIn("B014", protocol)
         self.assertIn("denied", protocol)
         # All three portable documents must not leak the live private host map.
-        for doc in (self.canonical, self.procedure, self.roadmap, protocol):
+        for doc in (self.canonical, self.procedure, protocol):
             self.assertNotIn("221.139.249.113", doc)
             self.assertNotIn("remote.xdr.ooo", doc)
 
@@ -95,14 +92,14 @@ class E2EProcedureGuard(unittest.TestCase):
         self.assertIn("Never bypass a genuine security denial", self.canonical)
 
     def test_lab_readiness_is_diagnostic_not_a_separate_test_queue(self):
-        self.assertIn("readiness is diagnostic", self.roadmap.lower())
-        self.assertIn("F001 and F007 remain open", self.roadmap)
-        self.assertIn("116 canonical IDs", self.roadmap)
-        self.assertIn("two complete same-HEAD", self.roadmap)
+        self.assertIn("readiness is diagnostic", self.procedure.lower())
+        self.assertIn("F001 and F007 remain open", self.procedure)
+        self.assertIn("116 canonical IDs", self.procedure)
+        self.assertIn("two complete same-HEAD", self.procedure)
         self.assertNotIn("starts this LAB-P0 readiness workstream first",
-                         self.roadmap)
-        self.assertNotIn("P0 owner-ordered prerequisite sequence", self.roadmap)
-        self.assertIn("B014", self.roadmap)
+                         self.procedure)
+        self.assertNotIn("P0 owner-ordered prerequisite sequence", self.procedure)
+        self.assertIn("B014", self.procedure)
 
     def test_procedure_retains_full_e2e_quality(self):
         required = (

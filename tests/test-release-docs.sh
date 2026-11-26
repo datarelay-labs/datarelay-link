@@ -173,11 +173,11 @@ pass "VERSION_STABLE_WORDING"
 
 grep -qF "v${PROJECT_VERSION}/dist/bootstrap-server.sh" README.md || fail "README missing intended immutable server bootstrap URL"
 if grep -nE 'raw.githubusercontent.com/(datarelay-labs|xdr-labs)/frp-auto-deploy/main/dist/bootstrap-(server|client)\.sh' \
-  README.md docs/SCHEMA_V2_DEPLOYMENT.md docs/DEPLOYMENT_MODES.md GITHUB_SETUP.md; then
+  README.md docs/CONTROL_PLANE_ARCHITECTURE.md docs/DEPLOYMENT_MODES.md GITHUB_SETUP.md; then
   fail "stable docs still point bootstrap installs at mutable main"
 fi
 if grep -nE 'datarelay-labs/frp-auto-deploy' \
-  README.md docs/SCHEMA_V2_DEPLOYMENT.md docs/DEPLOYMENT_MODES.md docs/FRP_UPGRADE.md docs/PRODUCT_MASTER.md GITHUB_SETUP.md; then
+  README.md docs/CONTROL_PLANE_ARCHITECTURE.md docs/DEPLOYMENT_MODES.md docs/FRP_UPGRADE.md docs/PRODUCT_MASTER.md GITHUB_SETUP.md; then
   fail "stable docs still reference old repository owner datarelay-labs"
 fi
 grep -qF 'datarelay-labs/datarelay-link' README.md GITHUB_SETUP.md ||

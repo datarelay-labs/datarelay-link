@@ -204,7 +204,7 @@ class CompactZeroTouchContract(unittest.TestCase):
             for marker in markers:
                 with self.subTest(file=path, obsolete=marker):
                     self.assertNotIn(marker, contents)
-        for path in ("docs/CLI_REFERENCE.md", "docs/ZERO_TOUCH_SHORT_URL.md",
+        for path in ("docs/CLI_REFERENCE.md",
                      "docs/ZERO_TOUCH_REGRESSION_CONTROL.md", "docs/PRODUCT_MASTER.md"):
             with self.subTest(doc=path):
                 self.assertNotIn("--long-bootstrap", (ROOT / path).read_text())

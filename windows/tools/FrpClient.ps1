@@ -7,7 +7,7 @@
 [CmdletBinding()]
 param(
     [Parameter(Position = 0)]
-    [string]$Command = 'help',
+    [string]$Command,
 
     [Parameter(Position = 1)]
     [string]$SubCommand,
@@ -47,6 +47,7 @@ $script:V24Destination = $null
 $script:V24Service = $null
 $script:V24Enabled = $null
 $script:V24File = $null
+$interactiveEntry = -not $PSBoundParameters.ContainsKey('Command') -and $PSBoundParameters.Count -eq 0
 $cmdLower = ([string]$Command).ToLowerInvariant()
 $subLower = if ($SubCommand) { $SubCommand.ToLowerInvariant() } else { '' }
 
@@ -152,6 +153,10 @@ function Set-FrpV24RemoteTokens {
     }
 }
 
+if ($interactiveEntry) {
+    $Command = 'interactive'
+    $normalized = $true
+} else {
 switch -Regex ($cmdLower) {
     '^\?$' { Assert-FrpNoTrailingAfterRoot; $Command = 'help-root'; $normalized = $true }
     '^help$' {
@@ -171,7 +176,7 @@ switch -Regex ($cmdLower) {
     '^exit$' { Assert-FrpNoTrailingAfterRoot; $Command = 'exit'; $normalized = $true }
     '^show$' {
         switch ($subLower) {
-            '?' { Assert-FrpNoTrailingAfterSubcommand; $Command = 'help-show' }
+            { $_ -in @('', '?') } { Assert-FrpNoTrailingAfterSubcommand; $Command = 'help-show' }
             'status' { Assert-FrpNoTrailingAfterSubcommand; $Command = 'status' }
             'agent' { Assert-FrpNoTrailingAfterSubcommand; $Command = 'show-agent' }
             'remote-services' { Assert-FrpNoTrailingAfterSubcommand; $Command = 'v24-list' }
@@ -193,7 +198,7 @@ switch -Regex ($cmdLower) {
         $normalized = $true
     }
     '^set$' {
-        if ($subLower -eq '?') { Assert-FrpNoTrailingAfterSubcommand; $Command = 'help-set'; $normalized = $true; break }
+        if ($subLower -in @('', '?')) { Assert-FrpNoTrailingAfterSubcommand; $Command = 'help-set'; $normalized = $true; break }
         if ($subLower -ne 'remote-service') {
             Exit-FrpServerOwnedAccessPolicy -Resource $subLower
             Write-Host ("ERROR: unknown set resource: {0}" -f $SubCommand)
@@ -207,7 +212,7 @@ switch -Regex ($cmdLower) {
         $normalized = $true
     }
     '^unset$' {
-        if ($subLower -eq '?') { Assert-FrpNoTrailingAfterSubcommand; $Command = 'help-unset'; $normalized = $true; break }
+        if ($subLower -in @('', '?')) { Assert-FrpNoTrailingAfterSubcommand; $Command = 'help-unset'; $normalized = $true; break }
         if ($subLower -ne 'remote-service') {
             Exit-FrpServerOwnedAccessPolicy -Resource $subLower
             Write-Host ("ERROR: unknown unset resource: {0}" -f $SubCommand)
@@ -221,7 +226,7 @@ switch -Regex ($cmdLower) {
         $normalized = $true
     }
     '^test$' {
-        if ($subLower -eq '?') { Assert-FrpNoTrailingAfterSubcommand; $Command = 'help-test'; $normalized = $true; break }
+        if ($subLower -in @('', '?')) { Assert-FrpNoTrailingAfterSubcommand; $Command = 'help-test'; $normalized = $true; break }
         if ($subLower -ne 'configuration' -or -not $Id) {
             Write-Host 'ERROR: use test configuration <file|->'
             exit 2
@@ -233,7 +238,7 @@ switch -Regex ($cmdLower) {
     }
     '^system$' {
         switch ($subLower) {
-            '?' { Assert-FrpNoTrailingAfterSubcommand; $Command = 'help-system' }
+            { $_ -in @('', '?') } { Assert-FrpNoTrailingAfterSubcommand; $Command = 'help-system' }
             'info' { Assert-FrpNoTrailingAfterSubcommand; $Command = 'info' }
             'version' { Assert-FrpNoTrailingAfterSubcommand; $Command = 'version' }
             'pause' { Assert-FrpNoTrailingAfterSubcommand; $Command = 'pause' }
@@ -319,6 +324,8 @@ switch -Regex ($cmdLower) {
     }
 }
 
+}
+
 if (-not $normalized) {
     Write-Host ("ERROR: unknown command: {0}" -f $Command)
     Write-Host 'Run: drlink help'
@@ -348,7 +355,7 @@ function Import-FrpWindowsModules {
     }
     foreach ($mod in @(
             'FrpPaths.ps1', 'FrpLock.ps1', 'FrpCrypto.ps1', 'FrpTls.ps1', 'FrpState.ps1', 'FrpDraft.ps1',
-            'FrpConfig.ps1', 'FrpProcess.ps1', 'FrpShim.ps1', 'FrpAutostart.ps1', 'FrpBootstrap.ps1', 'FrpV24.ps1'
+            'FrpConfig.ps1', 'FrpProcess.ps1', 'FrpShim.ps1', 'FrpAutostart.ps1', 'FrpBootstrap.ps1', 'FrpV24.ps1', 'FrpInteractive.ps1'
         )) {
         . (Join-Path $libDir $mod)
     }
@@ -362,7 +369,7 @@ try { Add-Type -AssemblyName System.Security -ErrorAction SilentlyContinue | Out
 
 function Show-FrpClientHelp {
     @'
-Data Relay Link — Windows Agent Host Commands
+Data Relay Link - Windows Agent Host Commands
 =============================================
 
 show
@@ -647,7 +654,7 @@ function Write-FrpEngineUpdateCheck {
     Write-Host 'FRP engine (project-pinned/tested only):'
     Write-Host ("  Would download: {0}" -f $Url)
     Write-Host ("  Expected SHA256: {0}" -f $Sha256)
-    Write-Host '  note      : Does not install latest upstream FRP — only the pinned release.'
+    Write-Host '  note      : Does not install latest upstream FRP - only the pinned release.'
     Write-Host 'Identity, ports, and frpc.toml token would be preserved.'
 }
 
@@ -1230,15 +1237,8 @@ switch ($Command) {
     'help-test' { Show-FrpClientContextHelp -Area test; exit 0 }
     'help-system' { Show-FrpClientContextHelp -Area system; exit 0 }
     'help-remote-service' { Show-FrpClientContextHelp -Area remote-service; exit 0 }
-    'menu' {
-        Write-Host 'Remote Services'
-        Write-Host 'Agent'
-        Write-Host 'Configuration'
-        Write-Host 'System'
-        Write-Host 'Help'
-        Write-Host 'Exit'
-        exit 0
-    }
+    'interactive' { Invoke-FrpInteractive -Entry $PSCommandPath; exit 0 }
+    'menu' { Invoke-FrpInteractiveMenu -Entry $PSCommandPath; exit 0 }
     'exit' { exit 0 }
     'show-agent' { exit (Show-FrpV24Agent) }
     'v24-list' { exit (Show-FrpV24RemoteServices) }

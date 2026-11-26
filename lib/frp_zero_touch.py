@@ -804,8 +804,8 @@ def windows_current_path_refresh():
       }).Count -gt 0
       if (-not $drlinkPresent) {
         $env:Path = (@($env:Path, $drlinkTools) | Where-Object { $_ }) -join ';'
+        Write-Host ('Current PowerShell PATH includes {0}.' -f $drlinkTools)
       }
-      Write-Host ('Current PowerShell PATH includes {0}.' -f $drlinkTools)
     } elseif ($drlinkDirs.Count -gt 1) {
       Write-Warning 'Multiple installed CLI paths found; use the intended drlink.cmd explicitly.'
     }

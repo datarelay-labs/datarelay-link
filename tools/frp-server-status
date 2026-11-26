@@ -709,7 +709,7 @@ fi
 
 if [[ "$registry_state" == "incompatible" || "$registry_state" == "invalid" ]]; then
   echo "Action required : backup/reset/redeploy before using generic multi-service enrollment"
-  echo "See docs/SCHEMA_V2_DEPLOYMENT.md"
+  echo "See docs/CONTROL_PLANE_ARCHITECTURE.md"
 fi
 
 if [[ -n "${control_port:-}" ]]; then

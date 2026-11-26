@@ -115,7 +115,7 @@ fi
 [[ "$(python3 "$ENROLL" "$PUBLIC_UNSET_ID" --state-only)" == "revoked" ]] \
   || fail "PUBLIC_UNSET_ENROLLMENT_PURGE_NO_CONFIRM_MUTATED"
 
-printf 'y\n' | FRP_ENROLLMENT_PURGE_YES=yes FRP_CTL_BIN_DIR="$ROOT/tools" FRP_CTL_TEST_ROOT="$TREE" FRP_DEPLOY_TEST_ROOT="$TREE" \
+printf 'y\n' | FRP_CTL_BIN_DIR="$ROOT/tools" FRP_CTL_TEST_ROOT="$TREE" FRP_DEPLOY_TEST_ROOT="$TREE" \
   "$ROOT/tools/frpctl" unset enrollment "$PUBLIC_UNSET_ID" >"$WORK/public-unset-purge.out"
 if python3 "$ENROLL" "$PUBLIC_UNSET_ID" --state-only >/dev/null 2>&1; then
   fail "PUBLIC_UNSET_ENROLLMENT_PURGE"

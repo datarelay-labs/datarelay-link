@@ -33,7 +33,7 @@ class UserLifecycleUxCoverage(unittest.TestCase):
     def test_missing_credential_identity_uses_public_noun(self):
         for action, suffix in (('rotate', []), ('revoke', []), ('configure', ['authentication', 'oauth']), ('configure', ['oauth-redirect', 'https://example.test/callback'])):
             with self.subTest(action=action, suffix=suffix):
-                rc, out, err = self._dispatch(['system', 'credential', action, 'ai-identity', 'missing'] + suffix)
+                rc, out, err = self._dispatch(['set', 'ai-identity', 'missing'] + ([action] if action != 'configure' else []) + suffix)
                 self.assertNotEqual(rc, 0)
                 self.assertIn('AI Identity', out + err)
                 self.assertNotIn('AI Principal', out + err)

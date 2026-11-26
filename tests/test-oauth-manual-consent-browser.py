@@ -79,16 +79,12 @@ class ManualConsentBrowserTests(unittest.TestCase):
         self.plane = ControlPlane(self.tmp)
         self.plane.set_ai_principal("agent-a", enabled=True)
         dispatch(
-            ["system", "credential", "configure", "ai-identity", "agent-a", "authentication", "oauth"],
+            ["set", "ai-identity", "agent-a", "authentication", "oauth"],
             root=self.tmp,
         )
         dispatch(
             [
-                "system",
-                "credential",
-                "configure",
-                "ai-identity",
-                "agent-a",
+                "set", "ai-identity", "agent-a",
                 "oauth-redirect",
                 "http://127.0.0.1/callback",
             ],
@@ -158,9 +154,9 @@ class ManualConsentBrowserTests(unittest.TestCase):
         resp = urllib.request.urlopen(self.base + "/oauth/authorize?" + qs, timeout=10)
         self.assertEqual(resp.status, 200)
         page = resp.read().decode("utf-8")
-        self.assertIn("approve-oauth", page)
+        self.assertIn("approve", page)
         self.assertIn("/oauth/continue?", page)
-        pending_m = re.search(r"approve-oauth\s+(oap_[A-Za-z0-9_-]+)", page)
+        pending_m = re.search(r"approve\s+(oap_[A-Za-z0-9_-]+)", page)
         self.assertIsNotNone(pending_m, page)
         cont_m = re.search(r"/oauth/continue\?([^\"'\s>]+)", page)
         self.assertIsNotNone(cont_m, page)
@@ -240,7 +236,7 @@ class ManualConsentBrowserTests(unittest.TestCase):
         verifier, challenge = self._pkce()
         auth = self._authorize(challenge=challenge, state="browser-ok")
         grammar = self._public_grammar(
-            ["system", "credential", "approve-oauth", auth["pending_id"]]
+            ["set", "ai-identity", "agent-a", "approve", auth["pending_id"]]
         )
         self.assertEqual(grammar.get("status"), "ok")
         self.assertEqual(grammar.get("action"), "control_plane")
@@ -248,10 +244,19 @@ class ManualConsentBrowserTests(unittest.TestCase):
         wait = urllib.request.urlopen(self.base + auth["continue_path"], timeout=10)
         self.assertEqual(wait.status, 200)
         wait_body = wait.read().decode("utf-8")
-        self.assertIn("Waiting for operator approval", wait_body)
+        for page in (auth["page"], wait_body):
+            self.assertIn("Pending request ID", page)
+            self.assertIn("Copy this ID", page)
+            self.assertIn("sudo drlink set ai-mcp", page)
+            self.assertIn("Connect or manage AI service", page)
+            self.assertNotIn("DRLink Server CLI (sudo drlink set ai-identity)", page)
+            self.assertIn("CLI", page)
+            self.assertIn("Retry", page)
+            self.assertNotIn("Waiting for operator approval", page)
+            self.assertNotIn("http-equiv='refresh'", page)
         self.assertIn(auth["pending_id"], wait_body)
-        self.assertIn("system credential approve-oauth", wait_body)
-        expected = "sudo drlink system credential approve-oauth " + auth["pending_id"]
+        self.assertIn("set ai-identity agent-a approve", wait_body)
+        expected = "sudo drlink set ai-identity agent-a approve " + auth["pending_id"]
         self.assertIn(expected, auth["page"])
         self.assertIn(expected, wait_body)
         self.assertNotIn("AI-IDENTITY", wait_body)  # Already-bound OAuth client.
@@ -259,7 +264,7 @@ class ManualConsentBrowserTests(unittest.TestCase):
         buf = io.StringIO()
         with redirect_stdout(buf):
             dispatch(
-                ["system", "credential", "approve-oauth", auth["pending_id"]],
+                ["set", "ai-identity", "agent-a", "approve", auth["pending_id"]],
                 root=self.tmp,
             )
         cli_out = buf.getvalue()
@@ -283,10 +288,25 @@ class ManualConsentBrowserTests(unittest.TestCase):
         print("MANUAL_CONSENT_BROWSER_FLOW=PASS")
         print("MANUAL_CONSENT_MCP_AUTH_AFTER_EXCHANGE=PASS")
 
+    def test_named_decision_cannot_target_a_different_bound_identity(self):
+        _, challenge = self._pkce()
+        auth = self._authorize(challenge=challenge, state="identity-mismatch")
+        pending = auth["pending_id"]
+        for action in ("approve", "deny"):
+            err = io.StringIO()
+            with redirect_stderr(err):
+                rc = dispatch(["set", "ai-identity", "another-ai", action, pending], root=self.tmp)
+            self.assertEqual(rc, 1)
+            self.assertIn("different AI Identity", err.getvalue())
+            self.assertEqual(self.plane.conn.execute("SELECT status FROM ai_oauth_pending WHERE id=?", (pending,)).fetchone()["status"], "pending")
+        self.assertEqual(dispatch(["set", "ai-identity", "agent-a", "approve", pending], root=self.tmp), 0)
+        with redirect_stderr(io.StringIO()):
+            self.assertEqual(dispatch(["set", "ai-identity", "another-ai", "approve", pending], root=self.tmp), 1)
+
     def test_deny_redirects_access_denied(self):
         _, challenge = self._pkce()
         auth = self._authorize(challenge=challenge, state="deny-me")
-        dispatch(["system", "credential", "deny-oauth", auth["pending_id"]], root=self.tmp)
+        dispatch(["set", "ai-identity", "agent-a", "deny", auth["pending_id"]], root=self.tmp)
         exc = open_no_redirect(self.base + auth["continue_path"])
         self.assertEqual(exc.code, 302)
         loc = exc.headers.get("Location") or ""
@@ -317,7 +337,7 @@ class ManualConsentBrowserTests(unittest.TestCase):
         _, challenge = self._pkce()
         auth = self._authorize(challenge=challenge, state="ttl-after-approve")
         dispatch(
-            ["system", "credential", "approve-oauth", auth["pending_id"]],
+            ["set", "ai-identity", "agent-a", "approve", auth["pending_id"]],
             root=self.tmp,
         )
         row = self.plane.conn.execute(
@@ -351,7 +371,7 @@ class ManualConsentBrowserTests(unittest.TestCase):
         verifier, challenge = self._pkce()
         auth = self._authorize(challenge=challenge, state="once")
         dispatch(
-            ["system", "credential", "approve-oauth", auth["pending_id"]],
+            ["set", "ai-identity", "agent-a", "approve", auth["pending_id"]],
             root=self.tmp,
         )
         first = open_no_redirect(self.base + auth["continue_path"])
@@ -377,9 +397,9 @@ class ManualConsentBrowserTests(unittest.TestCase):
     def test_approve_after_deny_rejected(self):
         _, challenge = self._pkce()
         auth = self._authorize(challenge=challenge)
-        dispatch(["system", "credential", "deny-oauth", auth["pending_id"]], root=self.tmp)
+        dispatch(["set", "ai-identity", "agent-a", "deny", auth["pending_id"]], root=self.tmp)
         rc = dispatch(
-            ["system", "credential", "approve-oauth", auth["pending_id"]],
+            ["set", "ai-identity", "agent-a", "approve", auth["pending_id"]],
             root=self.tmp,
         )
         self.assertEqual(rc, 1)
@@ -390,7 +410,7 @@ class ManualConsentBrowserTests(unittest.TestCase):
         verifier, challenge = self._pkce()
         auth = self._authorize(challenge=challenge, state="race")
         dispatch(
-            ["system", "credential", "approve-oauth", auth["pending_id"]],
+            ["set", "ai-identity", "agent-a", "approve", auth["pending_id"]],
             root=self.tmp,
         )
         url = self.base + auth["continue_path"]
@@ -496,13 +516,13 @@ class ManualConsentBrowserTests(unittest.TestCase):
                 .read()
                 .decode("utf-8")
             )
-            pending_m = re.search(r"approve-oauth\s+(oap_[A-Za-z0-9_-]+)", page)
+            pending_m = re.search(r"approve\s+(oap_[A-Za-z0-9_-]+)", page)
             cont_m = re.search(r"/oauth/continue\?([^\"'\s>]+)", page)
             self.assertIsNotNone(pending_m, page)
             self.assertIsNotNone(cont_m, page)
             pending_id = pending_m.group(1)
             continue_path = "/oauth/continue?" + cont_m.group(1)
-            dispatch(["system", "credential", "approve-oauth", pending_id], root=self.tmp)
+            dispatch(["set", "ai-identity", "agent-a", "approve", pending_id], root=self.tmp)
             exc = open_no_redirect(public + continue_path, context=ctx)
             self.assertEqual(exc.code, 302)
             loc = exc.headers.get("Location") or ""
@@ -529,6 +549,92 @@ class ManualConsentBrowserTests(unittest.TestCase):
     def _public_grammar(self, tokens):
         return match(tokens, "server")
 
+    def test_guided_approval_wrong_identity_and_cancel_leave_request_unchanged(self):
+        from drlink_v24_wizard import ScriptedIO, set_wizard_io
+        import drlink_mcp_tls as tls
+        _, challenge = self._pkce()
+        auth = self._authorize(challenge=challenge, state="wizard-bound")
+        view = {"frontend_available": True, "cloud_compatible": True,
+                "certificate": tls.STATUS_VALID, "url": auth["resource"]}
+        self.addCleanup(set_wizard_io, None)
+        with patch.object(tls, "status_view", return_value=view), patch.object(tls, "require_public_frontend"):
+            set_wizard_io(ScriptedIO(["Claude", auth["pending_id"]]))
+            with redirect_stderr(io.StringIO()):
+                self.assertEqual(dispatch(["set", "ai-identity", "claude"], root=self.tmp, plane=self.plane), 1)
+            self.assertIsNone(self.plane.get_principal("claude"))
+            set_wizard_io(ScriptedIO(["Connect / reconnect", "Claude", auth["pending_id"], "0"]))
+            self.assertEqual(dispatch(["set", "ai-identity", "agent-a"], root=self.tmp, plane=self.plane), 0)
+        self.assertEqual(self.plane.conn.execute("SELECT status FROM ai_oauth_pending WHERE id=?", (auth["pending_id"],)).fetchone()["status"], "pending")
+
+    def test_guided_approval_is_not_pkce_verification(self):
+        from drlink_v24_wizard import ScriptedIO, set_wizard_io
+        import drlink_mcp_tls as tls
+        reg = self.plane.register_oauth_client({
+            "redirect_uris": ["http://127.0.0.1/guided-pending"],
+            "token_endpoint_auth_method": "none", "grant_types": ["authorization_code"],
+            "client_name": "guided-pending",
+        })
+        _, challenge = self._pkce()
+        auth = self._authorize(challenge=challenge, client_id=reg["client_id"], redirect="http://127.0.0.1/guided-pending")
+        view = {"frontend_available": True, "cloud_compatible": True,
+                "certificate": tls.STATUS_VALID, "url": auth["resource"]}
+        scripted = ScriptedIO(["ChatGPT", auth["pending_id"], "Approve", "Check verification", "Finish later"])
+        set_wizard_io(scripted)
+        self.addCleanup(set_wizard_io, None)
+        with patch.object(tls, "status_view", return_value=view), patch.object(tls, "require_public_frontend"):
+            self.assertEqual(dispatch(["set", "ai-identity", "chatgpt"], root=self.tmp, plane=self.plane), 0)
+        output = "".join(scripted.out)
+        self.assertIn("not verified yet", output)
+        self.assertNotIn("OAuth exchange confirmed", output)
+        self.assertIn("Approval saved; connection verification not confirmed", output)
+        self.assertEqual(self.plane.get_principal("chatgpt")["credential_status"], "pending")
+
+    def test_guided_remote_client_approval_verifies_real_http_exchange(self):
+        from drlink_v24_wizard import ScriptedIO, set_wizard_io
+        from unittest.mock import patch
+        import drlink_mcp_tls as tls
+        import drlink_v24 as v24
+        reg = self.plane.register_oauth_client({
+            "redirect_uris": ["http://127.0.0.1/guided"],
+            "token_endpoint_auth_method": "none",
+            "grant_types": ["authorization_code", "refresh_token"],
+            "client_name": "guided-fixture",
+        })
+        verifier, challenge = self._pkce()
+        auth = self._authorize(challenge=challenge, client_id=reg["client_id"],
+                               redirect="http://127.0.0.1/guided")
+        outer = self
+        class BrowserIO(ScriptedIO):
+            def ask(self, prompt):
+                if prompt == "Select: " and any("Browser connection" in line for line in self.out) and not getattr(self, "exchanged", False):
+                    self.exchanged = True
+                    self.assert_pending()
+                    cont = open_no_redirect(outer.base + auth["continue_path"])
+                    code = urllib.parse.parse_qs(urllib.parse.urlparse(cont.headers["Location"]).query)["code"][0]
+                    issued = outer._exchange(code=code, verifier=verifier, resource=auth["resource"], client_id=reg["client_id"], redirect=auth["redirect"])
+                    outer.assertTrue(issued["access_token"])
+                return super().ask(prompt)
+            def assert_pending(self):
+                outer.assertEqual(outer.plane.get_principal("chatgpt")["credential_status"], "pending")
+        # This is a local HTTP fixture of the real consent/token handlers.
+        # Public certificate/route readiness is isolated, not claimed as E2E.
+        view = {"frontend_available": True, "cloud_compatible": True,
+                "certificate": tls.STATUS_VALID, "url": auth["resource"]}
+        self.assertTrue(auth["resource"].startswith("https://"), auth["resource"])
+        scripted = BrowserIO(["ChatGPT", auth["pending_id"], "Approve", "Check verification", "n"])
+        set_wizard_io(scripted)
+        self.addCleanup(set_wizard_io, None)
+        with patch.object(tls, "status_view", return_value=view), patch.object(tls, "require_public_frontend"), patch("drlink_control_cli._guide_mcp_server") as setup:
+            rc = dispatch(["set", "ai-identity", "chatgpt"], root=self.tmp, plane=self.plane)
+            setup.assert_not_called()
+        self.assertEqual(rc, 0)
+        self.assertTrue(scripted.exchanged)
+        output = "".join(scripted.out)
+        self.assertIn("OAuth exchange confirmed", output)
+        self.assertNotIn("drauth_", output)
+        self.assertEqual(self.plane.get_principal("chatgpt")["credential_status"], "verified")
+        self.assertIsNone(v24.get_access_policy(self.plane, "ai")["mode"])
+
     def test_dcr_first_time_chatgpt_connect_operator_approval_and_pkce(self):
         """The real public operator command bootstraps an identity, no DB edits."""
         reg = self.plane.register_oauth_client(
@@ -551,7 +657,7 @@ class ManualConsentBrowserTests(unittest.TestCase):
         buf = io.StringIO()
         with redirect_stdout(buf):
             rc = dispatch(
-                ["system", "credential", "approve-oauth", auth["pending_id"], "chatgpt"],
+                ["set", "ai-identity", "chatgpt", "approve", auth["pending_id"]],
                 root=self.tmp,
             )
         self.assertEqual(rc, 0, buf.getvalue())
@@ -595,8 +701,8 @@ class ManualConsentBrowserTests(unittest.TestCase):
             auth = self._authorize(challenge=challenge, state="hint-only",
                                    client_id=reg["client_id"],
                                    redirect="http://127.0.0.1/cb-approval-hint")
-            expected = ("sudo drlink system credential approve-oauth "
-                        + auth["pending_id"] + " agent-a")
+            expected = ("sudo drlink set ai-identity agent-a approve "
+                        + auth["pending_id"])
             self.assertIn(expected, auth["page"])
             self.assertNotIn("&lt;AI-IDENTITY&gt;", auth["page"])
             self.assertEqual(self.plane.conn.execute(
@@ -610,7 +716,7 @@ class ManualConsentBrowserTests(unittest.TestCase):
         for candidate in ("missing-identity", "agent-a<script>"):
             with patch.dict(os.environ, {"DRLINK_MCP_OAUTH_OPERATOR_IDENTITY": candidate}):
                 page = urllib.request.urlopen(self.base + auth["continue_path"], timeout=10).read().decode()
-                self.assertIn("sudo drlink system credential approve-oauth", page)
+                self.assertIn("sudo drlink set ai-identity", page)
                 self.assertIn("&lt;AI-IDENTITY&gt;", page)
                 self.assertNotIn("<script>", page.split("<pre>", 1)[-1].split("</pre>", 1)[0])
         # Revoking the suggested Identity withdraws the UI hint immediately;
@@ -620,14 +726,14 @@ class ManualConsentBrowserTests(unittest.TestCase):
         with patch.dict(os.environ, {"DRLINK_MCP_OAUTH_OPERATOR_IDENTITY": "agent-a"}):
             page = urllib.request.urlopen(self.base + auth["continue_path"], timeout=10).read().decode()
             self.assertIn("&lt;AI-IDENTITY&gt;", page)
-            self.assertNotIn(auth["pending_id"] + " agent-a", page)
+            self.assertNotIn("agent-a approve " + auth["pending_id"], page)
         self.plane.conn.execute(
             "UPDATE ai_principals SET credential_status='verified' WHERE name='agent-a'")
         # The browser hint is read-only: explicit operator approval is still
         # mandatory, and the existing OAuth consent binding/redirect works.
         buf = io.StringIO()
         with redirect_stdout(buf):
-            dispatch(["system", "credential", "approve-oauth", auth["pending_id"], "agent-a"],
+            dispatch(["set", "ai-identity", "agent-a", "approve", auth["pending_id"]],
                      root=self.tmp)
         self.assertIn("Authorization approved", buf.getvalue())
         exc = open_no_redirect(self.base + auth["continue_path"])
@@ -666,25 +772,23 @@ class ManualConsentBrowserTests(unittest.TestCase):
         )
         self.assertIn("AI-IDENTITY", auth["page"])
         pending = auth["pending_id"]
-        one = ["system", "credential", "approve-oauth", pending]
-        two = one + ["agent-dcr"]
+        one = ["set", "ai-identity", "agent-dcr", "approve"]
+        two = one + [pending]
         three = two + ["extra"]
-        self.assertEqual(self._public_grammar(one).get("status"), "ok")
+        self.assertEqual(self._public_grammar(one).get("status"), "error")
         self.assertEqual(self._public_grammar(two).get("action"), "control_plane")
         rejected = self._public_grammar(three)
         self.assertEqual(rejected.get("status"), "error")
         self.assertIn("unexpected argument: extra", rejected.get("message", ""))
         err = io.StringIO()
         with redirect_stderr(err):
-            rc = dispatch(one, root=self.tmp)
-        self.assertEqual(rc, 1)
-        self.assertIn("AI Identity", err.getvalue())
-        self.assertNotIn("AI Principal", err.getvalue())
+            with self.assertRaisesRegex(SystemExit, "Missing argument"):
+                dispatch(one, root=self.tmp)
         # First-time identity bootstrap is covered in test-oauth-principal-lifecycle.py.
         # Existing disabled or unverified identities must still fail closed.
         err = io.StringIO()
         with redirect_stderr(err):
-            rc = dispatch(one + ["agent-off"], root=self.tmp)
+            rc = dispatch(["set", "ai-identity", "agent-off", "approve", pending], root=self.tmp)
         self.assertEqual(rc, 1)
         self.assertIn("not found or disabled", err.getvalue())
         try:
@@ -692,7 +796,7 @@ class ManualConsentBrowserTests(unittest.TestCase):
         except SystemExit as exc:
             self.assertIn("unexpected argument: extra", str(exc))
         else:
-            self.fail("third approve-oauth argument reached the handler")
+            self.fail("extra approve argument reached the handler")
         err = io.StringIO()
         with redirect_stderr(err):
             rc = dispatch(two, root=self.tmp)

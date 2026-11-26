@@ -62,6 +62,10 @@ Fixed Windows entry target: `iex(curl.exe -kfsS https://remote.xdr.ooo/A3xK9mP2|
 
 Autostart (Service / Task Scheduler) is **optional**, not MVP-blocking.
 
+## CLI interaction contract
+
+Windows uses the same Agent Host public command model as Linux/macOS. The native PowerShell input layer is presentation only: no-argument launch enters the `drlink>` loop; menu selections, literal tokenized commands and guided Remote Service edits use the existing canonical PowerShell dispatcher. Tab reads local service inventory and cached catalog only. No expression evaluation, shell interpretation, network fetch on Tab, or separate mutation implementation. Explicit one-shot calls preserve their exit codes; noninteractive destructive confirmations remain fail-closed. Keep PowerShell 5.1 source text compatible with its encoding behavior and verify native console interactions separately from redirected-input tests.
+
 ## Security invariants
 
 - No global TLS bypass; fixed entry target has an initial request-local `-k` exception, which does not authenticate the peer. This is a recorded security qualification issue.

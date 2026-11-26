@@ -82,6 +82,17 @@ configurationBundle:
             ):
                 _safe_load_yaml(document)
 
+    def test_canonical_root_cannot_silently_ignore_legacy_or_unknown_keys(self):
+        for document in (
+            "configurationBundle:\n  context: server\napiVersion: v1alpha1\nkind: ConfigurationBundle\n",
+            "apiVersion: v1alpha1\nkind: ConfigurationBundle\nconfigurationBundle:\n  context: server\n",
+            "configurationBundle:\n  context: server\nunknown: ignored\n",
+        ):
+            with self.subTest(document=document), self.assertRaisesRegex(
+                BundleError, "only the top-level key"
+            ):
+                parse_v24_bundle(document)
+
     def test_benign_bundle_preserved(self):
         data = parse_v24_bundle(
             "configurationBundle:\n  context: server\n"
