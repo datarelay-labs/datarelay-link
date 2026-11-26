@@ -54,6 +54,73 @@ class ReplLiveInventoryTests(unittest.TestCase):
             **self.editor._completion_kwargs(),
         )
 
+    def test_managed_host_group_registry_authority_and_member_display(self):
+        import drlink_control_db as db
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            config = root / 'etc/drlink/config.json'
+            config.parent.mkdir(parents=True)
+            registry = root / 'registry.json'
+            config.write_text(json.dumps({'role': 'server', 'registry_file': str(registry), 'public_host': '192.0.2.10'}))
+            master = 'fa123456000000000000000000000001'
+            worker = '43123456000000000000000000000002'
+            gid = 'grp_22222222'
+            clients = {master: {'label': 'Example DP Master', 'hostname': 'dp1', 'group_ids': [gid]},
+                       worker: {'label': 'Example DP Worker', 'hostname': 'dp3', 'group_ids': [gid]}}
+            registry.write_text(json.dumps({'schema_version': 2, 'clients': clients, 'groups': {
+                'grp_11111111': {'name': 'Office'}, gid: {'name': 'Example'},
+                'grp_33333333': {'name': 'Empty'}}}))
+            conn = db.connect(root=temp)
+            db.initialize(conn)
+            timestamp = '2026-11-26T00:00:00Z'
+            conn.execute('INSERT INTO client_groups(id,name,created_at,updated_at) VALUES (?,?,?,?)',
+                         ('grp_11111111', 'Office', timestamp, timestamp))
+            for mid, row in clients.items():
+                conn.execute('INSERT INTO clients(id,label,hostname,created_at,updated_at) VALUES (?,?,?,?,?)',
+                             (mid, row['label'], row['hostname'], timestamp, timestamp))
+            conn.commit()
+            conn.close()
+            before = registry.read_bytes(), db.db_path(temp).read_bytes()
+            g = self.editor.grammar
+            payload = g.read_only_completion_inventory('server', temp)
+            self.assertIn('Example', payload['groups'])
+            self.assertIn('Empty', payload['groups'])
+            self.assertEqual(before, (registry.read_bytes(), db.db_path(temp).read_bytes()))
+            editor = REPL.LineEditor(dict(payload, role='server'))
+            for line in ('set managed-host 43123456 group Ex', 'show managed-host-group Ex', 'show managed-host-group ex',
+                         'set managed-host-group Ex', 'unset managed-host-group Ex',
+                         'unset managed-host 43123456 group Ex'):
+                self.assertEqual(g.completion_candidates(line, editor.role, editor.names,
+                    editor.services, editor.local_services, **editor._completion_kwargs()), ['Example'], line)
+            line = 'set managed-host '
+            hits = g.completion_candidates(line, editor.role, editor.names, editor.services,
+                editor.local_services, **editor._completion_kwargs())
+            rendered = g.format_tab_candidates(line, hits, editor.role, clients=editor.clients)
+            self.assertEqual(len(rendered.splitlines()), 3, rendered)
+            self.assertIn(master, rendered)
+            self.assertIn(worker, rendered)
+            env = dict(os.environ, FRP_DEPLOY_TEST_ROOT=temp, FRP_CTL_TEST_ROOT=temp,
+                       FRP_CTL_BIN_DIR=str(ROOT / "tools"))
+            proc = subprocess.run([str(ROOT / 'tools/drlink'), 'show', 'managed-host-group', 'Example'], env=env,
+                                  capture_output=True, text=True, check=True)
+            for value in (master, worker, 'Example DP Master', 'Example DP Worker', 'dp1', 'dp3'):
+                self.assertIn(value, proc.stdout)
+            self.assertIn('Managed Hosts : 2', proc.stdout)
+            empty = subprocess.run([str(ROOT / 'tools/drlink'), 'show', 'managed-host-group', 'Empty'], env=env,
+                                   capture_output=True, text=True, check=True)
+            self.assertIn('No Managed Hosts', empty.stdout)
+            # Native payload refresh after a successful public group creation.
+            env.pop('FRP_CTL_GRAMMAR_PAYLOAD', None)
+            created = subprocess.run([str(ROOT / 'tools/drlink'), 'set', 'managed-host-group', 'NewGroup'],
+                                     env=env, capture_output=True, text=True, check=True)
+            self.assertIn('NewGroup', created.stdout)
+            native = subprocess.run([str(ROOT / 'tools/frpctl'), '--print-grammar-payload'],
+                                    env=env, capture_output=True, text=True, check=True)
+            self.assertIn('NewGroup', json.loads(native.stdout)['groups'])
+            self.assertEqual(g.completion_candidates('show managed-host-group New', 'server', [], {}, [],
+                groups=json.loads(native.stdout)['groups']), ['NewGroup'])
+
+
     def test_finite_view_choices_after_selector(self):
         for resource, choices in {
             'managed-host': ['remote-services', 'agent', 'addresses'],

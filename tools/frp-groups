@@ -71,7 +71,20 @@ def show_group(state, selector):
     print('Description   : %s' % (
         CREG.sanitize_display(group.get('description') or '-', 1024) or '-'
     ))
-    print('Managed Hosts : %s' % CREG.group_member_count(state, gid))
+    members = CREG.clients_in_group(state, gid)
+    print('Managed Hosts : %s' % len(members))
+    print()
+    if not members:
+        print('No Managed Hosts in this group.')
+        return
+    rows = [(CREG.sanitize_display(mid),
+             CREG.sanitize_display(client.get('label') or '-'),
+             CREG.sanitize_display(client.get('hostname') or '-'))
+            for mid, client in members]
+    id_width = max(10, *(len(row[0]) for row in rows))
+    label_width = max(10, *(len(row[1]) for row in rows))
+    for mid, label, hostname in [('HOST ID', 'NAME', 'HOSTNAME')] + rows:
+        print('%-*s  %-*s  %s' % (id_width, mid, label_width, label, hostname))
 
 
 def main():
