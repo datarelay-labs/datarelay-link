@@ -1608,7 +1608,8 @@
     "args": [
       {
         "name": "RULE",
-        "required": false
+        "required": false,
+        "complete": "ai-access-rules"
       }
     ],
     "tail": "any",

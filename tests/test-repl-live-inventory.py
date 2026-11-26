@@ -54,6 +54,15 @@ class ReplLiveInventoryTests(unittest.TestCase):
             **self.editor._completion_kwargs(),
         )
 
+    def test_ai_access_set_tab_includes_live_rules_and_guidance(self):
+        g = self.editor.grammar
+        line = "set ai-access "
+        hits = g.completion_candidates(line, "server", [], {}, [], inventory={"ai-access-rules": ["at-secu-group", "expernet-group"]})
+        self.assertEqual(set(hits), {"at-secu-group", "expernet-group", "enabled", "disabled"})
+        output = g.format_tab_candidates(line, hits, "server")
+        for item in ("<Enter>", "new Rule name", "at-secu-group", "expernet-group", "Edit this AI Access Rule"):
+            self.assertIn(item, output)
+
     def test_managed_host_group_registry_authority_and_member_display(self):
         import drlink_control_db as db
         with tempfile.TemporaryDirectory() as temp:

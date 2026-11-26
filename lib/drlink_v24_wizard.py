@@ -1064,9 +1064,12 @@ def run_ai_access_wizard(plane: ControlPlane, name: str, *, source_identity=None
     session = WizardSession("ai-access", name, "edit" if existing else "create")
     _emit(io, "AI Access Rule: %s (%s)" % (name, "Edit existing" if existing else "Create new"))
     _emit(io, "AI Identity authenticates the client; an AI Access Rule grants its destination and permission.")
+    _emit(io, "A Rule name is independent of the AI Identity name. Use a distinct Rule name for another destination.")
+    previous_destination = None
     if existing:
         from drlink_v24_bundle import _ai_rule_view
         before = _ai_rule_view(plane, existing)
+        previous_destination = before["destination"]
         session.before = {
             "Source": before["source"],
             "Destination": before["destination"],
@@ -1172,6 +1175,9 @@ def run_ai_access_wizard(plane: ControlPlane, name: str, *, source_identity=None
                 "Paths       : %s" % (", ".join(paths) if paths else "-"),
                 "Enabled     : %s" % ("YES" if enabled else "NO"),
             ]
+            review_lines.insert(0, "Operation   : %s Rule" % ("UPDATE existing" if existing is not None else "CREATE new"))
+            if previous_destination is not None and previous_destination != destination:
+                review_lines.insert(4, "Replace destination: %s -> %s (this Rule only)" % (previous_destination, destination))
             action = _review_menu(
                 io,
                 session,

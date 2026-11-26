@@ -881,15 +881,7 @@ def handle_show(plane: ControlPlane, rest: list[str]) -> Optional[int]:
             p["credential_status"] or "UNBOUND"
         )
         sys.stdout.write("AI Identity : %s\nStatus      : %s\nEnabled     : %s\n" % (p["name"], status, "YES" if p["enabled"] else "NO"))
-        sys.stdout.write("AI Access Rules (configured for this Identity; runtime authorization is evaluated per call):\n")
-        rows = plane.conn.execute(
-            "SELECT name FROM ai_policy_rules WHERE source_identity_id=? ORDER BY name", (p["id"],)
-        ).fetchall()
-        if not rows:
-            sys.stdout.write("  No rules configured. Effective access: DENY.\n")
-        for row in rows:
-            sys.stdout.write("\n")
-            _show_ai_policy(plane, ["ai-access", row["name"]])
+        _show_identity_access(plane, p)
         return 0
     if res == "remote-access":
         _require_server(plane, "Remote Access policy")
@@ -1175,6 +1167,27 @@ def _show_ai_policy(plane: ControlPlane, rest: list[str]) -> int:
     principal = plane.conn.execute(
         "SELECT name FROM ai_principals WHERE id = ?", (row["source_identity_id"],)
     ).fetchone()
+    dest_label, perm_label = _ai_rule_labels(plane, row)
+    lines = [
+        "AI Access Rule: %s" % row["name"],
+        "Source      : %s" % (principal["name"] if principal else "-"),
+        "Destination : %s" % dest_label,
+        "Permission  : %s" % perm_label,
+        "Paths       : %s"
+        % (
+            ", ".join(v24.list_ai_policy_path_scopes(plane, row["name"]))
+            or "-"
+        ),
+        "Enabled     : %s" % ("YES" if row["enabled"] else "NO"),
+    ]
+    if pol.get("mode"):
+        lines.append("Mode        : %s" % str(pol["mode"]).upper())
+        lines.append("Enforcement : %s" % str(pol.get("enforcement") or "-").upper())
+    sys.stdout.write("\n".join(lines) + "\n")
+    return 0
+
+
+def _ai_rule_labels(plane, row) -> tuple[str, str]:
     dest_label = "-"
     if row["destination_ref_kind"] == "object" and row["destination_ref_id"]:
         dest = plane.conn.execute(
@@ -1205,23 +1218,49 @@ def _show_ai_policy(plane: ControlPlane, rest: list[str]) -> int:
             "SELECT name FROM permission_groups WHERE id = ?", (row["permission_ref_id"],)
         ).fetchone()
         perm_label = perm["name"] if perm else "-"
-    lines = [
-        "AI Access Rule: %s" % row["name"],
-        "Source      : %s" % (principal["name"] if principal else "-"),
-        "Destination : %s" % dest_label,
-        "Permission  : %s" % perm_label,
-        "Paths       : %s"
-        % (
-            ", ".join(v24.list_ai_policy_path_scopes(plane, row["name"]))
-            or "-"
-        ),
-        "Enabled     : %s" % ("YES" if row["enabled"] else "NO"),
-    ]
-    if pol.get("mode"):
-        lines.append("Mode        : %s" % str(pol["mode"]).upper())
-        lines.append("Enforcement : %s" % str(pol.get("enforcement") or "-").upper())
-    sys.stdout.write("\n".join(lines) + "\n")
-    return 0
+    return dest_label, perm_label
+
+
+def _show_identity_access(plane, principal) -> None:
+    """Describe configured grants and policy-matched hosts; never claim OS access."""
+    policy = v24.get_access_policy(plane, "ai")
+    identity_verified = bool(principal["enabled"]) and str(principal["credential_status"] or "").lower() in ("verified", "active")
+    rows = list(plane.conn.execute(
+        "SELECT * FROM ai_policy_rules WHERE source_identity_id=? ORDER BY name COLLATE NOCASE",
+        (principal["id"],),
+    ))
+    hosts = [r["name"] for r in plane.conn.execute(
+        "SELECT o.name FROM objects o JOIN managed_endpoints e ON e.object_id=o.id "
+        "JOIN clients c ON c.id=e.client_id WHERE o.type='managed_endpoint' AND o.origin='managed' "
+        "AND o.status='active' AND c.trust_status='trusted' "
+        "AND lower(c.status) NOT IN ('retired','removed','deleted') ORDER BY o.name COLLATE NOCASE"
+    )]
+    sys.stdout.write("\nAI Access Rules: %s\nPolicy enforcement: %s\n" % (
+        len(rows), str(policy.get("enforcement") or "-").upper()))
+    authorized = set()
+    for row in rows:
+        destination, permission = _ai_rule_labels(plane, row)
+        paths = v24.list_ai_policy_path_scopes(plane, row["name"])
+        capabilities = v24._ai_rule_permissions(plane, row)
+        active = (identity_verified and bool(row["enabled"]) and bool(capabilities)
+                  and v24.effective_policy_result(policy["mode"], policy["enforcement"], True, plane="ai") == "ALLOW")
+        matched_hosts = []
+        if active and (capabilities - v24.FILE_PERMISSIONS or paths):
+            matched_hosts = [host for host in hosts if v24._ref_name_match(
+                plane, row["destination_ref_kind"], row["destination_ref_id"], host)]
+            authorized.update(matched_hosts)
+        sys.stdout.write("  Rule: %s (%s)\n" % (row["name"], "enabled" if row["enabled"] else "disabled"))
+        sys.stdout.write("    Destination: %s\n    Permission: %s\n    Capabilities: %s\n    Paths: %s\n" % (
+            destination, permission, ", ".join(sorted(capabilities)) or "-", ", ".join(paths) or "-"))
+        sys.stdout.write("    Policy-matched current trusted Managed Hosts: %s\n" % (", ".join(matched_hosts) or "none"))
+        if row["destination_ref_kind"] == "server":
+            sys.stdout.write("    Server-self rule: %s (separate runtime controls apply)\n" % ("enabled by policy" if active else "not enabled by policy"))
+        if not active:
+            sys.stdout.write("    Effective policy: DENY (inactive Identity, Rule, permission or enforcement)\n")
+    sys.stdout.write("Policy-matched current trusted Managed Hosts: %d\n" % len(authorized))
+    sys.stdout.write("Unmatched access: DENY. File operations require matching canonical paths; OS permissions and host connectivity still apply.\n")
+    if not rows:
+        sys.stdout.write("No AI Access Rules configured for this Identity.\n")
 
 
 def _show_ai_log(plane: ControlPlane, args: list[str]) -> int:

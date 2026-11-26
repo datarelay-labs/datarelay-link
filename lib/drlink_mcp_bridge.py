@@ -280,14 +280,14 @@ TOOL_DEFS = (
     (
         "list_hosts",
         "List Managed Hosts",
-        "List Managed Hosts this identity may target",
+        "List Managed Hosts this identity may target; use the exact returned name or client_id as endpoint",
         {},
         {"readOnlyHint": True, "destructiveHint": False, "openWorldHint": False, "idempotentHint": True},
     ),
     (
         "get_host",
         "Get Managed Host",
-        "Get one Managed Host",
+        "Get one Managed Host by exact returned name or full Client ID (not a prefix)",
         {"endpoint": "string"},
         {"readOnlyHint": True, "destructiveHint": False, "openWorldHint": False, "idempotentHint": True},
     ),
@@ -355,6 +355,8 @@ def _input_schema(props: dict) -> dict:
     schema_props = {key: ({"type": "array", "items": {"type": "string"}}
                           if kind == "array" else {"type": kind})
                     for key, kind in props.items()}
+    if "endpoint" in schema_props:
+        schema_props["endpoint"]["description"] = "Exact name or full client_id returned by list_hosts; no ID prefixes. server:self is separately authorized."
     schema = {"type": "object", "properties": schema_props}
     if props:
         schema["required"] = list(props)
@@ -1458,7 +1460,32 @@ class MCPBridge:
             raise ControlPlaneError("endpoint is required")
         operand = arguments.get("path") or arguments.get("command") or arguments.get("operand")
         start = time.monotonic()
+        # list_hosts exposes the immutable Client ID as well as the endpoint
+        # name. Resolve an exact ID to exactly one Managed Host before the
+        # existing canonical policy evaluation. Never use a prefix, name
+        # collision or this alias to confer Server-self access.
+        requested_endpoint = endpoint
+        id_rows = self.plane.conn.execute(
+            "SELECT o.id, o.name, e.client_id FROM managed_endpoints e "
+            "JOIN objects o ON o.id=e.object_id WHERE e.client_id=? "
+            "AND o.type='managed_endpoint' AND o.origin='managed'", (endpoint,)
+        ).fetchall()
+        resolved_id = None
+        if id_rows:
+            named = self.plane.get_object(endpoint)
+            if (len(id_rows) != 1 or id_rows[0]["name"] == v24.SERVER_SELF_TARGET
+                    or (named is not None and named["id"] != id_rows[0]["id"])):
+                self.plane.record_ai_activity(principal=principal["name"], endpoint=requested_endpoint,
+                    capability=name, result="DENY", operand=operand)
+                return _text_result("DENY\nReason: ambiguous endpoint selector", is_error=True)
+            resolved_id = id_rows[0]["id"]
+            endpoint = id_rows[0]["name"]
         decision = self._authorize(principal, endpoint, name, operand)
+        if resolved_id is not None and (decision.get("endpoint_row") is None
+                or decision["endpoint_row"]["id"] != resolved_id):
+            self.plane.record_ai_activity(principal=principal["name"], endpoint=requested_endpoint,
+                capability=name, result="DENY", operand=operand)
+            return _text_result("DENY\nReason: endpoint changed during authorization", is_error=True)
         if decision["action"] != "ALLOW":
             self.plane.record_ai_activity(
                 principal=principal["name"],
@@ -1492,7 +1519,8 @@ class MCPBridge:
             )
             return _text_result("Authorization: ALLOW\nDelivery: endpoint unavailable (orphaned)", is_error=True)
         client = self.plane.client_for_endpoint(ep["id"])
-        if client is None or not self.plane.client_effectively_connected(client):
+        if (client is None or (resolved_id is not None and client["id"] != requested_endpoint)
+                or not self.plane.client_effectively_connected(client)):
             self.plane.record_ai_activity(
                 principal=principal["name"],
                 endpoint=endpoint,

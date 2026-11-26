@@ -4404,6 +4404,18 @@ def format_tab_candidates(line, matches, role, names=None, clients=None):
     matches = [m.rstrip() for m in (matches or []) if m is not None and str(m).strip()]
     if not matches:
         return ""
+    if line.rstrip() == "set ai-access" and line[-1:].isspace():
+        return "\n".join(["<Enter>  Create or configure an AI Access Rule", "<RULE>   Type a new Rule name to create; select an existing Rule to edit"] + [
+            "%s  %s" % (item, {
+                "enabled": "Enable AI Access enforcement",
+                "disabled": "Disable AI Access enforcement (DENY ALL)",
+            }.get(item, "Edit this AI Access Rule")) for item in matches
+        ])
+    if line.rstrip() == "unset ai-access" and line[-1:].isspace():
+        return "\n".join([
+            "%s  %s" % (item, "DANGER: reset ALL AI Access rules and policy" if item == "policy"
+                         else "Delete only this AI Access Rule") for item in matches
+        ])
     descs, style = _tab_desc_map(line, role, names=names, clients=clients)
     if style == "clients":
         from frp_client_registry import sanitize_display
