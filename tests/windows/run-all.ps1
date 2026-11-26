@@ -37,6 +37,7 @@ $tests = @(
     'test-update-rollback.ps1',
     'test-pid-ownership.ps1',
     'test-acl-fail-closed.ps1',
+    'test-install-code-acl.ps1',
     'test-multi-service.ps1',
     'test-ca-pinning.ps1',
     'test-uninstall.ps1',

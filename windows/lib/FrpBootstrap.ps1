@@ -362,6 +362,7 @@ function Install-FrpWindowsBinary {
         [string]$ExpectedSha256
     )
     Initialize-FrpDirectories
+    Protect-FrpExecutionTree
     if (-not $DownloadUrl) { $DownloadUrl = Get-FrpWindowsAmd64Url }
     if (-not $ExpectedSha256) { $ExpectedSha256 = Get-FrpWindowsAmd64Sha256 }
     $expected = $ExpectedSha256.Trim().ToLowerInvariant()
@@ -405,6 +406,7 @@ No changes were applied.
             throw 'ERROR: frpc.exe extract failed'
         }
         Write-FrpInstalledVersion -EngineSha256 $expected
+        Protect-FrpExecutionTree
         return $dest
     } finally {
         Remove-Item -LiteralPath $tmpZip -Force -ErrorAction SilentlyContinue
@@ -621,6 +623,8 @@ function Complete-FrpZeroTouchPostEnroll {
     }
 
     Set-FrpInstallStatus -Status 'enrolled_incomplete'
+    Initialize-FrpDirectories
+    Protect-FrpExecutionTree
 
     if ($env:FRP_WINDOWS_FAIL_AFTER_ENROLL -eq '1') {
         throw 'ERROR: simulated failure after enroll (FRP_WINDOWS_FAIL_AFTER_ENROLL=1)'
@@ -672,6 +676,7 @@ function Complete-FrpZeroTouchPostEnroll {
         Copy-Item -LiteralPath $manifestSource -Destination (Join-Path (Get-FrpWindowsRoot) 'release-manifest.json') -Force
     }
     Write-FrpInstalledVersion
+    Protect-FrpExecutionTree
 
     # Documented UX is a bare `drlink ...` from any shell, so the installed
     # tools directory goes on the system PATH. Never fatal: the client is
@@ -1585,6 +1590,7 @@ function Invoke-FrpZeroTouch {
         # pending-enrollment transaction instead of re-redeeming a
         # single-use Bootstrap Ticket.
         Initialize-FrpDirectories
+        Protect-FrpExecutionTree
         $machineId = Get-FrpOrCreateClientId
         if (-not $Hostname) {
             $Hostname = $env:COMPUTERNAME

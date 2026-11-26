@@ -589,6 +589,7 @@ function Install-FrpProjectManagementFiles {
         Copy-Item -LiteralPath $manifestSource -Destination (Join-Path (Get-FrpWindowsRoot) 'release-manifest.json') -Force
     }
     Write-FrpInstalledVersion -SourceRoot $SrcRoot
+    Protect-FrpExecutionTree
 }
 
 function New-FrpProjectUpdateSnapshot {
@@ -762,6 +763,13 @@ function Invoke-FrpClientUpdate {
             if ($lifecycleWasPresent -and -not (Test-FrpLifecycleTaskHealthy)) {
                 throw 'ERROR: existing lifecycle task ownership could not be verified; no update applied'
             }
+            if ($env:FRP_WINDOWS_BOOTSTRAP_PATH) {
+                $existingState = Read-FrpClientState
+                Confirm-FrpWindowsSourceProvenance -AllocatorUrl ([string]$existingState.allocator_url) -VerifyOnly
+            }
+            # Secure executable paths before reading/copying existing files or
+            # persisting provenance. Do not undo this hardening on rollback.
+            Protect-FrpExecutionTree
             $snapshot = New-FrpProjectUpdateSnapshot -SrcRoot $src
             if ($env:FRP_WINDOWS_BOOTSTRAP_PATH) {
                 # Prior-stable bridge: verify the complete outer bootstrap
@@ -787,6 +795,7 @@ function Invoke-FrpClientUpdate {
                 try {
                     if ($lifecycleTouched) { Uninstall-FrpLifecycleTask | Out-Null }
                     Restore-FrpProjectUpdateSnapshot -Snapshot $snapshot
+                    Protect-FrpExecutionTree
                     if ($lifecycleTouched -and $lifecycleWasPresent) { Install-FrpLifecycleTask | Out-Null }
                     Write-Host 'Product rollback restored prior management software and provenance.'
                 } catch {
@@ -811,6 +820,7 @@ function Invoke-FrpClientUpdate {
     if (-not (Enter-FrpClientLock)) { return 1 }
     try {
     Initialize-FrpDirectories
+    Protect-FrpExecutionTree
     # The snapshot includes frpc.toml, which carries the plaintext FRP token,
     # so the backup directory and every copy get the product-enforced ACL.
     $backupRoot = New-FrpBackupRoot -Prefix 'update'
@@ -864,6 +874,7 @@ function Invoke-FrpClientUpdate {
                 }
                 Copy-Item -LiteralPath $bak -Destination $dest -Force
             }
+            Protect-FrpExecutionTree
             if ($wasRunning) {
                 Start-FrpClient | Out-Null
             }
@@ -1037,6 +1048,14 @@ function Get-FrpClientDoctorReport {
     [void]$lines.Add(("Autostart         : {0}" -f $(if ($st.AutostartEnabled) { 'enabled' } else { 'disabled' })))
     [void]$lines.Add(("Lifecycle task    : {0}" -f $(if ($st.LifecycleEnabled) { 'enabled' } else { 'disabled' })))
     if ($st.RuntimeLevel -eq 'Critical') { $issues++ }
+    if (Test-FrpIsWindowsHost) {
+        if (Test-FrpExecutionTreeAcl) {
+            [void]$lines.Add('Execution ACL     : PASS')
+        } else {
+            [void]$lines.Add('Execution ACL     : FAIL (verified product repair required)')
+            $issues++
+        }
+    }
     [void]$lines.Add(('AI executor       : {0}' -f (Get-FrpAiExecutorStatusText)))
     [void]$lines.Add(("Running: {0} pid={1}" -f $st.Running, $st.Pid))
     if ($issues -gt 0) {

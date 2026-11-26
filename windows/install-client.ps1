@@ -74,7 +74,7 @@ if ($Help) { Show-FrpInstallHelp; exit 0 }
 $libDir = Join-Path $PSScriptRoot 'lib'
 foreach ($mod in @(
         'FrpPaths.ps1', 'FrpLock.ps1', 'FrpCrypto.ps1', 'FrpTls.ps1', 'FrpState.ps1', 'FrpDraft.ps1',
-        'FrpConfig.ps1', 'FrpProcess.ps1', 'FrpShim.ps1', 'FrpAutostart.ps1', 'FrpBootstrap.ps1', 'FrpV24.ps1'
+        'FrpConfig.ps1', 'FrpProcess.ps1', 'FrpShim.ps1', 'FrpAutostart.ps1', 'FrpBootstrap.ps1', 'FrpV24.ps1', 'FrpAiExecutor.ps1'
     )) {
     $path = Join-Path $libDir $mod
     if (-not (Test-Path -LiteralPath $path)) {
@@ -147,6 +147,7 @@ try {
     # without a Bootstrap Ticket or CA hash. Do not require them up front in
     # that case (the ticket is single-use and must not be re-supplied/re-used).
     Initialize-FrpDirectories
+    Protect-FrpExecutionTree
     $__frpResumeMachineId = Get-FrpOrCreateClientId
     $__frpResumePending = (-not (Test-FrpIsEnrolled)) -and (Test-FrpPendingEnrollMatches -MachineId $__frpResumeMachineId)
     if ($__frpResumePending -and -not $AllocatorUrl) {

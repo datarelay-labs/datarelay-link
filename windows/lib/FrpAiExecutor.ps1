@@ -36,14 +36,75 @@ function Test-FrpAiWindowsPathScope {
 
 function Get-FrpAiExecutorProfilePath { Join-Path (Get-FrpStateDir) 'ai-executor.json' }
 
+# The installer and updater own these flat executable directories. Do not
+# traverse arbitrary state, logs, backups, or OS ancestors to repair ACLs.
+function Get-FrpExecutionTreePaths {
+    $root = Get-FrpWindowsRoot
+    $dirs = @($root, (Get-FrpBinDir), (Get-FrpToolsDir), (Get-FrpLibDir))
+    foreach ($path in $dirs) {
+        $item = Get-Item -LiteralPath $path -Force -ErrorAction Stop
+        if (-not $item.PSIsContainer -or ($item.Attributes -band [IO.FileAttributes]::ReparsePoint)) {
+            throw "ERROR: unsafe product execution directory: $path"
+        }
+        [pscustomobject]@{Path=$item.FullName;Directory=$true}
+    }
+    foreach ($dir in $dirs[1..3]) {
+        foreach ($item in @(Get-ChildItem -LiteralPath $dir -Force -ErrorAction Stop)) {
+            if ($item.PSIsContainer -or ($item.Attributes -band [IO.FileAttributes]::ReparsePoint)) {
+                throw "ERROR: unsafe product execution entry: $($item.FullName)"
+            }
+            [pscustomobject]@{Path=$item.FullName;Directory=$false}
+        }
+    }
+    foreach ($name in @('version','version.tmp','release-manifest.json','source-provenance.json','source-provenance.json.tmp')) {
+        $path = Join-Path $root $name
+        $item = Get-Item -LiteralPath $path -Force -ErrorAction SilentlyContinue
+        if ($null -eq $item) { continue }
+        if ($item.PSIsContainer -or ($item.Attributes -band [IO.FileAttributes]::ReparsePoint)) {
+            throw "ERROR: unsafe product metadata path: $path"
+        }
+        [pscustomobject]@{Path=$item.FullName;Directory=$false}
+    }
+}
+
+function Test-FrpExecutionTreeAcl {
+    if (-not (Test-FrpIsWindowsHost)) { return $false }
+    try {
+        $trusted = @('S-1-5-18','S-1-5-32-544','S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464')
+        $writeMask = [Security.AccessControl.FileSystemRights]::Write -bor [Security.AccessControl.FileSystemRights]::Delete -bor [Security.AccessControl.FileSystemRights]::DeleteSubdirectoriesAndFiles -bor [Security.AccessControl.FileSystemRights]::ChangePermissions -bor [Security.AccessControl.FileSystemRights]::TakeOwnership -bor 0x50000000
+        foreach ($entry in @(Get-FrpExecutionTreePaths)) {
+            $acl = Get-Acl -LiteralPath $entry.Path -ErrorAction Stop
+            if ($acl.GetOwner([Security.Principal.SecurityIdentifier]).Value -notin $trusted) { return $false }
+            foreach ($rule in $acl.GetAccessRules($true,$true,[Security.Principal.SecurityIdentifier])) {
+                if ($rule.AccessControlType -eq 'Allow' -and $rule.IdentityReference.Value -notin $trusted -and
+                    -not ($rule.PropagationFlags -band [Security.AccessControl.PropagationFlags]::InheritOnly) -and
+                    ($rule.FileSystemRights -band $writeMask)) { return $false }
+            }
+        }
+        return $true
+    } catch { return $false }
+}
+
+function Protect-FrpExecutionTree {
+    if (-not (Test-FrpIsWindowsHost)) { return }
+    if ($env:FRP_WINDOWS_FAIL_ACL -eq '1') { throw 'ERROR: simulated ACL failure' }
+    Initialize-FrpNativeAiFiles
+    # Preflight the entire targeted tree before changing anything. Native
+    # handles reject reparse points, hardlinks and unexpected final paths.
+    $entries = @(Get-FrpExecutionTreePaths)
+    foreach ($entry in $entries) { [Drlink.NativeAiFiles]::CheckCodePath($entry.Path,$entry.Directory) }
+    foreach ($entry in $entries) { [Drlink.NativeAiFiles]::ProtectCodePath($entry.Path,$entry.Directory) }
+    if (-not (Test-FrpExecutionTreeAcl)) { throw 'ERROR: installed execution ACL verification failed' }
+}
+
 function Test-FrpAiProfileAcl {
     param([string]$Path)
     if (-not (Test-FrpIsWindowsHost) -or -not (Test-Path -LiteralPath $Path -PathType Leaf)) { return $false }
     try {
         $trusted = @('S-1-5-18','S-1-5-32-544','S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464')
         $writeMask = [Security.AccessControl.FileSystemRights]::Write -bor [Security.AccessControl.FileSystemRights]::Delete -bor [Security.AccessControl.FileSystemRights]::DeleteSubdirectoriesAndFiles -bor [Security.AccessControl.FileSystemRights]::ChangePermissions -bor [Security.AccessControl.FileSystemRights]::TakeOwnership
-        $protectedPaths = @((Get-FrpWindowsRoot),(Get-FrpToolsDir),(Get-FrpLibDir),(Get-FrpStateDir),$Path)
-        $protectedPaths += @(Get-ChildItem -LiteralPath (Get-FrpToolsDir),(Get-FrpLibDir) -Filter '*.ps1' -File -ErrorAction Stop | ForEach-Object FullName)
+        if (-not (Test-FrpExecutionTreeAcl)) { return $false }
+        $protectedPaths = @((Get-FrpStateDir),$Path)
         foreach ($name in $protectedPaths) {
             $item = Get-Item -LiteralPath $name -Force -ErrorAction Stop
             if ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) { return $false }
@@ -97,6 +158,12 @@ function Get-FrpAiExecutorProfile {
 
 function Get-FrpAiExecutorStatusText {
     if (Get-FrpAiExecutorProfile -ForStatus) { return 'Locally opted in; verify live readiness on Server' }
+    if ((Test-FrpIsWindowsHost) -and -not (Test-FrpExecutionTreeAcl)) {
+        return 'Disabled (unsafe installed execution ACL; verified product repair required)'
+    }
+    if (Test-Path -LiteralPath (Get-FrpAiExecutorProfilePath)) {
+        return 'Disabled (local profile or ancestor ACL validation failed)'
+    }
     return 'Disabled (explicit protected local opt-in required)'
 }
 
@@ -182,6 +249,47 @@ namespace Drlink {
         }
         static void Close(List<SafeFileHandle> handles) {
             for (int i=handles.Count-1;i>=0;i--) handles[i].Dispose();
+        }
+        [DllImport("advapi32.dll", CharSet=CharSet.Unicode, ExactSpelling=true, SetLastError=true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        static extern bool ConvertStringSecurityDescriptorToSecurityDescriptorW(string text,uint rev,out IntPtr sd,out uint size);
+        [DllImport("advapi32.dll", SetLastError=true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        static extern bool GetSecurityDescriptorOwner(IntPtr sd,out IntPtr owner,out bool defaulted);
+        [DllImport("advapi32.dll", SetLastError=true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        static extern bool GetSecurityDescriptorDacl(IntPtr sd,out bool present,out IntPtr dacl,out bool defaulted);
+        [DllImport("advapi32.dll", SetLastError=true)]
+        static extern uint SetSecurityInfo(SafeFileHandle h,int type,uint info,IntPtr owner,IntPtr group,IntPtr dacl,IntPtr sacl);
+        [DllImport("kernel32.dll")]
+        static extern IntPtr LocalFree(IntPtr p);
+        public static void CheckCodePath(string path,bool directory) {
+            var parents=Parents(path);
+            try { using(var h=Open(path,Attr,1,OpenExisting,directory)) {} }
+            finally { Close(parents); }
+        }
+        public static void ProtectCodePath(string path,bool directory) {
+            // ACL writes are bound to a verified handle rather than a
+            // potentially substituted pathname. Never apply ACLs to a link.
+            var parents=Parents(path);
+            IntPtr sd=IntPtr.Zero;
+            try {
+                using(var h=Open(path,Attr|0x20000|0x40000|0x80000,1,OpenExisting,directory)) {
+                    string inherit=directory ? "OICI" : "";
+                    string sddl="O:BAD:P(A;"+inherit+";FA;;;SY)(A;"+inherit+";FA;;;BA)(A;"+inherit+";0x1200a9;;;BU)";
+                    uint size;
+                    if(!ConvertStringSecurityDescriptorToSecurityDescriptorW(sddl,1,out sd,out size)) throw Failure();
+                    IntPtr owner,dacl; bool present,defaulted;
+                    if(!GetSecurityDescriptorOwner(sd,out owner,out defaulted) ||
+                       !GetSecurityDescriptorDacl(sd,out present,out dacl,out defaulted) ||
+                       owner==IntPtr.Zero || !present || dacl==IntPtr.Zero) throw Failure();
+                    uint code=SetSecurityInfo(h,1,0x80000005,owner,IntPtr.Zero,dacl,IntPtr.Zero);
+                    if(code!=0) throw new IOException("Product execution ACL protection failed: "+code);
+                }
+            } finally {
+                if(sd!=IntPtr.Zero) LocalFree(sd);
+                Close(parents);
+            }
         }
         static void MarkDelete(SafeFileHandle handle) {
             IntPtr buf=Marshal.AllocHGlobal(1);
