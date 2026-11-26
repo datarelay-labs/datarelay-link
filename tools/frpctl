@@ -873,18 +873,26 @@ def effective_installer_source(configured, platform):
         return "Unavailable (qualified Server-local installer source is unconfigured)"
     label = "configured former public source ignored" if configured else "automatic qualified source"
     return "%s (%s)" % (effective, label)
-print("Server Settings")
-print("===============")
-print("Public hostname              : %s" % (public or ("Automatic (Public IP: %s)" % control)))
-print("Bootstrap hostname           : %s" % (bootstrap or "Automatic (pinned-CA zt1 bootstrap)"))
-print("Linux/macOS Agent installer : %s" % effective_installer_source(linux_url, "linux"))
-print("Windows Agent installer     : %s" % effective_installer_source(windows_url, "windows"))
+try:
+    print("\nServer Settings")
+    print("===============")
+    print("Public hostname              : %s" % (public or ("Automatic (Public IP: %s)" % control)))
+    print("Bootstrap hostname           : %s" % (bootstrap or "Automatic (pinned-CA zt1 bootstrap)"))
+    print("Linux/macOS Agent installer : %s" % effective_installer_source(linux_url, "linux"))
+    print("Windows Agent installer     : %s" % effective_installer_source(windows_url, "windows"))
+    sys.stdout.flush()
+except BrokenPipeError:
+    import os
+    with open(os.devnull, "w") as sink:
+        os.dup2(sink.fileno(), sys.stdout.fileno())
 PY_SERVER_SETTINGS
 }
 
 frpctl_control_plane_server_status() {
   frpctl_control_plane_status || return $?
-  echo
+  # A reader may have closed stdout after the first status section.
+  # Keep the separator inside the guarded Python writer, not a separate
+  # shell builtin that can terminate the entire read-only command on SIGPIPE.
   frpctl_print_server_settings
 }
 

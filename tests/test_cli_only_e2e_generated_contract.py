@@ -54,7 +54,7 @@ class CLIOnlyGeneratedContractRegression(unittest.TestCase):
         scenarios = doc[doc.index("# 7. User scenarios"):doc.index("# 13. Platform matrix")]
         matrix = doc[doc.index("# 13. Platform matrix"):doc.index("# 15. CLI-only provenance")]
         forbidden = re.compile(
-            r"\b(?:AI-assisted|AI Access|AI Identity|AI Adviser|AI mirror|"
+            r"\b(?:AI-generated|AI-assisted|AI Access|AI Identity|AI Adviser|AI mirror|"
             r"ChatGPT|Plugin|MCP|OAuth)\b", re.I
         )
         self.assertNotRegex(scenarios, forbidden)

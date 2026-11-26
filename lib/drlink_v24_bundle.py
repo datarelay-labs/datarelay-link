@@ -2350,15 +2350,36 @@ def export_configuration_v24(plane: ControlPlane) -> str:
             "sourceRevision": int(plane.current_revision()),
         }
         nos = []
-        for row in v24.list_network_objects(plane):
-            if row["type"] == "Managed Host":
+        # The public Bundle schema represents one real value per Network
+        # Object. Legacy incremental CRUD could leave an empty object, or
+        # multiple values; the display placeholder "-" is not a CIDR and
+        # exporting the first of multiple values silently loses policy state.
+        # Fail before writing a file or claiming rollback availability.
+        from drlink_control_plane import normalize_object_value
+
+        type_map = {"host": "ip", "network": "cidr", "fqdn": "fqdn"}
+        for obj in plane.list_objects():
+            if obj.get("origin") == "managed" or obj["type"] == "managed_endpoint":
                 continue
-            type_map = {"IP": "ip", "CIDR": "cidr", "FQDN": "fqdn"}
+            if obj["name"].casefold() == v24.SERVER_SELF_TARGET.casefold():
+                _bundle_error(
+                    "Cannot serialize a legacy Network Object using the reserved Server "
+                    "target name 'server:self'. Resolve that legacy object before export."
+                )
+            values = obj.get("values") or []
+            if obj["type"] not in type_map or len(values) != 1:
+                _bundle_error(
+                    "Network Object '%s' cannot be represented in a v2.4 ConfigurationBundle "
+                    "(expected exactly one value). Inspect: show network-object %s. "
+                    "Complete or explicitly remove the obsolete object through the public CLI, "
+                    "then retry export. No configuration file was written." % (obj["name"], obj["name"])
+                )
+            value = normalize_object_value(obj["type"], values[0])
             nos.append(
                 {
-                    "name": row["name"],
-                    "type": type_map.get(row["type"], "ip"),
-                    "value": row["value"],
+                    "name": obj["name"],
+                    "type": type_map[obj["type"]],
+                    "value": value,
                 }
             )
         if nos:

@@ -34,7 +34,7 @@ Data Relay Link Windows Agent Host installer
 
 Zero-touch:
   iex(curl.exe -kfsS https://HOST/A3xK9mP2|Out-String)
-  Use the Server-issued locator. The operator approves the Agent key.
+  Use the Server-issued locator. The first valid Agent claim is registered automatically.
 
 Existing enrolled Agent software upgrade:
   .\bootstrap-client.ps1 -Upgrade

@@ -724,6 +724,20 @@ frpctl_nav_prompt_id 'Name: '
             self.assertNotIn("BrokenPipeError", proc.stderr)
             self.assertNotIn("Traceback", proc.stderr)
 
+    def test_server_status_handles_early_pipe_close(self):
+        env = dict(os.environ, FRP_CTL_TEST_ROOT=self.tmp)
+        for n in (1, 16):
+            for _ in range(3):
+                proc = subprocess.run(
+                    ["bash", "-o", "pipefail", "-c",
+                     'bash "$1" system status | head -n "$2"', "status-pipeline",
+                     str(ROOT / "tools/drlink"), str(n)],
+                    env=env, capture_output=True, text=True, timeout=30,
+                )
+                self.assertEqual(proc.returncode, 0, proc.stderr)
+                self.assertNotIn("BrokenPipeError", proc.stderr)
+                self.assertNotIn("Traceback", proc.stderr)
+
     def test_generated_enrollment_guidance_uses_agent_nouns(self):
         loader = importlib.machinery.SourceFileLoader(
             "enrollment_guidance_regression", str(ROOT / "tools/frp-create-client")

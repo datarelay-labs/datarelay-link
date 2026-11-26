@@ -168,12 +168,18 @@ class WindowsPinnedCaCommandTests(unittest.TestCase):
                 launcher.write_text('#!/bin/sh\nexec '+__import__('shlex').quote(parent)+' "$@"\n')
                 launcher.chmod(0o755)
                 env['PATH'] = tmp + os.pathsep + env['PATH']
+            env['FRP_WINDOWS_ROOT'] = str(root/'agent-root')
             # Do not execute a real product installer or alter OS trust.
             installer = (
                 "param([switch]$ZeroTouch)\n"
                 "if (-not $ZeroTouch -or $env:FRP_BOOTSTRAP_LOCATOR -ne 'A3xK9mP2' "
                 "-or -not (Test-Path -LiteralPath $env:FRP_ALLOCATOR_CA_FILE)) { exit 19 }\n"
                 "if ($env:OS -eq 'Windows_NT') { Get-Acl -LiteralPath $env:TEMP -ErrorAction Stop | Out-Null }\n"
+                "$tools = Join-Path $env:FRP_WINDOWS_ROOT 'tools'\n"
+                "$state = Join-Path $env:FRP_WINDOWS_ROOT 'state'\n"
+                "New-Item -ItemType Directory -Force -Path $tools,$state | Out-Null\n"
+                "Set-Content -LiteralPath (Join-Path $tools 'drlink.cmd') -Value '@rem DRLINK-PRODUCT-SHIM'\n"
+                "Set-Content -LiteralPath (Join-Path $state 'path-shim.json') -Value '{}'\n"
                 "Write-Output 'INERT_INSTALLER_EXECUTED'\n"
             ).encode('ascii')
             state = {'mode': 'good'}
@@ -214,6 +220,7 @@ class WindowsPinnedCaCommandTests(unittest.TestCase):
                     "$env:FRP_BOOTSTRAP_LOCATOR='audit-previous'\n"
                     "$modulePath=$env:PSModulePath\n"
                     "$protocol=[Net.ServicePointManager]::SecurityProtocol\n"
+                    "$beforePath=$env:Path\n"
                     "$failed=$false\n"
                     "try { Invoke-Expression (Get-Content -LiteralPath $env:TEST_STAGE -Raw) } "
                     "catch { $failed=$true; Write-Output ('STAGE_FAILURE='+$_.Exception.Message) }\n"
@@ -221,6 +228,8 @@ class WindowsPinnedCaCommandTests(unittest.TestCase):
                     "$env:FRP_BOOTSTRAP_LOCATOR -ne 'audit-previous' -or "
                     "$env:PSModulePath -cne $modulePath -or "
                     "[Net.ServicePointManager]::SecurityProtocol -ne $protocol) { throw 'parent state changed' }\n"
+                    "$expectedPath=$beforePath; if (-not $failed) { $expectedPath = (@($beforePath,(Join-Path $env:FRP_WINDOWS_ROOT 'tools')) | Where-Object { $_ }) -join ';' }\n"
+                    "if ($env:Path -cne $expectedPath) { throw 'caller PATH refresh mismatch' }\n"
                     "Write-Output 'PARENT_STATE_RESTORED'\n"
                     "if ($failed) { exit 17 }; exit 0\n",
                     encoding='ascii')
@@ -256,6 +265,30 @@ class WindowsPinnedCaCommandTests(unittest.TestCase):
                 server.shutdown()
                 worker.join(timeout=5)
                 server.server_close()
+
+    def test_current_shell_path_refresh(self):
+        parent = shutil.which(os.environ.get('DRLINK_STAGE_TEST_POWERSHELL') or 'pwsh')
+        if not parent:
+            self.skipTest('PowerShell unavailable')
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root/'tools').mkdir()
+            (root/'state').mkdir()
+            (root/'tools/drlink.cmd').write_text('@rem DRLINK-PRODUCT-SHIM')
+            (root/'state/path-shim.json').write_text('{}')
+            # In an isolated shell retain the pre-existing PATH entries.
+            # Invoke the very snippet included in the real bootstrap.
+            snippet = zt.windows_current_path_refresh()
+            script = "$ErrorActionPreference='Stop'\n$env:Path='preserve-first;preserve-second'\n"
+            script += snippet + '\n' + snippet + '\n'
+            script += """if ($env:Path -cne ('preserve-first;preserve-second;' + (Join-Path $env:FRP_WINDOWS_ROOT 'tools'))) { throw ('bad PATH: '+$env:Path) }
+Write-Output PATH_REFRESH_IDEMPOTENT=PASS
+"""
+            proc = subprocess.run([parent,'-NoProfile','-Command',script],
+                env=dict(os.environ, FRP_WINDOWS_ROOT=tmp), capture_output=True,
+                text=True, timeout=30)
+            self.assertEqual(proc.returncode,0,proc.stdout+proc.stderr)
+            self.assertIn('PATH_REFRESH_IDEMPOTENT=PASS',proc.stdout)
 
     def test_current_entry_and_downstream_hash_before_execute(self):
         command=zt.render_entry_command("remote.xdr.ooo","A3xK9mP2","windows")

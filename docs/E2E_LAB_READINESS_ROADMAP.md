@@ -12,8 +12,8 @@ F001 and F007 remain open until genuine exact-HEAD, signed Server/Agent evidence
 
 ## Owner-assigned routing and disposable-host authority
 
-- `MCP_DNS_SERVER` handles **MCP + DNS/public-hostname tests only**, including public TLS/OAuth, hostname DNS, bootstrap hostname and associated API checks.
-- `FUNCTION_PERFORMANCE_SERVER` handles **everything else**: functional Server, CLI, Remote Access, Internet Access, Agent, failure/recovery, performance and Soak. Mixed scenarios route each specific criterion to its matching host without doubling the 116-ID inventory.
+- `MCP_SERVER` (candidate alias `mcp-link`) handles **MCP-specific tests only**, including its own public HTTPS/TLS, OAuth and AI Access; verify actual public trust and test-only ownership before mutating it.
+- `FUNCTION_PERFORMANCE_SERVER` (alias `frp-e2e-server`) handles **everything else**: functional Server, CLI, Remote Access, Internet Access, Agent, public DNS/FQDN and bootstrap hostname/fallback, failure/recovery, performance and Soak. Use the owner-private mapped public FQDN for real hostname tests. Mixed scenarios route each specific criterion to its matching host without doubling the 116-ID inventory.
 - Two-Server separation is **not a new VM guest/snapshot/restore/host-provisioning prerequisite**. Native Windows/Rocky and credentials remain limited to the exact owner-assigned estate.
 
 **Owner decision — every assigned test host may be destroyed:** Within the owner-approved disposable roster, product loss, service interruption and reboot were approved. Before testing each host, inspect its prior DRLink state, clean only eligible test-only state and **verify it is** clean; then deploy the immutable test candidate and execute actual scenarios. Do not demand a fresh owner confirmation merely because a designated test VM may fail. Keep management SSH, unrelated machines and historical evidence intact.
@@ -21,6 +21,8 @@ F001 and F007 remain open until genuine exact-HEAD, signed Server/Agent evidence
 **Safety boundary:** A **current** platform/tool refusal for an exact operation, especially B014 Server uninstall or a native/certificate effect, stays binding; historical refusals are rechecked under the current permissions on the same tool/target: **never retry such an effect under an alternate executor** or route. Mark only dependent scenarios BLOCKED/NOT_RUN and continue independently authorized tests. No production, credentials or permissions changes, publication, merger or release are implied.
 
 ## Diagnostics are optional supporting evidence
+
+**Owner directive (2026-11-25): No separate connection preflight.** Use the owner-configured SSH aliases and existing SSH settings as-is. Do not run standalone SSH login/reachability probes, ping, TCP/port scans, SSH host-key checks, readiness scripts, or preliminary TLS/DNS checks merely to decide whether to start E2E. Read local inventory/config without network probes and execute the first actual scenario action directly. Record connection errors from that action only, classify the affected criterion, and continue independent scenarios; do not stop for repeated preflight or operator reconfirmation. Preserve normal SSH/security enforcement and genuine product DNS/TLS/OAuth, lifecycle and access-control assertions within their actual scenarios. The diagnostic tool is not run automatically before E2E; use it only on a separate explicit owner diagnostic request.
 
 `tools/e2e_lab_readiness.py` may inventory observed hosts, Source HEAD, reachable public CLI, native platform, public TLS and applicable OAuth. It emits a private `PREFLIGHT_STATUS.json` and `CLEANROOM_LEDGER.tsv`, which can show GO/NOT_READY/BLOCKED and reasons, but never authorizes/vetoes test execution as a global gate. Do not confuse script/readiness PASS with actual independent user actions.
 

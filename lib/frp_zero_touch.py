@@ -776,6 +776,44 @@ namespace DataRelayLinkBootstrap {
     return setup
 
 
+def windows_current_path_refresh():
+    # The child installer writes machine PATH, but cannot change its caller's
+    # process environment. Run this only after a successful child exit, in
+    # the caller that evaluated the bootstrap. Preserve PATH order and local
+    # overrides; never replace it with Machine+User PATH.
+    return r'''  try {
+    $drlinkRoots = @()
+    if ($env:FRP_WINDOWS_ROOT) { $drlinkRoots = @($env:FRP_WINDOWS_ROOT) }
+    elseif ($env:ProgramData) {
+      $drlinkRoots = @((Join-Path $env:ProgramData 'drlink'), (Join-Path $env:ProgramData 'frp-auto-deploy'))
+    }
+    $drlinkDirs = @()
+    foreach ($drlinkRoot in $drlinkRoots) {
+      $drlinkTools = Join-Path $drlinkRoot 'tools'
+      $drlinkShim = Join-Path $drlinkTools 'drlink.cmd'
+      if ((Test-Path -LiteralPath $drlinkShim -PathType Leaf) -and
+          ((Get-Content -LiteralPath $drlinkShim -Raw) -match 'DRLINK-PRODUCT-SHIM') -and
+          (Test-Path -LiteralPath (Join-Path $drlinkRoot 'state/path-shim.json') -PathType Leaf)) {
+        $drlinkDirs += $drlinkTools
+      }
+    }
+    if ($drlinkDirs.Count -eq 1) {
+      $drlinkTools = $drlinkDirs[0]
+      $drlinkPresent = @($env:Path -split ';' | Where-Object {
+        [Environment]::ExpandEnvironmentVariables($_.Trim().TrimEnd('\', '/')) -ieq $drlinkTools.TrimEnd('\', '/')
+      }).Count -gt 0
+      if (-not $drlinkPresent) {
+        $env:Path = (@($env:Path, $drlinkTools) | Where-Object { $_ }) -join ';'
+      }
+      Write-Host ('Current PowerShell PATH includes {0}.' -f $drlinkTools)
+    } elseif ($drlinkDirs.Count -gt 1) {
+      Write-Warning 'Multiple installed CLI paths found; use the intended drlink.cmd explicitly.'
+    }
+  } catch {
+    Write-Warning ('Could not refresh current PowerShell PATH: ' + $_.Exception.Message)
+  }'''
+
+
 def render_short_url_windows_bootstrap_script(
     allocator_url, ca_sha256, ticket, installer_url, *, entry_locator=None, ca_pem=None
 ):
@@ -891,6 +929,7 @@ def render_short_url_windows_bootstrap_script(
         '  $rc = $LASTEXITCODE',
         '  Remove-Item Env:FRP_BOOTSTRAP_TICKET -ErrorAction SilentlyContinue',
         '  if ($rc -ne 0) { exit $rc }',
+        windows_current_path_refresh(),
         '} finally {',
     ])
     if private_ca_origin and not entry:
