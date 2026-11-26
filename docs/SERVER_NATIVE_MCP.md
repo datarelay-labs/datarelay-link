@@ -68,6 +68,11 @@ The Server installer and product updater prepare an isolated non-admin
 explicit native profile is present. Preparation does not enable remote
 execution, alter AI Access, or grant root access. Existing native profiles
 are preserved; an unsafe existing account or workspace is not overwritten.
+On Linux, preparation grants only the dedicated UID read/search access to the
+root-owned software directory using the native access ACL, without requiring
+`setfacl`. Existing Egress and other effective permissions are preserved.
+A filesystem that cannot support the named ACL fails preparation without a
+world-access or privileged-group fallback.
 
 Use the existing `set ai-mcp` guided setup → Configure local Server execution
 account on the installed Server as a local administrator. Select an existing

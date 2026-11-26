@@ -8,6 +8,7 @@ import os
 from pathlib import Path
 import pwd
 import shlex
+import struct
 import subprocess
 import sys
 import tempfile
@@ -137,6 +138,38 @@ class RolloutTests(unittest.TestCase):
         self.assertFalse(self.layout.target(rollout.TARGETS[-1]).exists())
         self.mocks[-1].assert_not_called()
         self.assert_untouched()
+
+    def test_executor_acl_preserves_effective_group_and_named_rights(self):
+        undefined=0xffffffff
+        old=[(1,7,undefined),(2,7,12345),(4,5,undefined),
+             (8,6,23456),(16,1,undefined),(32,0,undefined)]
+        raw=struct.pack("<I",2)+b"".join(struct.pack("<HHI",*e) for e in old)
+        out=rollout._executor_code_acl(raw,0o710,34567)
+        entries={(tag,ident):perm for tag,perm,ident in struct.iter_unpack("<HHI",out[4:])}
+        newmask=entries[(16,undefined)]
+        self.assertEqual(newmask,5)
+        for tag,perm,ident in old:
+            if tag in (2,4,8):
+                self.assertEqual(entries[(tag,ident)] & newmask,perm & 1)
+        self.assertEqual(entries[(2,34567)],5)
+        self.assertEqual(entries[(1,undefined)],7)
+        self.assertEqual(entries[(32,undefined)],0)
+        self.assertEqual(rollout._executor_code_acl(out,0o750,34567),out)
+        basic=rollout._executor_code_acl(None,0o710,34567)
+        self.assertEqual(rollout._executor_code_acl(basic,0o750,34567),basic)
+
+    def test_executor_acl_kernel_roundtrip_without_setfacl(self):
+        path=self.root/"code-acl"
+        path.mkdir(mode=0o710)
+        path.chmod(0o710)
+        uid=34567 if os.geteuid()!=34567 else 34568
+        with patch.object(rollout,"safe_path"):
+            rollout.grant_executor_code_access(path,uid)
+            raw=os.getxattr(path,"system.posix_acl_access")
+            self.assertEqual(raw,rollout._executor_code_acl(None,0o710,uid))
+            self.assertEqual(path.stat().st_mode & 0o777,0o750)
+            rollout.grant_executor_code_access(path,uid)
+            self.assertEqual(os.getxattr(path,"system.posix_acl_access"),raw)
 
     def test_default_preparation_preserves_explicit_profile(self):
         with patch.object(rollout, "state", return_value={"sha256":"existing"}), \

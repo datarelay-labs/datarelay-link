@@ -2139,7 +2139,12 @@ frp_server_ensure_sandbox_dirs() {
       # this directory to execute frp-egress-gateway.py/drlink-tcp-egress.py.
       # Grant only directory execute, never world traversal or PKI access.
       if [[ -d "$lib_dir" ]]; then
-        if command -v setfacl >/dev/null 2>&1 &&
+        # An existing safe named ACL may also grant the MCP worker read/search.
+        # Avoid resetting its mask when Egress already has verified traversal.
+        if [[ ! -L "$lib_dir" && "$(stat -c '%u:%a' "$lib_dir")" =~ ^0:7[0145]0$ ]] &&
+           frp_service_user_can_traverse "$lib_dir"; then
+          :
+        elif command -v setfacl >/dev/null 2>&1 &&
            setfacl -m u:drlink-egress:--x "$lib_dir" 2>/dev/null; then
           :
         else

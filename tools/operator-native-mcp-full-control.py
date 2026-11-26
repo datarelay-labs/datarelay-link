@@ -15,6 +15,8 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 import hashlib
 import grp
+import errno
+import struct
 import shutil
 import json
 import os
@@ -362,6 +364,86 @@ DEFAULT_EXECUTOR = "drlink-mcp"
 DEFAULT_WORKSPACE = Path("/var/lib/drlink-mcp")
 
 
+def _executor_code_acl(raw, mode, uid):
+    """Linux access ACL encoding: add one named read/search entry.
+
+    Preserve the effective rights of every existing principal, even when
+    widening the ACL mask. Never change owner/other rights, grant write, or
+    add the account to the egress group. The kernel validates the final ACL.
+    """
+    owner, user, group_obj, group, mask, other = 1, 2, 4, 8, 16, 32
+    undefined = 0xffffffff
+    if not 0 < uid < undefined:
+        raise RolloutError("Invalid dedicated executor UID")
+    if raw is None:
+        entries = [(owner, (mode >> 6) & 7, undefined),
+                   (group_obj, (mode >> 3) & 7, undefined),
+                   (other, mode & 7, undefined)]
+    else:
+        if (len(raw) < 28 or len(raw) > 65536 or (len(raw)-4) % 8
+                or struct.unpack_from("<I", raw)[0] != 2):
+            raise RolloutError("Unsupported installed software ACL format")
+        entries = list(struct.iter_unpack("<HHI", raw[4:]))
+    seen = set()
+    for tag, perm, ident in entries:
+        if (tag not in (owner,user,group_obj,group,mask,other) or perm & ~7
+                or (tag in (user,group)) == (ident == undefined)
+                or (tag,ident) in seen):
+            raise RolloutError("Invalid installed software ACL entry")
+        seen.add((tag,ident))
+    base = {tag: perm for tag,perm,ident in entries if ident == undefined}
+    if not {owner,group_obj,other}.issubset(base):
+        raise RolloutError("Missing base ACL entries")
+    if any(tag in (user,group) for tag,_,_ in entries) and mask not in base:
+        raise RolloutError("Named ACL entries require a mask")
+    old_mask = base.get(mask,base[group_obj])
+    if (base[owner] != (mode >> 6) & 7 or base[other] != mode & 7
+            or old_mask != (mode >> 3) & 7):
+        raise RolloutError("Installed software ACL and mode disagree")
+    new_mask = old_mask | 5
+    result = []
+    for tag,perm,ident in entries:
+        if tag == mask or (tag == user and ident == uid):
+            continue
+        if tag in (user,group_obj,group):
+            # Discard only latent rights that would otherwise become effective.
+            perm &= old_mask | (~new_mask & 7)
+        result.append((tag,perm,ident))
+    result.extend(((user,5,uid),(mask,new_mask,undefined)))
+    result.sort(key=lambda entry:(entry[0],entry[2]))
+    return struct.pack("<I",2) + b"".join(struct.pack("<HHI",*entry) for entry in result)
+
+
+def grant_executor_code_access(path, uid):
+    """Apply a single named Linux directory ACL using the kernel API.
+
+    This does not need the optional acl package (setfacl/getfacl). The
+    installed software directory is root-owned; no state or credential
+    directory is opened, and no global mode fallback is permitted.
+    """
+    safe_path(path, Layout())
+    fd = os.open(path, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)
+    try:
+        info = os.fstat(fd)
+        mode = stat.S_IMODE(info.st_mode)
+        if info.st_uid != OWNER_UID or mode & 0o022:
+            raise RolloutError("Unsafe installed software directory")
+        name = "system.posix_acl_access"
+        try:
+            previous = os.getxattr(fd,name)
+        except OSError as exc:
+            if exc.errno != errno.ENODATA:
+                raise
+            previous = None
+        wanted = _executor_code_acl(previous,mode,uid)
+        if wanted != previous:
+            os.setxattr(fd,name,wanted)
+        if os.getxattr(fd,name) != wanted:
+            raise RolloutError("Installed software ACL did not verify")
+    finally:
+        os.close(fd)
+
+
 def prepare_default_executor():
     """Prepare an isolated non-admin OS account; never activate MCP access.
 
@@ -422,9 +504,7 @@ def prepare_default_executor():
             timeout=15, check=False)
         return result.returncode == 0
     if not can_import():
-        acl = shutil.which("setfacl")
-        if acl:
-            subprocess.run([acl, "-m", "u:"+DEFAULT_EXECUTOR+":r-x", str(lib)], check=True, timeout=10)
+        grant_executor_code_access(lib,account.pw_uid)
         if not can_import():
             raise RolloutError("Dedicated executor cannot load installed software; review local ACL support")
     return {"status":"prepared", "account":DEFAULT_EXECUTOR, "workspace":str(DEFAULT_WORKSPACE),
