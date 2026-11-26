@@ -79,6 +79,7 @@ class ReplLiveInventoryTests(unittest.TestCase):
                 ('object_groups', '', ''),
                 ('ai_principals', '', ''),
                 ('ai_access_rules', ',position', ',1'),
+                ('ai_policy_rules', '', ''),
             ):
                 conn.execute('INSERT INTO %s (id,name,created_at,updated_at%s) '
                              'VALUES (?,?,?,?%s)' % (table, extra_columns, extra_values),
@@ -88,6 +89,7 @@ class ReplLiveInventoryTests(unittest.TestCase):
             before = target.read_bytes()
             inventory = self.editor.grammar.read_only_completion_inventory('server', temp)
             self.assertEqual(target.read_bytes(), before)
+            self.assertNotIn('ai_access_rules-name', inventory['inventory'][self.editor.grammar.CATALOG.C_AI_RULE])
             config = Path(temp) / 'etc/drlink/config.json'
             config.parent.mkdir(parents=True, exist_ok=True)
             config.write_text('{"role":"server"}\n')
@@ -104,7 +106,7 @@ class ReplLiveInventoryTests(unittest.TestCase):
                 ('network-object', 'objects-name'),
                 ('network-group', 'object_groups-name'),
                 ('ai-identity', 'ai_principals-name'),
-                ('ai-access', 'ai_access_rules-name'),
+                ('ai-access', 'ai_policy_rules-name'),
             ):
                 with self.subTest(resource=resource):
                     for action in (('show',) if resource == 'ai-access'
@@ -157,6 +159,22 @@ class ReplLiveInventoryTests(unittest.TestCase):
         # Delete path
         self.editor.names = ["24cd7856"]
         self.assertNotIn("new-host", self._cands("show managed-host "))
+
+    def test_all_canonical_set_unset_resources_refresh_without_legacy_roots(self):
+        for command in self.editor.grammar.CATALOG.COMMANDS:
+            path = command["path"]
+            if len(path) >= 2 and path[0] in ("set", "unset") and not command.get("hidden"):
+                with self.subTest(path=path):
+                    self.assertTrue(REPL._should_refresh_inventory(list(path) + ["fixture"]))
+        for tokens in (
+            ["set", "ai-principal", "fixture"],
+            ["unset", "service-profile", "fixture"],
+            ["set", "object", "fixture"],
+            ["create", "service", "fixture"],
+            ["system", "import", "fixture"],
+        ):
+            with self.subTest(tokens=tokens):
+                self.assertFalse(REPL._should_refresh_inventory(tokens))
 
     def test_should_refresh_current_grammar(self):
         self.assertTrue(REPL._should_refresh_inventory(["set", "internet-access", "x"]))

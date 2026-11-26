@@ -880,7 +880,16 @@ def handle_show(plane: ControlPlane, rest: list[str]) -> Optional[int]:
         status = "VERIFIED" if str(p["credential_status"] or "").lower() in ("verified", "active", "configured", "ok") else (
             p["credential_status"] or "UNBOUND"
         )
-        sys.stdout.write("AI Identity : %s\nStatus      : %s\n" % (p["name"], status))
+        sys.stdout.write("AI Identity : %s\nStatus      : %s\nEnabled     : %s\n" % (p["name"], status, "YES" if p["enabled"] else "NO"))
+        sys.stdout.write("AI Access Rules (configured for this Identity; runtime authorization is evaluated per call):\n")
+        rows = plane.conn.execute(
+            "SELECT name FROM ai_policy_rules WHERE source_identity_id=? ORDER BY name", (p["id"],)
+        ).fetchall()
+        if not rows:
+            sys.stdout.write("  No rules configured. Effective access: DENY.\n")
+        for row in rows:
+            sys.stdout.write("\n")
+            _show_ai_policy(plane, ["ai-access", row["name"]])
         return 0
     if res == "remote-access":
         _require_server(plane, "Remote Access policy")
@@ -890,22 +899,8 @@ def handle_show(plane: ControlPlane, rest: list[str]) -> Optional[int]:
         return _show_policy(plane, "internet", rest)
     if res == "ai-access":
         _require_server(plane, "AI Access policy")
-        if len(rest) == 1:
-            cap_n = plane.conn.execute("SELECT COUNT(*) FROM ai_access_rules").fetchone()[0]
-            v24_n = plane.conn.execute("SELECT COUNT(*) FROM ai_policy_rules").fetchone()[0]
-            if int(cap_n or 0) and not int(v24_n or 0):
-                return None
-        if len(rest) >= 3 and rest[2] in ("impact",):
-            return None
-        if len(rest) >= 2:
-            v24_row = plane.conn.execute(
-                "SELECT id FROM ai_policy_rules WHERE name = ? COLLATE NOCASE", (rest[1],)
-            ).fetchone()
-            cap_row = plane.conn.execute(
-                "SELECT id FROM ai_access_rules WHERE name = ? COLLATE NOCASE", (rest[1],)
-            ).fetchone()
-            if cap_row is not None and v24_row is None:
-                return None
+        if len(rest) > 2:
+            raise ControlPlaneError("Usage: show ai-access [RULE]")
         return _show_ai_policy(plane, rest)
     if res == "ai-access-log":
         _require_server(plane, "AI Access Log")
@@ -1168,6 +1163,9 @@ def _show_ai_policy(plane: ControlPlane, rest: list[str]) -> int:
                     "  %s (%s)\n"
                     % (row["name"], "enabled" if row["enabled"] else "disabled")
                 )
+        archived = plane.conn.execute("SELECT COUNT(*) FROM ai_access_rules").fetchone()[0]
+        if archived:
+            sys.stdout.write("Retained pre-v2.4 records: %s (not effective AI Access rules; review before recreating in current policy).\n" % archived)
         return 0
     row = plane.conn.execute(
         "SELECT * FROM ai_policy_rules WHERE name = ? COLLATE NOCASE", (rest[1],)
@@ -1190,6 +1188,12 @@ def _show_ai_policy(plane: ControlPlane, rest: list[str]) -> int:
         dest_label = dest["name"] if dest else "-"
     elif row["destination_ref_kind"] == "server" and row["destination_ref_id"] == v24.SERVER_SELF_REF_ID:
         dest_label = v24.SERVER_SELF_TARGET
+    elif row["destination_ref_kind"] == v24.TRUSTED_MANAGED_HOSTS_KIND and row["destination_ref_id"] == v24.TRUSTED_MANAGED_HOSTS_REF_ID:
+        dest_label = v24.TRUSTED_MANAGED_HOSTS_TARGET
+    elif row["destination_ref_kind"] == v24.MANAGED_HOST_GROUP_KIND:
+        gid = row["destination_ref_id"]
+        label = v24.list_ai_managed_host_groups(plane).get(gid, "missing / unavailable")
+        dest_label = "%s%s (%s)" % (v24.MANAGED_HOST_GROUP_PREFIX, gid, label)
     perm_label = "-"
     if row["permission_ref_kind"] == "permission_object" and row["permission_ref_id"]:
         perm = plane.conn.execute(
@@ -1533,20 +1537,19 @@ def handle_set(plane: ControlPlane, rest: list[str]) -> Optional[int]:
     if res == "ai-access":
         _require_server(plane, "AI Access policy")
         if len(rest) < 2:
-            raise ControlPlaneError("Usage: set ai-access <RULE> ...")
+            from drlink_v24_wizard import run_wizard
+            return run_wizard(plane, "ai-access", None)
         name = rest[1]
         extra = rest[2:]
         if not extra:
-            if not _guided_create_available():
-                return None
             from drlink_v24_wizard import run_wizard
 
             return run_wizard(plane, "ai-access", name)
         kv = v24.parse_kv_tokens(
             extra,
-            allowed={"mode", "source", "destination", "permission", "paths", "enabled"},
+            allowed={"source", "destination", "permission", "paths", "enabled"},
             resource="AI Access",
-            allowed_hint="source, destination, permission, paths, mode, enabled|disabled",
+            allowed_hint="source, destination, permission, paths, enabled|disabled",
         )
         enabled = None
         if "enabled" in kv:
@@ -1560,7 +1563,6 @@ def handle_set(plane: ControlPlane, rest: list[str]) -> Optional[int]:
             v24.set_ai_access_rule,
             plane,
             name,
-            mode=kv.get("mode"),
             source=kv.get("source"),
             destination=kv.get("destination"),
             permission=kv.get("permission"),
@@ -1572,14 +1574,19 @@ def handle_set(plane: ControlPlane, rest: list[str]) -> Optional[int]:
             return 1
         sys.stdout.write("AI Access rule set: %s\n" % name)
         return 0
+    if res == "ai-mcp":
+        _require_server(plane, "AI MCP Setup")
+        if len(rest) != 1:
+            raise ControlPlaneError("Usage: set ai-mcp")
+        from drlink_v24_wizard import run_ai_mcp_setup
+        return run_ai_mcp_setup(plane)
     if res == "ai-identity":
         _require_server(plane, "AI Identities")
-        if len(rest) < 2:
-            raise ControlPlaneError("Usage: set ai-identity <NAME>")
-        name = rest[1]
         from drlink_v24_wizard import run_wizard
-
-        return run_wizard(plane, "ai-identity", name)
+        if len(rest) >= 3:
+            from drlink_control_cli import _ai_identity_action
+            return _ai_identity_action(plane, rest[1], rest[2:])
+        return run_wizard(plane, "ai-identity", rest[1] if len(rest) == 2 else None)
     if res == "remote-service":
         _require_agent(plane)
         if len(rest) < 2:
@@ -1626,9 +1633,13 @@ def handle_unset(plane: ControlPlane, rest: list[str]) -> Optional[int]:
         _require_server(plane, _policy_resource_label(res))
         from drlink_control_cli import _run
 
+        if len(rest) != 2:
+            raise ControlPlaneError("Usage: unset %s policy" % res)
+        if res == "ai-access":
+            sys.stdout.write("Reset ALL AI Access Rules; AI Identities and permission objects are retained. To delete a single Rule, use unset ai-access <RULE>.\n")
         result = _run(v24.reset_access_policy, plane, res)
         if isinstance(result, dict) and result.get("cancelled"):
-            return 1
+            return 0 if res == "ai-access" else 1
         sys.stdout.write("%s policy reset.\nEffective access: %s\n" % (res, "DENY" if res in ("internet-access", "ai-access") else "ALLOW"))
         return 0
     if res == "network-object":
@@ -1709,16 +1720,11 @@ def handle_unset(plane: ControlPlane, rest: list[str]) -> Optional[int]:
         if len(rest) < 2:
             raise ControlPlaneError("Usage: unset ai-access <RULE>|policy")
         if len(rest) >= 3:
-            return None
+            raise ControlPlaneError("Usage: unset ai-access <RULE>|policy")
         row = plane.conn.execute(
             "SELECT * FROM ai_policy_rules WHERE name = ? COLLATE NOCASE", (rest[1],)
         ).fetchone()
         if not row:
-            cap = plane.conn.execute(
-                "SELECT id FROM ai_access_rules WHERE name = ? COLLATE NOCASE", (rest[1],)
-            ).fetchone()
-            if cap is not None:
-                return None
             raise ControlPlaneError(v24.cli_error("Rule '%s' was not found." % rest[1]))
         from drlink_control_cli import _run
 

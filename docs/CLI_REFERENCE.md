@@ -1,6 +1,6 @@
 # Data Relay Link — CLI Reference
 
-> **Status:** v2.4 active
+> **Status:** AI Access UX redesign target; runtime implementation and qualification pending
 > **Primary CLI:** `drlink`
 > **Authoritative behavior:** `docs/DATA_RELAY_LINK_CLI_AI_MASTER_v2.4_FINAL.md`
 
@@ -136,20 +136,29 @@ set internet-access <RULE>
 set internet-access enabled
 set internet-access disabled
 
+set ai-mcp
 set ai-identity <IDENTITY>
+set ai-identity <IDENTITY> approve <PENDING-ID>
+set ai-identity <IDENTITY> deny <PENDING-ID>
+set ai-identity <IDENTITY> rotate
+set ai-identity <IDENTITY> revoke
+set ai-identity <IDENTITY> authentication <static-bearer|oauth>
+set ai-identity <IDENTITY> oauth-redirect <URI>
 
 set permission-object <PERMISSION>
 set permission-group <GROUP>
 
+set ai-access
 set ai-access <RULE>
 set ai-access enabled
 set ai-access disabled
 
-set mcp-tls hostname <FQDN>
-set mcp-tls mode <auto-acme|user-certificate>
-set mcp-tls contact-email <EMAIL>
-set mcp-tls acme-environment <production|staging>
-set mcp-tls acme-directory <URL>
+set server mcp
+set server mcp hostname <FQDN>
+set server mcp mode <auto-acme|user-certificate>
+set server mcp contact-email <EMAIL>
+set server mcp acme-environment <production|staging>
+set server mcp acme-directory <URL>
 ```
 
 **ZT-P0-CONTRACT-20261026 — fixed eight-character entry target (owner revision 2026-11-25).** The customer starts with one OS-native command, one HTTPS authority (FQDN or IP), and one eight-character root-path file locator. Public and private HTTPS use the same target form. No preinstalled DataRelay software, inline configuration, separate enrollment ID, fingerprint, artifact hash, or installer body in the customer command. All subsequent configuration, downloads, verification, installation, recovery and enrollment belong to the multi-stage Bootstrap; their size and count are unrestricted. Issuing the command authorizes one automatic registration by the first valid signed Agent claim. Treat the short locator as a sensitive, expiring bearer capability; it is not the downstream enrollment code. See `docs/ZERO_TOUCH_REGRESSION_CONTROL.md` for exact target templates, the automatic first-claim policy, the explicit initial-transport risk and actual acceptance status. This is a design target, not installed-product qualification.
@@ -173,12 +182,12 @@ set service-group web-services members http,https
 set permission-object read-only permissions host-info,process-read,file-read
 set permission-group operators members read-only,operator
 
-set ai-access allow-read mode whitelist source automation-ai destination ubuntu-prod permission read-only paths '/var/lib/vendor/**' enabled
+set ai-access allow-read source automation-ai destination ubuntu-prod permission read-only paths '/var/lib/vendor/**' enabled
 ```
 
 ## 4. Access Policy commands
 
-First non-interactive Rule in an unconfigured policy must include `mode`.
+First non-interactive Remote Access or Internet Access Rule in an unconfigured policy must include `mode`. AI Access always initializes WHITELIST without a mode field.
 
 Remote Access:
 
@@ -198,23 +207,18 @@ set internet-access github-https mode whitelist source ubuntu-prod destination g
 
 AI Access:
 
-On the first operator-approved OAuth AI Identity, after real PKCE verification,
-DataRelay Link creates the owner MCP access group and an explicit WHITELIST
-rule for signed/trusted enrolled Managed Hosts. This initial owner receives
-all seven MCP capabilities (including file operations, path scope `/*`);
-other authenticated identities remain default-DENY until separately granted.
-The owner rule is auditable as `mcp-owner-full-access`, with permission object
-`mcp-owner-all` and Network Group `mcp-owner-managed-hosts`.
-Revocation and endpoint trust checks remain effective.
+Authentication and authorization are separate. After verified OAuth, offer the reviewed Access Rule wizard; no policy is created if skipped. The optional first Owner profile is explicitly selected and reviewed, including future-host scope, permissions and paths. Other identities remain DENY until separately granted.
 
 ```text
-set ai-access claude-prod mode whitelist source claude destination production-servers permission read-only enabled
-set ai-access allow-read mode whitelist source automation-ai destination ubuntu-prod permission read-only paths '/var/lib/vendor/**',/opt/app/** enabled
+set ai-access claude-prod source claude destination production-servers permission read-only enabled
+set ai-access trusted-hosts source claude destination managed-hosts:trusted permission read-only paths /var/log/** enabled
+set ai-access developers-read source claude destination managed-host-group:developers permission read-only paths /var/log/** enabled
+set ai-access allow-read source automation-ai destination ubuntu-prod permission read-only paths '/var/lib/vendor/**',/opt/app/** enabled
 ```
 
 File permissions (`file-read` / `file-write` / `file-upload` / `file-download`) use rule-bound `paths` scopes. Omit `paths` on edit to preserve existing scopes; use `paths -` or `paths none` to clear. Missing scopes remain fail-closed at runtime (no unrestricted filesystem default).
 
-When Policy Mode already exists, `mode` may be omitted. A conflicting requested mode is rejected.
+For Remote Access and Internet Access, when Policy Mode already exists, `mode` may be omitted. A conflicting requested mode is rejected. AI Access accepts no mode field.
 
 Policy enforcement:
 
@@ -292,11 +296,11 @@ unset permission-group <GROUP>
 unset ai-access <RULE>
 unset ai-access policy
 
-unset mcp-tls
-unset mcp-tls purge
+unset server mcp
+unset server mcp purge
 ```
 
-`unset mcp-tls` clears TLS intent and removes the active public MCP route while retaining DRLink-owned certificate and ACME account material. Active MCP/OAuth connections may be interrupted; the explicit command approves this change without an additional confirmation prompt. Check `system certificate status` and `system diagnostics mcp` afterward. `unset mcp-tls purge` removes that retained material only after interactive y/N confirmation; non-interactive use fails closed.
+`unset server mcp` clears TLS intent and removes the active public MCP route while retaining DRLink-owned certificate and ACME account material. Active MCP/OAuth connections may be interrupted; the explicit command approves this change without an additional confirmation prompt. Check `system certificate status` and `system diagnostics mcp` afterward. `unset server mcp purge` removes that retained material only after interactive y/N confirmation; non-interactive use fails closed.
 
 Referenced Objects/Groups/Identities/Managed Hosts are protected from deletion until references are removed.
 
@@ -362,11 +366,6 @@ system certificate renew
 system certificate status
 system certificate preflight
 
-system credential rotate ai-identity <IDENTITY>
-system credential revoke ai-identity <IDENTITY>
-system credential configure ai-identity <IDENTITY> authentication <static-bearer|oauth>
-system credential approve-oauth <PENDING-ID> [AI-IDENTITY]
-system credential deny-oauth <PENDING-ID>
 
 system update product
 system update engine
@@ -389,7 +388,7 @@ verification. A heartbeat alone never establishes service health.
 `system status` is the detailed Server read-only view. In addition to runtime/control-plane health, it shows the current public hostname, bootstrap hostname, Linux/macOS Agent installer source, and Windows Agent installer source, including their automatic/default fallback semantics. `show status` remains the role-aware summary.
 
 
-`system certificate status` is the single public MCP TLS/certificate status surface. Configure TLS intent with `set mcp-tls ...`; there is no separate MCP TLS status read command.
+`system certificate status` is the single public MCP TLS/certificate status surface. Configure TLS intent with `set server mcp ...`; there is no separate MCP TLS status read command.
 
 The explicit `system certificate issue`, `import` or `renew` command authorizes
 activation and required service changes without another confirmation prompt.
@@ -525,7 +524,12 @@ An existing Remote Service cannot change in place across standard TCP and Fixed 
 
 ## 13. AI MCP Setup
 
-The canonical guided-menu target is `ai-mcp` (AI MCP Setup): `Set up and manage AI MCP connections`. Use it for MCP Server, MCP Bridge and AI service connection setup. AI Access remains the authorization function. The following existing action-first commands operate on the AI Identity security resource, not the guided menu:
+The canonical guided-menu target is `set ai-mcp` (AI MCP Setup): `Set up and manage AI MCP connections`. Use it for MCP Server, MCP Bridge and AI service connection setup. AI Access remains the authorization function. The following existing action-first commands operate on the AI Identity security resource, not the guided menu:
+
+### Beginner-first AI Access UX (2026-11-25 target)
+
+The single workflow specification is [AI_ACCESS_MCP.md](AI_ACCESS_MCP.md). Managed Hosts owns enrollment; AI MCP Setup manages infrastructure and connections; AI Identity retains verified authentication and credential lifecycle; AI Access Rules own Source → Destination → Permission authorization; System owns shared MCP settings and certificates. AI MCP Setup checks readiness and uses that same settings flow only when necessary, then optionally opens the separate Access Rule wizard. No automatic privilege grant from OAuth or first connection; explicitly reviewed Owner scope is optional. Basic permissions use built-in profiles; custom Objects/Groups are advanced. AI Access mode is fixed WHITELIST, not an operator input. Preserve existing state and all fail-closed controls. No duplicate public command/menu paths. These are target requirements, not installed-product evidence.
+
 
 ```text
 set ai-identity <NAME>
@@ -538,7 +542,7 @@ Interactive AI binds through OAuth Authorization Code verification.
 
 Automation / Custom AI binds through OAuth Client Credentials verification.
 
-Authentication is distinct from AI Access authorization.
+Authentication is distinct from AI Access authorization. `show ai-identity <NAME>` includes the configured AI Access Rules for that Identity; actual authorization is evaluated per call. Copy the browser Pending request ID into the guided CLI, approve the reviewed request, then select Retry in the browser. File scope examples: `/**`, `/home/**`, `/home/**,/opt/**`. Bare `set ai-access` opens the named Rule wizard; `set ai-access enabled/disabled` controls the whole policy. A named Rule edits the existing rule and replaces its destination if changed. `unset ai-access <RULE>` removes only that rule; `unset ai-access policy` resets all rules after confirmation, leaving DENY ALL.
 
 ## 14. ConfigurationBundle
 

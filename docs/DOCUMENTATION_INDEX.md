@@ -5,13 +5,13 @@
 
 ## Authority order
 
-When documents disagree, use this order:
+Separate intended contract from observed implementation. For intended product behavior, use the domain authority below; for what is installed or implemented, use exact candidate source, runtime and evidence. A mismatch is a tracked defect or explicitly marked pending design, not permission to revive an old behavior.
 
 1. `PRODUCT_MASTER.md` — product charter and product-level decisions.
 2. `DATA_RELAY_LINK_CLI_AI_MASTER_v2.4_FINAL.md` — canonical CLI and AI-assisted configuration behavior.
 3. `VERSION_POLICY.md` — version, release-channel, provenance, tag, and release-line rules.
 4. Area-specific canonical documents listed below.
-5. Exact-HEAD implementation and retained qualification evidence.
+5. Generated views and examples must derive from those contracts and exact-candidate code.
 
 Historical documents and internal storage names never override the public SSOT.
 
@@ -33,7 +33,7 @@ External copies, Project/chat attachments, exported snapshots, and same-named do
 | Feature ↔ CLI/AI ↔ Operator Workflow reconciliation | `CLI_FEATURE_SCENARIO_RECONCILIATION.md` — `FCS_CLI_ONLY` (13 Direct) or `FCS_FULL` (15 with AI/MCP) |
 | Exhaustive direct CLI audit | `CLI_EXHAUSTIVE_AUDIT.md` |
 | Exhaustive AI-assisted command audit | `AI_ASSISTED_COMMAND_EXHAUSTIVE_AUDIT.md` |
-| Internal control-plane/schema history | `CONTROL_PLANE_ARCHITECTURE.md` |
+| Internal control-plane architecture | `CONTROL_PLANE_ARCHITECTURE.md` |
 
 ## Operator lifecycle documents
 
@@ -65,6 +65,8 @@ These are executable audit contracts. An unqualified trigger starts execution im
 
 ## Qualification and evidence documents
 
+`MCP_BRIDGE_DISPATCH_DESIGN.md`, `ISSUE165_INTEGRATION.md`, and `F001_F007_RUNTIME_CONTINUITY_REMEDIATION.md` contain bounded investigation or candidate evidence. They are not current runtime/configuration oracles. Use exact HEAD source and the active roadmap for current behavior.
+
 These documents are useful for qualification but do not redefine product semantics:
 
 - [`FULL_USER_E2E_SCENARIOS.md`](FULL_USER_E2E_SCENARIOS.md) — canonical real-user black-box product-quality contract. It resolves deterministically from `datarelay-labs/datarelay-link/docs/FULL_USER_E2E_SCENARIOS.md`, starts immediately on an unqualified trigger, exercises novice/manual-free user workflows with real traffic/lifecycle/failure/recovery/performance/concurrency, accumulates findings without pausing, and updates the active Work Packet once after the run is exhausted.
@@ -75,11 +77,11 @@ These documents are useful for qualification but do not redefine product semanti
 
 Together, a clean `CLI_FEATURE_SCENARIO_RECONCILIATION=PASS` and `FULL_USER_E2E=PASS` on the same supported product candidate constitute `PRODUCT_QUALITY_CLOSURE=PASS`: no known in-scope product defect and no unresolved actionable product/usability improvement remains under the two exhaustive quality contracts. This is not a release declaration; `RELEASE_VALIDATION.md` and `RELEASE_CHECKLIST.md` still govern the existing release procedure.
 
-## Historical / internal compatibility documents
+## Internal implementation, migration and evidence documents
 
 - `OCI_ACCEPTANCE.md` — retired v2.1.1-era operator plan kept only as a tombstone for old links; it is not executable qualification and contains no current CLI contract.
 
-- `SCHEMA_V2_DEPLOYMENT.md` — historical JSON registry schema-v2 deployment material. It is not v2.4 control-plane authority.
+- `SCHEMA_V2_DEPLOYMENT.md` — redirect to the current SQLite deployment and upgrade authorities.
 - `FRP_UPGRADE.md` — Relay Engine/upstream compatibility and migration detail. FRP/internal helper names in this file are not public Data Relay Link CLI vocabulary.
 - `WINDOWS_CLIENT_DESIGN.md` — platform design notes; public command behavior remains governed by the CLI/AI Master.
 - `PRIVILEGE_SEPARATION_DEFERRED.md` — deferred privilege-separation record for the current v2.4 target. v2.3.1 was not manufactured.
@@ -119,7 +121,7 @@ Engineering System managed-adoption files such as `AGENTS.md` and `.engineering/
 
 ## Documentation maintenance rule
 
-A product behavior or user-facing terminology change is incomplete until the affected canonical documents are updated in place, superseded menu wording is removed from current guidance, and CLI/AI Master, derived references, runtime help/menu and relevant regression expectations agree. AI MCP Setup is the guided configuration label; AI Identity remains the authenticated security resource.
+A product behavior change is incomplete until the affected canonical document, source, catalog/help, installer and generated artifacts, and relevant regression/acceptance tests are updated in place in the same candidate, with superseded public wording removed. Do not silently backport an unmerged design as installed behavior. Remove superseded executable examples and redundant design sections rather than leaving them as alternatives. Keep historical release/evidence and required migration fixtures immutable; never use them as current product oracles. Regenerate derived CLI-only scenario inventory and checksums whenever their inputs change.
 
 A historical/internal document may retain implementation names only when the document clearly labels them as internal or historical and does not present them as current public CLI.
 

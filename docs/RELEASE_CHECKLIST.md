@@ -259,7 +259,7 @@ CHATGPT_OWNER_UI_ALLOW_DENY=
 
 ## 14.1 ConfigurationBundle / AI-assisted configuration
 
-- [ ] `apiVersion: drlink.datarelay.run/v1alpha1` / `kind: ConfigurationBundle` schema validated.
+- [ ] canonical `configurationBundle` mapping with `context: server|agent` validated; unsupported top-level formats rejected without mutation.
 - [ ] file input validated.
 - [ ] standard-input copy/paste validated.
 - [ ] no top-level `apply` root introduced; stable direct roots unchanged.
@@ -286,13 +286,11 @@ CHATGPT_OWNER_UI_ALLOW_DENY=
 - [ ] expired/revoked tickets release capacity without disconnecting enrolled clients.
 - [ ] YAML/CLI/API cannot override server ticket ceilings.
 
-## 15. Legacy model removal
+## 15. Single current product model
 
 - [ ] `registry.json` no longer authoritative.
 - [ ] `egress-control.json` no longer authoritative.
-- [ ] no public `service-profile` canonical resource.
-- [ ] no public `internet-profile` canonical resource.
-- [ ] no legacy ACL model presented as canonical.
+- [ ] only current typed Object, Group and Access Policy resources are accepted and discoverable; no compatibility-only alternate public mutation path.
 - [ ] old v2.4 MCP exclusion removed from version/release code.
 - [ ] release manifest schema no longer forces `mcp_included=false` for 2.4.x.
 - [ ] release manifest generator/checkers/tests aligned to target.
@@ -310,6 +308,8 @@ CHATGPT_OWNER_UI_ALLOW_DENY=
 - [ ] root help, `?`, Tab, menu, `help commands`, command-specific help, and errors expose the same supported surface; no supported command requires memorization.
 - [ ] every behavior-changing setting/subcommand has an explicit disposition; family-level parsing alone does not count as coverage.
 - [ ] no duplicate public mutation path exists for the same operation without an explicit product reason.
+- [ ] current product, architecture, release checklist and generated tests use one contract; the legacy policy model and retired bundle schema are not executable or prescribed.
+- [ ] beginner AI Access target is implemented and verified (including first/second AI, independent host enrollment, explicitly reviewed owner scope, native server-self boundary, and deny-by-default).
 - [ ] unreleased/greenfield v2.4 exposes no compatibility-only root-bypass alias or executable obsolete hidden grammar.
 - [ ] installer completion text, enrollment instructions, diagnostics, update recommendations, and recovery text point only to current canonical commands or exact documented installer actions.
 - [ ] active documentation examples use canonical public grammar or an explicitly justified installer-only lifecycle.

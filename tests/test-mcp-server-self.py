@@ -44,10 +44,10 @@ class ServerSelfMCPTest(unittest.TestCase):
         return buf.getvalue()
 
     def authorize_host_info(self):
-        self.cli("system", "credential", "rotate", "ai-identity", self.principal["name"])
+        self.cli("set", "ai-identity", self.principal["name"], "rotate")
         self.cli("set", "permission-object", "server-host-info", "permissions", "host-info")
         self.cli("set", "ai-access", "self-read-only",
-                 "mode", "whitelist", "source", self.principal["name"],
+                 "source", self.principal["name"],
                  "destination", "server:self", "permission", "server-host-info", "enabled")
 
     def test_server_self_bundle_export_restore_and_reapply_preserve_authorization(self):
@@ -228,11 +228,10 @@ class ServerSelfMCPTest(unittest.TestCase):
             self.assertIn("self-read-only", test_decision)
 
     def test_local_executor_requires_independent_flag_scope_and_policy(self):
-        self.cli("system", "credential", "rotate", "ai-identity", self.principal["name"])
+        self.cli("set", "ai-identity", self.principal["name"], "rotate")
         self.cli("set", "permission-object", "server-dev-perms", "permissions",
                  "file-read,file-write,command-exec")
-        self.cli("set", "ai-access", "self-dev-policy", "mode", "whitelist",
-                 "source", self.principal["name"], "destination", "server:self",
+        self.cli("set", "ai-access", "self-dev-policy", "source", self.principal["name"], "destination", "server:self",
                  "permission", "server-dev-perms", "enabled")
         v24.set_ai_policy_path_scopes(self.plane, "self-dev-policy", [self.root + "/**"])
         test_file = self.root + "/testfile.txt"
@@ -274,10 +273,9 @@ class ServerSelfMCPTest(unittest.TestCase):
     def test_scoped_server_run_requires_exec_permission_and_local_flags(self):
         self.assertTrue(any(tool[0] == "server_run" and tool[4]["destructiveHint"]
                             for tool in TOOL_DEFS))
-        self.cli("system", "credential", "rotate", "ai-identity", self.principal["name"])
+        self.cli("set", "ai-identity", self.principal["name"], "rotate")
         self.cli("set", "permission-object", "server-test-command", "permissions", "command-exec")
-        self.cli("set", "ai-access", "server-test-runner", "mode", "whitelist",
-                 "source", self.principal["name"], "destination", "server:self",
+        self.cli("set", "ai-access", "server-test-runner", "source", self.principal["name"], "destination", "server:self",
                  "permission", "server-test-command", "enabled")
         v24.set_ai_policy_path_scopes(self.plane, "server-test-runner", [self.root + "/**"])
         args = {"cwd": self.root, "argv": ["python3", "tests/test-example.py"]}
@@ -315,10 +313,10 @@ class ServerSelfMCPTest(unittest.TestCase):
         # An imported/legacy object using a reserved Server selector must
         # never confer server-local privileges through name matching.
         self.plane.set_object_type("old-server-alias", "host")
-        self.cli("system", "credential", "rotate", "ai-identity", self.principal["name"])
+        self.cli("set", "ai-identity", self.principal["name"], "rotate")
         self.cli("set", "permission-object", "old-host-info", "permissions", "host-info")
         self.cli("set", "ai-access", "old-object-rule",
-                 "mode", "whitelist", "source", self.principal["name"],
+                 "source", self.principal["name"],
                  "destination", "old-server-alias", "permission", "old-host-info", "enabled")
         self.plane.conn.execute("UPDATE objects SET name = ? WHERE name = ?",
                                 ("server:self", "old-server-alias"))

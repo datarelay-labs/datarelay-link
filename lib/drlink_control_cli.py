@@ -723,50 +723,6 @@ def _show(plane: ControlPlane, rest):
         if p["description"]:
             sys.stdout.write("Description         : %s\n" % p["description"])
         return 0
-    if res == "ai-access":
-        if len(rest) == 1:
-            sys.stdout.write("%-4s %-18s %-16s %-20s %-8s %s\n" % ("#", "NAME", "PRINCIPAL", "TARGETS", "ACTION", "STATUS"))
-            for row in plane.conn.execute("SELECT * FROM ai_access_rules ORDER BY position"):
-                view = plane._ai_rule_view(row)
-                sys.stdout.write(
-                    "%-4s %-18s %-16s %-20s %-8s %s\n"
-                    % (
-                        view["display_position"],
-                        view["name"],
-                        view["principal"] or "-",
-                        ",".join(view["targets"])[:20],
-                        view["action"].upper(),
-                        "enabled" if view["enabled"] else "disabled",
-                    )
-                )
-            sys.stdout.write("\nImplicit Default                                   DENY\n")
-            return 0
-        view = plane._ai_rule_view(plane._require_ai_rule(rest[1]))
-        if len(rest) >= 3 and rest[2] == "impact":
-            sys.stdout.write(
-                "AI Access impact for %s\nPrincipal : %s\nTargets   : %s\nCapabilities: %s\nAction    : %s\nEnabled   : %s\n"
-                % (
-                    view["name"],
-                    view["principal"] or "-",
-                    ",".join(view["targets"]) or "-",
-                    ",".join(view["capabilities"]) or "-",
-                    view["action"].upper(),
-                    "yes" if view["enabled"] else "no",
-                )
-            )
-            if "exec" in view["capabilities"]:
-                sys.stdout.write(
-                    "\nexec can modify the target through shell/OS permissions.\n"
-                    "A true read-only AI role requires exec disabled.\n"
-                )
-            return 0
-        if view["capabilities"] and "exec" in view["capabilities"] and "write_file" not in view["capabilities"]:
-            sys.stdout.write(
-                "exec can modify the target through shell/OS permissions.\n"
-                "A true read-only AI role requires exec disabled.\n\n"
-            )
-        sys.stdout.write(json.dumps(view, indent=2) + "\n")
-        return 0
     if res == "ai-activity":
         principal = None
         endpoint = None
@@ -785,10 +741,6 @@ def _show(plane: ControlPlane, rest):
             return 0
         for row in rows:
             sys.stdout.write("%s %s %s\n" % (row["id"], row["kind"], row["status"]))
-        return 0
-    if res == "mcp-tls":
-        view = mcp_tls.status_view(plane, plane.root)
-        sys.stdout.write(mcp_tls.format_status(view))
         return 0
     raise SystemExit("Unknown show resource.")
 
@@ -1000,43 +952,6 @@ def _set(plane: ControlPlane, rest, client_sel):
             _run(plane.set_ai_principal, rest[1], enabled=True)
             return 0
         raise SystemExit("Unknown ai-principal setting")
-    if res == "ai-access":
-        _need(rest, 2, "set ai-access <RULE>")
-        if len(rest) == 2:
-            _run(plane.set_ai_rule, rest[1])
-            return 0
-        prop = rest[2]
-        if prop == "principal":
-            _run(plane.set_ai_rule_principal, rest[1], rest[3])
-            return 0
-        if prop == "target":
-            _run(plane.set_ai_rule_target, rest[1], rest[3], rest[4])
-            return 0
-        if prop == "capability":
-            _run(plane.set_ai_rule_capability, rest[1], rest[3])
-            return 0
-        if prop == "path":
-            _run(plane.set_ai_rule_path, rest[1], rest[3])
-            return 0
-        if prop == "exec-timeout":
-            _run(plane.set_ai_rule_exec_timeout, rest[1], int(rest[3]))
-            return 0
-        if prop == "action":
-            _run(plane.set_ai_rule_action, rest[1], rest[3])
-            return 0
-        if prop == "description":
-            _run(plane.set_ai_rule_description, rest[1], " ".join(rest[3:]))
-            return 0
-        if prop == "enabled":
-            _run(plane.set_ai_rule_enabled, rest[1], True)
-            return 0
-        if prop == "before":
-            _run(plane.move_ai_rule, rest[1], before=rest[3])
-            return 0
-        if prop == "after":
-            _run(plane.move_ai_rule, rest[1], after=rest[3])
-            return 0
-        raise SystemExit("Unknown ai-access setting")
     if res == "enrollment":
         kind = rest[1] if len(rest) > 1 else "manual"
         def write():
@@ -1051,33 +966,97 @@ def _set(plane: ControlPlane, rest, client_sel):
         _run(plane._mutate, "set enrollment %s" % kind, "create enrollment", write)
         sys.stdout.write("Enrollment created. Secret is not redisplayed.\n")
         return 0
-    if res == "mcp-tls":
-        return _set_mcp_tls(plane, rest[1:])
+    if rest[:2] == ["server", "mcp"]:
+        v24cli._require_server(plane, "MCP Server settings")
+        return _set_mcp_tls(plane, rest[2:])
     raise SystemExit("Unknown set resource.")
 
 
+def _guide_mcp_server(plane: ControlPlane, *, io=None) -> int:
+    """Review and configure shared MCP server settings; never change mode silently."""
+    ask = io.ask if io is not None else input
+    emit = io.write if io is not None else sys.stdout.write
+    def confirm(message):
+        return io.ask(message + " ").strip().lower() in ("y", "yes") if io is not None else _confirm_from_stdin(message)
+    try:
+        mcp_tls.require_public_frontend(plane.root)
+        view = mcp_tls.status_view(plane, plane.root)
+        state = mcp_tls.load_state(plane)
+        emit(mcp_tls.format_status(view))
+        if (view.get("frontend_available") and view.get("cloud_compatible")
+                and view.get("certificate") in (mcp_tls.STATUS_VALID, mcp_tls.STATUS_RENEWAL_DUE)
+                and view.get("url", "").startswith("https://")):
+            emit("Existing certificate retained. Check actual connectivity with system diagnostics mcp.\n")
+            return 0
+        host = ask("MCP public hostname [%s]: " % (state.get("hostname") or "required")).strip()
+        host = host or state.get("hostname") or ""
+        if not host:
+            raise SystemExit("MCP public hostname is required.")
+        host = mcp_tls.canonicalize_hostname(host)
+        selection = ask("Certificate: 1) Automatic public certificate  2) Existing certificate [1]: ").strip() or "1"
+        if selection not in ("1", "2"):
+            raise SystemExit("Invalid certificate choice. No changes were applied.")
+        mode = "auto-acme" if selection == "1" else "user-certificate"
+        email = ask("ACME contact email (optional): ").strip() if selection == "1" else None
+        cert = key = chain = None
+        if selection == "2":
+            cert = ask("Certificate file: ").strip()
+            key = ask("Private key file: ").strip()
+            chain = ask("Chain file (optional): ").strip() or None
+            if not cert or not key:
+                raise SystemExit("Certificate and key files are required. No changes were applied.")
+        emit("Review MCP Server: hostname=%s, certificate=%s\n" % (host, mode))
+        emit("Activating a different certificate may interrupt MCP/OAuth connections.\n")
+        if not confirm("Apply and activate? [y/N]:"):
+            emit("Cancelled. No changes were applied.\n")
+            return 0
+        preflight = mcp_tls.preflight_hostname(host, require_public_dns=selection == "1")
+        if not preflight.get("ok"):
+            emit(json.dumps(preflight, indent=2) + "\nNo changes were applied.\n")
+            return 1
+        mcp_tls.configure_intent(plane, hostname=host, mode=mode, contact_email=email,
+                                 acme_environment="production" if selection == "1" else None)
+        try:
+            if selection == "1":
+                mcp_tls.issue_and_activate(plane, plane.root)
+            else:
+                mcp_tls.import_user_certificate(plane, plane.root, cert_path=cert,
+                                                key_path=key, chain_path=chain)
+        except McpTlsError as exc:
+            sys.stderr.write("MCP intent saved, activation failed: %s\n" % exc)
+            return 1
+        emit(mcp_tls.format_status(mcp_tls.status_view(plane, plane.root)))
+        return 0
+    except McpTlsError as exc:
+        raise SystemExit(str(exc)) from exc
+
+
 def _set_mcp_tls(plane: ControlPlane, rest):
+    if not rest and _stdin_is_interactive():
+        return _guide_mcp_server(plane)
     if not rest:
         raise SystemExit(
-            "Missing mcp-tls setting.\n\n"
+            "Missing MCP Server setting.\n\n"
             "Usage:\n"
-            "  set mcp-tls hostname <fqdn>\n"
-            "  set mcp-tls mode auto-acme|user-certificate|private-ca\n"
-            "  set mcp-tls contact-email <email>\n"
-            "  set mcp-tls acme-environment staging|production\n\n"
+            "  set server mcp hostname <fqdn>\n"
+            "  set server mcp mode auto-acme|user-certificate|private-ca\n"
+            "  set server mcp contact-email <email>\n"
+            "  set server mcp acme-environment staging|production\n\n"
             "Default public-cloud mode is AUTO_ACME.\n"
             "PRIVATE_CA is for internal/test clients that trust the DRLink CA;\n"
             "it is not the default ChatGPT/Claude cloud connector path.\n"
             "After configure: system certificate issue|import|renew"
         )
     prop = rest[0]
+    if len(rest) != 2:
+        raise SystemExit("Usage: set server mcp <SETTING> <VALUE>")
     try:
         mcp_tls.require_public_frontend(plane.root)
         if prop == "hostname":
-            _need(rest, 2, "set mcp-tls hostname <fqdn>")
+            _need(rest, 2, "set server mcp hostname <fqdn>")
             state = mcp_tls.configure_intent(plane, hostname=rest[1])
         elif prop == "mode":
-            _need(rest, 2, "set mcp-tls mode auto-acme|user-certificate|private-ca")
+            _need(rest, 2, "set server mcp mode auto-acme|user-certificate|private-ca")
             state = mcp_tls.configure_intent(plane, mode=rest[1])
             if state.get("mode") == mcp_tls.MODE_PRIVATE_CA:
                 sys.stdout.write(
@@ -1085,16 +1064,16 @@ def _set_mcp_tls(plane: ControlPlane, rest):
                     "Cloud-hosted Remote MCP clients that do not trust this CA may reject it.\n"
                 )
         elif prop in ("contact-email", "email"):
-            _need(rest, 2, "set mcp-tls contact-email <email>")
+            _need(rest, 2, "set server mcp contact-email <email>")
             state = mcp_tls.configure_intent(plane, contact_email=rest[1])
         elif prop in ("acme-environment", "acme-env"):
-            _need(rest, 2, "set mcp-tls acme-environment staging|production")
+            _need(rest, 2, "set server mcp acme-environment staging|production")
             state = mcp_tls.configure_intent(plane, acme_environment=rest[1])
         elif prop in ("acme-directory", "acme-directory-url"):
-            _need(rest, 2, "set mcp-tls acme-directory <url>")
+            _need(rest, 2, "set server mcp acme-directory <url>")
             state = mcp_tls.configure_intent(plane, acme_directory_url=rest[1])
         else:
-            raise SystemExit("Unknown mcp-tls setting: %s" % prop)
+            raise SystemExit("Unknown MCP Server setting: %s" % prop)
     except McpTlsError as exc:
         raise SystemExit(str(exc)) from exc
     sys.stdout.write("MCP TLS intent updated.\n")
@@ -1193,38 +1172,19 @@ def _unset(plane: ControlPlane, rest, client_sel):
             return 0
         _run(plane.unset_ai_principal, rest[1])
         return 0
-    if res == "ai-access":
-        name = rest[1]
-        if len(rest) == 2:
-            _run(plane.unset_ai_rule, name)
-            return 0
-        if rest[2] == "target":
-            _run(plane.unset_ai_rule_target, name, rest[3], rest[4])
-            return 0
-        if rest[2] == "capability":
-            _run(plane.unset_ai_rule_capability, name, rest[3])
-            return 0
-        if rest[2] == "path":
-            _run(plane.unset_ai_rule_path, name, rest[3])
-            return 0
-        if rest[2] == "exec-timeout":
-            _run(plane.unset_ai_rule_exec_timeout, name)
-            return 0
-        if rest[2] == "enabled":
-            _run(plane.set_ai_rule_enabled, name, False)
-            return 0
-        raise SystemExit("Unknown unset ai-access")
     if res == "enrollment":
         plane.conn.execute("DELETE FROM enrollments WHERE id = ?", (rest[1],))
         return 0
-    if res == "mcp-tls":
+    if rest[:2] == ["server", "mcp"]:
+        v24cli._require_server(plane, "MCP Server settings")
+        rest = rest[1:]
         if len(rest) > 2 or (len(rest) == 2 and rest[1] != "purge"):
-            raise SystemExit("Usage:\n  unset mcp-tls\n  unset mcp-tls purge")
+            raise SystemExit("Usage:\n  unset server mcp\n  unset server mcp purge")
         purge = len(rest) == 2
         if purge:
             if not _stdin_is_interactive():
                 sys.stderr.write(
-                    "ERROR: unset mcp-tls purge requires interactive confirmation.\n"
+                    "ERROR: unset server mcp purge requires interactive confirmation.\n"
                     "This removes DRLink-owned MCP TLS certificate and ACME account material.\n"
                     "Run interactively and answer y.\n"
                     "No changes were applied.\n"
@@ -1244,7 +1204,7 @@ def _unset(plane: ControlPlane, rest, client_sel):
         if purge:
             sys.stdout.write("DRLink-owned certificate and ACME account material removed.\n")
         else:
-            sys.stdout.write("Certificate files retained (use unset mcp-tls purge to remove secrets).\n")
+            sys.stdout.write("Certificate files retained (use unset server mcp purge to remove secrets).\n")
         return 0
     raise SystemExit("Unknown unset resource.")
 
@@ -1278,12 +1238,6 @@ def _test(plane: ControlPlane, rest):
                 },
             )
         )
-        return 0
-    if rest[0] == "ai-access":
-        _need(rest, 4, "test ai-access <PRINCIPAL> <ENDPOINT> <CAPABILITY> [OPERAND]")
-        operand = rest[4] if len(rest) > 4 else None
-        result = plane.evaluate_ai_access(rest[1], rest[2], rest[3], operand)
-        sys.stdout.write(plane.format_ai_explain(result))
         return 0
     raise SystemExit(
         "Unknown test target.\n\n"
@@ -1509,83 +1463,43 @@ def _system(plane: ControlPlane, rest):
     if rest[0] == "revoke" and len(rest) >= 3 and rest[1] == "client":
         _run(plane.remove_client, rest[2], revoke_only=True)
         return 0
-    if rest[0] == "credential":
-        if len(rest) < 2:
-            raise SystemExit(
-                "usage: system credential rotate|revoke|configure|approve-oauth|deny-oauth ..."
-            )
-        if rest[1] == "approve-oauth":
-            # system credential approve-oauth <PENDING-ID> [AI-IDENTITY]
-            args = rest[2:]
-            if not args:
-                raise SystemExit(
-                    "usage: system credential approve-oauth <PENDING-ID> [AI-IDENTITY]\n"
-                    "DCR/CIMD requests require AI-IDENTITY."
-                )
-            if len(args) > 2:
-                raise SystemExit(
-                    "unexpected argument: %s\n"
-                    "usage: system credential approve-oauth <PENDING-ID> [AI-IDENTITY]" % args[2]
-                )
-            pending_id = args[0]
-            principal = args[1] if len(args) > 1 else None
-            _run(plane.approve_oauth_pending, pending_id, principal)
-            sys.stdout.write(
-                "Authorization approved. The browser continues via /oauth/continue to the registered redirect.\n"
-            )
-            sys.stdout.write(
-                "The authorization code is delivered only through the one-time browser continuation redirect.\n"
-            )
-            return 0
-        if rest[1] == "deny-oauth":
-            args = rest[2:]
-            if len(args) != 1:
-                raise SystemExit("usage: system credential deny-oauth <PENDING-ID>")
-            pending_id = args[0]
-            _run(plane.deny_oauth_pending, pending_id)
-            sys.stdout.write(
-                "Authorization denied. The browser continues via /oauth/continue with access_denied.\n"
-            )
-            return 0
-        if len(rest) < 4:
-            raise SystemExit(
-                "usage: system credential rotate|revoke|configure ai-identity <NAME> ..."
-            )
-        noun = rest[2]
-        if noun != "ai-identity":
-            raise SystemExit(
-                "usage: system credential rotate|revoke|configure ai-identity <NAME> ..."
-            )
-        if rest[1] == "rotate":
-            result = _run(plane.rotate_ai_credential, rest[3])
-            token = result.get("token") if isinstance(result, dict) else None
-            if token:
-                sys.stdout.write("Credential issued once. Store it now; it will not be shown again.\n")
-                sys.stdout.write("Fingerprint: %s\n" % result.get("fingerprint"))
-                sys.stdout.write("Token: %s\n" % token)
-            return 0
-        if rest[1] == "revoke":
-            _run(plane.revoke_ai_credential, rest[3])
-            sys.stdout.write("Credential revoked.\n")
-            return 0
-        if rest[1] == "configure":
-            principal = rest[3]
-            if len(rest) >= 6 and rest[4] == "authentication":
-                _run(plane.configure_ai_auth, principal, rest[5])
-                sys.stdout.write("Authentication configured.\n")
-                return 0
-            if len(rest) >= 6 and rest[4] == "oauth-redirect":
-                _run(plane.add_oauth_redirect, principal, rest[5])
-                sys.stdout.write("OAuth redirect registered.\n")
-                return 0
-            raise SystemExit(
-                "usage: system credential configure ai-identity <NAME> authentication <static-bearer|oauth>\n"
-                "       system credential configure ai-identity <NAME> oauth-redirect <URI>"
-            )
-        raise SystemExit("Unknown credential operation.")
     if rest[0] == "certificate":
         return _system_certificate(plane, rest[1:])
     raise SystemExit("Unknown system operation.")
+
+
+def _ai_identity_action(plane: ControlPlane, name: str, args: list[str]) -> int:
+    from frp_cli_catalog import ai_identity_action_error
+    error = ai_identity_action_error(["set", "ai-identity", name, *args])
+    if error:
+        raise SystemExit(error)
+    action = args[0]
+    if action == "approve":
+        _run(plane.approve_oauth_pending, args[1], name)
+        sys.stdout.write("Authorization approved. The browser continues via /oauth/continue to the registered redirect.\n")
+        sys.stdout.write("The authorization code is delivered only through the one-time browser continuation redirect.\n")
+    elif action == "deny":
+        _run(plane.deny_oauth_pending, args[1], principal_name=name)
+        sys.stdout.write("Authorization denied. The browser continues via /oauth/continue with access_denied.\n")
+    elif action == "rotate":
+        result = _run(plane.rotate_ai_credential, name)
+        token = result.get("token") if isinstance(result, dict) else None
+        if token:
+            sys.stdout.write("Credential issued once. Store it now; it will not be shown again.\n")
+            sys.stdout.write("Fingerprint: %s\n" % result.get("fingerprint"))
+            sys.stdout.write("Token: %s\n" % token)
+    elif action == "revoke":
+        _run(plane.revoke_ai_credential, name)
+        sys.stdout.write("Credential revoked.\n")
+    elif action == "authentication":
+        _run(plane.configure_ai_auth, name, args[1])
+        sys.stdout.write("Authentication configured.\n")
+    elif action == "oauth-redirect":
+        _run(plane.add_oauth_redirect, name, args[1])
+        sys.stdout.write("OAuth redirect registered.\n")
+    else:
+        raise SystemExit("Unknown AI Identity operation")
+    return 0
 
 
 def _system_certificate(plane: ControlPlane, rest):
@@ -1612,7 +1526,7 @@ def _system_certificate(plane: ControlPlane, rest):
             state = mcp_tls.load_state(plane)
             host = state.get("hostname") or ""
             if not host:
-                raise SystemExit("Configure hostname first: set mcp-tls hostname <fqdn>")
+                raise SystemExit("Configure hostname first: set server mcp hostname <fqdn>")
             require_public = (state.get("mode") or mcp_tls.DEFAULT_PUBLIC_CLOUD_TLS_MODE) == mcp_tls.MODE_AUTO_ACME
             result = mcp_tls.preflight_hostname(host, require_public_dns=require_public)
             sys.stdout.write(json.dumps(result, indent=2) + "\n")

@@ -65,6 +65,31 @@ class WizardCancelAtomicty(unittest.TestCase):
     def _rev(self):
         return self.plane.current_revision()
 
+    def test_ai_mcp_setup_routes_and_cancel_preserve_identity_policy(self):
+        import frp_cli_catalog as catalog
+        import frp_ctl_grammar as grammar
+        rev = self._rev()
+        menu = catalog.render_navigation_menu("server.ai")
+        self.assertIn("AI MCP Setup", menu)
+        self.assertIn("Set up and manage AI MCP connections", menu)
+        self.assertEqual(catalog.navigation_entries("server.ai")[0][-1], "set ai-mcp")
+        self.assertIn("ai-mcp", grammar.completion_candidates("set ", "server", [], {}, []))
+        self.assertNotIn("ai-mcp", grammar.completion_candidates("set ", "client", [], {}, []))
+        self.assertEqual(grammar.match(["set", "ai-mcp"], role="server")["status"], "ok")
+        self.assertNotEqual(grammar.match(["set", "ai-mcp", "extra"], role="server")["status"], "ok")
+        for answers in (["0"], ["3", "0"], ["4"]):
+            scripted = ScriptedIO(answers)
+            set_wizard_io(scripted)
+            with redirect_stdout(io.StringIO()):
+                self.assertEqual(cli.dispatch(["set", "ai-mcp"], root=self.tmp, plane=self.plane), 0)
+            self.assertIn("AI MCP Setup", "".join(scripted.out))
+            self.assertEqual(self._rev(), rev)
+        set_wizard_io(ScriptedIO(["1"]))
+        with mock.patch.object(cli, "_guide_mcp_server", return_value=0) as guide:
+            self.assertEqual(cli.dispatch(["set", "ai-mcp"], root=self.tmp, plane=self.plane), 0)
+            guide.assert_called_once()
+        self.assertEqual(self._rev(), rev)
+
     def test_create_wizard_cancel_no_mutation(self):
         rev = self._rev()
         # type ip, invalid then valid value, review cancel
@@ -383,33 +408,16 @@ class AIIdentityOAuth(unittest.TestCase):
         self.assertEqual(ev["result"], "DENY")
         self.assertEqual(ev["auth"], "UNAUTHENTICATED")
 
-    def test_wizard_ai_identity_auth_code(self):
-        class ExternalApproveIO(ScriptedIO):
-            def __init__(self, plane, name, answers):
-                super().__init__(answers)
-                self.plane = plane
-                self.name = name
-
-            def ask(self, prompt):
-                text = str(prompt or "")
-                if "Authorization code" in text:
-                    row = self.plane.conn.execute(
-                        "SELECT id FROM ai_oauth_pending ORDER BY created_at DESC"
-                    ).fetchone()
-                    approved = self.plane.approve_oauth_pending(
-                        row["id"], principal_name=self.name, retain_for_browser=False
-                    )
-                    return approved["code"]
-                return super().ask(prompt)
-
-        set_wizard_io(ExternalApproveIO(self.plane, "claude", ["1", "y"]))
+    def test_wizard_ai_identity_requires_public_tls(self):
+        rev = self.plane.current_revision()
+        set_wizard_io(ScriptedIO(["Claude", "n"]))
         out = io.StringIO()
         with redirect_stdout(out):
             rc = cli.dispatch(["set", "ai-identity", "claude"], root=self.tmp, plane=self.plane)
         self.assertEqual(rc, 0)
-        self.assertIn("VERIFIED", out.getvalue())
-        self.assertEqual(str(self.plane.get_principal("claude")["credential_status"]).lower(), "verified")
-        self.assertNotIn("drauth_", out.getvalue())
+        self.assertIsNone(self.plane.get_principal("claude"))
+        self.assertEqual(self.plane.current_revision(), rev)
+        self.assertIn("No changes were applied", out.getvalue())
 
     def test_wizard_ai_identity_cancel_zero_revision(self):
         rev_before = self.plane.current_revision()

@@ -759,6 +759,11 @@ Review each referencing Rule with `set ai-access <RULE>` to select a replacement
 
 # 13. AI MCP Setup
 
+### Beginner-first AI Access UX (2026-11-25 target)
+
+The single workflow specification is [AI_ACCESS_MCP.md](AI_ACCESS_MCP.md). Managed Hosts owns enrollment; AI MCP Setup manages infrastructure and connections; AI Identity retains verified authentication and credential lifecycle; AI Access Rules own Source → Destination → Permission authorization; System owns shared MCP settings and certificates. AI MCP Setup checks readiness and uses that same settings flow only when necessary, then optionally opens the separate Access Rule wizard. No automatic privilege grant from OAuth or first connection; explicitly reviewed Owner scope is optional. Basic permissions use built-in profiles; custom Objects/Groups are advanced. AI Access mode is fixed WHITELIST, not an operator input. Preserve existing state and all fail-closed controls. No duplicate public command/menu paths. These are target requirements, not installed-product evidence.
+
+
 AI Access uses an authenticated AI Identity as its source.
 
 Examples:
@@ -783,11 +788,12 @@ The normal Server CLI path is:
 set ai-identity <NAME>
 ```
 
-or the canonical guided menu flow (target UX contract):
+or the canonical guided menu flow:
 
 ```text
 AI Access
 → AI MCP Setup
+→ Connect or manage AI service
 ```
 
 The guided menu selector is `ai-mcp` with help text `Set up and manage AI MCP connections`. It is the user-facing entry for MCP Server, MCP Bridge and AI service connections. AI Access remains the separate authorization function. AI Identity is the authenticated security resource, not the setup menu name; action-first identity and credential commands retain their existing syntax and semantics.
@@ -1020,7 +1026,7 @@ The selected mode is saved with the policy.
 
 AI one-shot commands are non-interactive.
 
-If no Policy Mode exists yet, the first one-shot Rule must include the mode. Internet Access and AI Access accept `mode whitelist` only; Remote Access accepts `mode blacklist|whitelist`.
+If no Policy Mode exists yet, the first Remote Access or Internet Access one-shot Rule must include mode. Internet Access accepts whitelist only; Remote Access accepts blacklist or whitelist. AI Access has no mode parameter and initializes WHITELIST with its first valid Rule.
 
 Example:
 
@@ -1038,7 +1044,7 @@ Rules:
 
 ```text
 No existing Policy Mode
-→ mode is required in the first AI one-shot Rule
+→ mode is required for the first Remote/Internet Access one-shot Rule only
 
 Policy Mode already exists
 → mode may be omitted
@@ -2488,20 +2494,29 @@ set internet-access <RULE>
 set internet-access enabled
 set internet-access disabled
 
+set ai-mcp
 set ai-identity <IDENTITY>
+set ai-identity <IDENTITY> approve <PENDING-ID>
+set ai-identity <IDENTITY> deny <PENDING-ID>
+set ai-identity <IDENTITY> rotate
+set ai-identity <IDENTITY> revoke
+set ai-identity <IDENTITY> authentication <static-bearer|oauth>
+set ai-identity <IDENTITY> oauth-redirect <URI>
 
 set permission-object <PERMISSION>
 set permission-group <GROUP>
 
+set ai-access
 set ai-access <RULE>
 set ai-access enabled
 set ai-access disabled
 
-set mcp-tls hostname <FQDN>
-set mcp-tls mode <auto-acme|user-certificate>
-set mcp-tls contact-email <EMAIL>
-set mcp-tls acme-environment <production|staging>
-set mcp-tls acme-directory <URL>
+set server mcp
+set server mcp hostname <FQDN>
+set server mcp mode <auto-acme|user-certificate>
+set server mcp contact-email <EMAIL>
+set server mcp acme-environment <production|staging>
+set server mcp acme-directory <URL>
 ```
 
 Human invocation enters Guided Create/Edit unless a complete one-shot form is supplied. Server settings remain action-first under `set server ...` / `unset server ...`; the guided placement is System → Server Settings.
@@ -2543,11 +2558,11 @@ unset permission-group <GROUP>
 unset ai-access <RULE>
 unset ai-access policy
 
-unset mcp-tls
-unset mcp-tls purge
+unset server mcp
+unset server mcp purge
 ```
 
-`unset mcp-tls` clears TLS intent and removes the active public MCP route while retaining DRLink-owned certificate and ACME account material. Active MCP/OAuth connections may be interrupted; the explicit command approves this change without an additional confirmation prompt. Check `system certificate status` and `system diagnostics mcp` afterward. `unset mcp-tls purge` removes that retained material only after interactive y/N confirmation; non-interactive use fails closed.
+`unset server mcp` clears TLS intent and removes the active public MCP route while retaining DRLink-owned certificate and ACME account material. Active MCP/OAuth connections may be interrupted; the explicit command approves this change without an additional confirmation prompt. Check `system certificate status` and `system diagnostics mcp` afterward. `unset server mcp purge` removes that retained material only after interactive y/N confirmation; non-interactive use fails closed.
 
 `unset enrollment <ENROLLMENT>`, `unset network-object`, `unset network-group`, `unset service-object`, `unset service-group`, `unset permission-object`, `unset permission-group`, and `unset ai-identity` are destructive lifecycle operations and require explicit `y/N` confirmation after existence/reference validation. Default is No and cancellation applies no change. These are normal `y_n` flows rather than TTY-only flows, so controlled automation may provide `y`/`yes` on stdin; there is no public hidden environment-variable or `--yes` bypass for these commands. Policy Rule deletion uses effect-aware `conditional_y_n`: confirmation is required when the calculated change broadens or materially narrows access, while full `unset <plane>-access policy` reset always requires explicit confirmation.
 
@@ -2599,11 +2614,6 @@ system certificate renew
 system certificate status
 system certificate preflight
 
-system credential rotate ai-identity <IDENTITY>
-system credential revoke ai-identity <IDENTITY>
-system credential configure ai-identity <IDENTITY> authentication <static-bearer|oauth>
-system credential approve-oauth <PENDING-ID> [AI-IDENTITY]
-system credential deny-oauth <PENDING-ID>
 
 system update product
 system update engine
@@ -2620,7 +2630,7 @@ state.
 `system status` is the detailed Server read-only status and settings view. It includes current public/bootstrap hostnames and Linux/macOS/Windows Agent installer sources, with explicit automatic/default fallback text. `show status` remains the role-aware summary.
 
 
-`system certificate status` is the single public MCP TLS/certificate status surface. Configure TLS intent with `set mcp-tls ...`; there is no separate MCP TLS status read command.
+`system certificate status` is the single public MCP TLS/certificate status surface. Configure TLS intent with `set server mcp ...`; there is no separate MCP TLS status read command.
 
 ---
 
@@ -2652,13 +2662,17 @@ Data Relay Link — DRLink Server
 │
 ├── 6. AI Access
 │   ├── AI MCP Setup
-│   ├── Permission Objects
-│   ├── Permission Groups
-│   ├── Rules
+│   ├── Access Rules
 │   ├── Access Log
-│   └── Test / Explain
+│   ├── Test / Explain
+│   └── Advanced Permissions
+│       ├── Permission Objects
+│       └── Permission Groups
 │
 ├── 7. System
+│   ├── Server Settings
+│   │   └── MCP Server Settings
+│   └── Certificates
 ├── 8. Help
 └── 9. Exit
 ```
@@ -2764,7 +2778,9 @@ set internet-access github-https mode whitelist source office-network destinatio
 Example AI Access after AI Identity and Permission Object already exist:
 
 ```text
-set ai-access claude-prod mode whitelist source claude destination production-servers permission read-only enabled
+set ai-access claude-prod source claude destination production-servers permission read-only enabled
+set ai-access trusted-hosts source claude destination managed-hosts:trusted permission read-only paths /var/log/** enabled
+set ai-access developers-read source claude destination managed-host-group:developers permission read-only paths /var/log/** enabled
 ```
 
 If the Resource already exists, only explicitly supplied fields change.
@@ -2803,7 +2819,7 @@ Missing:
 No changes were applied.
 ```
 
-When no Policy Mode exists, a first Remote Access one-shot Rule requires `mode blacklist|whitelist`; first Internet Access and AI Access one-shot Rules require `mode whitelist`.
+When no Policy Mode exists, Remote Access requires `mode blacklist|whitelist` and Internet Access requires `mode whitelist`. AI Access initializes WHITELIST without a mode parameter.
 
 ---
 
@@ -5165,7 +5181,7 @@ A v2.4 CLI implementation is conformant only if the following can all be demonst
 ## Policy
 
 - First Remote Access Human Rule selects BLACKLIST/WHITELIST; Internet Access and AI Access are WHITELIST-only.
-- First AI one-shot Rule requires `mode`.
+- First Remote/Internet Access one-shot Rule requires `mode`; AI Access must not request it.
 - Multiple matches behave deterministically without rule ordering.
 - Last Rule deletion preserves Mode.
 - Rule disable and Policy disable have different, correctly explained effects.

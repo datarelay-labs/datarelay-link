@@ -180,10 +180,9 @@ def patch_section(sid: str, text: str) -> str:
 # Preserve all original 13/14 platform, topology, direct CLI commands, and
 # corresponding criteria; omit only commands solely dedicated to AI/MCP.
 AI_ONLY_CLI_COMMAND = re.compile(
-    r"^(?:show|set|unset) (?:ai-|permission-|mcp-tls)"
+    r"^(?:show|set|unset) (?:ai-|permission-|server mcp\b)"
     r"|^test ai-access\b|^system diagnostics mcp$"
     r"|^system certificate (?:status|preflight|issue|renew|import)\b"
-    r"|^system credential (?:rotate|revoke|configure|approve-oauth|deny-oauth)\b"
     r"|^supported AI/MCP client when applicable$", re.I
 )
 
@@ -195,7 +194,7 @@ def platform_and_command_matrix(source: str) -> str:
     result = "\n".join(lines).replace("FULL_USER_E2E", "CLI_ONLY_E2E")
     result = result.replace("public v2.4 CLI/AI Master", "public v2.4.0 direct CLI Reference")
     result = result.replace("test every platform currently claimed by the candidate at its actual qualification level.", "record every claimed platform at its actual qualification level. Test all currently assigned, suitable native hosts; missing claimed platforms remain explicit platform-qualification gaps, not a reason to stop other available-host scenarios. A configured required host that fails an actual scenario action remains BLOCKED, not N/A. Do not invent additional host-count tiers.")
-    if re.search(r"(?mi)^(?:show|set|unset|test) (?:ai-|mcp-tls|permission-)", result):
+    if re.search(r"(?mi)^(?:show|set|unset|test) (?:ai-|server mcp\b|permission-)", result):
         raise AssertionError("AI/MCP command leaked into direct CLI inventory")
     return result.rstrip() + "\n\n"
 

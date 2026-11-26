@@ -361,7 +361,7 @@ class OAuthPrincipalLifecycleTests(unittest.TestCase):
             }
         )
         page = urllib.request.urlopen(self.base + "/oauth/authorize?" + qs, timeout=10).read().decode("utf-8")
-        self.assertIn("approve-oauth", page)
+        self.assertIn("set ai-identity", page)
         pending = self.plane.conn.execute(
             "SELECT id, principal_id FROM ai_oauth_pending WHERE state = ?",
             ("bound-none",),

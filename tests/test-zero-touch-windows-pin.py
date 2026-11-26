@@ -289,6 +289,7 @@ Write-Output PATH_REFRESH_IDEMPOTENT=PASS
                 text=True, timeout=30)
             self.assertEqual(proc.returncode,0,proc.stdout+proc.stderr)
             self.assertIn('PATH_REFRESH_IDEMPOTENT=PASS',proc.stdout)
+            self.assertEqual(proc.stdout.count('Current PowerShell PATH includes'), 1)
 
     def test_current_entry_and_downstream_hash_before_execute(self):
         command=zt.render_entry_command("remote.xdr.ooo","A3xK9mP2","windows")

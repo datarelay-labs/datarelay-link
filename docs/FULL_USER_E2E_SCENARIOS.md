@@ -1,5 +1,7 @@
 # Data Relay Link — User E2E Test Scenarios
 
+> **AI Access UX target update (2026-11-25):** AI/MCP scenarios follow the canonical workflow in [AI_ACCESS_MCP.md](AI_ACCESS_MCP.md). The revised command names are target acceptance criteria, not installed-product evidence. Existing scenario IDs and negative/real-user gates remain mandatory. Add coverage for one-entry first connection, ready TLS reuse, Direct fail-closed, second AI, explicit Owner scope versus skipped policy, host enrollment independent of AI, custom permissions only when needed, retired command rejection, credential lifecycle, and preserved upgrade state.
+
 > **Document role:** Single canonical final User E2E execution contract — role-based real operation + exhaustive Direct CLI + exhaustive AI-assisted parity + performance/concurrency
 > **Canonical repository:** `datarelay-labs/datarelay-link`
 > **Canonical path:** `docs/FULL_USER_E2E_SCENARIOS.md` (single canonical entry point)
@@ -1727,9 +1729,10 @@ Server discovers `ai-mcp` / `AI MCP Setup` with the description `Set up and mana
 Representative CLI:
 
 ~~~text
+set ai-mcp
 set ai-identity <IDENTITY>
 set permission-object read-only permissions host-info,process-read,file-read
-set ai-access ai-read mode whitelist source <IDENTITY> destination <DESTINATION> permission read-only enabled
+set ai-access ai-read source <IDENTITY> destination <DESTINATION> permission read-only enabled
 test ai-access source <IDENTITY> destination <DESTINATION> permission read-only
 show ai-access-log identity <IDENTITY>
 ~~~
@@ -2347,20 +2350,22 @@ show ai-access-log identity <IDENTITY>
 show ai-access-log destination <DESTINATION>
 show ai-access-log permission <PERMISSION>
 
-set mcp-tls hostname <FQDN>
-set mcp-tls mode <auto-acme|user-certificate>
-set mcp-tls contact-email <EMAIL>
-set mcp-tls acme-environment <production|staging>
-set mcp-tls acme-directory <URL>
+set server mcp
+set server mcp hostname <FQDN>
+set server mcp mode <auto-acme|user-certificate>
+set server mcp contact-email <EMAIL>
+set server mcp acme-environment <production|staging>
+set server mcp acme-directory <URL>
 set ai-identity <IDENTITY>
 set permission-object <PERMISSION>
 set permission-group <GROUP>
+set ai-access
 set ai-access <RULE>
 set ai-access enabled
 set ai-access disabled
 
-unset mcp-tls
-unset mcp-tls purge
+unset server mcp
+unset server mcp purge
 unset ai-identity <IDENTITY>
 unset permission-object <PERMISSION>
 unset permission-group <GROUP>
@@ -2368,15 +2373,15 @@ unset ai-access <RULE>
 unset ai-access policy
 
 test ai-access source <AI_IDENTITY> destination <DESTINATION> permission <PERMISSION>
-system credential configure ai-identity <IDENTITY> authentication static-bearer
-system credential configure ai-identity <IDENTITY> authentication oauth
-system credential rotate ai-identity <IDENTITY>
-system credential revoke ai-identity <IDENTITY>
-system credential approve-oauth <PENDING-ID> [AI-IDENTITY]
-system credential deny-oauth <PENDING-ID>
+set ai-identity <IDENTITY> authentication static-bearer
+set ai-identity <IDENTITY> authentication oauth
+set ai-identity <IDENTITY> rotate
+set ai-identity <IDENTITY> revoke
+set ai-identity <IDENTITY> approve <PENDING-ID>
+set ai-identity <IDENTITY> deny <PENDING-ID>
 ~~~
 
-Verify authentication and authorization states are represented separately, reference-aware deletion works, and AI Access enforcement toggles have the documented functional effect.
+Verify authentication and authorization states are represented separately, reference-aware deletion works, and AI Access enforcement toggles have the documented functional effect. Run a clean beginner AI MCP Setup flow with no TLS/no Identity, then a second AI with ready TLS, no-policy denial, a reviewed rule with built-in permission, selected-only versus explicit dynamic trusted-host scope, independent enrollment of a new host, explicit native server:self scope if enabled, and OAuth/credential failure recovery. Confirm retired grammar is rejected and absent from help/completion/menu; retain the existing security-negative and exact-candidate gates.
 
 ## A-007 — Reference protection — MANDATORY
 
@@ -3610,11 +3615,11 @@ set server public-hostname <value>
 set server bootstrap-hostname <value>
 set server installer-url <value>
 set server windows-installer-url <value>
-set mcp-tls hostname <FQDN>
-set mcp-tls mode <MODE>
-set mcp-tls contact-email <EMAIL>
-set mcp-tls acme-environment <ENVIRONMENT>
-set mcp-tls acme-directory <URL>
+set server mcp hostname <FQDN>
+set server mcp mode <MODE>
+set server mcp contact-email <EMAIL>
+set server mcp acme-environment <ENVIRONMENT>
+set server mcp acme-directory <URL>
 
 set managed-host-group <GROUP>
 set managed-host <HOST> group <GROUP>
@@ -3654,8 +3659,8 @@ unset server public-hostname
 unset server bootstrap-hostname
 unset server installer-url
 unset server windows-installer-url
-unset mcp-tls
-unset mcp-tls purge
+unset server mcp
+unset server mcp purge
 
 unset network-object <OBJECT>
 unset network-group <GROUP>
@@ -3720,12 +3725,12 @@ system update product
 system update engine
 system update check-engine
 
-system credential rotate ai-identity <NAME>
-system credential revoke ai-identity <NAME>
-system credential configure ai-identity <NAME> authentication static-bearer
-system credential configure ai-identity <NAME> authentication oauth
-system credential approve-oauth <PENDING-ID> [AI-IDENTITY]
-system credential deny-oauth <PENDING-ID>
+set ai-identity <NAME> rotate
+set ai-identity <NAME> revoke
+set ai-identity <NAME> authentication static-bearer
+set ai-identity <NAME> authentication oauth
+set ai-identity <IDENTITY> approve <PENDING-ID>
+set ai-identity <IDENTITY> deny <PENDING-ID>
 
 system support-bundle
 system history

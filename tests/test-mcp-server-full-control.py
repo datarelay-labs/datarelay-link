@@ -343,6 +343,40 @@ class FullControlRuntimeTests(unittest.TestCase):
         finally:
             gate.touch()
 
+    def test_full_filesystem_command_cwd_alias_only(self):
+        target = self.root / "actual"
+        target.mkdir()
+        alias = self.root / "current"
+        alias.symlink_to(target, target_is_directory=True)
+        account = full.configured_account()
+        with self.assertRaisesRegex(full.FullControlDenied, "symbolic link"):
+            full.allowed_cwd(str(alias), self.patterns, account)
+        with self.assertRaises(full.FullControlDenied):
+            full.allowed_cwd(str(alias), ["/**"], account)
+        with patch.dict(os.environ, {"DRLINK_MCP_SERVER_ALLOWED_ROOTS": "/"}):
+            account = full.configured_account()
+            with self.assertRaises(full.FullControlDenied):
+                full.allowed_cwd(str(alias), self.patterns, account)
+            with self.assertRaises(full.FullControlDenied):
+                full.allowed_cwd(str(alias), [], account)
+            with self.assertRaises(full.FullControlDenied):
+                full.allowed_path(str(alias), ["/**"], account)
+            self.assertEqual(full.allowed_cwd(str(alias), ["/**"], account), str(target.resolve()))
+            result = self.completed(self.runtime.start(self.owner, {
+                "cwd": str(alias), "argv": [sys.executable, "-c", "import os; print(os.getcwd())"],
+                "wait_ms": 1000,
+            }, ["/**"]))
+            self.assertEqual(result["exit_status"], 0, result)
+            self.assertEqual(result["cwd"], str(target.resolve()))
+            self.assertEqual(result["stdout"]["text"].strip(), str(target.resolve()))
+            broken = self.root / "broken"
+            broken.symlink_to(self.root / "missing")
+            loop = self.root / "loop"
+            loop.symlink_to(loop)
+            for invalid in (broken, loop, alias / ".."):
+                with self.assertRaises(full.FullControlDenied):
+                    full.allowed_cwd(str(invalid), ["/**"], account)
+
     def test_initial_directory_scope_and_request_shape(self):
         with self.assertRaises(full.FullControlDenied):
             self.runtime.start(self.owner, {"cwd": "/", "argv": ["true"]}, self.patterns)
@@ -387,7 +421,7 @@ class FullControlBridgeAuthorizationTests(unittest.TestCase):
         self.bridge = MCPBridge(root=str(self.root), plane=self.plane)
         self.principal = {"name": "native-full-fixture", "id": "fixture-identity"}
         self.plane.set_ai_principal(self.principal["name"], enabled=True)
-        self.cli("system", "credential", "rotate", "ai-identity", self.principal["name"])
+        self.cli("set", "ai-identity", self.principal["name"], "rotate")
 
     def tearDown(self):
         self.bridge.close()
@@ -404,7 +438,7 @@ class FullControlBridgeAuthorizationTests(unittest.TestCase):
     def authorize(self):
         self.cli("set", "permission-object", "fixture-all", "permissions",
                  "host-info,process-read,file-read,file-write,file-upload,file-download,command-exec")
-        self.cli("set", "ai-access", "fixture-server", "mode", "whitelist", "source",
+        self.cli("set", "ai-access", "fixture-server", "source",
                  self.principal["name"], "destination", "server:self", "permission",
                  "fixture-all", "paths", str(self.root) + "/**", "enabled")
 

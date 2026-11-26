@@ -97,20 +97,16 @@ class RemoteConnectorInteropTests(unittest.TestCase):
         for name in ("ro-agent", "rw-agent"):
             buf = io.StringIO()
             with contextlib.redirect_stdout(buf):
-                dispatch(["system", "credential", "rotate", "ai-identity", name], root=self.tmp)
+                dispatch(["set", "ai-identity", name, "rotate"], root=self.tmp)
             token = [ln.split(" ", 1)[1].strip() for ln in buf.getvalue().splitlines() if ln.startswith("Token: ")][0]
             setattr(self, name.replace("-", "_") + "_token", token)
             dispatch(
-                ["system", "credential", "configure", "ai-identity", name, "authentication", "oauth"],
+                ["set", "ai-identity", name, "authentication", "oauth"],
                 root=self.tmp,
             )
             dispatch(
                 [
-                    "system",
-                    "credential",
-                    "configure",
-                    "ai-identity",
-                    name,
+                    "set", "ai-identity", name,
                     "oauth-redirect",
                     "http://127.0.0.1/callback",
                 ],
@@ -141,8 +137,6 @@ class RemoteConnectorInteropTests(unittest.TestCase):
                 "set",
                 "ai-access",
                 "ro-rule",
-                "mode",
-                "whitelist",
                 "source",
                 "ro-agent",
                 "destination",
@@ -158,8 +152,6 @@ class RemoteConnectorInteropTests(unittest.TestCase):
                 "set",
                 "ai-access",
                 "rw-rule",
-                "mode",
-                "whitelist",
                 "source",
                 "rw-agent",
                 "destination",
@@ -356,7 +348,7 @@ class RemoteConnectorInteropTests(unittest.TestCase):
         self.assertEqual(json.loads(cm.exception.read())["error"], "invalid_scope")
 
         page = authorize("drlink.ai").read().decode("utf-8")
-        self.assertIn("approve-oauth", page)
+        self.assertIn("set ai-identity", page)
         pending = self.plane.conn.execute(
             "SELECT id FROM ai_oauth_pending WHERE client_id = ?", (limited["client_id"],)
         ).fetchone()
@@ -512,7 +504,7 @@ class RemoteConnectorInteropTests(unittest.TestCase):
         )
         # unbound: no auto-approve
         page = urllib.request.urlopen(self.base + "/oauth/authorize?" + qs, timeout=10).read().decode("utf-8")
-        self.assertIn("approve-oauth", page)
+        self.assertIn("set ai-identity", page)
         pending = self.plane.conn.execute(
             "SELECT id FROM ai_oauth_pending WHERE client_id = ?", (reg["client_id"],)
         ).fetchone()
@@ -597,7 +589,7 @@ class RemoteConnectorInteropTests(unittest.TestCase):
             "code_challenge_method": "S256", "resource": resource, "scope": "drlink.ai",
         })
         narrow_page = urllib.request.urlopen(self.base + "/oauth/authorize?" + narrow_qs, timeout=10).read().decode("utf-8")
-        self.assertIn("approve-oauth", narrow_page)
+        self.assertIn("set ai-identity", narrow_page)
         narrow_pending = self.plane.conn.execute(
             "SELECT id FROM ai_oauth_pending WHERE client_id = ?", (narrow["client_id"],)
         ).fetchone()

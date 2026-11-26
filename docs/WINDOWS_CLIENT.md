@@ -99,6 +99,10 @@ FRP hard-codes the websocket path `/~!frp` (not configurable).
 
 A Windows PC can forward LAN targets by setting `local_ip` to a reachable LAN address (same semantics as Linux). Ensure Windows routing/firewall allows frpc to reach that target. This project does not reconfigure host firewall or routing.
 
+## Interactive CLI
+
+Run `drlink` without arguments in an administrator PowerShell or Command Prompt to open the Agent Host command prompt. Use `?` or `help commands` for discovery, Tab for command and local Remote Service completion, `menu` for guided navigation, and `exit` to return to the original shell. For example, enter `show remote-services` inside the prompt. The shell and menu invoke the same canonical CLI handlers as one-shot `drlink show remote-services`; confirmations and server-owned resource restrictions are unchanged. Guided Remote Service creation/edit is available in the interactive prompt. The initial completion inventory is local and does not perform network requests. This interactive UX requires native Windows console acceptance on the exact candidate.
+
 ## Lifecycle
 
 ```text

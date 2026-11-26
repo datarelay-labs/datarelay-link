@@ -96,8 +96,6 @@ class AiPathScopePublicParity(unittest.TestCase):
             "set",
             "ai-access",
             "allow-read",
-            "mode",
-            "whitelist",
             "source",
             "bot",
             "destination",
@@ -123,8 +121,6 @@ class AiPathScopePublicParity(unittest.TestCase):
             "set",
             "ai-access",
             "allow-read",
-            "mode",
-            "whitelist",
             "source",
             "bot",
             "destination",
@@ -143,8 +139,6 @@ class AiPathScopePublicParity(unittest.TestCase):
             "set",
             "ai-access",
             "allow-read",
-            "mode",
-            "whitelist",
             "source",
             "bot",
             "destination",
@@ -167,8 +161,6 @@ class AiPathScopePublicParity(unittest.TestCase):
             "set",
             "ai-access",
             "allow-info",
-            "mode",
-            "whitelist",
             "source",
             "bot",
             "destination",
@@ -199,8 +191,6 @@ class AiPathScopePublicParity(unittest.TestCase):
             "set",
             "ai-access",
             "allow-read",
-            "mode",
-            "whitelist",
             "source",
             "bot",
             "destination",
@@ -311,8 +301,6 @@ configurationBundle:
             "set",
             "ai-access",
             "allow-read",
-            "mode",
-            "whitelist",
             "source",
             "bot",
             "destination",
@@ -373,6 +361,154 @@ configurationBundle:
         self.assertEqual(rc, 0, err)
         self.assertIn("DENY", out)
         self.assertEqual(self._auth("read_file", operand=out_path)["action"], "DENY")
+
+    def test_noninteractive_bare_rule_cannot_create_old_policy(self):
+        before = self.plane.current_revision()
+        set_wizard_io(None)
+        rc, _, err = self._run("set", "ai-access", "bare")
+        self.assertNotEqual(rc, 0)
+        self.assertIn("TTY", err)
+        self.assertEqual(self.plane.conn.execute("SELECT COUNT(*) FROM ai_access_rules").fetchone()[0], 0)
+        self.assertEqual(self.plane.conn.execute("SELECT COUNT(*) FROM ai_policy_rules").fetchone()[0], 0)
+        self.assertEqual(self.plane.current_revision(), before)
+
+    def test_first_mode_free_rule_and_retired_mode_rejected(self):
+        before = self.plane.current_revision()
+        rc, _, err = self._run("set", "ai-access", "bad", "mode", "whitelist",
+                               "source", "bot", "destination", "ubuntu-prod",
+                               "permission", "info-only", "enabled")
+        self.assertNotEqual(rc, 0)
+        self.assertIn("mode", err)
+        self.assertEqual(self.plane.current_revision(), before)
+        self.assertIsNone(v24.get_access_policy(self.plane, "ai")["mode"])
+        rc, _, err = self._run("set", "ai-access", "good", "source", "bot",
+                               "destination", "ubuntu-prod", "permission", "info-only", "enabled")
+        self.assertEqual(rc, 0, err)
+        self.assertEqual(v24.get_access_policy(self.plane, "ai")["mode"], "whitelist")
+
+    def test_named_free_profile_review_cancel_then_apply(self):
+        before = self.plane.current_revision()
+        answers = ["profile-rule", "bot", "ubuntu-prod", "Read-only profile",
+                   self.vendor_glob, "y"]
+        set_wizard_io(ScriptedIO(answers + ["0"]))
+        rc, _, err = self._run("set", "ai-access")
+        self.assertEqual(rc, 0, err)
+        self.assertIsNone(v24.get_permission_object(self.plane, "profile-read-only"))
+        self.assertEqual(self.plane.current_revision(), before)
+        set_wizard_io(ScriptedIO(answers + ["1"]))
+        rc, _, err = self._run("set", "ai-access")
+        self.assertEqual(rc, 0, err)
+        self.assertEqual(v24.expand_permissions(self.plane, "profile-read-only"),
+                         {"host-info", "process-read", "file-read"})
+        self.assertEqual(v24.list_ai_policy_path_scopes(self.plane, "profile-rule"), [self.vendor_glob])
+        self.assertEqual(self._auth("read_file", operand=str(self.vendor / "app.log"))["action"], "ALLOW")
+        self.assertEqual(self._auth("read_file", operand=str(self.etc / "config.yaml"))["action"], "DENY")
+        self.assertEqual(self._auth("exec", operand="id")["action"], "DENY")
+
+    def test_builtin_profile_collision_does_not_rewrite_existing_permission(self):
+        v24.set_permission_object(self.plane, "profile-read-only", permissions=["host-info"], oneshot=True)
+        before = self.plane.current_revision()
+        set_wizard_io(ScriptedIO(["bot", "ubuntu-prod", "Read-only profile"]))
+        rc, _, err = self._run("set", "ai-access", "collision")
+        self.assertNotEqual(rc, 0)
+        self.assertIn("conflicts", err)
+        self.assertEqual(v24.expand_permissions(self.plane, "profile-read-only"), {"host-info"})
+        self.assertEqual(self.plane.current_revision(), before)
+
+    def test_wizard_examples_and_identity_rule_view(self):
+        scripted = ScriptedIO(["1", "1", "2", "*", "?", "/**", "y", "1"])
+        set_wizard_io(scripted)
+        rc, _, err = self._run("set", "ai-access", "wizard-all")
+        self.assertEqual(rc, 0, err)
+        messages = "".join(scripted.out)
+        self.assertIn("All files: /**", messages)
+        self.assertIn("/home/**,/opt/**", messages)
+        self.assertIn("not a valid absolute path", messages)
+        self.assertEqual(v24.list_ai_policy_path_scopes(self.plane, "wizard-all"), ["/**"])
+        rc, out, err = self._run("show", "ai-identity", "bot")
+        self.assertEqual(rc, 0, err)
+        self.assertIn("wizard-all", out)
+        self.assertIn("ubuntu-prod", out)
+        self.assertIn("read-only", out)
+        self.assertIn("/**", out)
+
+    def test_policy_reset_cancel_is_success_without_mutation(self):
+        from unittest.mock import patch
+        self._run("set", "ai-access", "one", "source", "bot", "destination",
+                  "ubuntu-prod", "permission", "info-only", "enabled")
+        before = self.plane.current_revision()
+        os.environ.pop("DRLINK_CONFIRM", None)
+        with patch("sys.stdin", io.StringIO("n\n")):
+            rc, out, err = self._run("unset", "ai-access", "policy")
+        self.assertEqual(rc, 0, err)
+        self.assertIn("Reset ALL AI Access Rules", out)
+        self.assertIn("Cancelled", out)
+        self.assertEqual(self.plane.current_revision(), before)
+        self.assertEqual(v24.get_access_policy(self.plane, "ai")["mode"], "whitelist")
+        self.assertIsNotNone(self.plane.conn.execute(
+            "SELECT 1 FROM ai_policy_rules WHERE name='one'").fetchone())
+        rc, _, _ = self._run("unset", "ai-access", "policy", "unexpected")
+        self.assertNotEqual(rc, 0)
+        self.assertEqual(self.plane.current_revision(), before)
+
+    def test_tty_invalid_utf8_reprompts_without_accepting_corrupted_input(self):
+        from unittest.mock import patch
+        from drlink_v24_wizard import TtyIO
+        invalid = UnicodeDecodeError("utf-8", b"\xc3", 0, 1, "invalid continuation byte")
+        with patch("builtins.input", side_effect=[invalid, "\udcc3", "/**"]) as read:
+            with redirect_stdout(io.StringIO()) as out:
+                self.assertEqual(TtyIO().ask("Path: "), "/**")
+        self.assertEqual(read.call_count, 3)
+        self.assertIn("Invalid UTF-8 input", out.getvalue())
+
+    @unittest.skipUnless(sys.platform.startswith("linux"), "Linux PTY regression")
+    def test_tty_pty_backspace_and_invalid_utf8_recovery(self):
+        import pty
+        import select
+        import subprocess
+        import termios
+        import time
+
+        for invalid in (False, True):
+            with self.subTest(invalid=invalid):
+                master, slave = pty.openpty()
+                attrs = termios.tcgetattr(slave)
+                attrs[6][termios.VERASE] = b"\x7f"
+                termios.tcsetattr(slave, termios.TCSANOW, attrs)
+                proc = subprocess.Popen(
+                    [sys.executable, "-c",
+                     "from drlink_v24_wizard import TtyIO; print('VALUE='+TtyIO().ask('Path: '))"],
+                    stdin=slave, stdout=slave, stderr=slave,
+                    env=dict(os.environ, PYTHONPATH=str(ROOT / "lib"), PYTHONUTF8="1"),
+                )
+                os.close(slave)
+                output = bytearray()
+
+                def read_until(token):
+                    deadline = time.monotonic() + 5
+                    while token not in output:
+                        remaining = deadline - time.monotonic()
+                        self.assertGreater(remaining, 0, repr(output))
+                        if select.select([master], [], [], remaining)[0]:
+                            chunk = os.read(master, 4096)
+                            self.assertTrue(chunk, repr(output))
+                            output.extend(chunk)
+
+                try:
+                    read_until(b"Path: ")
+                    if invalid:
+                        os.write(master, b"\xc3\n")
+                        read_until(b"Invalid UTF-8 input")
+                        os.write(master, b"/**\n")
+                    else:
+                        os.write(master, b"wrong" + b"\x7f" * 5 + b"/**\n")
+                    read_until(b"VALUE=/**")
+                    self.assertEqual(proc.wait(timeout=5), 0)
+                finally:
+                    if proc.poll() is None:
+                        proc.kill()
+                        proc.wait()
+                    os.close(master)
 
     def test_wizard_binds_paths_for_file_permission(self):
         # AI Access is WHITELIST-only; wizard does not ask for policy mode.
