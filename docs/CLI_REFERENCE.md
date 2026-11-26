@@ -53,6 +53,7 @@ Tab completion
 show status
 
 show managed-hosts
+show managed-services
 show managed-host <HOST>
 show managed-host <HOST> agent
 show managed-host <HOST> addresses

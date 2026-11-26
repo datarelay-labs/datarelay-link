@@ -3163,6 +3163,27 @@
   {
     "path": [
       "show",
+      "managed-services"
+    ],
+    "roles": "server",
+    "category": "Managed Hosts",
+    "summary": "List all Managed Services and port mappings",
+    "detail": "Read-only Server-wide Remote Service inventory, sorted by public port. Shows public endpoint, Managed Host, service name, target address and port, and status. Includes disabled and pending services; excludes released mappings.",
+    "examples": ["show managed-services"],
+    "args": [],
+    "tail": null,
+    "internal": null,
+    "aliases": [],
+    "destructive": false,
+    "hidden": false,
+    "risk": "none",
+    "confirmation": "none",
+    "surface": "",
+    "flags": []
+  },
+  {
+    "path": [
+      "show",
       "managed-hosts"
     ],
     "roles": "server",

@@ -660,6 +660,50 @@ def handle_show(plane: ControlPlane, rest: list[str]) -> Optional[int]:
         ):
             sys.stdout.write("  %s\n" % m["name"])
         return 0
+    if res == "managed-services":
+        _require_server(plane, "Managed Services")
+        if len(rest) != 1:
+            raise ControlPlaneError("Usage: show managed-services")
+        # Use the same authoritative publications and status calculation as
+        # the per-host view. Include disabled/reserved mappings, not releases.
+        rows = plane.conn.execute(
+            "SELECT s.*, c.label AS host_label, c.hostname AS host_name, "
+            "m.status AS service_status, m.pending_allocation, m.runtime_verified "
+            "FROM published_services s JOIN clients c ON c.id=s.client_id "
+            "LEFT JOIN remote_service_meta m ON m.service_id=s.id "
+            "WHERE s.released=0 ORDER BY s.public_port IS NULL, s.public_port, "
+            "COALESCE(c.label,c.hostname,c.id), s.name, s.id"
+        ).fetchall()
+        if not rows:
+            sys.stdout.write("No Managed Services configured.\n")
+            return 0
+        try:
+            host = _public_endpoint_host(plane)
+        except _scfg.ConfigError:
+            host = "unconfigured"
+        def endpoint(address, port):
+            address = str(address or "-")
+            if ":" in address and not address.startswith("["):
+                address = "[" + address + "]"
+            return "%s:%s" % (address, port) if port is not None else "-"
+        columns = ("PUBLIC ENDPOINT", "MANAGED HOST", "SERVICE", "TARGET", "STATUS")
+        table = []
+        clients = {}
+        for row in rows:
+            cid = row["client_id"]
+            if cid not in clients:
+                clients[cid] = plane.conn.execute("SELECT * FROM clients WHERE id=?", (cid,)).fetchone()
+            public = "Pending allocation" if row["pending_allocation"] or row["public_port"] is None else endpoint(host, row["public_port"])
+            status = v24.inventory_remote_service_status(
+                plane, clients[cid], enabled=bool(row["enabled"]),
+                stored_status=row["service_status"] or "", runtime_verified=bool(row["runtime_verified"]),
+            )
+            table.append((public, row["host_label"] or row["host_name"] or cid[:8], row["name"], endpoint(row["target_host"], row["target_port"]), status))
+        widths = [max(len(str(value[i])) for value in [columns] + table) for i in range(len(columns))]
+        for line in [columns] + table:
+            sys.stdout.write("  ".join(str(value).ljust(widths[i]) for i, value in enumerate(line)).rstrip() + "\n")
+        sys.stdout.write("\nTotal: %d Managed Services\n" % len(table))
+        return 0
     if res in ("managed-hosts",):
         _require_server(plane, "Managed Hosts")
         rows = plane.conn.execute(

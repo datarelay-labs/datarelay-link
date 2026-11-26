@@ -1474,6 +1474,7 @@ def domain_help(topic, role):
             "  menu → Managed Hosts\n\n"
             "Everyday commands:\n"
             "  show managed-hosts\n"
+            "  show managed-services\n"
             "  show managed-host <HOST>\n"
             "  show managed-host <HOST> remote-services\n"
             "  show managed-host <HOST> agent\n"
@@ -1546,11 +1547,19 @@ def domain_help(topic, role):
             "  set remote-access enabled|disabled\n"
             "  test remote-access source <SRC> destination <DST> service <SVC>\n"
         )
+    if topic == "managed-services":
+        if not server:
+            return "Managed Services inventory is available on a Data Relay Link server.\n"
+        return ("Managed Services\n================\n\n"
+                "  show managed-services\n\n"
+                "List all Server port mappings with host, service, target and status.\n"
+                "Disabled and pending mappings are included; released mappings are excluded.\n")
     if topic in ("remote-service", "remote-services"):
         if server:
             return (
                 "Remote Services are owned by Agent Hosts.\n\n"
                 "On the Server:\n"
+                "  show managed-services\n"
                 "  show managed-host <HOST> remote-services\n\n"
                 "On an Agent Host:\n"
                 "  show remote-services\n"
@@ -2401,7 +2410,7 @@ NAVIGATION_TREE = {
         ("back", "Back", "", "back", None),
     ),
     "server.services": (
-        ("server_svc_list", "Remote Services (inspect via Managed Host)", "", "command", "show managed-hosts"),
+        ("server_svc_list", "List Managed Services", "", "command", "show managed-services"),
         ("back", "Back", "", "back", None),
     ),
     "server.internet": (
@@ -2785,6 +2794,7 @@ COMPLETION_DOMAIN_GROUPS = (
         "Managed Hosts",
         (
             "managed-hosts",
+            "managed-services",
             "managed-host",
             "clients",
             "client",

@@ -1110,6 +1110,50 @@ frpctl_nav_workflow manage_host
         self.assertFalse(rows[("system", "autostart")]["destructive"])
         self.assertEqual(rows[("system", "autostart")]["risk"], "none")
 
+    def test_managed_services_global_port_inventory(self):
+        v24.ensure_v2_schema(self.plane.conn)
+        (Path(self.tmp) / "etc/drlink/config.json").write_text(json.dumps({"role":"server", "public_ip":"203.0.113.10", "public_hostname":"relay.example.test"}))
+        before = self.plane.current_revision()
+        rc, out, err = self._dispatch(["show", "managed-services"])
+        self.assertEqual(rc, 0, err)
+        self.assertIn("No Managed Services", out)
+        self.assertEqual(self.plane.current_revision(), before)
+        self.plane.upsert_client("a" * 32, label="First Host", hostname="first")
+        self.plane.upsert_client("b" * 32, label="Second Host", hostname="second")
+        for cid, name, port, target, local, enabled in [
+            ("a"*32, "HTTPS", 6003, "10.0.0.8", 443, True),
+            ("b"*32, "SSH", 6001, "127.0.0.1", 22, False),
+            ("a"*32, "Released", 6002, "127.0.0.1", 80, True),
+        ]:
+            self.plane.set_published_service(cid, name, target_mode="routed", target_host=target, target_port=local, public_port=port, enabled=enabled)
+        self.plane.conn.execute("UPDATE published_services SET released=1 WHERE name='Released'")
+        self.plane.conn.commit()
+        before = self.plane.current_revision()
+        rc, out, err = self._dispatch(["show", "managed-services"])
+        self.assertEqual(rc, 0, err)
+        self.assertIn("First Host", out)
+        self.assertIn("Second Host", out)
+        self.assertIn("10.0.0.8:443", out)
+        self.assertIn("127.0.0.1:22", out)
+        self.assertIn("DISABLED", out)
+        self.assertIn("DEGRADED", out)
+        self.assertIn("relay.example.test:6001", out)
+        self.assertNotIn("Released", out)
+        self.assertLess(out.index(":6001"), out.index(":6003"))
+        self.assertEqual(self.plane.current_revision(), before)
+        self.assertEqual(grammar.match(["show", "managed-services"], "server")["status"], "ok")
+        self.assertNotEqual(grammar.match(["show", "managed-services"], "client")["status"], "ok")
+        self.assertNotEqual(grammar.match(["show", "managed-services", "extra"], "server")["status"], "ok")
+        self.assertIn("managed-services", grammar.completion_candidates("show managed-s", "server", [], [], []))
+        self.assertNotIn("managed-services", grammar.completion_candidates("show managed-s", "client", [], [], []))
+        self.assertIn("show managed-services", grammar.help_text(["managed-services"], "server"))
+        # Invoke the public shell entrypoint against the same isolated DB.
+        result = subprocess.run(["bash", str(ROOT / "tools/drlink"), "show", "managed-services"], env=dict(os.environ, FRP_CTL_TEST_ROOT=self.tmp, FRP_CTL_BIN_DIR=str(ROOT / "tools")), text=True, capture_output=True, timeout=15)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("relay.example.test:6001", result.stdout)
+        self.assertIn("10.0.0.8:443", result.stdout)
+        self.assertEqual(self.plane.current_revision(), before)
+
     def test_managed_host_remote_services_empty_state_names_agent_next_action(self):
         v24.ensure_v2_schema(self.plane.conn)
         self.plane.upsert_client("c" * 32, label="empty-agent", hostname="empty-agent")

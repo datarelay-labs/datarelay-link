@@ -250,6 +250,7 @@ Server inspection examples:
 
 ```text
 show managed-hosts
+show managed-services
 show managed-host ubuntu-prod
 show managed-host ubuntu-prod agent
 show managed-host ubuntu-prod addresses
