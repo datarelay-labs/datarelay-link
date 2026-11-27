@@ -467,6 +467,38 @@ class NativeWaitSignal:
                 self._handle = None
 
 
+def _reap_process_after_native_start_failure(process) -> None:
+    """Release a child already spawned by Python when native selection fails."""
+    try:
+        try:
+            os.killpg(process.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        except OSError:
+            try:
+                process.kill()
+            except OSError:
+                pass
+        try:
+            process.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.wait()
+    finally:
+        for stream in (process.stdout, process.stderr):
+            if stream is not None and not stream.closed:
+                try:
+                    stream.close()
+                except OSError:
+                    pass
+        try:
+            free_process_watch(process)
+        except Exception:
+            # Preserve the native-selection error while still attempting all
+            # process, pipe, and watcher cleanup owned by this call.
+            pass
+
+
 def capture_process(process, *, input_data: bytes | None, timeout_seconds: float,
                     stdout_limit: int, stderr_limit: int):
     """Run bounded pipe capture through the native helper, or return None.
@@ -474,7 +506,12 @@ def capture_process(process, *, input_data: bytes | None, timeout_seconds: float
     Python owns input, timeout selection, process-group cleanup and reaping.
     Output is always drained, while only each requested prefix is retained.
     """
-    if not native_process_io_available():
+    try:
+        native_available = native_process_io_available()
+    except BaseException:
+        _reap_process_after_native_start_failure(process)
+        raise
+    if not native_available:
         return None
     limits = (max(0, int(stdout_limit)), max(0, int(stderr_limit)))
     captured = [bytearray(), bytearray()]

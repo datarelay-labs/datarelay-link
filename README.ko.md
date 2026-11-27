@@ -292,6 +292,9 @@ Rust process I/O의 최종 EOF drain이 실패하면 Agent capture는 stream을 
 lifecycle 오류가 있는 완료 영수증으로 노출하며 성공적인 출력으로 표시하지 않습니다.
 stdin writer가 없거나 최종 drain이 시간 초과해도 Python이 소유한 process watcher를 해제합니다.
 계정, timeout, process-group 종료, wait/reap 권한은 계속 Python에 있습니다.
+Python이 자식을 시작한 뒤 명시적 Rust 런타임 library 로드가 실패하는 경우에도
+소유 프로세스 그룹을 종료하고 자식을 reap하며 stdout/stderr와 watcher를 정리한 후
+오류를 반환합니다. 이 경우에도 계정 및 프로세스 수명 주기 권한은 Python에 남습니다.
 이전 Agent helper의 flat snapshot은 manifest 경로가 파일 basename 하나에 유일하게 대응할 때만
 복구합니다. 새 native 파일은 Python fallback을 복구하도록 제거합니다. 중복 basename이나
 모호한 경로는 설치 파일을 변경하기 전에 거부합니다.

@@ -404,6 +404,25 @@ class RustDispatchBudgetTests(unittest.TestCase):
         self.assertTrue(result["stdout_truncated"])
         self.assertTrue(result["stderr_truncated"])
 
+    def test_native_runtime_selection_failure_reaps_started_child_and_closes_streams(self):
+        with mock.patch.dict(os.environ, {"DRLINK_MCP_RUNTIME": "rust"}), \
+                mock.patch.object(runtime, "native_process_io_available",
+                                  side_effect=RuntimeError("native MCP runtime unavailable")), \
+                mock.patch.object(runtime, "free_process_watch") as free_watch:
+            proc = subprocess.Popen(
+                [sys.executable, "-c", "import time; time.sleep(30)"],
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True,
+            )
+            with self.assertRaisesRegex(RuntimeError, "native MCP runtime unavailable"):
+                runtime.capture_process(
+                    proc, input_data=None, timeout_seconds=3,
+                    stdout_limit=128, stderr_limit=128,
+                )
+            self.assertIsNotNone(proc.returncode)
+            self.assertTrue(proc.stdout.closed)
+            self.assertTrue(proc.stderr.closed)
+            free_watch.assert_called_once_with(proc)
+
     def test_final_pipe_drain_timeout_fails_capture_after_reaping(self):
         with mock.patch.dict(os.environ, {
             "DRLINK_MCP_RUNTIME": "rust",
