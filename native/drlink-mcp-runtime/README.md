@@ -57,6 +57,9 @@ hashes, and library hashes in `runtime-build.json`. The Agent runtime lineage
 manifest and Server project-file manifest cover these files in install,
 update, and rollback. Linux ARM64 assets were built and exercised on a native
 ARM64 runner.
+The Agent updater refuses a legacy basename-layout snapshot before mutating
+installed files because nested target paths can reuse basenames; operator
+recovery is required for that interrupted legacy transaction.
 R2 currently covers dispatch admission, one ready-listener accept, bounded
 streamed-result retention, bounded request-body reads and bounded outbound
 response writes, and the per-subscription condition wait used for bounded job
