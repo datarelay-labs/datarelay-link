@@ -137,6 +137,15 @@ def configured_account() -> Account:
     return account
 
 
+def default_cwd(account: Account) -> str:
+    """Resolve only the operator's configured default or selected account HOME.
+
+    The caller must validate this value against current rule/local scopes;
+    never search for another directory after an invalid configured default.
+    """
+    return os.environ.get("DRLINK_MCP_SERVER_DEFAULT_CWD") or account.home
+
+
 def allowed_path(path: str, patterns: list[str], account: Account) -> str:
     if not isinstance(path, str) or not Path(path).is_absolute() or "\x00" in path:
         raise FullControlDenied("An absolute path is required")
@@ -311,7 +320,7 @@ class FullControlRuntime:
         account = configured_account()
         if not owner:
             raise FullControlDenied("Authenticated AI identity is required")
-        cwd = allowed_cwd(args.get("cwd") or account.home, patterns, account)
+        cwd = allowed_cwd(args["cwd"] if "cwd" in args else default_cwd(account), patterns, account)
         argv = args.get("argv")
         command = args.get("command")
         if command is not None:

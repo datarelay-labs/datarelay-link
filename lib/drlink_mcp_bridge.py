@@ -167,7 +167,7 @@ TOOL_DEFS = (
     (
         "get_server",
         "Get Local DRLink Server",
-        "Discover this DRLink Server only when Server-self MCP is enabled and host-info is explicitly authorized",
+        "Discover this DRLink Server and, if authorized, the configured execution account and default cwd; query before working",
         {},
         {"readOnlyHint": True, "destructiveHint": False, "openWorldHint": False, "idempotentHint": True},
     ),
@@ -200,12 +200,12 @@ TOOL_DEFS = (
         "Requires current command-exec AI Access and an approved initial cwd. "
         "Full-control commands have the account's OS authority; cwd is not a sandbox.",
         {"type": "object", "properties": {
-            "cwd": {"type": "string", "description": "Absolute initial working directory"},
+            "cwd": {"type": "string", "minLength": 1, "description": "Absolute initial working directory; omit to use the approved default reported by get_server"},
             "argv": {"type": "array", "items": {"type": "string"}, "minItems": 1,
                      "description": "Argument vector beginning with git"},
             "timeout_seconds": {"type": "integer", "minimum": 1, "maximum": 86400, "default": 3600},
             "wait_ms": {"type": "integer", "minimum": 0, "maximum": 5000, "default": 1000},
-        }, "required": ["cwd", "argv"], "additionalProperties": False},
+        }, "required": ["argv"], "additionalProperties": False},
         {"readOnlyHint": False, "destructiveHint": True, "openWorldHint": True, "idempotentHint": False},
     ),
     (
@@ -216,11 +216,11 @@ TOOL_DEFS = (
         "AI Access for the initial cwd; cwd is not a filesystem sandbox. Returns job_id, "
         "state and bounded output; use server_job_poll/input/stop for running jobs.",
         {"type": "object", "properties": {
-            "cwd": {"type": "string", "description": "Absolute initial working directory"},
+            "cwd": {"type": "string", "minLength": 1, "description": "Absolute initial working directory; omit to use the approved default reported by get_server"},
             "argv": {"type": "array", "items": {"type": "string"}, "minItems": 1},
             "timeout_seconds": {"type": "integer", "minimum": 1, "maximum": 86400, "default": 3600},
             "wait_ms": {"type": "integer", "minimum": 0, "maximum": 5000, "default": 1000},
-        }, "required": ["cwd", "argv"], "additionalProperties": False},
+        }, "required": ["argv"], "additionalProperties": False},
         {"readOnlyHint": False, "destructiveHint": True, "openWorldHint": True, "idempotentHint": False},
     ),
     (
@@ -231,11 +231,11 @@ TOOL_DEFS = (
         "commands within that account's OS permissions. Root requires a separate local operator "
         "opt-in. Initial cwd is not a filesystem sandbox. Returns job_id and bounded output.",
         {"type": "object", "properties": {
-            "cwd": {"type": "string", "description": "Absolute initial working directory"},
+            "cwd": {"type": "string", "minLength": 1, "description": "Absolute initial working directory; omit to use the approved default reported by get_server"},
             "command": {"type": "string", "minLength": 1},
             "timeout_seconds": {"type": "integer", "minimum": 1, "maximum": 86400, "default": 3600},
             "wait_ms": {"type": "integer", "minimum": 0, "maximum": 5000, "default": 1000},
-        }, "required": ["cwd", "command"], "additionalProperties": False},
+        }, "required": ["command"], "additionalProperties": False},
         {"readOnlyHint": False, "destructiveHint": True, "openWorldHint": True, "idempotentHint": False},
     ),
     (
@@ -1282,8 +1282,7 @@ class MCPBridge:
                 operand = runtime.context(owner, str(arguments.get("job_id") or ""))
                 capability = "exec"
             elif name in command_tools:
-                operand = str(arguments.get("cwd") or
-                              os.environ.get("DRLINK_MCP_SERVER_DEFAULT_CWD") or account.home)
+                operand = str(arguments["cwd"] if "cwd" in arguments else full.default_cwd(account))
                 capability = "exec"
             elif operation in full.FILE_ACTIONS:
                 operand = str(arguments.get("path") or "")
@@ -1330,6 +1329,30 @@ class MCPBridge:
             return _text_result("DENY: " + failure, is_error=True)
         return _structured_result(payload)
 
+    def _native_execution_context(self, principal, target: str) -> dict:
+        """Expose only the current identity's approved legacy execution context.
+
+        Configured scope is not proof of live OS access. No policy changes or
+        arbitrary command probes are made by discovery.
+        """
+        import drlink_mcp_full_control as full
+        denied = {"state": "not_authorized_or_unavailable"}
+        try:
+            decision = self._authorize(principal, target, "exec")
+            if decision["action"] != "ALLOW":
+                return denied
+            account = full.configured_account()
+            patterns = list(decision.get("patterns") or [])
+            cwd = full.allowed_cwd(full.default_cwd(account), patterns, account)
+            return {"state": "configured", "default_account": account.name,
+                    "uid": account.uid, "default_cwd": cwd,
+                    "administrative": account.uid == 0,
+                    "command_authorized": True,
+                    "os_access_verified": False}
+        except (full.FullControlDenied, OSError, ValueError, TypeError, KeyError,
+                ControlPlaneError):
+            return denied
+
     def _call_server_self(self, principal, name: str, arguments: dict) -> dict:
         """Server-target policy is independent of enrolled Managed Host identity."""
         if (os.environ.get("DRLINK_MCP_SERVER_FULL_CONTROL_ENABLED") == "1"
@@ -1364,12 +1387,15 @@ class MCPBridge:
                     if name == "get_server":
                         payload = {"target": target, "type": "server",
                                    "status": "available", "nodename": uname.nodename}
+                        payload["execution_context"] = self._native_execution_context(principal, target)
                     else:
                         payload = {"sysname": uname.sysname, "nodename": uname.nodename,
                                    "release": uname.release, "machine": uname.machine}
                     result = "ALLOW"
                 elif os.environ.get("DRLINK_MCP_SERVER_LOCAL_EXEC_ENABLED") != "1":
                     reason = "Server-local executor is disabled"
+                elif name in ("server_git", "server_run") and not operand:
+                    reason = "Restricted Server executor requires an explicit approved cwd"
                 elif name in ("server_git", "server_run") and not path_allowed(
                     os.path.join(operand, ".drlink-mcp-git-scope"
                                  if name == "server_git" else ".drlink-mcp-dev-command-scope"),

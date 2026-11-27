@@ -181,7 +181,7 @@ class NativeFullControlPublicTests(unittest.TestCase):
                             ("server_git", "argv")):
             schema = tools[name]["inputSchema"]
             self.assertEqual(schema["type"], "object")
-            self.assertEqual(set(schema["required"]), {"cwd", field})
+            self.assertEqual(set(schema["required"]), {field})
             self.assertEqual(schema["properties"]["cwd"]["type"], "string")
             for option, low, high in (("wait_ms", 0, 5000), ("timeout_seconds", 1, 86400)):
                 self.assertNotIn(option, schema["required"])
@@ -219,6 +219,29 @@ class NativeFullControlPublicTests(unittest.TestCase):
             self.assertEqual(status, 401, body)
             self.assertIn("resource_metadata=", headers.get("WWW-Authenticate", ""))
             self.assertFalse(marker.exists())
+
+    def test_discover_context_and_omit_cwd_without_widening_scope(self):
+        ctx = self.allowed("get_server", {})["execution_context"]
+        self.assertEqual(ctx["state"], "configured")
+        self.assertEqual(ctx["default_cwd"], str(self.root))
+        self.assertEqual(ctx["default_account"], pwd.getpwuid(os.geteuid()).pw_name)
+        self.assertFalse(ctx["os_access_verified"])
+        result = self.completed(self.allowed("server_run", {"argv": ["pwd"]}))
+        self.assertEqual(result["exit_status"], 0)
+        self.assertEqual(result["cwd"], str(self.root))
+        for bad in ("", "/", "/nonexistent"):
+            self.denied("server_exec", {"cwd": bad, "command": "pwd"})
+        with patch.dict(os.environ, {"DRLINK_MCP_SERVER_DEFAULT_CWD": "/"}):
+            self.assertEqual(self.allowed("get_server", {})["execution_context"],
+                             {"state": "not_authorized_or_unavailable"})
+            self.denied("server_exec", {"command": "pwd"})
+            self.assertEqual(self.completed(self.allowed("server_exec", {
+                "cwd": str(self.root), "command": "pwd"}))["exit_status"], 0)
+        self.cli("set", "permission-object", "hostinfo-only", "permissions", "host-info")
+        self.cli("set", "ai-access", self.rule("other"), "permission", "hostinfo-only")
+        self.assertEqual(self.allowed("get_server", {}, identity="other")["execution_context"],
+                         {"state": "not_authorized_or_unavailable"})
+        self.denied("server_run", {"argv": ["pwd"]}, identity="other")
 
     def test_public_argv_shell_receipts_and_audit(self):
         argv = self.command([sys.executable, "-c", "print('PUBLIC_ARGV_OK')"])

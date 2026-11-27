@@ -794,7 +794,7 @@ MCP Server Settings
 0) Cancel
 ```
 
-The combined setup prompts for Server execution after TLS readiness is confirmed. Execution activation requires the local administrator to select Run as User and existing local file roots / initial working directories, then explicitly approve. The default prepared account is drlink-mcp with /var/lib/drlink-mcp; preparation alone does not enable execution. UID 0 requires separate explicit approval.
+The combined setup reuses valid TLS and reviews local execution eligibility after TLS readiness. The operator approves existing eligible accounts, including root only explicitly; preparation of the optional nonprivileged workspace does not grant AI access. The AI Access rule selects the authorized account subset and its default. See the canonical execution-account contract; target multi-account behavior is pending implementation and qualification.
 
 Connect and authenticate each AI independently:
 
