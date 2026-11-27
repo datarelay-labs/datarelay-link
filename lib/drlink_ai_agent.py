@@ -228,6 +228,212 @@ def execute_local(capability: str, arguments: dict, *, patterns: list[str], time
     raise ControlPlaneError("unsupported local capability %s" % cap)
 
 
+# Account-bound jobs are a distinct wire capability: an older Agent rejects
+# them as unsupported instead of accidentally running them as its service UID.
+ACCOUNT_JOB = "account-bound-v1"
+ACCOUNT_ACTIONS = frozenset({"exec", "list_processes", "read_file", "write_file",
+                             "delete_file", "upload_file", "download_file"})
+
+
+def normalize_execution_profile(value):
+    """Validate signed public profile metadata without inspecting Server paths."""
+    import re
+    if not isinstance(value, dict) or value.get("version") != 1:
+        raise ControlPlaneError("Invalid Agent execution profile version")
+    state = value.get("state")
+    if state in ("legacy", "unavailable"):
+        if set(value) != {"version", "state"}:
+            raise ControlPlaneError("Invalid Agent execution state")
+        return dict(value)
+    if state != "configured" or set(value) != {"version", "state", "accounts", "reader"}:
+        raise ControlPlaneError("Invalid Agent execution profile")
+    accounts = value["accounts"]
+    if not isinstance(accounts, dict) or not accounts or len(accounts) > 64:
+        raise ControlPlaneError("Invalid Agent execution accounts")
+    def absolute(path):
+        return (isinstance(path, str) and path.startswith("/") and len(path) <= 4096
+                and not any(ord(c) < 32 or c in "%\\*?[]" for c in path)
+                and all(part not in (".", "..") for part in path.split("/"))
+                and (path == "/" or (not path.endswith("/") and "//" not in path)))
+    clean = {}
+    for name, entry in accounts.items():
+        if (not isinstance(name, str) or not re.fullmatch(r"[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}[$]?", name)
+                or not isinstance(entry, dict) or set(entry) != {"uid", "home", "cwd", "roots"}
+                or type(entry["uid"]) is not int or entry["uid"] < 0
+                or not absolute(entry["home"]) or not absolute(entry["cwd"])
+                or not isinstance(entry["roots"], list) or not entry["roots"] or len(entry["roots"]) > 64
+                or not all(absolute(root) for root in entry["roots"])
+                or not any(root == "/" or entry["cwd"] == root or entry["cwd"].startswith(root + "/")
+                           for root in entry["roots"])):
+            raise ControlPlaneError("Invalid Agent execution account")
+        clean[name] = dict(entry, roots=sorted(set(entry["roots"])))
+    reader = value["reader"]
+    if reader is not None and (not isinstance(reader, str) or reader not in clean or clean[reader]["uid"] == 0):
+        raise ControlPlaneError("Invalid Agent read-only account")
+    normalized = {"version":1, "state":"configured", "accounts":clean, "reader":reader}
+    if len(json.dumps(normalized)) > 65536:
+        raise ControlPlaneError("Agent execution profile is too large")
+    return normalized
+
+
+def execution_profile_digest(value):
+    import hashlib
+    return hashlib.sha256(json.dumps(normalize_execution_profile(value), sort_keys=True,
+                                     separators=(",", ":")).encode()).hexdigest()
+
+
+def local_execution_profile(root):
+    """Read locally approved Linux account ceilings; no remote job can edit this configuration."""
+    import sys
+    if not sys.platform.startswith("linux"):
+        return {"version":1, "state":"legacy"}
+    import pwd
+    path = Path(root or "/") / "etc/drlink/ai-execution.json"
+    try:
+        # No symlink or writable ancestor from the selected Agent root.
+        current = Path(root or "/")
+        for part in ("etc", "drlink", "ai-execution.json"):
+            current = current / part
+            try:
+                info = current.lstat()
+            except FileNotFoundError:
+                return {"version":1, "state":"legacy"}
+            if (stat.S_ISLNK(info.st_mode) or info.st_uid != os.geteuid()
+                    or info.st_mode & 0o022):
+                raise ControlPlaneError("Unsafe local Agent execution profile ownership")
+        if not stat.S_ISREG(info.st_mode) or info.st_size > 65536:
+            raise ControlPlaneError("Invalid local Agent execution profile")
+        # Local config has explicit root opt-in; only public normalized metadata
+        # leaves the Agent through its authenticated management claim.
+        with path.open("rb") as handle:
+            raw = json.loads(handle.read(65537))
+        if not isinstance(raw, dict) or set(raw) != {"version","accounts","reader","allow_root"} or raw["version"] != 1 or type(raw["allow_root"]) is not bool:
+            raise ControlPlaneError("Invalid local Agent execution profile")
+        entries = {}
+        for name, spec in raw["accounts"].items():
+            entry = pwd.getpwnam(name)
+            if set(spec) != {"uid","cwd","roots"} or spec["uid"] != entry.pw_uid:
+                raise ControlPlaneError("Agent execution UID changed")
+            if entry.pw_uid == 0 and not raw["allow_root"]:
+                raise ControlPlaneError("Agent root requires explicit local approval")
+            if os.geteuid() != 0 and (entry.pw_uid != os.geteuid() or entry.pw_gid != os.getegid()):
+                raise ControlPlaneError("Agent cannot assume approved account")
+            roots = spec["roots"]
+            cwd = spec["cwd"]
+            if not all(Path(p).is_dir() and str(Path(p).resolve(strict=True)) == p for p in [cwd, *roots]):
+                raise ControlPlaneError("Agent execution paths must be existing canonical directories")
+            entries[name] = dict(spec, home=entry.pw_dir)
+        return normalize_execution_profile({"version":1,"state":"configured","accounts":entries,"reader":raw["reader"]})
+    except (OSError, ValueError, KeyError, TypeError, AttributeError, ControlPlaneError):
+        return {"version":1,"state":"unavailable"}
+
+
+def _account_job(root, job):
+    """Recheck live local approval before running a bound operation."""
+    import pwd
+    import sys
+    profile = local_execution_profile(root)
+    args = job.get("arguments")
+    if not isinstance(args, dict) or set(args) != {"binding","operation","arguments"}:
+        raise ControlPlaneError("Invalid account-bound Agent job")
+    binding = args["binding"]
+    operation = args["operation"]
+    options = args["arguments"]
+    if (not isinstance(binding, dict) or set(binding) != {"account","uid","profile_digest","rule_id"}
+            or operation not in ACCOUNT_ACTIONS or not isinstance(options, dict)
+            or profile["state"] != "configured" or binding["profile_digest"] != execution_profile_digest(profile)):
+        raise ControlPlaneError("Agent execution profile changed or unavailable")
+    name = binding["account"]
+    entry = profile["accounts"].get(name)
+    if not entry or entry["uid"] != binding["uid"]:
+        raise ControlPlaneError("Agent account is not locally approved")
+    user = pwd.getpwnam(name)
+    if user.pw_uid != entry["uid"]:
+        raise ControlPlaneError("Agent execution UID changed")
+    patterns = job.get("patterns") or []
+    def within_roots(value, *, directory=False):
+        if not isinstance(value, str) or not value.startswith("/") or "%" in value or not path_allowed(value, patterns):
+            raise ControlPlaneError("Agent path denied")
+        canonical = str(Path(value).resolve(strict=directory))
+        if not any(r == "/" or canonical == r or canonical.startswith(r + "/") for r in entry["roots"]):
+            raise ControlPlaneError("Agent local path ceiling denied")
+        if directory and not Path(canonical).is_dir():
+            raise ControlPlaneError("Agent cwd unavailable")
+        return canonical
+    cwd = entry["cwd"]
+    if operation == "exec":
+        cwd = within_roots(options.get("cwd", cwd), directory=True)
+        if not isinstance(options.get("command"), str) or not options["command"] or "\x00" in options["command"]:
+            raise ControlPlaneError("Invalid Agent command")
+        argv = ["/bin/sh", "-c", options["command"]]
+        data = None
+    else:
+        if operation != "list_processes":
+            within_roots(options.get("path"))
+        if operation in ("write_file","upload_file") and not isinstance(options.get("content"), str):
+            raise ControlPlaneError("Explicit file content required")
+        # Isolated Python worker, not a privileged in-process file action.
+        argv = [sys.executable, "-I", "-c",
+                "import sys;sys.path.insert(0,sys.argv[1]);from drlink_ai_agent import account_file_worker;account_file_worker()",
+                str(Path(__file__).resolve().parent)]
+        data = json.dumps({"operation":operation,"arguments":options,
+                           "patterns":patterns,"roots":entry["roots"]}).encode()
+        if len(data) > 2*MAX_FILE_BYTES:
+            raise ControlPlaneError("Agent file request too large")
+    env = {"PATH":"/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+           "HOME":user.pw_dir,"USER":name,"LOGNAME":name,"LANG":"C.UTF-8"}
+    identity = ({"user":user.pw_uid,"group":user.pw_gid,"extra_groups":os.getgrouplist(name,user.pw_gid)}
+                if os.geteuid() == 0 else {})
+    proc = subprocess.Popen(argv, cwd=cwd, env=env, stdin=subprocess.PIPE if data is not None else subprocess.DEVNULL,
+                            stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True, close_fds=True, **identity)
+    try:
+        out, err = proc.communicate(data, timeout=max(1, min(int(job.get("timeout") or 30), 3600)))
+    except subprocess.TimeoutExpired:
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        proc.communicate()
+        return {"result":"TIMEOUT","exit_status":-9,"execution_user":name,"execution_uid":user.pw_uid}
+    if operation == "exec":
+        stdout, trunc = _bound(out, MAX_STDOUT_BYTES)
+        stderr, err_trunc = _bound(err, MAX_STDERR_BYTES)
+        return {"result":"ALLOW","exit_status":proc.returncode,
+                "stdout":stdout.decode("utf-8","replace"),"stderr":stderr.decode("utf-8","replace"),
+                "stdout_truncated":trunc,"stderr_truncated":err_trunc,"cwd":cwd,
+                "execution_user":name,"execution_uid":user.pw_uid}
+    if proc.returncode or len(out) > 2*MAX_FILE_BYTES:
+        raise ControlPlaneError("Agent account file operation failed")
+    result = json.loads(out)
+    if not isinstance(result, dict) or result.get("result") != "ALLOW":
+        raise ControlPlaneError("Agent account file operation denied")
+    return dict(result, execution_user=name, execution_uid=user.pw_uid)
+
+
+def account_file_worker():
+    import sys
+    try:
+        data = sys.stdin.buffer.read(2*MAX_FILE_BYTES+1)
+        if len(data) > 2*MAX_FILE_BYTES:
+            raise ControlPlaneError("Agent file request too large")
+        request = json.loads(data)
+        operation = request["operation"]
+        if operation not in ACCOUNT_ACTIONS or operation == "exec":
+            raise ControlPlaneError("Invalid Agent file operation")
+        if operation != "list_processes":
+            value = request["arguments"].get("path")
+            if not isinstance(value,str) or not path_allowed(value,request["patterns"]):
+                raise ControlPlaneError("Agent file rule denied")
+            canonical = str(Path(value).resolve(strict=False))
+            if not any(r == "/" or canonical == r or canonical.startswith(r + "/")
+                       for r in request["roots"]):
+                raise ControlPlaneError("Agent file ceiling denied")
+        result = execute_local(operation, request["arguments"], patterns=request["patterns"], timeout=30)
+        sys.stdout.write(json.dumps(dict(result, result="ALLOW")))
+    except Exception:
+        sys.stdout.write('{"result":"DENY"}')
+
+
 def _agent_post(url: str, token: str, body: dict, timeout: float = 10) -> dict:
     req = urllib.request.Request(
         url,
@@ -300,8 +506,9 @@ class AgentLoop:
         if self.agent_root:
             import drlink_mgmt_sync as mgmt
 
+            profile = local_execution_profile(self.agent_root)
             payload = mgmt.claim_ai_jobs_on_server(
-                root=self.agent_root, limit=4, wait_ms=self.wait_ms
+                root=self.agent_root, limit=4, wait_ms=self.wait_ms, execution_profile=profile
             )
             return list(payload.get("jobs") or [])
         body = {"limit": 4}
@@ -413,12 +620,16 @@ class AgentLoop:
                 )
                 continue
             try:
-                result = execute_local(
-                    job.get("capability") or "",
-                    job.get("arguments") or {},
-                    patterns=job.get("patterns") or [],
-                    timeout=job.get("timeout"),
-                )
+                cap = job.get("capability") or ""
+                if cap == ACCOUNT_JOB:
+                    if not self.agent_root:
+                        raise ControlPlaneError("Account-bound jobs require enrolled Agent management")
+                    result = _account_job(self.agent_root, job)
+                else:
+                    if self.agent_root and cap in ACCOUNT_ACTIONS and local_execution_profile(self.agent_root)["state"] != "legacy":
+                        raise ControlPlaneError("Agent requires an explicit account-bound job")
+                    result = execute_local(cap, job.get("arguments") or {},
+                        patterns=job.get("patterns") or [], timeout=job.get("timeout"))
             except ControlPlaneError as exc:
                 result = {"result": "DENY", "error": str(exc)}
             except Exception as exc:

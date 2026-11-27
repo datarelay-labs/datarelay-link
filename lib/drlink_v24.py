@@ -5624,6 +5624,56 @@ def _resolve_ai_execution_grant(
                                                 "row_version": row["row_version"]}}
 
 
+def resolve_managed_execution_grant(plane_db, *, identity, principal_id, destination,
+                                    capability, arguments, profile, run_as=None, rule_id=None):
+    """Remote POSIX paths are lexical here; actual filesystem checks are Agent-local."""
+    from drlink_ai_agent import normalize_execution_profile, execution_profile_digest
+    from fnmatch import fnmatchcase
+    from drlink_control_plane import FILE_CAPABILITIES
+    def denied(code):
+        return {"action":"DENY","reason_code":code,"winner":None,"patterns":[]}
+    try:
+        profile = normalize_execution_profile(profile)
+    except ControlPlaneError:
+        return denied("AGENT_PROFILE_INVALID")
+    if profile["state"] != "configured":
+        return denied("AGENT_PROFILE_UNAVAILABLE")
+    if run_as is not None and (not isinstance(run_as,str) or not run_as):
+        return denied("INVALID_EXECUTION_ACCOUNT")
+    accounts = profile["accounts"]
+    operand = arguments.get("cwd") if capability == "exec" else arguments.get("path")
+    def valid_path(path):
+        return (isinstance(path,str) and path.startswith("/") and len(path)<=4096
+                and not any(ord(c)<32 or c in "%\\*?[]" for c in path)
+                and all(p not in (".","..") for p in path.split("/"))
+                and (path=="/" or ("//" not in path and not path.endswith("/"))))
+    if (capability == "exec" and "cwd" in arguments and not valid_path(operand)
+            or capability in FILE_CAPABILITIES and not valid_path(operand)):
+        return denied("INVALID_AGENT_PATH")
+    def within(path, root):
+        return root=="/" or path==root or path.startswith(root+"/")
+    def validate(name, patterns, value):
+        path = accounts[name]["cwd"] if value is None and capability=="exec" else value
+        if not valid_path(path) or not any(within(path, r) for r in accounts[name]["roots"]):
+            return False
+        for pattern in patterns:
+            if pattern.endswith("/**") and within(path,pattern[:-3].rstrip("/") or "/"):
+                return True
+            if not pattern.endswith("/**") and fnmatchcase(path, pattern):
+                return True
+        return False
+    decision = resolve_ai_execution_grant(plane_db, identity=identity, principal_id=principal_id,
+        destination=destination, capability=capability, local_accounts=accounts, run_as=run_as,
+        operand=operand, rule_id=rule_id, reader_account=profile["reader"], validate_operand=validate)
+    if decision["action"] == "ALLOW":
+        name = decision["account"]
+        decision["binding"] = {"account":name, "uid":accounts[name]["uid"],
+                               "profile_digest":execution_profile_digest(profile),
+                               "rule_id":decision["winner"]["id"]}
+        decision["cwd"] = operand if capability=="exec" and operand is not None else accounts[name]["cwd"]
+    return decision
+
+
 def authorize_ai_capability_v24(
     plane_db,
     *,

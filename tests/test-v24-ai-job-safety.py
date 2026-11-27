@@ -369,6 +369,106 @@ class AiJobSafetyTests(unittest.TestCase):
         self.assertEqual(args[1]["result"], "DENY")
         self.assertIn("deadline", args[1]["error"])
 
+    def _account_profile(self, users, reader=None):
+        import pwd
+        cfg = Path(self.agent_a_tmp, "etc/drlink/ai-execution.json")
+        cfg.parent.mkdir(mode=0o755, parents=True, exist_ok=True)
+        entries = {name:{"uid":pwd.getpwnam(name).pw_uid, "cwd":str(self.agent_a_root),
+                         "roots":[str(self.agent_a_root)]} for name in users}
+        cfg.write_text(json.dumps({"version":1,"accounts":entries,"reader":reader,
+                                  "allow_root":any(item["uid"]==0 for item in entries.values())}))
+        cfg.chmod(0o600)
+        from drlink_ai_agent import local_execution_profile
+        profile = local_execution_profile(self.agent_a_tmp)
+        self.assertEqual(profile["state"],"configured")
+        return profile
+
+    def test_signed_account_profile_default_and_fail_closed_claim(self):
+        import pwd
+        user = pwd.getpwuid(os.geteuid()).pw_name
+        profile = self._account_profile([user], user if os.geteuid() else None)
+        # Only the authenticated Agent claim publishes eligibility.
+        mgmt.claim_ai_jobs_on_server(root=self.agent_a_tmp, execution_profile=profile)
+        self.assertEqual(json.loads(self.plane.conn.execute(
+            "SELECT ai_execution_profile_json FROM clients WHERE id=?",(MACHINE_A,)).fetchone()[0]), profile)
+        v24.set_ai_access_rule(self.plane,"ops-"+HOST_A,
+            execution={"default":user,"accounts":[user]},confirm=True)
+        grant = v24.resolve_managed_execution_grant(self.plane, identity="ops", principal_id=self.principal["id"],
+            destination=HOST_A, capability="exec", arguments={}, profile=profile)
+        self.assertEqual(grant["action"],"ALLOW")
+        job = self.plane.enqueue_ai_job(principal_id=self.principal["id"],
+            endpoint_object_id="ep-"+MACHINE_A[:8],client_id=MACHINE_A,capability="exec",
+            arguments={"command":"id -u","cwd":str(self.agent_a_root)},patterns=grant["patterns"],
+            timeout=30,execution_binding=grant["binding"])
+        # An old or bearer-only Agent cannot receive a bound command.
+        self.assertEqual(self.plane.claim_ai_jobs(MACHINE_A),[])
+        self.assertEqual(self.plane.get_ai_job(job)["status"],"cancelled")
+        job = self.plane.enqueue_ai_job(principal_id=self.principal["id"],
+            endpoint_object_id="ep-"+MACHINE_A[:8],client_id=MACHINE_A,capability="exec",
+            arguments={"command":"id -u","cwd":str(self.agent_a_root)},patterns=grant["patterns"],
+            timeout=30,execution_binding=grant["binding"])
+        v24.set_ai_access_rule(self.plane,"ops-"+HOST_A,enabled=False,confirm=True)
+        self.assertEqual(mgmt.claim_ai_jobs_on_server(root=self.agent_a_tmp,execution_profile=profile)["jobs"],[])
+        self.assertEqual(self.plane.get_ai_job(job)["status"],"cancelled")
+        v24.set_ai_access_rule(self.plane,"ops-"+HOST_A,enabled=True,confirm=True)
+        self._start_mgmt_worker(self.agent_a_tmp)
+        ctx = self.bridge.call_tool(self.principal,"get_host",{"endpoint":HOST_A})
+        self.assertEqual(ctx["structuredContent"]["execution_context"]["default_account"],user)
+        result = self.bridge.call_tool(self.principal,"exec",{"endpoint":HOST_A,"command":"id -u"})
+        self.assertFalse(result.get("isError"),result)
+        data=json.loads(result["content"][0]["text"])
+        self.assertEqual(data["execution_uid"],os.geteuid())
+        self.assertEqual(data["stdout"].strip(),str(os.geteuid()))
+        for args in ({"run_as":"not-approved"},{"run_as":""},{"cwd":"/"},{"cwd":None}):
+            self.assertTrue(self.bridge.call_tool(self.principal,"exec",
+                {"endpoint":HOST_A,"command":"id -u",**args}).get("isError"))
+        dest=self.agent_a_root/"bound-file"
+        result=self.bridge.call_tool(self.principal,"write_file",{"endpoint":HOST_A,"path":str(dest),"content":"bound"})
+        self.assertFalse(result.get("isError"),result)
+        self.assertEqual(dest.stat().st_uid,os.geteuid())
+        self.assertEqual(dest.read_text(),"bound")
+
+    def test_profile_downgrade_cannot_restore_legacy_service_execution(self):
+        import pwd
+        user=pwd.getpwuid(os.geteuid()).pw_name
+        profile=self._account_profile([user])
+        mgmt.claim_ai_jobs_on_server(root=self.agent_a_tmp,execution_profile=profile)
+        queued=self._enqueue_with_timeout(MACHINE_A,"exec",30,command="id")
+        self.assertEqual(mgmt.claim_ai_jobs_on_server(root=self.agent_a_tmp)["jobs"],[])
+        self.assertEqual(self.plane.get_ai_job(queued)["status"],"cancelled")
+        stored=json.loads(self.plane.conn.execute("SELECT ai_execution_profile_json FROM clients WHERE id=?",(MACHINE_A,)).fetchone()[0])
+        self.assertEqual(stored["state"],"unavailable")
+        self.assertTrue(self.bridge.call_tool(self.principal,"exec",{"endpoint":HOST_A,"command":"id"}).get("isError"))
+        mgmt.claim_ai_jobs_on_server(root=self.agent_a_tmp,execution_profile=profile)
+        self.assertEqual(json.loads(self.plane.conn.execute("SELECT ai_execution_profile_json FROM clients WHERE id=?",(MACHINE_A,)).fetchone()[0])["state"],"configured")
+
+    @unittest.skipUnless(os.geteuid()==0,"two real OS accounts require root in disposable fixtures")
+    def test_signed_two_real_os_accounts(self):
+        import pwd
+        normal=pwd.getpwuid(ROOT.stat().st_uid) if ROOT.stat().st_uid else pwd.getpwnam("nobody")
+        self.assertNotEqual(normal.pw_uid,0)
+        Path(self.agent_a_tmp).chmod(0o711)
+        os.chown(self.agent_a_root,normal.pw_uid,normal.pw_gid)
+        profile=self._account_profile([normal.pw_name,"root"],normal.pw_name)
+        mgmt.claim_ai_jobs_on_server(root=self.agent_a_tmp,execution_profile=profile)
+        v24.set_ai_access_rule(self.plane,"ops-"+HOST_A,
+            execution={"default":normal.pw_name,"accounts":[normal.pw_name,"root"]},confirm=True)
+        self._start_mgmt_worker(self.agent_a_tmp)
+        for args,uid in (({},normal.pw_uid),({"run_as":"root"},0)):
+            response=self.bridge.call_tool(self.principal,"exec",{"endpoint":HOST_A,"command":"id -u",**args})
+            self.assertFalse(response.get("isError"),response)
+            data=json.loads(response["content"][0]["text"])
+            self.assertEqual(data["execution_uid"],uid)
+            self.assertEqual(data["stdout"].strip(),str(uid))
+        file=self.agent_a_root/"owned-by-user"
+        response=self.bridge.call_tool(self.principal,"write_file",{"endpoint":HOST_A,"path":str(file),"content":"fixture"})
+        self.assertFalse(response.get("isError"),response)
+        self.assertEqual(file.stat().st_uid,normal.pw_uid)
+        v24.set_ai_access_rule(self.plane,"ops-"+HOST_A,
+            execution={"default":normal.pw_name,"accounts":[normal.pw_name]},confirm=True)
+        response=self.bridge.call_tool(self.principal,"exec",{"endpoint":HOST_A,"command":"id -u","run_as":"root"})
+        self.assertTrue(response.get("isError"),response)
+
     def test_read_only_normal_success(self):
         self._start_mgmt_worker(self.agent_a_tmp)
         result = self.bridge.call_tool(

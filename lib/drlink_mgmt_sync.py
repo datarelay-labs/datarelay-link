@@ -855,7 +855,7 @@ CLAIM_HOLD_TIMEOUT_MARGIN_SECONDS = 10.0
 
 
 def claim_ai_jobs_on_server(
-    *, root: Optional[str] = None, limit: int = 4, wait_ms: int = 0
+    *, root: Optional[str] = None, limit: int = 4, wait_ms: int = 0, execution_profile=None
 ) -> dict:
     """Claim queued AI jobs for this enrolled Managed Host via management auth.
 
@@ -871,6 +871,12 @@ def claim_ai_jobs_on_server(
             "No changes were applied."
         )
     body = {"limit": int(limit)}
+    if execution_profile is not None:
+        from drlink_ai_agent import normalize_execution_profile
+        profile = normalize_execution_profile(execution_profile)
+        if profile["state"] == "configured" and not _load_response_mac(root):
+            raise MgmtSyncError("Account-bound Agent requires authenticated management responses")
+        body["execution_profile"] = profile
     timeout = 8.0
     hold = max(0, min(int(wait_ms or 0), CLAIM_HOLD_MAX_MS))
     if hold:
@@ -1839,13 +1845,20 @@ def server_claim_ai_jobs(plane, auth: MgmtAuthContext, body: dict) -> dict:
     if platform not in ("posix", "windows"):
         raise MgmtSyncError("unsupported AI executor platform")
     plane.record_ai_executor_platform(machine_id, platform)
+    profile = (body or {}).get("execution_profile")
+    if profile is not None:
+        from drlink_ai_agent import normalize_execution_profile
+        profile = normalize_execution_profile(profile)
+        if profile["state"] == "configured" and (platform != "posix" or not auth.client.get("mgmt_mac_key")):
+            raise MgmtSyncError("Account-bound jobs require a compatible authenticated Agent")
+    profile = plane.record_ai_execution_profile(machine_id, profile)
     limit = int((body or {}).get("limit") or 4)
     wait_ms = (body or {}).get("wait_ms")
     if wait_ms:
         # Held claim (AUD-21 step 2): answer when a job is queued, or empty after wait_ms.
-        jobs = plane.claim_ai_jobs_held(machine_id, limit, wait_ms=wait_ms)
+        jobs = plane.claim_ai_jobs_held(machine_id, limit, wait_ms=wait_ms, **({"execution_profile":profile} if profile is not None else {}))
     else:
-        jobs = plane.claim_ai_jobs(machine_id, limit)
+        jobs = plane.claim_ai_jobs(machine_id, limit, **({"execution_profile":profile} if profile is not None else {}))
     return {"jobs": jobs}
 
 

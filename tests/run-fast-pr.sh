@@ -162,6 +162,12 @@ python3 tests/test-mcp-bridge-held-claim.py
 python3 tests/test-mcp-bridge-workers.py
 python3 tests/test-ai-access-eval-equivalence.py
 python3 tests/test-ai-jobs-schema-once.py
+python3 tests/test-v24-ai-job-safety.py AiJobSafetyTests.test_signed_account_profile_default_and_fail_closed_claim AiJobSafetyTests.test_profile_downgrade_cannot_restore_legacy_service_execution
+if [[ "$(id -u)" == 0 ]]; then
+  python3 tests/test-v24-ai-job-safety.py AiJobSafetyTests.test_signed_two_real_os_accounts
+else
+  sudo -n "$(command -v python3)" -B tests/test-v24-ai-job-safety.py AiJobSafetyTests.test_signed_two_real_os_accounts
+fi
 python3 tests/test-mcp-agent-dispatch-latency.py
 python3 tests/test-mcp-bridge-concurrent-calls.py
 python3 tests/test-mcp-public-tls-lifecycle.py \

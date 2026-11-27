@@ -5320,6 +5320,7 @@ class ControlPlane:
         patterns: list[str],
         timeout: Optional[int],
         correlation_id: Optional[str] = None,
+        execution_binding: Optional[dict] = None,
     ) -> str:
         ensure_ai_jobs_safety_schema_once(self.conn)
         job_id = _new_id("job")
@@ -5335,6 +5336,8 @@ class ControlPlane:
             "timeout": timeout_seconds,
             "deadline_at": deadline_at,
         }
+        if execution_binding is not None:
+            payload["execution_binding"] = execution_binding
         self.conn.execute(
             "INSERT INTO ai_jobs(id, principal_id, endpoint_object_id, capability, payload_json, "
             "status, result_json, created_at, updated_at, timeout_seconds, client_id, deadline_at, "
@@ -5543,7 +5546,68 @@ class ControlPlane:
         )
         self.commit_if_autonomous()
 
-    def claim_ai_jobs(self, client_id: str, limit: int = 4) -> list[dict]:
+    def record_ai_execution_profile(self, client_id, profile):
+        """Authenticated claim metadata; never an AI permission grant."""
+        from drlink_ai_agent import normalize_execution_profile
+        self.assert_ai_job_claimant(client_id)
+        incoming = None if profile is None else json.dumps(
+            normalize_execution_profile(profile), sort_keys=True, separators=(",", ":"))
+        def read():
+            current = self.conn.execute("SELECT ai_execution_profile_json FROM clients WHERE id=?", (client_id,)).fetchone()
+            return current[0] if current else None
+        if read() == incoming:
+            return profile
+        owned = not self.conn.in_transaction
+        if owned:
+            self.conn.execute("BEGIN IMMEDIATE")
+        try:
+            stored = read()
+            previous = json.loads(stored) if stored else None
+            if previous and previous.get("state") in ("configured","unavailable") and (profile is None or profile.get("state") == "legacy"):
+                profile = {"version":1,"state":"unavailable"}
+            text = None if profile is None else json.dumps(
+                normalize_execution_profile(profile), sort_keys=True, separators=(",", ":"))
+            self.conn.execute(
+                "UPDATE clients SET ai_execution_profile_json=? WHERE id=? "
+                "AND ai_execution_profile_json IS NOT ?", (text, client_id, text))
+            if owned:
+                self.conn.commit()
+        except BaseException:
+            if owned:
+                self.conn.rollback()
+            raise
+        return profile
+
+    def _account_bound_claim(self, row, payload, execution_profile):
+        """A queued binding is checked against current policy and the actual claim."""
+        import drlink_v24 as v24
+        from drlink_ai_agent import execution_profile_digest
+        binding = payload["execution_binding"]
+        if (not isinstance(execution_profile, dict) or execution_profile.get("state") != "configured"
+                or execution_profile_digest(execution_profile) != binding.get("profile_digest")):
+            return False
+        client = self.conn.execute("SELECT * FROM clients WHERE id=?", (row["client_id"],)).fetchone()
+        if (not client or not self.client_effectively_connected(client)
+                or not client["ai_execution_profile_json"]
+                or execution_profile_digest(json.loads(client["ai_execution_profile_json"])) != binding["profile_digest"]):
+            return False
+        ep = self.conn.execute(
+            "SELECT o.name FROM objects o JOIN managed_endpoints e ON e.object_id=o.id "
+            "WHERE o.id=? AND e.client_id=? AND o.type='managed_endpoint'",
+            (row["endpoint_object_id"],row["client_id"])).fetchone()
+        principal = self.conn.execute("SELECT name FROM ai_principals WHERE id=?",
+                                      (row["principal_id"],)).fetchone()
+        if not ep or not principal:
+            return False
+        grant = v24.resolve_managed_execution_grant(
+            self, identity=principal["name"], principal_id=row["principal_id"],
+            destination=ep["name"], capability=row["capability"],
+            arguments=payload["arguments"], profile=execution_profile,
+            run_as=binding["account"], rule_id=binding["rule_id"])
+        return (grant["action"] == "ALLOW" and grant["binding"] == binding
+                and grant["patterns"] == payload["patterns"])
+
+    def claim_ai_jobs(self, client_id: str, limit: int = 4, *, execution_profile=None) -> list[dict]:
         ensure_ai_jobs_safety_schema_once(self.conn)
         self.assert_ai_job_claimant(client_id)
         self.refresh_managed_host_liveness(client_id)
@@ -5561,35 +5625,63 @@ class ControlPlane:
             )
         )
         claimed = []
-        for row in rows:
-            if len(claimed) >= take:
-                break
-            payload = json.loads(row["payload_json"] or "{}")
-            claim_token = "atk_" + secrets.token_urlsafe(24)
-            attempt_id = _new_id("att")
-            self.conn.execute(
-                "UPDATE ai_jobs SET status = 'running', claim_token = ?, attempt_id = ?, "
-                "claimed_at = ?, updated_at = ?, queue_ms = MAX(0, ? - enqueued_ms) "
-                "WHERE id = ? AND status = 'queued'",
-                (claim_token, attempt_id, now, now, _epoch_ms(), row["id"]),
-            )
-            if self.conn.execute("SELECT changes()").fetchone()[0]:
-                claimed.append(
-                    {
-                        "id": row["id"],
-                        "capability": row["capability"],
-                        "arguments": payload.get("arguments") or {},
-                        "patterns": payload.get("patterns") or [],
-                        "timeout": payload.get("timeout") or row["timeout_seconds"],
-                        "deadline_at": row["deadline_at"] or payload.get("deadline_at"),
-                        "claim_token": claim_token,
-                        "attempt_id": attempt_id,
-                    }
+        try:
+            for row in rows:
+                if len(claimed) >= take:
+                    break
+                payload = json.loads(row["payload_json"] or "{}")
+                binding = payload.get("execution_binding")
+                live = self.conn.execute("SELECT ai_execution_profile_json FROM clients WHERE id=?", (client_id,)).fetchone()
+                live_profile = json.loads(live[0]) if live and live[0] else None
+                account_aware = bool(live_profile and live_profile["state"] != "legacy")
+                if binding is not None:
+                    # Serialize the final policy read and queue transition; never
+                    # hold this lock while executing or waiting for Agent I/O.
+                    if not self.conn.in_transaction:
+                        self.conn.execute("BEGIN IMMEDIATE")
+                    try:
+                        approved = self._account_bound_claim(row, payload, execution_profile)
+                    except (ControlPlaneError, ValueError, KeyError, TypeError):
+                        approved = False
+                    if not approved:
+                        self.conn.execute("UPDATE ai_jobs SET status='cancelled', updated_at=? "
+                                          "WHERE id=? AND status='queued'", (now, row["id"]))
+                        continue
+                elif (account_aware or (execution_profile and execution_profile.get("state") != "legacy")) and row["capability"] != "get_system_info":
+                    self.conn.execute("UPDATE ai_jobs SET status='cancelled', updated_at=? "
+                                      "WHERE id=? AND status='queued'", (now, row["id"]))
+                    continue
+                claim_token = "atk_" + secrets.token_urlsafe(24)
+                attempt_id = _new_id("att")
+                self.conn.execute(
+                    "UPDATE ai_jobs SET status = 'running', claim_token = ?, attempt_id = ?, "
+                    "claimed_at = ?, updated_at = ?, queue_ms = MAX(0, ? - enqueued_ms) "
+                    "WHERE id = ? AND status = 'queued'",
+                    (claim_token, attempt_id, now, now, _epoch_ms(), row["id"]),
                 )
-        self.commit_if_autonomous()
+                if self.conn.execute("SELECT changes()").fetchone()[0]:
+                    claimed.append(
+                        {
+                            "id": row["id"],
+                            "capability": "account-bound-v1" if binding is not None else row["capability"],
+                            "arguments": ({"binding":binding, "operation":row["capability"],
+                                           "arguments":payload.get("arguments") or {}}
+                                          if binding is not None else payload.get("arguments") or {}),
+                            "patterns": payload.get("patterns") or [],
+                            "timeout": payload.get("timeout") or row["timeout_seconds"],
+                            "deadline_at": row["deadline_at"] or payload.get("deadline_at"),
+                            "claim_token": claim_token,
+                            "attempt_id": attempt_id,
+                        }
+                    )
+            self.commit_if_autonomous()
+        except BaseException:
+            if self.conn.in_transaction and not self._batch_mode:
+                self.conn.rollback()
+            raise
         return claimed
 
-    def claim_ai_jobs_held(self, client_id: str, limit: int = 4, wait_ms: int = 0) -> list[dict]:
+    def claim_ai_jobs_held(self, client_id: str, limit: int = 4, wait_ms: int = 0, *, execution_profile=None) -> list[dict]:
         """Claim like ``claim_ai_jobs``, but hold an empty claim for ``wait_ms``.
 
         With no job queued the call waits for a change to the Control DB (any
@@ -5599,7 +5691,7 @@ class ControlPlane:
         read before each look, so a commit between the look and the wait is
         never missed, and the wait itself is bounded by a fallback poll.
         """
-        jobs = self.claim_ai_jobs(client_id, limit)
+        jobs = self.claim_ai_jobs(client_id, limit, execution_profile=execution_profile) if execution_profile is not None else self.claim_ai_jobs(client_id, limit)
         wait_s = clamp_claim_wait_ms(wait_ms) / 1000.0
         if jobs or wait_s <= 0:
             return jobs
@@ -5627,7 +5719,7 @@ class ControlPlane:
                     (client_id,),
                 ).fetchone()
                 if queued is not None:
-                    jobs = self.claim_ai_jobs(client_id, limit)
+                    jobs = self.claim_ai_jobs(client_id, limit, execution_profile=execution_profile) if execution_profile is not None else self.claim_ai_jobs(client_id, limit)
                     if jobs:
                         return jobs
                 remaining = deadline - time.monotonic()
