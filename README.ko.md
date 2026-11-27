@@ -244,18 +244,18 @@ handoff 이후 세션을 Python relay로 재실행하지 않으며, 새 연결�
 선택할 수 있습니다. 각 방향의 relay queue는 256 KiB로 제한하며, peer hangup 뒤에도
 수신 EOF까지 대기 데이터를 전달하고 backpressure 중 유휴 descriptor를 poll에서 제외합니다.
 Rust MCP helper는 dispatch admission, 1 MiB 결과 보존 창/64 KiB cursor page, 64 KiB 제한
-response body 쓰기를 제공합니다. 실제 socket/TLS 쓰기, HTTP framing, backpressure는 Python
-handler가 담당합니다. 결과 대기와 inbound connection I/O 통합은 아직 남아 있습니다. R3 stdout/stderr drain은
+inbound request body 읽기와 response 쓰기를 제공합니다. HTTP/TLS stream, JSON parsing,
+권한 판단은 계속 Python이 담당합니다. socket accept/connection lifecycle과 결과 대기 통합은 아직 남아 있습니다. R3 stdout/stderr drain은
 Linux/macOS Agent 및 Server 경로에 연결됐습니다. Linux 회귀는 통과했고, Apple Silicon 재검증에서 timeout/retry watcher 검사는 통과했습니다. 다만 종료된 자식(`returncode 0`)의 process group 신호에 `EPERM`이 발생해 macOS executor qualification은 해당 runner에서 차단됐습니다. 이 권한 거부는 오류로 유지합니다. 두 Rust library는 아직 설치 패키지에 포함되지 않았고 실제 사용자
 E2E qualification도 진행 중입니다. MCP rollback은 `DRLINK_MCP_RUNTIME=python`이며,
 `auto`는 library가 없으면 Python으로 돌아가고 명시적 `rust` 선택은 library 부재 시
 서비스 초기화를 fail-closed 합니다.
 R3에서는 Python이 시작한 Linux/macOS Agent 및 Server executor 자식 프로세스의
 stdout/stderr pipe를 Rust가 poll하고 읽습니다. macOS는 timeout/retry drain 호출 사이에 유지되는 kqueue process-exit watcher로
-종료를 관찰하고, Linux는 waitid를 사용합니다. Apple Silicon 재검증은 진행 중입니다. process 시작,
+종료를 관찰하고, Linux는 waitid를 사용합니다. Apple Silicon timeout/retry watcher 검사는 통과했지만 group cleanup의 `EPERM`으로 executor qualification은 차단됐습니다. process 시작,
 timeout 선택, process-group 종료, wait/reap 권한은 Python에 유지됩니다.
 또한 MCP job 출력은 Rust가 기존 1 MiB 보존 창과 64 KiB cursor 페이지를 제공하고,
-Python이 job 소유권과 cursor 검증, 응답 생성을 계속 담당합니다. 연결 I/O와 결과 대기는
+Python이 job 소유권과 cursor 검증, 응답 생성을 계속 담당합니다. socket connection lifecycle과 결과 대기는
 R2에 남아 있으며, native shared library의 설치 패키징은 아직 완료되지 않았습니다.
 
 ### AI Access / MCP

@@ -37,7 +37,7 @@ from urllib.parse import parse_qs, urlencode, urlparse, urlsplit
 from drlink_ai_agent import AgentLoop, execute_local
 from drlink_db_watch import get_watcher
 from drlink_mcp_server_executor import ExecutorDenied, execute_as_unprivileged_user
-from drlink_mcp_runtime import DispatchBudget, write_mcp_response
+from drlink_mcp_runtime import DispatchBudget, read_mcp_request_body, write_mcp_response
 from drlink_control_db import ControlPlaneError, resolve_root
 from drlink_control_plane import (
     clamp_claim_wait_ms,
@@ -1989,7 +1989,7 @@ def make_handler(bridge: MCPBridge):
             if length > 2_000_000:
                 self._send(413, _jsonrpc_error(None, -32700, "payload too large"))
                 return
-            raw = self.rfile.read(length) if length else b"{}"
+            raw = read_mcp_request_body(self.rfile, length) if length else b"{}"
             if parsed.path in ("/oauth/register", "/register"):
                 if self._rate_limited("register", limit=20, window_s=60):
                     self._send(429, {"error": "rate_limited"})

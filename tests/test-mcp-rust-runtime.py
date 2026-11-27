@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib.util
 import base64
+import io
 import os
 import signal
 import subprocess
@@ -52,6 +53,36 @@ class PythonDispatchBudgetTests(unittest.TestCase):
 
 @unittest.skipUnless(LIBRARY.is_file(), "build the locked Rust MCP runtime library first")
 class RustDispatchBudgetTests(unittest.TestCase):
+    def test_rust_request_body_uses_bounded_reads_and_preserves_bytes(self):
+        class ShortReader:
+            def __init__(self, data):
+                self.data = io.BytesIO(data)
+                self.largest_read = 0
+
+            def read(self, size):
+                self.largest_read = max(self.largest_read, size)
+                return self.data.read(min(size, 997))
+
+        payload = bytes(range(251)) * 900
+        reader = ShortReader(payload)
+        with mock.patch.dict(os.environ, {
+            "DRLINK_MCP_RUNTIME": "rust",
+            "DRLINK_MCP_NATIVE_LIBRARY": str(LIBRARY),
+        }):
+            result = runtime.read_mcp_request_body(reader, len(payload))
+        self.assertEqual(result, payload)
+        self.assertLessEqual(reader.largest_read, 64 * 1024)
+
+    def test_rust_request_body_rejects_short_read_and_oversized_length(self):
+        with mock.patch.dict(os.environ, {
+            "DRLINK_MCP_RUNTIME": "rust",
+            "DRLINK_MCP_NATIVE_LIBRARY": str(LIBRARY),
+        }):
+            with self.assertRaises(OSError):
+                runtime.read_mcp_request_body(io.BytesIO(b"short"), 10)
+            with self.assertRaises(ValueError):
+                runtime.read_mcp_request_body(io.BytesIO(b""), 2_000_001)
+
     def test_rust_response_writer_bounds_chunks_and_applies_short_write_backpressure(self):
         class PartialWriter:
             def __init__(self):

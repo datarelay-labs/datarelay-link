@@ -15,6 +15,7 @@ pub struct DispatchBudget {
 
 type OutputChunk = extern "C" fn(i32, *const u8, usize, *mut std::ffi::c_void) -> bool;
 type WriteChunk = extern "C" fn(*const u8, usize, *mut std::ffi::c_void) -> isize;
+type ReadChunk = extern "C" fn(*mut u8, usize, *mut std::ffi::c_void) -> isize;
 
 /// Create a persistent macOS process-exit watcher. Python owns its lifetime
 /// across timeout/retry drain calls and closes it after final EOF or failure.
@@ -271,6 +272,37 @@ pub unsafe extern "C" fn drlink_mcp_write_chunks(
     1
 }
 
+/// Read exactly one bounded HTTP request body through the caller-owned reader.
+/// Python retains socket/TLS ownership; this helper limits native read chunks
+/// and refuses bodies above the public 2 MB request limit.
+#[no_mangle]
+pub unsafe extern "C" fn drlink_mcp_read_request_body(
+    output: *mut u8,
+    len: usize,
+    callback: Option<ReadChunk>,
+    context: *mut std::ffi::c_void,
+) -> i32 {
+    const BODY_LIMIT: usize = 2_000_000;
+    const CHUNK_LIMIT: usize = 64 * 1024;
+    if len > BODY_LIMIT || (len > 0 && output.is_null()) {
+        return 0;
+    }
+    if len == 0 {
+        return 1;
+    }
+    let Some(callback) = callback else { return 0 };
+    let mut offset = 0usize;
+    while offset < len {
+        let capacity = (len - offset).min(CHUNK_LIMIT);
+        let count = callback(output.add(offset), capacity, context);
+        if count <= 0 || count as usize > capacity {
+            return 0;
+        }
+        offset += count as usize;
+    }
+    1
+}
+
 /// Drain a spawned child's stdout/stderr while observing its exit without
 /// reaping it. Python retains process creation, termination policy and reaping.
 /// Return 0 after the leader exits and currently available pipe bytes are
@@ -500,6 +532,47 @@ mod tests {
             assert_eq!(drlink_mcp_write_chunks(input.as_ptr(), input.len(), 0, Some(stalled), std::ptr::null_mut()), 0);
             assert_eq!(drlink_mcp_write_chunks(input.as_ptr(), input.len(), 64 * 1024 + 1, Some(stalled), std::ptr::null_mut()), 0);
             assert_eq!(drlink_mcp_write_chunks(input.as_ptr(), input.len(), 8, Some(stalled), std::ptr::null_mut()), 0);
+        }
+    }
+
+    #[test]
+    fn request_reader_bounds_chunks_and_retries_short_reads() {
+        struct Source { bytes: Vec<u8>, offset: usize, largest_chunk: usize }
+        extern "C" fn read_short(target: *mut u8, capacity: usize, context: *mut std::ffi::c_void) -> isize {
+            let source = unsafe { &mut *(context as *mut Source) };
+            source.largest_chunk = source.largest_chunk.max(capacity);
+            let count = capacity.min(7).min(source.bytes.len().saturating_sub(source.offset));
+            if count == 0 { return 0; }
+            unsafe { std::ptr::copy_nonoverlapping(source.bytes.as_ptr().add(source.offset), target, count); }
+            source.offset += count;
+            count as isize
+        }
+
+        let input: Vec<u8> = (0..200_000).map(|i| (i % 251) as u8).collect();
+        let mut output = vec![0; input.len()];
+        let mut source = Source { bytes: input.clone(), offset: 0, largest_chunk: 0 };
+        unsafe {
+            assert_eq!(drlink_mcp_read_request_body(
+                output.as_mut_ptr(), output.len(), Some(read_short),
+                (&mut source as *mut Source).cast(),
+            ), 1);
+        }
+        assert_eq!(output, input);
+        assert_eq!(source.offset, input.len());
+        assert_eq!(source.largest_chunk, 64 * 1024);
+    }
+
+    #[test]
+    fn request_reader_fails_closed_on_oversize_or_early_eof() {
+        extern "C" fn empty(_target: *mut u8, _capacity: usize, _context: *mut std::ffi::c_void) -> isize { 0 }
+        let mut output = [0u8; 4];
+        unsafe {
+            assert_eq!(drlink_mcp_read_request_body(
+                output.as_mut_ptr(), 4, Some(empty), std::ptr::null_mut(),
+            ), 0);
+            assert_eq!(drlink_mcp_read_request_body(
+                output.as_mut_ptr(), 2_000_001, Some(empty), std::ptr::null_mut(),
+            ), 0);
         }
     }
 }

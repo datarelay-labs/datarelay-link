@@ -28,10 +28,12 @@ process/pipe lifecycle paths;
 service initialization if the library cannot be loaded. The Python adapter is
 included in Server bundles; native shared-library packaging is still pending.
 R2 currently covers dispatch admission, bounded streamed-result retention,
-and bounded outbound response writes. Native result-wait and inbound/connection
-I/O integration remain open. R3 process-pipe
+bounded request-body reads and bounded outbound response writes. HTTP/TLS stream
+ownership, JSON parsing, and authorization remain in Python; socket accept and
+connection lifecycle plus native result-wait integration remain open. R3 process-pipe
 integration is present for Linux/macOS Agent and Server paths; Linux regression
-passes and Apple Silicon runtime qualification is being rerun.
+passes. Apple Silicon timeout/retry observation passes, but process-group
+cleanup gets `EPERM` on the runner and macOS executor qualification remains blocked.
 
 Build and unit test with the pinned Rust 1.75 toolchain:
 

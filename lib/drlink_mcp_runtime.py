@@ -22,10 +22,15 @@ _OUTPUT_FREE = None
 _OUTPUT_CHECKED = False
 _WRITE_CHUNKS = None
 _WRITE_CHUNKS_CHECKED = False
+_READ_REQUEST_BODY = None
+_READ_REQUEST_BODY_CHECKED = False
 _PROCESS_CALLBACK = ctypes.CFUNCTYPE(
     ctypes.c_bool, ctypes.c_int, ctypes.c_void_p, ctypes.c_size_t, ctypes.c_void_p
 )
 _WRITE_CALLBACK = ctypes.CFUNCTYPE(
+    ctypes.c_ssize_t, ctypes.c_void_p, ctypes.c_size_t, ctypes.c_void_p
+)
+_READ_CALLBACK = ctypes.CFUNCTYPE(
     ctypes.c_ssize_t, ctypes.c_void_p, ctypes.c_size_t, ctypes.c_void_p
 )
 
@@ -225,6 +230,63 @@ def write_mcp_response(writer, data: bytes, *, chunk_limit: int = 64 * 1024) -> 
         raise OSError("MCP response write callback failed") from callback_error[0]
     if result != 1:
         raise OSError("Rust MCP response write failed or stalled")
+
+
+def read_mcp_request_body(reader, length: int, *, max_bytes: int = 2_000_000) -> bytes:
+    """Read an already length-checked HTTP body in bounded native chunks.
+
+    The Python HTTP/TLS stream remains the reader and JSON/authentication stay
+    in Python. Rust only enforces the existing 2 MB ceiling and 64 KiB read
+    chunks; older optional libraries keep the original single-read path.
+    """
+    size = int(length)
+    limit = min(2_000_000, max(0, int(max_bytes)))
+    if size < 0 or size > limit:
+        raise ValueError("MCP request body exceeds the configured limit")
+    if size == 0:
+        return b""
+    if _native_process_drain() is None:
+        return reader.read(size)
+
+    global _READ_REQUEST_BODY, _READ_REQUEST_BODY_CHECKED
+    with _PROCESS_LOCK:
+        if not _READ_REQUEST_BODY_CHECKED:
+            try:
+                read_body = _PROCESS_LIBRARY.drlink_mcp_read_request_body
+                read_body.argtypes = [ctypes.c_void_p, ctypes.c_size_t, _READ_CALLBACK, ctypes.c_void_p]
+                read_body.restype = ctypes.c_int
+                _READ_REQUEST_BODY = read_body
+            except AttributeError as exc:
+                if os.environ.get("DRLINK_MCP_RUNTIME", "auto").strip().lower() == "rust":
+                    raise RuntimeError("Rust MCP runtime lacks bounded request I/O") from exc
+            _READ_REQUEST_BODY_CHECKED = True
+    if _READ_REQUEST_BODY is None:
+        return reader.read(size)
+
+    output = ctypes.create_string_buffer(size)
+    callback_error = []
+
+    def read_callback(target, capacity, _context):
+        try:
+            chunk = reader.read(capacity)
+            if not chunk:
+                return 0
+            raw = bytes(chunk)
+            if len(raw) > capacity:
+                return -1
+            ctypes.memmove(target, raw, len(raw))
+            return len(raw)
+        except BaseException as exc:
+            callback_error.append(exc)
+            return -1
+
+    callback = _READ_CALLBACK(read_callback)
+    result = _READ_REQUEST_BODY(output, size, callback, None)
+    if callback_error:
+        raise OSError("MCP request body reader callback failed") from callback_error[0]
+    if result != 1:
+        raise OSError("MCP request body was incomplete or native read failed")
+    return output.raw[:size]
 
 
 def drain_process(process, *, on_stdout, on_stderr, timeout_seconds: float = 0,
