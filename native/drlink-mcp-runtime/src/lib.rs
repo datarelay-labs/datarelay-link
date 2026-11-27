@@ -17,6 +17,46 @@ type OutputChunk = extern "C" fn(i32, *const u8, usize, *mut std::ffi::c_void) -
 type WriteChunk = extern "C" fn(*const u8, usize, *mut std::ffi::c_void) -> isize;
 type ReadChunk = extern "C" fn(*mut u8, usize, *mut std::ffi::c_void) -> isize;
 
+/// Accept one connection from a Python-owned, already-ready listener.
+/// The listener bind/backlog and connection/TLS authority stay in Python.
+/// Returns an accepted close-on-exec fd or the negated errno.
+#[no_mangle]
+pub extern "C" fn drlink_mcp_accept(listener_fd: libc::c_int) -> libc::c_int {
+    if listener_fd < 0 {
+        return -libc::EBADF;
+    }
+    #[cfg(target_os = "linux")]
+    let accepted = unsafe {
+        libc::accept4(
+            listener_fd,
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            libc::SOCK_CLOEXEC,
+        )
+    };
+    #[cfg(target_os = "macos")]
+    let accepted = unsafe {
+        let fd = libc::accept(listener_fd, std::ptr::null_mut(), std::ptr::null_mut());
+        if fd >= 0 && libc::fcntl(fd, libc::F_SETFD, libc::FD_CLOEXEC) < 0 {
+            let error = *libc::__error();
+            libc::close(fd);
+            return -error;
+        }
+        fd
+    };
+    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+    let accepted = { let _ = listener_fd; return -libc::ENOSYS; };
+    if accepted >= 0 {
+        accepted
+    } else {
+        #[cfg(target_os = "macos")]
+        let error = unsafe { *libc::__error() };
+        #[cfg(not(target_os = "macos"))]
+        let error = unsafe { *libc::__errno_location() };
+        -error
+    }
+}
+
 /// Create a persistent macOS process-exit watcher. Python owns its lifetime
 /// across timeout/retry drain calls and closes it after final EOF or failure.
 #[no_mangle]

@@ -2,14 +2,22 @@
 
 This Rust component owns bounded runtime operations around existing Python
 authority: atomic, nonblocking dispatch admission; retention and paging for
-streamed job output; stdout/stderr draining for Python-spawned children; and
-64 KiB response-body writes through Python's existing HTTP/TLS writer. The
+streamed job output; stdout/stderr draining for Python-spawned children; one
+ready-connection accept from Python's already bound HTTP listener; and bounded
+request-body reads and response-body writes through Python's existing HTTP/TLS
+handler. The
 output window retains the newest 1 MiB and returns pages up to 64 KiB, matching
 the Python cursor contract. Python continues to authenticate requests,
 evaluate AI Access, own durable jobs and audit, dispatch to Agents, choose
 timeouts, terminate process groups, reap children, frame HTTP responses, and
 own the socket/TLS connection. A blocked Python writer backpressures the
 handler; failed or stalled writes fail closed.
+
+Rust accept uses close-on-exec descriptors and returns the accepted descriptor
+to Python, which constructs the socket, obtains the peer address, frames HTTP,
+and owns connection/TLS handling. Python mode keeps the standard socket accept
+path. In `auto`, a library without the accept symbol keeps Python accept; an
+explicit Rust selection fails closed if the symbol is unavailable.
 
 On Linux, child exit is observed with non-reaping `waitid(WNOWAIT)`; on macOS,
 the helper uses a persistent `kqueue` `EVFILT_PROC/NOTE_EXIT` watcher across
@@ -34,10 +42,10 @@ process/pipe lifecycle paths;
 `python` selects the rollback implementation. Explicit Rust selection fails
 service initialization if the library cannot be loaded. The Python adapter is
 included in Server bundles; native shared-library packaging is still pending.
-R2 currently covers dispatch admission, bounded streamed-result retention,
-bounded request-body reads and bounded outbound response writes. HTTP/TLS stream
-ownership, JSON parsing, and authorization remain in Python; socket accept and
-connection lifecycle plus native result-wait integration remain open. R3 process-pipe
+R2 currently covers dispatch admission, one ready-listener accept, bounded
+streamed-result retention, bounded request-body reads and bounded outbound
+response writes. HTTP/TLS stream ownership, JSON parsing, authorization,
+connection lifecycle and durable result waiting remain in Python. R3 process-pipe
 integration is present for Linux/macOS Agent and Server paths; Linux regression
 passes. Apple Silicon testing exposed retry watcher state loss and unnecessary
 group signaling after successful EOF; the stateful ABI and cleanup scope are

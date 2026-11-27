@@ -475,6 +475,7 @@ def capture_process(process, *, input_data: bytes | None, timeout_seconds: float
                 on_stderr=lambda data: append(1, data), timeout_seconds=5,
                 wait_for_eof=True,
             )
+        final_drain_incomplete = drain_status not in (0, None)
         if drain_status not in (0, None):
             for stream in (process.stdout, process.stderr):
                 if stream is not None:
@@ -493,6 +494,8 @@ def capture_process(process, *, input_data: bytes | None, timeout_seconds: float
             free_process_watch(process)
     if status in (2, 3):
         raise OSError("native child process lifecycle failed")
+    if final_drain_incomplete:
+        raise OSError("native child process output capture did not reach EOF")
     return {
         "stdout": bytes(captured[0]), "stderr": bytes(captured[1]),
         "stdout_truncated": totals[0] > limits[0],
@@ -514,8 +517,9 @@ class DispatchBudget:
         mode = os.environ.get("DRLINK_MCP_RUNTIME", "auto").strip().lower()
         if mode not in ("auto", "python", "rust"):
             raise ValueError("DRLINK_MCP_RUNTIME must be auto, python or rust")
+        self._required = mode == "rust"
         if mode != "python":
-            self._load_native(required=mode == "rust")
+            self._load_native(required=self._required)
 
     def _load_native(self, *, required: bool) -> None:
         here = Path(__file__).resolve().parent.parent
@@ -580,6 +584,23 @@ class DispatchBudget:
         with self._lock:
             if self._inflight:
                 self._inflight -= 1
+
+    def accept(self, listener_fd: int) -> int | None:
+        """Accept one ready connection natively, or return None in Python mode."""
+        if self._handle is None:
+            return None
+        accept = getattr(self._library, "drlink_mcp_accept", None)
+        if accept is None:
+            if not self._required:
+                return None
+            raise RuntimeError("Rust MCP runtime lacks bounded listener accept support")
+        accept.argtypes = [ctypes.c_int]
+        accept.restype = ctypes.c_int
+        result = int(accept(int(listener_fd)))
+        if result < 0:
+            error = -result
+            raise OSError(error, os.strerror(error))
+        return result
 
     def close(self) -> None:
         if self._handle:

@@ -470,5 +470,42 @@ class OAuthRefreshTokenRaceTests(unittest.TestCase):
         self.assertEqual(sum(1 for item in results if item is not None), 1, "refresh token redeemed more than once")
 
 
+class RustMcpAcceptIntegrationTests(unittest.TestCase):
+    def test_threaded_http_server_uses_native_accept_for_ready_listener(self):
+        library = ROOT / "native/drlink-mcp-runtime/target/release" / (
+            "libdrlink_mcp_runtime.dylib" if sys.platform == "darwin"
+            else "libdrlink_mcp_runtime.so"
+        )
+        if not library.is_file():
+            self.skipTest("build the locked Rust MCP runtime library first")
+
+        from http.server import BaseHTTPRequestHandler
+
+        class Handler(BaseHTTPRequestHandler):
+            def do_GET(self):
+                self.send_response(200)
+                self.end_headers()
+
+        with mock.patch.dict(os.environ, {
+            "DRLINK_MCP_RUNTIME": "rust",
+            "DRLINK_MCP_NATIVE_LIBRARY": str(library),
+        }):
+            budget = bridge_mod.DispatchBudget(1)
+            server = bridge_mod.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+            server._drlink_native_accept = budget.accept
+            client = socket.create_connection(server.server_address)
+            accepted, address = server.get_request()
+            try:
+                self.assertEqual(address, client.getsockname())
+                self.assertFalse(os.get_inheritable(accepted.fileno()))
+                client.sendall(b"accept-test")
+                self.assertEqual(accepted.recv(32), b"accept-test")
+            finally:
+                accepted.close()
+                client.close()
+                server.server_close()
+                budget.close()
+
+
 if __name__ == "__main__":
     unittest.main()

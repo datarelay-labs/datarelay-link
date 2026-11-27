@@ -7,6 +7,7 @@ import base64
 import io
 import os
 import signal
+import socket
 import subprocess
 import sys
 import threading
@@ -53,6 +54,31 @@ class PythonDispatchBudgetTests(unittest.TestCase):
 
 @unittest.skipUnless(LIBRARY.is_file(), "build the locked Rust MCP runtime library first")
 class RustDispatchBudgetTests(unittest.TestCase):
+    def test_rust_accepts_one_ready_socket_and_sets_close_on_exec(self):
+        listener = socket.socket()
+        listener.bind(("127.0.0.1", 0))
+        listener.listen(4)
+        client = socket.socket()
+        with mock.patch.dict(os.environ, {
+            "DRLINK_MCP_RUNTIME": "rust",
+            "DRLINK_MCP_NATIVE_LIBRARY": str(LIBRARY),
+        }):
+            budget = runtime.DispatchBudget(2)
+            try:
+                client.connect(listener.getsockname())
+                fd = budget.accept(listener.fileno())
+                self.assertIsInstance(fd, int)
+                self.assertFalse(os.get_inheritable(fd))
+                accepted = socket.socket(fileno=fd)
+                try:
+                    self.assertEqual(accepted.getpeername(), client.getsockname())
+                finally:
+                    accepted.close()
+            finally:
+                budget.close()
+                client.close()
+                listener.close()
+
     def test_rust_request_body_uses_bounded_reads_and_preserves_bytes(self):
         class ShortReader:
             def __init__(self, data):
@@ -288,6 +314,24 @@ class RustDispatchBudgetTests(unittest.TestCase):
         self.assertEqual(result["stderr"], b"Y" * 2048)
         self.assertTrue(result["stdout_truncated"])
         self.assertTrue(result["stderr_truncated"])
+
+    def test_final_pipe_drain_timeout_fails_capture_after_reaping(self):
+        with mock.patch.dict(os.environ, {
+            "DRLINK_MCP_RUNTIME": "rust",
+            "DRLINK_MCP_NATIVE_LIBRARY": str(LIBRARY),
+        }), mock.patch.object(runtime, "drain_process", side_effect=[9, 1]):
+            proc = subprocess.Popen(
+                [sys.executable, "-c", "pass"], stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE, start_new_session=True,
+            )
+            with self.assertRaisesRegex(OSError, "output capture did not reach EOF"):
+                runtime.capture_process(
+                    proc, input_data=None, timeout_seconds=3,
+                    stdout_limit=128, stderr_limit=128,
+                )
+            self.assertIsNotNone(proc.returncode)
+            self.assertTrue(proc.stdout.closed)
+            self.assertTrue(proc.stderr.closed)
 
 
 if __name__ == "__main__":

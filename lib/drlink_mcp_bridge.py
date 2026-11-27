@@ -23,6 +23,7 @@ import os
 import re
 import shutil
 import signal
+import socket
 import sqlite3
 import tempfile
 import threading
@@ -1691,6 +1692,23 @@ class ThreadingHTTPServer(ThreadingMixIn, HTTPServer):
     request_queue_size = 128
     allow_reuse_address = True
 
+    def get_request(self):
+        native_accept = getattr(self, "_drlink_native_accept", None)
+        if native_accept is None:
+            return super().get_request()
+        fd = native_accept(self.socket.fileno())
+        if fd is None:
+            return super().get_request()
+        request = socket.socket(fileno=fd)
+        try:
+            client_address = request.getpeername()
+            if self.timeout is not None:
+                request.settimeout(self.timeout)
+            return request, client_address
+        except BaseException:
+            request.close()
+            raise
+
 
 def make_handler(bridge: MCPBridge):
     def _scoped(method):
@@ -2344,7 +2362,9 @@ def _run_worker(host, port, root, index, count, rundir) -> None:
     bridge.worker_count = count
     bridge._shared_rate = SharedRateLimiter(os.path.join(rundir, "rate.sqlite"))
     bridge.warm_up()
-    _ReusePortServer((host, int(port)), make_handler(bridge)).serve_forever()
+    httpd = _ReusePortServer((host, int(port)), make_handler(bridge))
+    httpd._drlink_native_accept = bridge._dispatch_admission.accept
+    httpd.serve_forever()
 
 
 def _run_full_control(path) -> None:
@@ -2447,6 +2467,7 @@ def serve(host=DEFAULT_LISTEN, port=DEFAULT_PORT, root=None, workers=None):
     bridge.listen_host = host
     bridge.listen_port = int(port)
     httpd = ThreadingHTTPServer((host, int(port)), make_handler(bridge))
+    httpd._drlink_native_accept = bridge._dispatch_admission.accept
     httpd.serve_forever()
 
 
