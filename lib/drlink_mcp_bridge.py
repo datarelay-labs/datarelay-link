@@ -758,7 +758,7 @@ class MCPBridge:
                     remote = self._remote_full = full.RemoteFullControlRuntime(path)
                 return remote
             if not hasattr(self, "_native_full"):
-                self._native_full = full.FullControlRuntime()
+                self._native_full = full.FullControlRuntime(policy_root=self.root)
             return self._native_full
 
     def _native_public_url(self) -> Optional[str]:
@@ -1323,9 +1323,9 @@ class MCPBridge:
                     return False
 
             decision = v24.resolve_ai_execution_grant(
-                self.plane, identity=principal["name"], destination=target, capability=capability,
-                operand=operand, run_as=requested, local_accounts=accounts,
-                legacy_account=full.legacy_execution_account(), rule_id=grant_rule,
+                self.plane, identity=principal["name"], principal_id=str(principal["id"]),
+                destination=target, capability=capability, operand=operand, run_as=requested, local_accounts=accounts,
+                legacy_account=full.legacy_execution_account(), legacy_rule_ids=full.legacy_execution_rule_ids(), rule_id=grant_rule,
                 validate_operand=validate_operand, reader_account=full.reader_execution_account(accounts))
             if decision["action"] != "ALLOW":
                 if job_context is not None:
@@ -1390,8 +1390,8 @@ class MCPBridge:
                     return False
             def resolve(requested=None):
                 return v24.resolve_ai_execution_grant(
-                    self.plane, identity=principal["name"], destination=target, capability="exec",
-                    run_as=requested, local_accounts=accounts, legacy_account=full.legacy_execution_account(),
+                    self.plane, identity=principal["name"], principal_id=str(principal["id"]),
+                    destination=target, capability="exec", run_as=requested, local_accounts=accounts, legacy_account=full.legacy_execution_account(), legacy_rule_ids=full.legacy_execution_rule_ids(),
                     validate_operand=validate)
             choices = []
             for name, account in accounts.items():
@@ -2294,12 +2294,12 @@ def _run_worker(host, port, root, index, count, rundir) -> None:
     _ReusePortServer((host, int(port)), make_handler(bridge)).serve_forever()
 
 
-def _run_full_control(path) -> None:
+def _run_full_control(path, root) -> None:
     signal.signal(signal.SIGTERM, signal.SIG_DFL)
     signal.signal(signal.SIGINT, signal.SIG_DFL)
     import drlink_mcp_full_control as full
 
-    full.serve_full_control(path)
+    full.serve_full_control(path, runtime=full.FullControlRuntime(policy_root=root))
     threading.Event().wait()
 
 
@@ -2324,7 +2324,7 @@ def _supervise(host, port, root, count) -> None:
             code = 0
             try:
                 if slot == "full-control":
-                    _run_full_control(full_control_path)
+                    _run_full_control(full_control_path, resolved_root)
                 else:
                     _run_worker(host, port, resolved_root, int(slot), count, rundir)
             except BaseException:

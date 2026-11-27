@@ -167,9 +167,11 @@ class FullControlRuntimeTests(unittest.TestCase):
         with patch.dict(os.environ, {"DRLINK_MCP_SERVER_FULL_CONTROL_ENABLED": "0"}):
             with self.assertRaises(full.FullControlDenied):
                 self.runtime.poll(self.owner, job_id)
-        stopped = self.runtime.stop(self.owner, job_id)
-        self.assertEqual(stopped["state"], "completed", stopped)
-        self.assertNotEqual(stopped["exit_status"], 0)
+        with self.assertRaises(full.FullControlDenied):
+            self.runtime.stop(self.owner, job_id)
+        job = self.runtime.jobs[job_id]
+        self.assertTrue(job.done.wait(3))
+        self.assertNotEqual(job.process.returncode, 0)
 
     def test_timeout_terminates_job(self):
         result = self.run_command([sys.executable, "-c", "import time; time.sleep(10)"],
@@ -311,8 +313,8 @@ class FullControlRuntimeTests(unittest.TestCase):
                 # process is gone; any readable live process still fails.
                 text = None
             if text is not None:
-                self.assertEqual(text.split(") ", 1)[1][0], "Z",
-                                 "child still runs after its job completed")
+                self.assertIn(text.split(") ", 1)[1][0], ("Z", "X", "x"),
+                              "child still runs after its job completed")
             with patch.object(full.os, "killpg", wraps=full.os.killpg) as kill:
                 self.runtime.stop(self.owner, result["job_id"])
                 kill.assert_not_called()
@@ -435,6 +437,7 @@ class FullControlBridgeAuthorizationTests(unittest.TestCase):
         self.principal = {"name": "native-full-fixture", "id": "fixture-identity"}
         self.plane.set_ai_principal(self.principal["name"], enabled=True)
         self.cli("set", "ai-identity", self.principal["name"], "rotate")
+        self.principal = dict(self.plane.get_principal(self.principal["name"]))
 
     def tearDown(self):
         self.bridge.close()

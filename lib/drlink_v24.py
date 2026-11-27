@@ -5468,11 +5468,81 @@ def _path_scopes_for_rules(plane_db, rule_rows) -> list[str]:
     return patterns
 
 
+def legacy_execution_rule_fingerprint(plane_db, row) -> str:
+    """Freeze the actual previously approved Server rule, not just its name/ID."""
+    import hashlib
+    payload = {
+        "id": row["id"], "source": row["source_identity_id"],
+        "destination": [row["destination_ref_kind"], row["destination_ref_id"]],
+        "permission": [row["permission_ref_kind"], row["permission_ref_id"]],
+        "capabilities": sorted(_ai_rule_permissions(plane_db, row)),
+        "paths": _path_scopes_for_rules(plane_db, [row]),
+    }
+    return hashlib.sha256(json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+
+
+def snapshot_legacy_server_execution_rules(plane_db) -> dict[str, str]:
+    """Snapshot only previously effective unbound Server rules for local migration."""
+    conn = plane_db.conn
+    owned = not conn.in_transaction
+    if owned:
+        conn.execute("BEGIN")
+    try:
+        rows = conn.execute(
+            "SELECT * FROM ai_policy_rules WHERE destination_ref_kind='server' "
+            "AND destination_ref_id=? AND execution_json IS NULL ORDER BY id",
+            (SERVER_SELF_REF_ID,)).fetchall()
+        if len(rows) > 256:
+            raise ControlPlaneError("Too many legacy rules for automatic migration; review explicit bindings locally")
+        policy = get_access_policy(plane_db, "ai")
+        policy_enabled = effective_policy_result(policy["mode"], policy["enforcement"], True, plane="ai") == "ALLOW"
+        result = {}
+        for row in rows:
+            identity = conn.execute("SELECT enabled, credential_status FROM ai_principals WHERE id=?",
+                                    (row["source_identity_id"],)).fetchone()
+            effective = (policy_enabled and bool(row["enabled"]) and identity is not None and bool(identity["enabled"])
+                         and str(identity["credential_status"]).lower() in ("verified", "active"))
+            result[row["id"]] = legacy_execution_rule_fingerprint(plane_db, row) if effective else ""
+        return result
+    finally:
+        if owned:
+            conn.execute("ROLLBACK")
+
+
 def resolve_ai_execution_grant(
     plane_db, *, identity: str, destination: str, capability: str,
     local_accounts, run_as: Optional[str] = None, operand: Optional[str] = None,
     legacy_account: Optional[str] = None, rule_id: Optional[str] = None,
     validate_operand=None, reader_account: Optional[str] = None,
+    legacy_rule_ids=None, principal_id: Optional[str] = None,
+) -> dict:
+    """Resolve identity, permission, account and scope from one SQLite snapshot."""
+    conn = plane_db.conn
+    owned = not conn.in_transaction
+    if owned:
+        conn.execute("BEGIN")
+    try:
+        if principal_id is not None:
+            principal = plane_db.get_principal(identity)
+            if principal is None or principal["id"] != principal_id:
+                return {"action":"DENY", "reason_code":"AI_IDENTITY_CHANGED", "account":None,
+                        "accounts":[], "patterns":[], "winner":None}
+        return _resolve_ai_execution_grant(
+            plane_db, identity=identity, destination=destination, capability=capability,
+            local_accounts=local_accounts, run_as=run_as, operand=operand,
+            legacy_account=legacy_account, rule_id=rule_id, validate_operand=validate_operand,
+            reader_account=reader_account, legacy_rule_ids=legacy_rule_ids)
+    finally:
+        if owned:
+            conn.execute("ROLLBACK")
+
+
+def _resolve_ai_execution_grant(
+    plane_db, *, identity: str, destination: str, capability: str,
+    local_accounts, run_as: Optional[str] = None, operand: Optional[str] = None,
+    legacy_account: Optional[str] = None, rule_id: Optional[str] = None,
+    validate_operand=None, reader_account: Optional[str] = None,
+    legacy_rule_ids=None,
 ) -> dict:
     """Resolve a complete capability/account/path grant; no cross-rule union.
 
@@ -5508,14 +5578,22 @@ def resolve_ai_execution_grant(
         except ControlPlaneError:
             continue
         readonly = _ai_rule_permissions(plane_db, row) <= {"host-info", "process-read", "file-read"}
-        if readonly and legacy_account is None:
-            if reader_account is None:
+        migrated_rule = legacy_rule_ids is not None and row["id"] in legacy_rule_ids
+        legacy_grant = (binding is None and legacy_account is not None and
+                        (legacy_rule_ids is None or (migrated_rule and
+                         legacy_rule_ids[row["id"]] == legacy_execution_rule_fingerprint(plane_db, row))))
+        if legacy_grant:
+            binding = {"default": legacy_account, "accounts": [legacy_account]}
+        elif migrated_rule and binding is None:
+            # A changed legacy rule must be explicitly rebound, never switch
+            # to a new reader or default merely because the old grant is stale.
+            continue
+        elif readonly:
+            if reader_account is None or (binding is not None and reader_account not in binding["accounts"]):
                 continue
             binding = {"default": reader_account, "accounts": [reader_account]}
         elif binding is None:
-            if legacy_account is None:
-                continue
-            binding = {"default": legacy_account, "accounts": [legacy_account]}
+            continue
         eligible = set(binding["accounts"]) & local
         patterns = _path_scopes_for_rules(plane_db, [row])
         selected = run_as if run_as is not None else binding["default"]

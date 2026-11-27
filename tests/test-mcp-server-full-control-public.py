@@ -276,6 +276,71 @@ class NativeFullControlPublicTests(unittest.TestCase):
         self.assertEqual(decide(run_as="root", legacy="aella")["action"], "DENY")
         self.assertEqual(decide()["action"], "DENY")
 
+    def test_revoked_running_job_is_terminated_without_another_mcp_call(self):
+        job = self.allowed("server_run", {"argv":[sys.executable,"-c","import time; time.sleep(60)"],"wait_ms":0})
+        runtime = self.bridge._full_control_runtime(__import__("drlink_mcp_full_control"))
+        original = runtime.jobs[job["job_id"]]
+        self.cli("set","ai-access",self.rule("owner"),"disabled")
+        self.assertTrue(original.done.wait(4), "revoked job continued without client polling")
+        self.assertTrue(original.revoked)
+        self.assertLess(original.process.returncode, 0)
+        self.cli("set","ai-access",self.rule("owner"),"enabled")
+        self.denied("server_job_poll", {"job_id":job["job_id"]})
+
+    def test_execution_snapshot_never_mixes_concurrent_rule_versions(self):
+        user = pwd.getpwuid(os.geteuid()).pw_name
+        v24.set_ai_access_rule(self.plane, self.rule("owner"), paths=[str(self.root)+"/**"],
+            execution={"default":user,"accounts":[user]}, confirm=True)
+        owner = self.identities["owner"]
+        owner_id = self.plane.get_principal(owner)["id"]
+        separate = ControlPlane(str(self.root))
+        try:
+            original = v24._matched_ai_rule_rows
+            def change_between_reads(plane, names):
+                separate.conn.execute("UPDATE ai_policy_rules SET enabled=0 WHERE name=?", (self.rule("owner"),))
+                separate.conn.commit()
+                return original(plane, names)
+            with patch.object(v24, "_matched_ai_rule_rows", side_effect=change_between_reads):
+                decision = v24.resolve_ai_execution_grant(self.plane, identity=owner,
+                    principal_id=owner_id, destination="server:self", capability="exec",
+                    local_accounts=[user], operand=str(self.root))
+            self.assertEqual(decision["action"], "ALLOW")  # one coherent pre-change snapshot
+            self.assertFalse(self.plane.conn.in_transaction)
+            self.assertEqual(v24.resolve_ai_execution_grant(self.plane, identity=owner,
+                principal_id=owner_id, destination="server:self", capability="exec",
+                local_accounts=[user], operand=str(self.root))["action"], "DENY")
+            self.assertEqual(v24.resolve_ai_execution_grant(self.plane, identity=owner,
+                principal_id="replaced-id", destination="server:self", capability="exec",
+                local_accounts=[user], operand=str(self.root))["reason_code"], "AI_IDENTITY_CHANGED")
+        finally:
+            separate.close()
+
+    def test_migrated_profile_only_retains_unchanged_legacy_grants(self):
+        user = pwd.getpwuid(os.geteuid())
+        rule = self.plane.conn.execute("SELECT * FROM ai_policy_rules WHERE name=?", (self.rule("owner"),)).fetchone()
+        fingerprint = v24.legacy_execution_rule_fingerprint(self.plane, rule)
+        snapshots = v24.snapshot_legacy_server_execution_rules(self.plane)
+        self.assertEqual(snapshots[rule["id"]], fingerprint)
+        self.assertEqual(len(snapshots), 2)
+        profile = {user.pw_name: {"uid":user.pw_uid,"cwd":str(self.root),"roots":[str(self.root)]}}
+        env = {"DRLINK_MCP_SERVER_EXEC_ACCOUNTS":json.dumps(profile),
+               "DRLINK_MCP_SERVER_EXEC_USER":"",
+               "DRLINK_MCP_SERVER_ALLOWED_ROOTS":"/",
+               "DRLINK_MCP_SERVER_LEGACY_ACCOUNT":user.pw_name,
+               "DRLINK_MCP_SERVER_LEGACY_RULE_IDS":json.dumps({rule["id"]:fingerprint})}
+        with patch.dict(os.environ, env):
+            result = self.completed(self.allowed("server_run", {"argv":["id","-u"]}))
+            self.assertEqual(result["stdout"]["text"].strip(), str(user.pw_uid))
+            self.denied("server_run", {"argv":["pwd"],"cwd":"/"})
+            self.denied("server_run", {"argv":["id"]}, identity="other")
+            v24.set_ai_access_rule(self.plane, self.rule("owner"), paths=["/**"], confirm=True)
+            self.denied("server_run", {"argv":["id"]})
+            v24.set_ai_access_rule(self.plane, self.rule("owner"),
+                execution={"default":user.pw_name,"accounts":[user.pw_name]}, confirm=True)
+            self.assertEqual(self.completed(self.allowed("server_run", {"argv":["id"]}))["exit_status"],0)
+            self.denied("server_run", {"argv":["pwd"],"cwd":"/"})
+            self.denied("server_read_file", {"path":"/etc/passwd"})
+
     def test_explicit_binding_uses_current_uid_and_does_not_expand_legacy_rules(self):
         user = pwd.getpwuid(os.geteuid())
         profile = {user.pw_name: {"uid": user.pw_uid, "cwd": str(self.root)}}
@@ -343,9 +408,9 @@ class NativeFullControlPublicTests(unittest.TestCase):
                 execution={"default":admin.pw_name,"accounts":[admin.pw_name]})
             self.denied("server_job_poll", {"job_id":job["job_id"]})
             runtime = self.bridge._full_control_runtime(__import__("drlink_mcp_full_control"))
-            original = runtime.poll(str(self.plane.get_principal(self.identities["owner"])["id"]), job["job_id"], wait_ms=1000)
-            self.assertEqual(original["state"], "completed")
-            self.assertLess(original["exit_status"], 0)
+            original = runtime.jobs[job["job_id"]]
+            self.assertTrue(original.done.wait(3))
+            self.assertLess(original.process.returncode, 0)
 
     def test_discover_context_and_omit_cwd_without_widening_scope(self):
         ctx = self.allowed("get_server", {})["execution_context"]
@@ -509,7 +574,9 @@ class NativeFullControlPublicTests(unittest.TestCase):
         self.assertFalse((self.root / "revoked-must-not-exist").exists())
         self.assert_activity("server_exec", "DENY")
         v24.set_ai_policy_path_scopes(self.plane, self.rule("owner"), [str(self.root) + "/**"])
-        self.allowed("server_job_stop", {"job_id": job["job_id"]})
+        self.denied("server_job_stop", {"job_id": job["job_id"]})
+        replacement = self.allowed("server_run", {"argv":["id"],"wait_ms":1000})
+        self.assertEqual(self.completed(replacement)["exit_status"], 0)
 
     def test_missing_or_invalid_content_preserves_file_and_explicit_empty_is_allowed(self):
         path = self.root / "preserved-content.txt"

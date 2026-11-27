@@ -46,6 +46,10 @@ The public rule wizard is the account configuration entry point. Review the loca
 
 Keep existing tool names/argument compatibility, extend Managed Host parity without replacing the transport. Expose only supported capabilities. New optional parameters are genuinely optional in public JSON schemas. Existing clients omitting them use their explicitly authorized default. Tool descriptions explain account selection; do not classify command strings to choose root. All errors identify the failing boundary, with authorized context only. Command, writable Git, stdin and mutation tools retain accurate destructive/open-world annotations. The canonical path/default, overlapping-rule, root, migration and diagnostic semantics are in AI_ACCESS_MCP.md.
 
+### Existing singleton profile migration
+
+The combined setup reviews the active managed profile against its exact local file and live Bridge settings. A reviewed additive migration pins the previous account's UID, default cwd and roots; additional accounts receive separately reviewed local roots. It retains only unchanged, previously effective Server-self legacy grants via a bounded fingerprint snapshot of rule identity, destination, permission capabilities and paths. Disabled or unverified legacy rules, edited rules and new management rules require explicit account binding. New accounts never inherit the previous grant. Existing local account scopes are not expanded by migration. Unrecognized external overrides or incompatible changes are refused without overwriting the previous profile. An activation failure restores the exact prior profile and verifies the running service. The legacy singleton environment value is cleared in a multi-account profile so an older native executor cannot silently substitute the previous default.
+
 ## Process and output contract
 
 - `timeout_seconds`: 1–86,400; default 3,600.

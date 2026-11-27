@@ -1366,7 +1366,9 @@ def _configure_mcp_local_execution(plane, io):
         except KeyError:
             return "Execution account does not exist."
         return None
-    users = _ask_text(io, "Eligible OS accounts (comma separated)", validate=valid_users).split(",")
+    previous = plane.native_mcp_local_accounts()
+    users = _ask_text(io, "Eligible OS accounts (comma separated)",
+                      default=",".join(previous) or None, validate=valid_users).split(",")
     roots = _ask_text(io, "Direct file roots / initial directories (colon separated)", default="/")
     argv = [sys.executable, "/usr/local/lib/drlink/operator-native-mcp-full-control.py", "--configure-installed"]
     for user in users:

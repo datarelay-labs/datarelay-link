@@ -133,6 +133,60 @@ class RolloutTests(unittest.TestCase):
             self.assertEqual(rollout.configure_installed(settings, self.layout)["status"], "already configured")
         self.assert_untouched()
 
+    def test_migration_preserves_old_scope_and_rolls_back_exact_bytes(self):
+        self.installed_runtime()
+        target = self.layout.target(rollout.TARGETS[-1])
+        target.parent.mkdir(parents=True, exist_ok=True)
+        old_bytes = rollout.dropin(self.settings)
+        target.write_bytes(old_bytes)
+        old = rollout._profile_environment(self.settings)
+        user = self.account.pw_name
+        extra = "root" if self.account.pw_uid else "nobody"
+        proposed = rollout.multi_account_profile([user, extra], ["/"], True,
+                                                  reader=user if self.account.pw_uid else extra)
+        snapshots = {"air_old": "a"*64, "air_disabled": ""}
+        with patch.object(rollout, "running_profile_environment", return_value=old), \
+             patch.object(rollout, "read_legacy_rule_snapshot", return_value=snapshots):
+            reviewed = rollout.prepare_profile_update(proposed, self.layout)
+            new = reviewed["settings"]
+            self.assertEqual(new["exec_accounts"][user]["roots"], self.settings["roots"])
+            self.assertEqual(new["exec_accounts"][user]["cwd"], self.settings["roots"][0])
+            self.assertEqual(new["exec_accounts"][extra]["roots"], ["/"])
+            self.assertEqual(new["legacy_account"], user)
+            self.assertEqual(new["legacy_rules"], snapshots)
+            self.assertEqual(target.read_bytes(), old_bytes)
+            with patch.object(rollout, "verify_selected_worker"), \
+                 patch.object(rollout, "verify_installed_profile", side_effect=rollout.RolloutError("fixture activation failure")):
+                with self.assertRaisesRegex(rollout.RolloutError, "rolled back"):
+                    rollout.configure_installed(new, self.layout, reviewed=reviewed)
+            self.assertEqual(target.read_bytes(), old_bytes)
+            with patch.object(rollout, "verify_selected_worker"), patch.object(rollout, "verify_installed_profile"):
+                self.assertEqual(rollout.configure_installed(new, self.layout, reviewed=reviewed)["status"], "migrated")
+            self.assertEqual(target.read_bytes(), rollout.dropin(new))
+            self.assertEqual(rollout._profile_environment(new)["DRLINK_MCP_SERVER_EXEC_USER"], "")
+        self.assert_untouched()
+
+    def test_migration_rejects_omitted_old_account_and_stale_review(self):
+        self.installed_runtime()
+        target = self.layout.target(rollout.TARGETS[-1])
+        target.parent.mkdir(parents=True, exist_ok=True)
+        old_bytes = rollout.dropin(self.settings)
+        target.write_bytes(old_bytes)
+        old = rollout._profile_environment(self.settings)
+        user = self.account.pw_name
+        extra = "root" if self.account.pw_uid else "nobody"
+        with patch.object(rollout, "running_profile_environment", return_value=old), \
+             patch.object(rollout, "read_legacy_rule_snapshot", return_value={}):
+            with self.assertRaisesRegex(rollout.RolloutError, "Retain existing"):
+                rollout.prepare_profile_update(rollout.multi_account_profile([extra], ["/"], True), self.layout)
+            reviewed = rollout.prepare_profile_update(
+                rollout.multi_account_profile([user, extra], ["/"], True), self.layout)
+            target.write_bytes(old_bytes + b"# concurrent edit\n")
+            with self.assertRaisesRegex(rollout.RolloutError, "changed after review"):
+                rollout.configure_installed(reviewed["settings"], self.layout, reviewed=reviewed)
+            self.assertEqual(target.read_bytes(), old_bytes + b"# concurrent edit\n")
+        self.assert_untouched()
+
     def test_installed_profile_conflict_refused_and_failed_activation_rolls_back(self):
         self.installed_runtime()
         target = self.layout.target(rollout.TARGETS[-1])

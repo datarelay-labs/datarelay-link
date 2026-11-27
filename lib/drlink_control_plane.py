@@ -6672,7 +6672,8 @@ class ControlPlane:
                     allowed = {b"DRLINK_MCP_SERVER_" + suffix for suffix in (
                         b"SELF_ENABLED", b"LOCAL_EXEC_ENABLED", b"FULL_CONTROL_ENABLED",
                         b"ADMIN_ENABLED", b"EXEC_USER", b"ALLOWED_ROOTS",
-                        b"EXEC_ACCOUNTS", b"READ_USER", b"DEFAULT_CWD")}
+                        b"EXEC_ACCOUNTS", b"READ_USER", b"DEFAULT_CWD",
+                        b"LEGACY_ACCOUNT", b"LEGACY_RULE_IDS")}
                     for item in data.split(b"\0"):
                         key, sep, value = item.partition(b"=")
                         if sep and key in allowed:

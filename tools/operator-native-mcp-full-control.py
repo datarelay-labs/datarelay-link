@@ -109,7 +109,7 @@ def multi_account_profile(users, roots, allow_root=False, *, reader=None):
         cwd = home if Path(home).is_dir() and any(
             root == "/" or home == root or home.startswith(root + "/") for root in resolved
         ) else resolved[0]
-        entries[user] = {"uid": entry.pw_uid, "cwd": cwd}
+        entries[user] = {"uid": entry.pw_uid, "cwd": cwd, "roots": list(resolved)}
     if reader is not None and (reader not in entries or entries[reader]["uid"] == 0):
         raise RolloutError("Read-only executor must be an approved non-administrative account")
     return {"exec_accounts": entries, "roots": resolved,
@@ -131,6 +131,10 @@ def _profile_environment(settings):
         values["DRLINK_MCP_SERVER_EXEC_USER"] = ""
         values["DRLINK_MCP_SERVER_DEFAULT_CWD"] = ""
         values["DRLINK_MCP_SERVER_READ_USER"] = settings.get("reader") or ""
+        if "legacy_account" in settings:
+            values["DRLINK_MCP_SERVER_LEGACY_ACCOUNT"] = settings["legacy_account"] or ""
+            values["DRLINK_MCP_SERVER_LEGACY_RULE_IDS"] = json.dumps(
+                settings["legacy_rules"], sort_keys=True, separators=(",", ":"))
     else:
         values["DRLINK_MCP_SERVER_EXEC_USER"] = settings["exec_user"]
         values["DRLINK_MCP_SERVER_DEFAULT_CWD"] = settings["roots"][0]
@@ -545,8 +549,8 @@ def prepare_default_executor():
             "remote_execution":"unchanged; requires explicit local opt-in"}
 
 
-def verify_installed_profile(settings):
-    """Check the actual restarted process, not just the generated drop-in."""
+def running_profile_environment():
+    """Read only execution keys from the same verified live Bridge process."""
     def pid():
         out = subprocess.check_output(
             ["/usr/bin/systemctl", "show", UNIT, "--property=MainPID", "--value"],
@@ -559,14 +563,120 @@ def verify_installed_profile(settings):
         raw = stream.read(1024 * 1024 + 1)
     if len(raw) > 1024 * 1024 or pid() != current:
         raise RolloutError("Could not verify the active execution profile")
-    actual = dict(item.partition(b"=")[::2] for item in raw.split(b"\0") if b"=" in item)
+    allowed = {"DRLINK_MCP_SERVER_" + key for key in (
+        "SELF_ENABLED", "LOCAL_EXEC_ENABLED", "FULL_CONTROL_ENABLED", "ADMIN_ENABLED",
+        "ALLOWED_ROOTS", "EXEC_USER", "DEFAULT_CWD", "EXEC_ACCOUNTS", "READ_USER",
+        "LEGACY_ACCOUNT", "LEGACY_RULE_IDS")}
+    allowed.add("DRLINK_MCP_OAUTH_OPERATOR_IDENTITY")
+    values = {}
+    for item in raw.split(b"\0"):
+        key, sep, value = item.partition(b"=")
+        if sep and key.decode("ascii", errors="ignore") in allowed:
+            values[key.decode("ascii")] = value.decode("utf-8")
+    return values
+
+
+def verify_installed_profile(settings):
+    actual = running_profile_environment()
     wanted = _profile_environment(settings)
-    if any(actual.get(key.encode()) != value.encode() for key, value in wanted.items()):
+    if settings.get("approval_identity"):
+        wanted["DRLINK_MCP_OAUTH_OPERATOR_IDENTITY"] = settings["approval_identity"]
+    if any(actual.get(key) != value for key, value in wanted.items()):
         raise RolloutError("Running Bridge profile differs from the approved profile; review existing local overrides")
     if "exec_accounts" in settings:
-        if actual.get(b"DRLINK_MCP_SERVER_READ_USER", b"").decode() != (settings.get("reader") or ""):
-            raise RolloutError("Running Bridge reader differs from the approved profile")
+        for key in ("READ_USER", "LEGACY_ACCOUNT", "LEGACY_RULE_IDS"):
+            env = "DRLINK_MCP_SERVER_" + key
+            if actual.get(env, "") != wanted.get(env, ""):
+                raise RolloutError("Running Bridge account bindings differ from the approved profile")
 
+
+def read_legacy_rule_snapshot(layout):
+    """Read a consistent canonical policy snapshot without changing its DB."""
+    if layout.root != Path("/"):
+        raise RolloutError("Legacy rule snapshot requires the installed Server database")
+    from drlink_control_plane import ControlPlane
+    import drlink_v24 as v24
+    plane = ControlPlane("/", read_only=True)
+    try:
+        return v24.snapshot_legacy_server_execution_rules(plane)
+    except v24.ControlPlaneError as exc:
+        raise RolloutError(str(exc)) from None
+    finally:
+        plane.close()
+
+
+
+def _existing_profile_settings(values, previous_bytes):
+    """Recognize only an exact product-managed profile, not arbitrary overrides."""
+    prefix = "DRLINK_MCP_SERVER_"
+    if any(values.get(prefix + key) != "1" for key in
+           ("SELF_ENABLED", "LOCAL_EXEC_ENABLED", "FULL_CONTROL_ENABLED")):
+        raise RolloutError("Existing execution profile is not verified active")
+    roots = values.get(prefix + "ALLOWED_ROOTS", "").split(os.pathsep)
+    admin = values.get(prefix + "ADMIN_ENABLED") == "1"
+    identity = values.get("DRLINK_MCP_OAUTH_OPERATOR_IDENTITY")
+    if prefix + "EXEC_ACCOUNTS" in values:
+        from drlink_mcp_full_control import _profile_accounts
+        accounts = _profile_accounts(values)
+        previous = {"exec_accounts": accounts, "roots": roots, "admin": admin,
+                    "reader": values.get(prefix + "READ_USER") or None}
+        if prefix + "LEGACY_ACCOUNT" in values:
+            previous["legacy_account"] = values[prefix + "LEGACY_ACCOUNT"] or None
+            previous["legacy_rules"] = json.loads(values.get(prefix + "LEGACY_RULE_IDS", "{}"))
+        if identity:
+            previous["approval_identity"] = identity
+    else:
+        previous = profile(values.get(prefix + "EXEC_USER"), roots, admin, approval_identity=identity)
+    if dropin(previous) != previous_bytes:
+        raise RolloutError("Existing operator execution profile differs from its running managed settings; preserve it and review locally")
+    wanted = _profile_environment(previous)
+    if any(values.get(key) != value for key, value in wanted.items()):
+        raise RolloutError("Existing execution profile does not match the running Bridge")
+    return previous
+
+
+def prepare_profile_update(settings, layout=Layout()):
+    """Prepare a reviewed additive migration, retaining every old account's authority."""
+    target = layout.target(TARGETS[-1])
+    previous_state = state(target, layout)
+    if previous_state is None or previous_state["sha256"] == digest(dropin(settings)):
+        return {"settings": settings, "previous": previous_state, "migration": False}
+    if "exec_accounts" not in settings:
+        raise RolloutError("An existing operator execution profile differs; preserve it and review locally")
+    previous_bytes = target.read_bytes()
+    previous_values = running_profile_environment()
+    previous = _existing_profile_settings(previous_values, previous_bytes)
+    proposed = json.loads(json.dumps(settings))
+    if "exec_accounts" in previous:
+        existing = previous["exec_accounts"]
+        if previous.get("reader") != proposed.get("reader"):
+            raise RolloutError("Changing an existing read-only account requires explicit Rule migration; existing profile preserved")
+        if "legacy_account" in previous:
+            proposed["legacy_account"] = previous["legacy_account"]
+            proposed["legacy_rules"] = previous["legacy_rules"]
+    else:
+        name = previous["exec_user"]
+        existing = {name: {"uid": previous["uid"], "cwd": previous["roots"][0],
+                           "roots": list(previous["roots"])}}
+        proposed["legacy_account"] = name
+        proposed["legacy_rules"] = read_legacy_rule_snapshot(layout)
+    for name, entry in existing.items():
+        if name not in proposed["exec_accounts"]:
+            raise RolloutError("Retain existing execution account '%s' during migration; no changes applied" % name)
+        if proposed["exec_accounts"][name]["uid"] != entry["uid"]:
+            raise RolloutError("Existing execution UID changed; no changes applied")
+        # Existing scope and initial cwd are immutable in this additive operation.
+        preserved = dict(entry)
+        preserved.setdefault("roots", list(previous["roots"]))
+        proposed["exec_accounts"][name] = preserved
+    proposed["roots"] = list(dict.fromkeys([*previous["roots"], *proposed["roots"]]))
+    if previous.get("approval_identity"):
+        proposed["approval_identity"] = previous["approval_identity"]
+    if previous["admin"] and not proposed["admin"]:
+        raise RolloutError("Existing administrative authority must be reviewed explicitly")
+    return {"settings": proposed, "previous": previous_state, "migration": True,
+            "previous_bytes": previous_bytes, "previous_values": previous_values,
+            "legacy_count": len(proposed.get("legacy_rules", {}))}
 
 
 def verify_selected_worker(settings, layout=Layout()):
@@ -574,7 +684,7 @@ def verify_selected_worker(settings, layout=Layout()):
     if "exec_accounts" in settings:
         for name, entry in settings["exec_accounts"].items():
             verify_selected_worker({"exec_user":name, "uid":entry["uid"],
-                                    "roots":list(dict.fromkeys([*settings["roots"],entry["cwd"]]))}, layout)
+                                    "roots":list(dict.fromkeys([*entry.get("roots", settings["roots"]),entry["cwd"]]))}, layout)
         return
     account = pwd.getpwnam(settings["exec_user"])
     if account.pw_uid != settings["uid"]:
@@ -593,7 +703,7 @@ def verify_selected_worker(settings, layout=Layout()):
         raise RolloutError("Selected account cannot load installed code or enter the approved roots; no changes applied")
 
 
-def configure_installed(settings, layout=Layout()):
+def configure_installed(settings, layout=Layout(), *, reviewed=None):
     """Configure ONLY the existing local execution profile of installed code.
 
     No source checkout or software replacement. Existing explicitly configured
@@ -608,17 +718,48 @@ def configure_installed(settings, layout=Layout()):
     previous = state(target, layout)
     # Reuse the existing profile format and location, not a second policy.
     proposed = dropin(settings)
-    if previous is not None:
-        if previous["sha256"] != digest(proposed):
-            raise RolloutError("An existing operator execution profile differs; preserve it and review locally")
+    if previous is not None and previous["sha256"] == digest(proposed):
         verify_installed_profile(settings)
         return {"status": "already configured", "service": UNIT, "ai_access": "unchanged"}
+    replacing = previous is not None
+    if replacing:
+        if (not reviewed or not reviewed.get("migration") or reviewed["settings"] != settings
+                or reviewed["previous"] != previous or reviewed["previous_bytes"] != target.read_bytes()
+                or reviewed["previous_values"] != running_profile_environment()):
+            raise RolloutError("An existing operator execution profile differs or changed after review; preserve it and review locally")
     verify_selected_worker(settings, layout)
     service("is-active")
     target.parent.mkdir(mode=0o755, parents=True, exist_ok=True)
     safe_path(target, layout)
-    # Publish complete bytes with no overwrite. A failed write must not
-    # leave a partially active systemd profile.
+    # A reviewed migration replaces only the exact previously approved bytes.
+    if replacing:
+        if state(target, layout) != previous:
+            raise RolloutError("Existing execution profile changed after review")
+        atomic_write(target, proposed, mode=previous["mode"], uid=previous["uid"], gid=previous["gid"])
+    else:
+        _publish_new_profile(target, proposed)
+    try:
+        restart_bridge()
+        verify_installed_profile(settings)
+    except Exception as failure:
+        try:
+            if state(target, layout) is None or digest(target.read_bytes()) != digest(proposed):
+                raise RolloutError("Local configuration changed during activation; manual review required")
+            if replacing:
+                atomic_write(target, reviewed["previous_bytes"], mode=previous["mode"],
+                             uid=previous["uid"], gid=previous["gid"])
+            else:
+                target.unlink()
+            restart_bridge()
+            if replacing and running_profile_environment() != reviewed["previous_values"]:
+                raise RolloutError("Restored profile is not confirmed active")
+        except Exception as restore_failure:
+            raise RolloutError("Local execution setup failed; rollback requires local review") from restore_failure
+        raise RolloutError("Local execution setup failed and was rolled back") from failure
+    return {"status": "migrated" if replacing else "configured", "service": UNIT, "ai_access": "unchanged"}
+
+
+def _publish_new_profile(target, proposed):
     fd, staging = tempfile.mkstemp(prefix=".native-profile-", dir=target.parent)
     try:
         with os.fdopen(fd, "wb") as stream:
@@ -630,20 +771,6 @@ def configure_installed(settings, layout=Layout()):
         os.link(staging, target, follow_symlinks=False)
     finally:
         os.unlink(staging)
-    try:
-        restart_bridge()
-        verify_installed_profile(settings)
-    except Exception as failure:
-        try:
-            if state(target, layout) is None or digest(target.read_bytes()) != digest(proposed):
-                raise RolloutError("Local configuration changed during activation; manual review required")
-            target.unlink()
-            restart_bridge()
-        except Exception as restore_failure:
-            raise RolloutError("Local execution setup failed; rollback requires local review") from restore_failure
-        raise RolloutError("Local execution setup failed and was rolled back") from failure
-    return {"status": "configured", "service": UNIT, "ai_access": "unchanged"}
-
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
@@ -681,10 +808,16 @@ def main(argv=None):
             if args.configure_installed:
                 if not sys.stdin.isatty() or not sys.stdout.isatty():
                     raise RolloutError("Installed execution setup requires a local interactive administrator")
+                reviewed = prepare_profile_update(settings)
+                settings = reviewed["settings"]
+                if reviewed["migration"]:
+                    print("Existing accounts retain their exact local roots and default directories.")
+                    print("Legacy Rule snapshots retained: %d; edited Rules need explicit account review." % reviewed["legacy_count"])
                 if "exec_accounts" in settings:
                     for account, entry in settings["exec_accounts"].items():
                         print("Eligible execution account: %s (UID %s; default cwd %s)" %
                               (account, entry["uid"], entry["cwd"]))
+                        print("  Approved roots: " + ", ".join(entry.get("roots", settings["roots"])))
                     print("Read-only executor: " + (settings.get("reader") or "not configured"))
                     print("AI Access rules separately grant a subset and default; no AI rights are created.")
                 else:
@@ -697,7 +830,7 @@ def main(argv=None):
                 if settings["admin"] and input("Separately approve UID 0 administrative execution? [y/N]: ").strip().lower() not in ("y", "yes"):
                     print(json.dumps({"status": "cancelled", "ai_access": "unchanged"}))
                     return 0
-                result = configure_installed(settings)
+                result = configure_installed(settings, reviewed=reviewed)
             else:
                 operation = apply if args.apply else check
                 result = operation(args.source, args.head, settings)
