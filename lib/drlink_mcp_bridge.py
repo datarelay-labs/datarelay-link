@@ -36,7 +36,7 @@ from typing import Any, Optional
 from urllib.parse import parse_qs, urlencode, urlparse, urlsplit
 
 from drlink_ai_agent import AgentLoop, execute_local
-from drlink_db_watch import get_watcher
+from drlink_db_watch import DbChangeWatcher, get_watcher
 from drlink_mcp_server_executor import ExecutorDenied, execute_as_unprivileged_user
 from drlink_mcp_runtime import DispatchBudget, read_mcp_request_body, write_mcp_response
 from drlink_control_db import ControlPlaneError, resolve_root
@@ -1608,9 +1608,14 @@ class MCPBridge:
         watcher = get_watcher(self.plane.db_file)
         # Wake only for THIS job reaching a terminal status, not for every
         # commit in the Control DB (a herd of waits made 30 calls take seconds).
-        sub = watcher.subscribe(
-            "job", job_id, native_signal_factory=self._dispatch_admission.new_signal,
-        )
+        if isinstance(watcher, DbChangeWatcher):
+            sub = watcher.subscribe(
+                "job", job_id, native_signal_factory=self._dispatch_admission.new_signal,
+            )
+        else:
+            # Keep the public watcher seam compatible with lightweight observers
+            # that implement the original two-argument subscribe contract.
+            sub = watcher.subscribe("job", job_id)
         try:
             while time.monotonic() < deadline:
                 # Clear the signal BEFORE looking, so a completion that commits
