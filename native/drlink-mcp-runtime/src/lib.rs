@@ -29,7 +29,10 @@ pub unsafe extern "C" fn drlink_mcp_process_watch_new(pid: libc::pid_t) -> libc:
         let mut change: libc::kevent = std::mem::zeroed();
         change.ident = pid as libc::uintptr_t;
         change.filter = libc::EVFILT_PROC;
-        change.flags = (libc::EV_ADD | libc::EV_ENABLE | libc::EV_CLEAR) as u16;
+        // Keep NOTE_EXIT readable across drain calls. Python may first drain
+        // the leader's output and then retry while descendants still hold the
+        // inherited pipes open; EV_CLEAR would consume the only exit event.
+        change.flags = (libc::EV_ADD | libc::EV_ENABLE) as u16;
         change.fflags = libc::NOTE_EXIT;
         if libc::kevent(queue, &change, 1, std::ptr::null_mut(), 0, std::ptr::null()) < 0 {
             libc::close(queue);

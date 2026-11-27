@@ -422,27 +422,28 @@ def capture_process(process, *, input_data: bytes | None, timeout_seconds: float
         raise
     timed_out = status == 1
     try:
-        # The leader remains waitable, so its process-group id is still pinned.
-        try:
-            os.killpg(process.pid, signal.SIGKILL)
-        except ProcessLookupError:
-            pass
-        except PermissionError as exc:
-            # Preserve the group-cleanup denial as a hard failure, but ensure
-            # the directly owned child cannot leak while reporting it.
+        # A completed EOF drain leaves no captured descendant holding these
+        # pipes. Group cleanup is needed only after timeout or leader-exit with
+        # inherited pipes still open; preserve denials on those paths.
+        if status != 0:
             try:
-                process.kill()
-                process.wait(timeout=5)
-            except (OSError, subprocess.TimeoutExpired):
+                os.killpg(process.pid, signal.SIGKILL)
+            except ProcessLookupError:
                 pass
-            for stream in (process.stdout, process.stderr):
-                if stream is not None and not stream.closed:
-                    stream.close()
-            free_process_watch(process)
-            raise OSError(
-                "process-group cleanup denied after native drain (status %s, returncode %s)"
-                % (status, process.returncode)
-            ) from exc
+            except PermissionError as exc:
+                try:
+                    process.kill()
+                    process.wait(timeout=5)
+                except (OSError, subprocess.TimeoutExpired):
+                    pass
+                for stream in (process.stdout, process.stderr):
+                    if stream is not None and not stream.closed:
+                        stream.close()
+                free_process_watch(process)
+                raise OSError(
+                    "process-group cleanup denied after native drain (status %s, returncode %s)"
+                    % (status, process.returncode)
+                ) from exc
         drain_status = 0
         if status != 0:
             drain_status = drain_process(

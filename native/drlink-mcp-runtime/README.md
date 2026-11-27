@@ -15,12 +15,14 @@ On Linux, child exit is observed with non-reaping `waitid(WNOWAIT)`; on macOS,
 the helper uses a persistent `kqueue` `EVFILT_PROC/NOTE_EXIT` watcher across
 timeout/retry drain calls. Python owns and closes that watcher after final EOF
 or error. Both paths leave the child waitable so Python retains reaping and
-process-group cleanup authority. On the 2026-11-27 Apple Silicon retest, the
-timeout/retry watcher case passed, while capture-process cleanup received
-`EPERM` when signaling the completed child's process group. That denial remains
-a hard error; macOS executor qualification is blocked on this runner behavior.
-Drain status `9` identifies an exited leader whose descendants still hold a
-captured pipe; Python terminates the process group and performs a final EOF drain.
+process-group cleanup authority. The 2026-11-27 Apple Silicon retest found that
+the consumed exit event could be missed on retry and that the completed-child
+path unnecessarily signaled its process group and received `EPERM`. The watcher
+now keeps the exit event observable across calls, and group signaling is limited
+to incomplete drains. Drain status `9` identifies an exited leader whose
+descendants still hold a captured pipe; Python terminates the process group and
+performs a final EOF drain. Exact Apple Silicon retest is pending; denials on
+required cleanup paths remain hard errors.
 
 The library is selected with `DRLINK_MCP_RUNTIME=rust` and
 `DRLINK_MCP_NATIVE_LIBRARY=/path/to/libdrlink_mcp_runtime.so`. `auto` loads an
@@ -34,8 +36,9 @@ bounded request-body reads and bounded outbound response writes. HTTP/TLS stream
 ownership, JSON parsing, and authorization remain in Python; socket accept and
 connection lifecycle plus native result-wait integration remain open. R3 process-pipe
 integration is present for Linux/macOS Agent and Server paths; Linux regression
-passes. Apple Silicon timeout/retry observation passes, but process-group
-cleanup gets `EPERM` on the runner and macOS executor qualification remains blocked.
+passes. Apple Silicon testing exposed retry watcher state loss and unnecessary
+group signaling after successful EOF; both are corrected and await exact-head
+retest. Required process-group cleanup denials remain failures.
 
 Build and unit test with the pinned Rust 1.75 toolchain:
 
