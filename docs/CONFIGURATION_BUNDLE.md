@@ -228,6 +228,8 @@ configurationBundle:
         enabled: true
 ```
 
+The target account binding defined in [AI_ACCESS_MCP.md §4.1](AI_ACCESS_MCP.md#41-canonical-execution-account-contract) must round-trip with the rule in CLI and ConfigurationBundle. Proposed canonical YAML field for account-bearing permissions: `execution: {default: aella, accounts: [aella, ubuntu, root]}`. Root is explicit in the account list and independently locally approved; importing a Bundle never silently grants local root eligibility. Omitted `execution` on an existing rule preserves the existing binding; invalid or ambiguous defaults fail closed. This is a target schema requirement, not an implemented syntax claim. Read-only has no selectable shell account.
+
 If `paths` is omitted on an existing AI Access rule, existing path scopes are preserved. An explicit empty `paths: []` clears scopes. Missing scopes remain fail-closed for file capabilities.
 
 If `members` is omitted on an existing group, its membership remains unchanged.
@@ -248,7 +250,7 @@ Enforcement:
 
 There is no rule ordering and no per-rule ALLOW/DENY action.
 
-For an unconfigured policy, creation of the first rule requires `mode`.
+For an unconfigured Remote Access or Internet Access policy, creation of the first rule requires `mode`. AI Access is WHITELIST-only and initializes atomically on the first reviewed rule; no user mode selection is required and disabled AI Access is DENY ALL.
 
 For an already configured policy:
 

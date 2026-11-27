@@ -264,7 +264,7 @@ AI Identity backing state
 AI Access Rules
 Network Object / Network Group targets
 Permission Object / Permission Group references
-path scopes / exec constraints
+direct-file scopes / per-identity target account grants and default
 AI sessions / activity
 ```
 
@@ -316,6 +316,16 @@ Real interoperability is required for each client explicitly claimed supported. 
 **Status:** Main integration completed in PR #318 (including #315); source CLI/menu/help/completion, shared MCP setup and separate AI Access Rule workflow implemented. Automated regression and exact installed-product qualification are distinct: remaining Web parity, installed upgrade/rollback and real user E2E must be verified against the exact candidate before release. No stable release qualification is claimed.
 
 Maintain and qualify the canonical [AI Access workflow](AI_ACCESS_MCP.md) and [CLI information architecture](Data%20Relay%20Link%20CLI%20Information%20Architecture.md). Remove competing public command/menu paths, not security controls or persisted state. WBS: (1) reconcile catalog/parser/help/completion, (2) shared MCP setup/readiness wizard, (3) AI Identity onboarding and credential lifecycle, (4) separate AI Access Rule wizard and permission profiles, (5) CLI/Web parity, (6) persisted-state upgrade and failure/rollback, (7) focused regressions, surface reconciliation and real user E2E on exact candidate. Each item requires actual evidence, not document-only PASS.
+
+### MCP execution-account convergence — owner direction 2026-11-27 (P0)
+
+**Status:** accepted design; implementation, migration and real E2E pending. Supersedes singleton execution-account design. Canonical contract: [AI_ACCESS_MCP.md §4.1](AI_ACCESS_MCP.md#41-canonical-execution-account-contract). Do not implement separate competing modes or expand into new gateway/sandbox infrastructure.
+
+1. Rule schema, deterministic complete-grant authorization, local execution ceiling and lossless non-widening migration.
+2. Guided single review: default user, multiple additional existing users, explicit root/default, direct-file scopes, account/target validation; equivalent CLI/Bundle and existing Web surface.
+3. Effective account discovery, optional run_as and cwd, same behavior across Server and Linux Managed Hosts; accurate unsupported reporting elsewhere.
+4. UID/GID/HOME/file ownership, Git and jobs; root only when expressly granted; current grant/owner checks, audit, denial diagnostics and tracked-job revocation.
+5. Installer/upgrade/rollback and exact-candidate tests: ordinary natural-language development + administration, root-only, read-only, denied root/account/cwd, multi-identity, overlapping rules, new trusted host, migration and genuine ChatGPT connection. Reuse existing U-007, U-011, A-006 and C-006 IDs; do not mark PASS from documentation or synthetic tests.
 
 ## 12. Phase DL-10 — canonical CLI implementation
 
