@@ -83,8 +83,8 @@ fn relay(
         let wait = until_check.min(until_idle).min(Duration::from_secs(1));
         let millis = wait.as_millis().min(i32::MAX as u128) as i32;
         let mut fds = [
-            pollfd { fd: client, events: c_events as i16, revents: 0 },
-            pollfd { fd: upstream, events: u_events as i16, revents: 0 },
+            pollfd { fd: if c_events == 0 { -1 } else { client }, events: c_events as i16, revents: 0 },
+            pollfd { fd: if u_events == 0 { -1 } else { upstream }, events: u_events as i16, revents: 0 },
         ];
         let ready = unsafe { libc::poll(fds.as_mut_ptr(), fds.len() as _, millis) };
         if ready < 0 {
@@ -95,7 +95,7 @@ fn relay(
         if ready == 0 { continue; }
         if fds.iter().any(|fd| fd.revents & (libc::POLLERR | libc::POLLNVAL) != 0) { return IO_ERROR; }
 
-        if fds[0].revents & libc::POLLIN != 0 && cr {
+        if fds[0].revents & (libc::POLLIN | libc::POLLHUP) != 0 && cr {
             let cap = cbuf.len().min(c2u.available());
             let n = unsafe { libc::recv(client, cbuf.as_mut_ptr().cast(), cap, 0) };
             if n == 0 { cr = false; }
@@ -104,7 +104,7 @@ fn relay(
                 if e.kind() != std::io::ErrorKind::WouldBlock && e.kind() != std::io::ErrorKind::Interrupted { return IO_ERROR; }
             } else { c2u.push(&cbuf[..n as usize]); last_data = Instant::now(); }
         }
-        if fds[1].revents & libc::POLLIN != 0 && ur {
+        if fds[1].revents & (libc::POLLIN | libc::POLLHUP) != 0 && ur {
             let cap = ubuf.len().min(u2c.available());
             let n = unsafe { libc::recv(upstream, ubuf.as_mut_ptr().cast(), cap, 0) };
             if n == 0 { ur = false; outcome = UPSTREAM_CLOSED; }
@@ -129,8 +129,6 @@ fn relay(
                 if e.kind() != std::io::ErrorKind::WouldBlock && e.kind() != std::io::ErrorKind::Interrupted { return IO_ERROR; }
             } else { u2c.consume(n as usize); *down_total += n as u64; last_data = Instant::now(); }
         }
-        if fds[0].revents & libc::POLLHUP != 0 && cr { cr = false; }
-        if fds[1].revents & libc::POLLHUP != 0 && ur { ur = false; outcome = UPSTREAM_CLOSED; }
         if !cr && c2u.is_empty() && uw { unsafe { libc::shutdown(upstream, libc::SHUT_WR); } uw = false; }
         if !ur && u2c.is_empty() && cw { unsafe { libc::shutdown(client, libc::SHUT_WR); } cw = false; }
     }

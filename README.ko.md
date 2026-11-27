@@ -241,7 +241,9 @@ nonce, audit 권한은 Python에 유지됩니다. Rust relay가 없거나 재검
 실패하거나 정책이 철회되면 연결을 닫습니다. native library가 없는 자동 모드에서는
 handoff 전에 Python relay를 사용하고, 명시적인 Rust 선택은 library 부재 시 fail-closed입니다.
 handoff 이후 세션을 Python relay로 재실행하지 않으며, 새 연결은 `DRLINK_EGRESS_RUNTIME=python`으로 기존 Python rollback 경로를
-선택할 수 있습니다. MCP의 결과 대기, connection I/O, streaming과 backpressure 전환도
+선택할 수 있습니다. 각 방향의 relay queue는 256 KiB로 제한하며, peer hangup 뒤에도
+수신 EOF까지 대기 데이터를 전달하고 backpressure 중 유휴 descriptor를 poll에서 제외합니다.
+MCP의 결과 대기, connection I/O, streaming과 backpressure 전환도
 아직 진행 중입니다. 두 Rust library는 아직 설치 패키지에 포함되지 않았고 실제 사용자
 E2E qualification도 진행 중입니다. MCP rollback은 `DRLINK_MCP_RUNTIME=python`이며,
 `auto`는 library가 없으면 Python으로 돌아가고 명시적 `rust` 선택은 library 부재 시

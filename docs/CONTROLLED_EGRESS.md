@@ -121,6 +121,12 @@ session is never replayed through the Python relay after native handoff. The
 scoped `DRLINK_EGRESS_RUNTIME=python` setting selects the known Python rollback
 path before a new session starts; it does not weaken authorization.
 
+Each direction uses a fixed 256 KiB queue with 64 KiB read chunks. The relay
+continues reading after a socket hangup until `recv` reaches EOF, so queued
+payload drains before half-close propagation. A descriptor with no remaining
+read or write work is excluded from `poll`, preventing a persistent hangup from
+spinning while the opposite direction is backpressured.
+
 A CIDR/IP destination rule may authorize a hostname when a validated resolved
 address falls inside that selector. Authorization of one candidate never widens
 authorization to other candidates outside the allowed IP/CIDR scope.
