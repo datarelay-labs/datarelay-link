@@ -7,6 +7,7 @@ or any file/command primitive. No arbitrary shell or sudo is exposed.
 from __future__ import annotations
 
 import json
+import importlib.util
 import os
 import grp
 from pathlib import Path
@@ -17,7 +18,25 @@ import signal
 import stat
 import subprocess
 import sys
-from drlink_mcp_runtime import capture_process
+
+
+def _load_isolated_capture_process():
+    # The non-root worker is launched with Python -I, which intentionally
+    # omits script and environment paths. Load only the trusted sibling file
+    # by its absolute installed path instead of broadening module search paths.
+    runtime_path = Path(__file__).resolve().with_name("drlink_mcp_runtime.py")
+    spec = importlib.util.spec_from_file_location("drlink_mcp_runtime", runtime_path)
+    if spec is None or spec.loader is None:
+        raise ImportError("trusted MCP runtime adapter is unavailable")
+    runtime = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(runtime)
+    return runtime.capture_process
+
+
+if sys.flags.isolated:
+    capture_process = _load_isolated_capture_process()
+else:
+    from drlink_mcp_runtime import capture_process
 
 MAX_BYTES = 1024 * 1024
 MAX_OUTPUT = 65536

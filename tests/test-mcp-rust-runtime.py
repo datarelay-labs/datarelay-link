@@ -323,6 +323,58 @@ class RustDispatchBudgetTests(unittest.TestCase):
                 proc.stdout.close()
                 proc.stderr.close()
 
+    def test_rust_bounds_post_exit_drain_for_continuously_writing_descendant(self):
+        with mock.patch.dict(os.environ, {
+            "DRLINK_MCP_RUNTIME": "rust",
+            "DRLINK_MCP_NATIVE_LIBRARY": str(LIBRARY),
+        }):
+            child_code = "import os; data=b'x'*8192\nwhile True: os.write(1,data)"
+            parent_code = (
+                "import subprocess,sys; "
+                "child=subprocess.Popen([sys.executable,'-c',sys.argv[1]]); "
+                "print(child.pid,flush=True)"
+            )
+            proc = subprocess.Popen(
+                [sys.executable, "-c", parent_code, child_code],
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True,
+            )
+            drain_returned = threading.Event()
+            external_kill = []
+
+            def kill_if_native_drain_stalls():
+                time.sleep(1)
+                if not drain_returned.is_set():
+                    external_kill.append(True)
+                    os.killpg(proc.pid, signal.SIGKILL)
+
+            watchdog = threading.Thread(target=kill_if_native_drain_stalls, daemon=True)
+            watchdog.start()
+            try:
+                first = runtime.drain_process(
+                    proc, on_stdout=lambda _chunk: None, on_stderr=lambda _chunk: None,
+                    timeout_seconds=0,
+                )
+                drain_returned.set()
+                watchdog.join(timeout=2)
+                self.assertFalse(external_kill, "post-exit drain spun while descendant kept the pipe readable")
+                self.assertEqual(first, 9)
+                os.killpg(proc.pid, signal.SIGKILL)
+                final = runtime.drain_process(
+                    proc, on_stdout=lambda _chunk: None, on_stderr=lambda _chunk: None,
+                    timeout_seconds=3, wait_for_eof=True,
+                )
+                self.assertEqual(final, 0)
+                self.assertEqual(proc.wait(timeout=1), 0)
+            finally:
+                drain_returned.set()
+                watchdog.join(timeout=2)
+                if proc.poll() is None:
+                    proc.kill()
+                    proc.wait(timeout=5)
+                for stream in (proc.stdout, proc.stderr):
+                    if stream is not None and not stream.closed:
+                        stream.close()
+
     def test_rust_capture_process_bounds_output_and_reaps_child(self):
         with mock.patch.dict(os.environ, {
             "DRLINK_MCP_RUNTIME": "rust",

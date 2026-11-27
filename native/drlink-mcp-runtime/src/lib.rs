@@ -590,6 +590,13 @@ pub unsafe extern "C" fn drlink_mcp_drain_child_stateful(
                 return 3;
             }
         }
+        // Once the leader exits, a descendant can keep an inherited pipe
+        // continuously readable forever. Return after this bounded poll/read
+        // pass so Python can terminate the process group, then perform the
+        // final EOF drain with its separate deadline.
+        if exited && !wait_for_eof && (stdout_open || stderr_open) {
+            return 9;
+        }
     }
 }
 
