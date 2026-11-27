@@ -619,3 +619,29 @@ Post-v2.4 follow-up:
 - unprivileged frpc account when supported targets allow
 - frps with CAP_NET_BIND_SERVICE only if privileged bind is required
 - allocator read-only config/PKI with narrow registry/enrollment write
+
+## Rust runtime qualification update (2026-11-27, exact artifact `7a4b886`)
+
+The refreshed target packages bind MCP runtime libraries to source `be9b8f3`
+for Linux x86_64, Linux ARM64, and Apple Silicon macOS Agent. Artifact closure,
+exact-head `tests/run-fast-pr.sh`, PR lint/governance/adoption/enforcement/
+portable macOS/Linux native checks, explicit Apple Silicon lifecycle/client-port/
+pinned-FRP workflow `46065150269`, and exact-head Codex review all passed.
+The unchanged Rust-selected shared-plane workload completed a 3,600-second
+soak: 54 waves; each wave passed 90/90 MCP jobs across 30 synthetic hosts,
+three concurrent denials, 20/20 CONNECT acknowledgements, one policy 403,
+21 audit IDs, zero unauthorized jobs/upstream connects, and 38 fixture FDs.
+All 54 receipt sets passed. MCP p95 was 262–426 ms, below the preferred
+500 ms target in every sample. Bridge PSS was 127–166 MiB and worker peak RSS
+31–39 MiB. The runner emitted
+`LPERF_SHARED_SOAK_RESULT PASS_LAB WAVES 54 ELAPSED_S 3600.0 REQUESTED_S 3600`.
+After the run 27.7 GiB RAM was available, cgroup CPU throttling counters were
+zero, and only the first of three `vmstat` samples showed swap-in/out. Raw log:
+`/tmp/lperf-shared-plane-7a4b886-soak-3600.log`. This is synthetic local lab
+qualification, not installed-service or real-user E2E.
+
+The current authorized-host inventory still contains only
+`final-e2e-rocky9-pass2` with `connectivity=disconnected` and
+`ai_executor=not_ready`. Surface Reconciliation and real Direct/AI-assisted
+Full User E2E remain NOT_RUN. No production, merge, release, or permission/auth
+action was taken.

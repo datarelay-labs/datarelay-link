@@ -302,6 +302,29 @@ Rust helper는 즉시 읽을 수 있는 양쪽 pipe 데이터를 EOF까지 계�
 210 KiB 양방향 출력 회귀와 Apple Silicon process lifecycle, client-port 및 pinned FRP
 검증이 exact source `be9b8f3` workflow `46062751724`에서 통과했습니다. 새 native package와
 full local gate 검증은 계속 진행 중입니다.
+
+2026-11-27 exact artifact `7a4b886`에서 target별 MCP Rust library provenance와
+bundle closure 검증, 전체 `tests/run-fast-pr.sh`, PR lint/governance/adoption/
+enforcement/portable macOS/Linux x86_64/ARM64 CI가 통과했습니다. 별도 workflow
+`46065150269`의 Apple Silicon process lifecycle, client-port 및 pinned FRP도
+통과했고, exact-head Codex review에서 major issue가 없었습니다.
+
+동일 artifact HEAD의 Rust-selected shared-plane soak은 3,600초 동안 54개 wave를
+완료했습니다. 각 wave에서 30개 synthetic host에 MCP job 90/90건, 거부 3건,
+CONNECT ACK 20/20건, policy 403 한 건, audit ID 21개가 확인됐고,
+unauthorized job/upstream connect는 0건, fixture FD는 계속 38개였습니다.
+54개 receipt set 모두 통과했고 MCP p95는 262–426 ms로 전 샘플이 preferred
+500 ms 미만이었습니다. Bridge PSS는 127–166 MiB, worker peak RSS는 31–39 MiB였습니다.
+완료 결과는 `PASS_LAB WAVES 54 ELAPSED_S 3600.0 REQUESTED_S 3600`이며 raw log는
+`/tmp/lperf-shared-plane-7a4b886-soak-3600.log`입니다. 종료 후 사용 가능 RAM은
+27.7 GiB, cgroup CPU throttling은 0이었습니다. 첫 vmstat sample에만 swap I/O가
+있었고 다음 두 sample에는 없었습니다. 이는 local synthetic lab qualification이며
+실제 설치 서비스 또는 사용자 E2E를 대체하지 않습니다.
+
+현재 host inventory에는 `final-e2e-rocky9-pass2` 한 대만 있으며
+`connectivity=disconnected`, `ai_executor=not_ready`입니다. 따라서 Surface
+Reconciliation 및 Direct/AI-assisted Full User E2E는 NOT_RUN 상태입니다. 실제
+production, merge, release 또는 permission/auth 변경은 수행하지 않았습니다.
 이전 Agent helper의 flat snapshot은 manifest 경로가 파일 basename 하나에 유일하게 대응할 때만
 복구합니다. 새 native 파일은 Python fallback을 복구하도록 제거합니다. 중복 basename이나
 모호한 경로는 설치 파일을 변경하기 전에 거부합니다.

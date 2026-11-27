@@ -76,12 +76,11 @@ response writes, and the per-subscription condition wait used for bounded job
 result wakeups. Python's DB watcher sends the signal and Python re-reads SQLite,
 checks job ownership/status and consumes the durable result. HTTP/TLS stream
 ownership, JSON parsing, authorization and connection lifecycle remain in Python.
-R3 process-pipe
-integration is present for Linux/macOS Agent and Server paths; Linux regression
-passes. Apple Silicon testing exposed retry watcher state loss and unnecessary
-group signaling after successful EOF; the stateful ABI and cleanup scope are
-corrected and await exact-head retest. Required process-group cleanup denials
-remain failures.
+R3 process-pipe integration is present for Linux/macOS Agent and Server paths.
+The exact Apple Silicon workflow `46065150269` on artifact HEAD `7a4b886`
+passed native process lifecycle, client-port, and pinned FRP checks; the Linux
+x86_64/ARM64 native matrix passed in workflow `46065075057`. Required
+process-group cleanup denials remain failures.
 
 Build and unit test with the pinned Rust 1.75 toolchain:
 
