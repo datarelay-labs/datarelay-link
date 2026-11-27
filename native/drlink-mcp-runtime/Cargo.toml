@@ -16,4 +16,3 @@ libc = "=0.2.191"
 lto = true
 codegen-units = 1
 panic = "abort"
-

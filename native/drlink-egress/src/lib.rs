@@ -181,4 +181,3 @@ mod tests {
         assert_eq!(buffer.available(), 0);
     }
 }
-
