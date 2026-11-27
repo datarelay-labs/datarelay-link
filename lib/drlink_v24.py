@@ -5472,7 +5472,7 @@ def resolve_ai_execution_grant(
     plane_db, *, identity: str, destination: str, capability: str,
     local_accounts, run_as: Optional[str] = None, operand: Optional[str] = None,
     legacy_account: Optional[str] = None, rule_id: Optional[str] = None,
-    validate_operand=None,
+    validate_operand=None, reader_account: Optional[str] = None,
 ) -> dict:
     """Resolve a complete capability/account/path grant; no cross-rule union.
 
@@ -5507,7 +5507,12 @@ def resolve_ai_execution_grant(
             binding = ai_rule_execution(row)
         except ControlPlaneError:
             continue
-        if binding is None:
+        readonly = _ai_rule_permissions(plane_db, row) <= {"host-info", "process-read", "file-read"}
+        if readonly and legacy_account is None:
+            if reader_account is None:
+                continue
+            binding = {"default": reader_account, "accounts": [reader_account]}
+        elif binding is None:
             if legacy_account is None:
                 continue
             binding = {"default": legacy_account, "accounts": [legacy_account]}
@@ -5642,8 +5647,9 @@ def authorize_ai_capability_v24(
         # interpret a bound rule as a grant to their singleton OS account.
         original_count = len(matched_rows)
         matched_rows = [row for row in matched_rows if row["execution_json"] is None]
-        if original_count and not matched_rows and evaluation["result"] == "ALLOW":
-            evaluation = dict(evaluation, result="DENY", matched_rules=[])
+        if original_count != len(matched_rows):
+            evaluation = dict(evaluation, matched_rules=[row["name"] for row in matched_rows],
+                              result=evaluation["result"] if matched_rows else "DENY")
 
     patterns = _path_scopes_for_rules(plane_db, matched_rows)
     winner = None

@@ -91,16 +91,25 @@ def execution_profile_status(settings: dict | None) -> dict:
         return result("Disabled", "Server-self is disabled")
     if not status["local"]:
         return result("Disabled", "Server-local executor is disabled")
-    name = settings.get("DRLINK_MCP_SERVER_EXEC_USER", "")
     raw = settings.get("DRLINK_MCP_SERVER_ALLOWED_ROOTS", "")
-    if not name or not raw:
-        return result("Not ready", "Execution account or allowed roots missing")
     try:
-        account = pwd.getpwnam(name)
-    except KeyError:
-        return result("Not ready", "Configured execution account does not exist")
-    if account.pw_uid == 0 and (not status["full"] or not status["admin"]):
-        return result("Not ready", "Administrative account requires explicit local opt-in")
+        entries = _profile_accounts(settings)
+    except FullControlDenied:
+        return result("Not ready", "Execution account or allowed roots missing or invalid")
+    if not raw:
+        return result("Not ready", "Execution account or allowed roots missing")
+    for name, spec in entries.items():
+        try:
+            account = pwd.getpwnam(name)
+        except KeyError:
+            return result("Not ready", "Configured execution account does not exist")
+        if spec["uid"] is not None and spec["uid"] != account.pw_uid:
+            return result("Not ready", "Configured execution account UID changed")
+        if account.pw_uid == 0 and (not status["full"] or not status["admin"]):
+            return result("Not ready", "Administrative account requires explicit local opt-in")
+    reader = settings.get("DRLINK_MCP_SERVER_READ_USER")
+    if reader and (reader not in entries or pwd.getpwnam(reader).pw_uid == 0):
+        return result("Not ready", "Invalid read-only execution account")
     try:
         if any(not p or not Path(p).is_absolute() or not Path(p).is_dir() for p in raw.split(os.pathsep)):
             return result("Not ready", "Configured root is missing or invalid")
@@ -184,6 +193,13 @@ def eligible_accounts() -> dict[str, Account]:
         except (FullControlDenied, OSError):
             continue
     return result
+
+
+def reader_execution_account(accounts: dict[str, Account]) -> str | None:
+    reader = os.environ.get("DRLINK_MCP_SERVER_READ_USER")
+    if reader in accounts and accounts[reader].uid != 0:
+        return reader
+    return None
 
 
 def default_cwd(account: Account) -> str:

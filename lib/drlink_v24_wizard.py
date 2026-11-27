@@ -1184,6 +1184,23 @@ def run_ai_access_wizard(plane: ControlPlane, name: str, *, source_identity=None
                                       default=default_paths, validate=valid_scope,
                                       help_text=examples)
                 paths = v24.parse_ai_paths_field(raw_paths)
+            execution = None
+            management = bool(capabilities & {"command-exec", "file-write", "file-upload", "file-download"})
+            if destination == v24.SERVER_SELF_TARGET and management:
+                eligible = plane.native_mcp_local_accounts()
+                if eligible:
+                    default_account = _ask_choice(io, "Default execution account", eligible)
+                    extra = []
+                    for account in eligible:
+                        if account != default_account and _ask_yes_no(
+                                io, "Also allow execution as %s?" % account, default=False):
+                            extra.append(account)
+                    execution = v24.normalize_ai_execution_binding({
+                        "default": default_account, "accounts": [default_account, *extra]})
+                    if "root" in execution["accounts"]:
+                        _emit(io, "Root grants full OS administrative authority, including modification of Data Relay Link.")
+                else:
+                    _emit(io, "Local execution accounts are not verified. Configure MCP Server execution before using this Rule.")
             if "command-exec" in capabilities:
                 _emit(io, "Command execution uses the target OS account and is not a filesystem sandbox. Review the target execution controls.")
             enabled = _ask_yes_no(io, "Enabled", default=True)
@@ -1204,6 +1221,9 @@ def run_ai_access_wizard(plane: ControlPlane, name: str, *, source_identity=None
                 "Paths       : %s" % (", ".join(paths) if paths else "-"),
                 "Enabled     : %s" % ("YES" if enabled else "NO"),
             ]
+            if execution is not None:
+                review_lines.extend(["Default account: " + execution["default"],
+                                     "Accounts: " + ", ".join(execution["accounts"])])
             review_lines.insert(0, "Operation   : %s Rule" % ("UPDATE existing" if existing is not None else "CREATE new"))
             if previous_destination is not None and previous_destination != destination:
                 review_lines.insert(4, "Replace destination: %s -> %s (this Rule only)" % (previous_destination, destination))
@@ -1227,6 +1247,7 @@ def run_ai_access_wizard(plane: ControlPlane, name: str, *, source_identity=None
                     destination=destination,
                     permission=permission,
                     paths=paths,
+                    execution=execution,
                     enabled=enabled,
                     oneshot=True,
                 )
@@ -1332,20 +1353,32 @@ def _configure_mcp_local_execution(plane, io):
     if plane.root not in (None, "", "/") or os.geteuid() != 0 or not isinstance(io, TtyIO):
         raise ControlPlaneError("Local execution setup requires an interactive administrator on the installed Server. No changes were applied.")
     import subprocess
-    user = _ask_text(io, "Run as User", default="drlink-mcp")
-    default_roots = "/var/lib/drlink-mcp" if user == "drlink-mcp" else None
-    roots = _ask_text(io, "Local file roots / initial working directories (colon separated)", default=default_roots)
-    argv = [sys.executable, "/usr/local/lib/drlink/operator-native-mcp-full-control.py",
-            "--configure-installed", "--exec-user", user]
+    import pwd
+    _emit(io, "Select existing OS accounts for local execution. The AI Access Rule separately grants accounts and chooses its default.")
+    _emit(io, "Use the project owner for development; root may be added or selected alone if administrative access is required.")
+    def valid_users(raw):
+        names = raw.split(",")
+        if not names or any(not name or name != name.strip() for name in names) or len(set(names)) != len(names):
+            return "Enter unique existing OS account names separated by commas."
+        try:
+            for name in names:
+                pwd.getpwnam(name)
+        except KeyError:
+            return "Execution account does not exist."
+        return None
+    users = _ask_text(io, "Eligible OS accounts (comma separated)", validate=valid_users).split(",")
+    roots = _ask_text(io, "Direct file roots / initial directories (colon separated)", default="/")
+    argv = [sys.executable, "/usr/local/lib/drlink/operator-native-mcp-full-control.py", "--configure-installed"]
+    for user in users:
+        argv.extend(["--exec-account", user])
     for path in roots.split(":"):
         argv.extend(["--allowed-root", path])
-    import pwd
-    try:
-        admin = pwd.getpwnam(user).pw_uid == 0
-    except KeyError:
-        raise ControlPlaneError("Execution account does not exist. No changes were applied.") from None
-    if admin:
-        if not _ask_yes_no(io, "Select administrative UID 0 execution?", default=False):
+    normal = [name for name in users if pwd.getpwnam(name).pw_uid != 0]
+    if normal:
+        reader = normal[0] if len(normal) == 1 else _ask_choice(io, "Read-only executor", normal)
+        argv.extend(["--read-user", reader])
+    if any(pwd.getpwnam(user).pw_uid == 0 for user in users):
+        if not _ask_yes_no(io, "Permit explicitly granted administrative UID 0 execution?", default=False):
             raise WizardCancelled()
         argv.append("--allow-root")
     return subprocess.run(argv, check=False).returncode

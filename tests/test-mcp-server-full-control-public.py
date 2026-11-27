@@ -327,6 +327,12 @@ class NativeFullControlPublicTests(unittest.TestCase):
             self.assertEqual(file.stat().st_uid, ordinary.pw_uid)
             self.allowed("server_read_file", {"path":str(file),"run_as":admin.pw_name})
             self.denied("server_run", {"argv":["id"],"run_as":admin.pw_name}, identity="other")
+            self.cli("set", "permission-object", "reader", "permissions", "host-info,file-read")
+            self.cli("set", "ai-access", self.rule("other"), "permission", "reader")
+            with patch.dict(os.environ, {"DRLINK_MCP_SERVER_READ_USER":ordinary.pw_name}):
+                self.allowed("server_read_file", {"path":str(file)}, identity="other")
+                self.denied("server_read_file", {"path":str(file),"run_as":admin.pw_name}, identity="other")
+                self.denied("server_run", {"argv":["id"]}, identity="other")
             with patch.dict(os.environ, {"DRLINK_MCP_SERVER_ADMIN_ENABLED":"0"}):
                 self.denied("server_run", {"argv":["id"], "run_as":admin.pw_name})
                 self.assertEqual(self.completed(self.allowed("server_run", {"argv":["id","-u"]}))["stdout"]["text"].strip(),

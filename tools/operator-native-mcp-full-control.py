@@ -95,16 +95,50 @@ def profile(user, roots, allow_root=False, *, approval_identity=None):
     return settings
 
 
-def dropin(settings):
+def multi_account_profile(users, roots, allow_root=False, *, reader=None):
+    """Explicit local ceiling for fresh installs; never a grant to an AI."""
+    if not users or len(users) > 128 or len(set(users)) != len(users):
+        raise RolloutError("Select unique existing execution accounts")
+    entries = {}
+    resolved = None
+    for user in users:
+        selected = profile(user, roots, allow_root)
+        resolved = selected["roots"]
+        entry = pwd.getpwnam(user)
+        home = str(Path(entry.pw_dir).resolve())
+        cwd = home if Path(home).is_dir() and any(
+            root == "/" or home == root or home.startswith(root + "/") for root in resolved
+        ) else resolved[0]
+        entries[user] = {"uid": entry.pw_uid, "cwd": cwd}
+    if reader is not None and (reader not in entries or entries[reader]["uid"] == 0):
+        raise RolloutError("Read-only executor must be an approved non-administrative account")
+    return {"exec_accounts": entries, "roots": resolved,
+            "admin": any(entry["uid"] == 0 for entry in entries.values()), "reader": reader}
+
+
+def _profile_environment(settings):
     values = {
         "DRLINK_MCP_SERVER_SELF_ENABLED": "1",
         "DRLINK_MCP_SERVER_LOCAL_EXEC_ENABLED": "1",
         "DRLINK_MCP_SERVER_FULL_CONTROL_ENABLED": "1",
-        "DRLINK_MCP_SERVER_EXEC_USER": settings["exec_user"],
         "DRLINK_MCP_SERVER_ALLOWED_ROOTS": os.pathsep.join(settings["roots"]),
-        "DRLINK_MCP_SERVER_DEFAULT_CWD": settings["roots"][0],
         "DRLINK_MCP_SERVER_ADMIN_ENABLED": "1" if settings["admin"] else "0",
     }
+    if "exec_accounts" in settings:
+        values["DRLINK_MCP_SERVER_EXEC_ACCOUNTS"] = json.dumps(settings["exec_accounts"], sort_keys=True, separators=(",", ":"))
+        # Clear inherited singleton values so an older native executor cannot
+        # accidentally run the old default against a new local account map.
+        values["DRLINK_MCP_SERVER_EXEC_USER"] = ""
+        values["DRLINK_MCP_SERVER_DEFAULT_CWD"] = ""
+        values["DRLINK_MCP_SERVER_READ_USER"] = settings.get("reader") or ""
+    else:
+        values["DRLINK_MCP_SERVER_EXEC_USER"] = settings["exec_user"]
+        values["DRLINK_MCP_SERVER_DEFAULT_CWD"] = settings["roots"][0]
+    return values
+
+
+def dropin(settings):
+    values = _profile_environment(settings)
     if settings.get("approval_identity"):
         values["DRLINK_MCP_OAUTH_OPERATOR_IDENTITY"] = settings["approval_identity"]
     def escape(value):
@@ -526,18 +560,22 @@ def verify_installed_profile(settings):
     if len(raw) > 1024 * 1024 or pid() != current:
         raise RolloutError("Could not verify the active execution profile")
     actual = dict(item.partition(b"=")[::2] for item in raw.split(b"\0") if b"=" in item)
-    wanted = {
-        "SELF_ENABLED": "1", "LOCAL_EXEC_ENABLED": "1", "FULL_CONTROL_ENABLED": "1",
-        "EXEC_USER": settings["exec_user"], "ALLOWED_ROOTS": os.pathsep.join(settings["roots"]),
-        "DEFAULT_CWD": settings["roots"][0], "ADMIN_ENABLED": "1" if settings["admin"] else "0",
-    }
-    if any(actual.get(("DRLINK_MCP_SERVER_"+key).encode()) != value.encode()
-           for key, value in wanted.items()):
+    wanted = _profile_environment(settings)
+    if any(actual.get(key.encode()) != value.encode() for key, value in wanted.items()):
         raise RolloutError("Running Bridge profile differs from the approved profile; review existing local overrides")
+    if "exec_accounts" in settings:
+        if actual.get(b"DRLINK_MCP_SERVER_READ_USER", b"").decode() != (settings.get("reader") or ""):
+            raise RolloutError("Running Bridge reader differs from the approved profile")
+
 
 
 def verify_selected_worker(settings, layout=Layout()):
     """Verify the selected account can load code and enter each approved root."""
+    if "exec_accounts" in settings:
+        for name, entry in settings["exec_accounts"].items():
+            verify_selected_worker({"exec_user":name, "uid":entry["uid"],
+                                    "roots":list(dict.fromkeys([*settings["roots"],entry["cwd"]]))}, layout)
+        return
     account = pwd.getpwnam(settings["exec_user"])
     if account.pw_uid != settings["uid"]:
         raise RolloutError("Execution account changed after review")
@@ -618,6 +656,8 @@ def main(argv=None):
     parser.add_argument("--source", type=Path, default=Path(__file__).resolve().parents[1])
     parser.add_argument("--head", help="Exact 40-character candidate Git HEAD; required for apply")
     parser.add_argument("--exec-user")
+    parser.add_argument("--exec-account", action="append", default=[])
+    parser.add_argument("--read-user")
     parser.add_argument("--allowed-root", action="append", default=[])
     parser.add_argument("--allow-root", action="store_true", help="Explicit opt-in for execution UID 0")
     parser.add_argument("--approval-ai-identity", help="Verified AI Identity shown in unbound OAuth operator commands (display only)")
@@ -628,12 +668,27 @@ def main(argv=None):
         elif args.prepare_default:
             result = prepare_default_executor()
         else:
-            settings = profile(args.exec_user, args.allowed_root, args.allow_root,
-                               approval_identity=args.approval_ai_identity)
+            if args.exec_account:
+                if not args.configure_installed or args.exec_user or args.approval_ai_identity:
+                    raise RolloutError("Multiple execution accounts require installed local configuration")
+                settings = multi_account_profile(args.exec_account, args.allowed_root, args.allow_root,
+                                                 reader=args.read_user)
+            else:
+                if args.read_user:
+                    raise RolloutError("--read-user requires --exec-account")
+                settings = profile(args.exec_user, args.allowed_root, args.allow_root,
+                                   approval_identity=args.approval_ai_identity)
             if args.configure_installed:
                 if not sys.stdin.isatty() or not sys.stdout.isatty():
                     raise RolloutError("Installed execution setup requires a local interactive administrator")
-                print("Execution account: " + settings["exec_user"])
+                if "exec_accounts" in settings:
+                    for account, entry in settings["exec_accounts"].items():
+                        print("Eligible execution account: %s (UID %s; default cwd %s)" %
+                              (account, entry["uid"], entry["cwd"]))
+                    print("Read-only executor: " + (settings.get("reader") or "not configured"))
+                    print("AI Access rules separately grant a subset and default; no AI rights are created.")
+                else:
+                    print("Execution account: " + settings["exec_user"])
                 print("Allowed initial directories / file roots: " + ", ".join(settings["roots"]))
                 print("General commands have the selected account's real OS authority; not a filesystem sandbox.")
                 if input("Activate this existing execution profile? [y/N]: ").strip().lower() not in ("y", "yes"):

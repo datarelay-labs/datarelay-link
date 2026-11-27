@@ -111,6 +111,20 @@ class AiPathScopePublicParity(unittest.TestCase):
         self.plane.record_ai_executor_platform("a" * 32, "posix")
         self.assertEqual(self._auth("read_file", operand="C:/Data/report.txt")["action"], "DENY")
 
+    def test_native_rule_wizard_reviews_default_and_additional_accounts(self):
+        from unittest.mock import patch
+        v24.set_permission_object(self.plane, "ops", permissions=["host-info","command-exec","file-read"], oneshot=True)
+        script = ScriptedIO(["bot", "server:self", "ops", self.vendor_glob,
+                             "aella", "y", "y", "1"])
+        set_wizard_io(script)
+        with patch.object(self.plane, "native_mcp_local_accounts", return_value=["aella","root"]):
+            rc, out, err = self._run("set","ai-access","native-wizard")
+        self.assertEqual(rc, 0, err)
+        row = self.plane.conn.execute("SELECT * FROM ai_policy_rules WHERE name='native-wizard'").fetchone()
+        self.assertIsNotNone(row)
+        self.assertEqual(v24.ai_rule_execution(row), {"default":"aella","accounts":["aella","root"]})
+        self.assertIn("Default execution account", "".join(script.out))
+
     def test_execution_binding_cli_bundle_roundtrip_and_omitted_edit(self):
         import yaml
         v24.set_permission_object(self.plane, "ops", permissions=["host-info", "command-exec"], oneshot=True)

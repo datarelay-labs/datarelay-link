@@ -114,6 +114,25 @@ class RolloutTests(unittest.TestCase):
                 self.assertEqual(self.layout.target(name).read_bytes(), data)
             self.assert_untouched()
 
+    def test_multi_account_local_profile_pins_uid_and_preserves_existing(self):
+        current = self.account.pw_name
+        users = [current] if self.account.pw_uid == 0 else [current, "root"]
+        settings = rollout.multi_account_profile(users, [str(self.root)], True,
+                                                  reader=current if self.account.pw_uid else None)
+        self.assertEqual(set(settings["exec_accounts"]), set(users))
+        self.assertEqual(settings["exec_accounts"][current]["uid"], self.account.pw_uid)
+        self.assertEqual(rollout._profile_environment(settings)["DRLINK_MCP_SERVER_EXEC_USER"], "")
+        self.assertEqual(rollout._profile_environment(settings)["DRLINK_MCP_SERVER_DEFAULT_CWD"], "")
+        with self.assertRaises(rollout.RolloutError):
+            rollout.multi_account_profile(["root"], [str(self.root)], True, reader="root")
+        with self.assertRaises(rollout.RolloutError):
+            rollout.multi_account_profile(users, [str(self.root)], False)
+        self.installed_runtime()
+        with patch.object(rollout, "verify_selected_worker"), patch.object(rollout, "verify_installed_profile"):
+            self.assertEqual(rollout.configure_installed(settings, self.layout)["status"], "configured")
+            self.assertEqual(rollout.configure_installed(settings, self.layout)["status"], "already configured")
+        self.assert_untouched()
+
     def test_installed_profile_conflict_refused_and_failed_activation_rolls_back(self):
         self.installed_runtime()
         target = self.layout.target(rollout.TARGETS[-1])

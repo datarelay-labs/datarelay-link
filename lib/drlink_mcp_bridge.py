@@ -1326,7 +1326,7 @@ class MCPBridge:
                 self.plane, identity=principal["name"], destination=target, capability=capability,
                 operand=operand, run_as=requested, local_accounts=accounts,
                 legacy_account=full.legacy_execution_account(), rule_id=grant_rule,
-                validate_operand=validate_operand)
+                validate_operand=validate_operand, reader_account=full.reader_execution_account(accounts))
             if decision["action"] != "ALLOW":
                 if job_context is not None:
                     runtime.revoke(owner, arguments["job_id"])

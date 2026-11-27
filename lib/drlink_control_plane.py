@@ -6651,13 +6651,11 @@ class ControlPlane:
             "remote_ready": bool(routed and public_url != "Not configured" and st.get("mcp_configured")),
         }
 
-    def native_mcp_runtime_status(self) -> dict:
-        """Read only the running Bridge's execution settings; never expose raw environment."""
+    def _native_mcp_runtime_settings(self) -> dict | None:
+        """Read only allowlisted execution settings from the verified running Bridge."""
         import subprocess
-        from drlink_mcp_full_control import execution_profile_status
-
         if self.root and str(self.root) != "/":
-            return execution_profile_status(None)
+            return None
         try:
             def main_pid():
                 result = subprocess.run(
@@ -6673,15 +6671,31 @@ class ControlPlane:
                     values = {}
                     allowed = {b"DRLINK_MCP_SERVER_" + suffix for suffix in (
                         b"SELF_ENABLED", b"LOCAL_EXEC_ENABLED", b"FULL_CONTROL_ENABLED",
-                        b"ADMIN_ENABLED", b"EXEC_USER", b"ALLOWED_ROOTS")}
+                        b"ADMIN_ENABLED", b"EXEC_USER", b"ALLOWED_ROOTS",
+                        b"EXEC_ACCOUNTS", b"READ_USER", b"DEFAULT_CWD")}
                     for item in data.split(b"\0"):
                         key, sep, value = item.partition(b"=")
                         if sep and key in allowed:
                             values[key.decode("ascii")] = value.decode("utf-8")
-                    return execution_profile_status(values)
+                    return values
         except (OSError, ValueError, UnicodeError, subprocess.SubprocessError):
             pass
-        return execution_profile_status(None)
+        return None
+
+    def native_mcp_runtime_status(self) -> dict:
+        from drlink_mcp_full_control import execution_profile_status
+        return execution_profile_status(self._native_mcp_runtime_settings())
+
+    def native_mcp_local_accounts(self) -> list[str]:
+        """Local administrator wizard only: validated current approved OS accounts."""
+        from drlink_mcp_full_control import _profile_accounts, execution_profile_status, FullControlDenied
+        settings = self._native_mcp_runtime_settings()
+        if execution_profile_status(settings)["readiness"] != "Configured":
+            return []
+        try:
+            return sorted(_profile_accounts(settings))
+        except FullControlDenied:
+            return []
 
     def _native_mcp_diagnostics(self) -> list[str]:
         status = self.native_mcp_runtime_status()
