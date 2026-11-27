@@ -4850,6 +4850,15 @@ def set_ai_access_rule(
     ).fetchone()
     if execution is not None:
         execution = normalize_ai_execution_binding(execution)
+    server_target = (destination == SERVER_SELF_TARGET if destination is not None else
+                     existing is not None and existing["destination_ref_kind"] == "server"
+                     and existing["destination_ref_id"] == SERVER_SELF_REF_ID)
+    if not server_target and (execution is not None or
+                              (existing is not None and ai_rule_execution(existing) is not None)):
+        raise ControlPlaneError(
+            "Execution accounts apply only to This Server (server:self). "
+            "Managed Hosts use existing Agent execution and central AI Access. "
+            "Create a separate Managed Host Rule; no changes were applied.")
     if oneshot and existing is None:
         missing = []
         if source is None:
@@ -5622,89 +5631,6 @@ def _resolve_ai_execution_grant(
             "accounts": sorted(set().union(*(g[3] for g in grants))),
             "patterns": patterns, "winner": {"id": row["id"], "name": row["name"],
                                                 "row_version": row["row_version"]}}
-
-
-def managed_execution_account_choices(plane, destination):
-    """Operator picker: union of eligible names, enforced separately per target."""
-    from drlink_ai_agent import normalize_execution_profile
-    target=plane.get_object(destination)
-    group=plane.get_object_group(destination)
-    choices=set()
-    for row in plane.conn.execute(
-        "SELECT o.name,c.* FROM objects o JOIN managed_endpoints e ON e.object_id=o.id "
-        "JOIN clients c ON c.id=e.client_id WHERE o.type='managed_endpoint' AND o.origin='managed' "
-        "AND o.status='active' AND c.trust_status='trusted'"):
-        name=row["name"]
-        if destination==TRUSTED_MANAGED_HOSTS_TARGET:
-            matches=_trusted_managed_host_matches(plane,name)
-        elif destination.startswith(MANAGED_HOST_GROUP_PREFIX):
-            matches=_managed_host_group_matches(plane,resolve_managed_host_group_target(plane,destination),
-                                               name,_managed_host_group_inventory(plane))
-        elif target is not None:
-            matches=target["name"]==name
-        elif group is not None:
-            matches=_ref_name_match(plane,"group",group["id"],name)
-        else:
-            matches=False
-        if not matches or not plane.client_effectively_connected(row):
-            continue
-        try:
-            profile=normalize_execution_profile(json.loads(row["ai_execution_profile_json"] or "null"))
-            if profile["state"]=="configured":
-                choices.update(profile["accounts"])
-        except (ValueError,TypeError,ControlPlaneError):
-            continue
-    return sorted(choices)
-
-
-def resolve_managed_execution_grant(plane_db, *, identity, principal_id, destination,
-                                    capability, arguments, profile, run_as=None, rule_id=None):
-    """Remote POSIX paths are lexical here; actual filesystem checks are Agent-local."""
-    from drlink_ai_agent import normalize_execution_profile, execution_profile_digest
-    from fnmatch import fnmatchcase
-    from drlink_control_plane import FILE_CAPABILITIES
-    def denied(code):
-        return {"action":"DENY","reason_code":code,"winner":None,"patterns":[]}
-    try:
-        profile = normalize_execution_profile(profile)
-    except ControlPlaneError:
-        return denied("AGENT_PROFILE_INVALID")
-    if profile["state"] != "configured":
-        return denied("AGENT_PROFILE_UNAVAILABLE")
-    if run_as is not None and (not isinstance(run_as,str) or not run_as):
-        return denied("INVALID_EXECUTION_ACCOUNT")
-    accounts = profile["accounts"]
-    operand = arguments.get("cwd") if capability == "exec" else arguments.get("path")
-    def valid_path(path):
-        return (isinstance(path,str) and path.startswith("/") and len(path)<=4096
-                and not any(ord(c)<32 or c in "%\\*?[]" for c in path)
-                and all(p not in (".","..") for p in path.split("/"))
-                and (path=="/" or ("//" not in path and not path.endswith("/"))))
-    if (capability == "exec" and "cwd" in arguments and not valid_path(operand)
-            or capability in FILE_CAPABILITIES and not valid_path(operand)):
-        return denied("INVALID_AGENT_PATH")
-    def within(path, root):
-        return root=="/" or path==root or path.startswith(root+"/")
-    def validate(name, patterns, value):
-        path = accounts[name]["cwd"] if value is None and capability=="exec" else value
-        if not valid_path(path) or not any(within(path, r) for r in accounts[name]["roots"]):
-            return False
-        for pattern in patterns:
-            if pattern.endswith("/**") and within(path,pattern[:-3].rstrip("/") or "/"):
-                return True
-            if not pattern.endswith("/**") and fnmatchcase(path, pattern):
-                return True
-        return False
-    decision = resolve_ai_execution_grant(plane_db, identity=identity, principal_id=principal_id,
-        destination=destination, capability=capability, local_accounts=accounts, run_as=run_as,
-        operand=operand, rule_id=rule_id, reader_account=profile["reader"], validate_operand=validate)
-    if decision["action"] == "ALLOW":
-        name = decision["account"]
-        decision["binding"] = {"account":name, "uid":accounts[name]["uid"],
-                               "profile_digest":execution_profile_digest(profile),
-                               "rule_id":decision["winner"]["id"]}
-        decision["cwd"] = operand if capability=="exec" and operand is not None else accounts[name]["cwd"]
-    return decision
 
 
 def authorize_ai_capability_v24(

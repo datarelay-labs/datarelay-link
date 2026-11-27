@@ -835,6 +835,15 @@ class MCPBridgeE2ETests(unittest.TestCase):
         _, result = self.call(self.cursor, "write_file", {"endpoint": endpoint, "path": str(Path(self.tmp) / "outside"), "content": "denied"})
         self.assertIn("DENY", self.text_of(result))
 
+    def test_managed_host_rejects_native_execution_overrides(self):
+        # Managed Hosts keep the existing execution transport and identity.
+        _, normal = self.call(self.cursor,"exec",{"endpoint":"lab1","command":"echo central-only"})
+        self.assertIn("central-only",self.text_of(normal))
+        for override in ({"run_as":"root"},{"cwd":"/"}):
+            _, result=self.call(self.cursor,"exec",{"endpoint":"lab1","command":"echo must-not-run",**override})
+            self.assertIn("DENY",self.text_of(result))
+            self.assertNotIn("must-not-run",self.text_of(result))
+
     def test_large_exec_bounded_result_completes_via_real_agent_queue(self):
         # PASS1 F014: a quick 64 KiB/1 MiB command must return a bounded
         # result, never an Agent-job delivery TIMEOUT. Exercise the complete

@@ -183,7 +183,6 @@ Data Relay Link — Agent Host
 The root and `show status` must identify the role as `Agent Host`.
 Diagnostics, support-bundle human output, menus, help, and errors use the same
 `Agent Host` label. `show agent` is a required read-only Agent Host command.
-Linux Agent execution eligibility is reviewed through `set agent-execution` and inspected through `show agent-execution`. This is a local ceiling, not a Server AI Access grant.
 
 ## 7. Canonical terminology
 
@@ -332,7 +331,7 @@ The canonical setup command is `set mcp-server` (MCP Server Settings): Configure
 
 ### MCP Server Settings and AI Access workflow
 
-The single normative workflow is [AI_ACCESS_MCP.md](AI_ACCESS_MCP.md). Managed Hosts owns enrollment; `set mcp-server` owns the unified endpoint, TLS and local execution setup; `set ai-identity` owns verified connection and credential lifecycle; AI Access Rules own Source, Destination, Permission, allowed execution accounts, default account and direct-file paths. System owns shared infrastructure and the local execution safety ceiling, not a second independent user-facing account wizard. After OAuth, guide the operator into one reviewed Access Rule flow; skipping it leaves DENY. Built-in permissions need no custom Objects/Groups. AI Access is fixed WHITELIST. Normal requests describe work, not OS accounts: MCP discovers effective accounts and defaults; AI selects an explicitly granted account only when needed. Preserve existing state, public command compatibility and fail-closed enforcement. These are target requirements pending exact-candidate implementation and E2E.
+The single normative workflow is [AI_ACCESS_MCP.md](AI_ACCESS_MCP.md). Managed Hosts owns enrollment; `set mcp-server` owns the unified endpoint, TLS and local execution setup; `set ai-identity` owns verified connection and credential lifecycle; AI Access Rules own Source, Destination, Permission and direct-file paths; only This Server Rules include allowed execution accounts and a default. Managed Hosts keep existing Agent execution with centrally managed AI Access and no additional Agent configuration. System owns shared infrastructure and the local Server execution safety ceiling, not a second independent user-facing account wizard. After OAuth, guide the operator into one reviewed Access Rule flow; skipping it leaves DENY. Built-in permissions need no custom Objects/Groups. AI Access is fixed WHITELIST. Normal requests describe work, not OS accounts: MCP discovers effective accounts and defaults; AI selects an explicitly granted account only when needed. Preserve existing state, public command compatibility and fail-closed enforcement. These are target requirements pending exact-candidate implementation and E2E.
 
 
 ```text

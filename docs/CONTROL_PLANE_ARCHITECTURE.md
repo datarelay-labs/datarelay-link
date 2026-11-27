@@ -880,7 +880,7 @@ paths       → direct-file scopes
 enabled / disabled
 ```
 
-AI Access is WHITELIST-only: no policy, disabled enforcement, unsupported mode or no complete matching enabled rule is DENY. Authentication is required, never sufficient. A single matching rule must authorize capability, selected account and path together, with independent target-local eligibility. No rule-order or cross-rule permission union. Conflicting implicit defaults fail closed; explicit account selection must satisfy a complete grant. Root is explicitly locally approved and granted to the identity/target, never inferred. See [AI_ACCESS_MCP.md §4.1](AI_ACCESS_MCP.md#41-canonical-execution-account-contract).
+AI Access is WHITELIST-only: no policy, disabled enforcement, unsupported mode or no complete matching enabled rule is DENY. Authentication is required, never sufficient. For server:self, a single matching rule must authorize capability, selected account and path together, with independent Server-local eligibility. No cross-rule account grant union. Conflicting implicit defaults fail closed; explicit account selection must satisfy a complete grant. Native root is explicitly locally approved and granted to the identity, never inferred. Managed Host authorization and existing Agent execution remain centrally managed and unchanged. See [AI_ACCESS_MCP.md §4.1](AI_ACCESS_MCP.md#41-canonical-execution-account-contract).
 
 ## 39. Initial MCP capability surface
 
@@ -931,7 +931,7 @@ Therefore:
 true read-only AI role => exec=false
 ```
 
-When `exec=true`, the chosen account's real OS authority, groups and any pre-existing escalation rights apply. Direct-file paths and initial cwd are not a shell sandbox. Root requires explicit local and per-rule approval; AI discovers allowed accounts, defaults to the authorized account and explicitly selects another only for the user's task. No automatic escalation. See the canonical execution-account contract.
+When `exec=true`, the chosen account's real OS authority, groups and any pre-existing escalation rights apply. Direct-file paths and initial cwd are not a shell sandbox. Native Server root requires explicit local and per-rule approval; AI discovers allowed native accounts, defaults to the authorized account and explicitly selects another only for the user's task. Managed Hosts retain existing Agent execution; AI-specific authorization remains central. No automatic escalation. See the canonical execution-account contract.
 
 ## 41. AI authorization timing
 

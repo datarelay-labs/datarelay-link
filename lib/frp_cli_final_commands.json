@@ -48,52 +48,6 @@
   {
     "path": [
       "show",
-      "agent-execution"
-    ],
-    "roles": "client",
-    "category": "Agent",
-    "summary": "Show local Agent execution eligibility",
-    "detail": "Show approved account metadata, not remote authorization.",
-    "examples": [
-      "show agent-execution"
-    ],
-    "args": [],
-    "tail": null,
-    "internal": null,
-    "aliases": [],
-    "destructive": false,
-    "hidden": false,
-    "risk": "none",
-    "confirmation": "none",
-    "surface": "",
-    "flags": []
-  },
-  {
-    "path": [
-      "set",
-      "agent-execution"
-    ],
-    "roles": "client",
-    "category": "Agent",
-    "summary": "Review local Linux Agent execution eligibility",
-    "detail": "Review existing OS accounts and direct file roots, explicitly approve root if selected, and apply local profile. Server AI Access Rules are independently required.",
-    "examples": [
-      "set agent-execution"
-    ],
-    "args": [],
-    "tail": null,
-    "internal": null,
-    "aliases": [],
-    "destructive": false,
-    "hidden": false,
-    "risk": "none",
-    "confirmation": "none",
-    "surface": "",
-    "flags": []
-  },
-  {
-    "path": [
-      "show",
       "managed-host-groups"
     ],
     "roles": "server",
@@ -1634,7 +1588,7 @@
     "roles": "server",
     "category": "AI Access",
     "summary": "Create or edit an AI Access rule",
-    "detail": "Bare set ai-access opens the guided Rule name prompt; set ai-access enabled/disabled controls the entire policy. A named Rule edits or creates one rule; selecting a new destination replaces the old one. For explicit execution accounts, supply accounts and default-account together; local target approval is still required. File scope examples: /**, /home/**, /home/**,/opt/**. The calculated security impact of an edit is checked before mutation. A y/N confirmation is required when that impact broadens or materially narrows access; safe creation and no-change paths need no additional confirmation. AI Access is WHITELIST-only; the first rule initializes this mode without a mode field. Explicit destination managed-hosts:trusted includes all current and future trusted Managed Hosts; never server:self.",
+    "detail": "Bare set ai-access opens the guided Rule name prompt; set ai-access enabled/disabled controls the entire policy. A named Rule edits or creates one rule; selecting a new destination replaces the old one. For This Server (server:self) only, supply accounts and default-account together; local Server approval is still required. Managed Hosts retain existing Agent execution and central AI Access. File scope examples: /**, /home/**, /home/**,/opt/**. The calculated security impact of an edit is checked before mutation. A y/N confirmation is required when that impact broadens or materially narrows access; safe creation and no-change paths need no additional confirmation. AI Access is WHITELIST-only; the first rule initializes this mode without a mode field. Explicit destination managed-hosts:trusted includes all current and future trusted Managed Hosts; never server:self.",
     "examples": [
       "set ai-access",
       "set ai-access <RULE>",

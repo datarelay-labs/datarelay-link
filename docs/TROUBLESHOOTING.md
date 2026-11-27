@@ -139,7 +139,7 @@ AI authentication
 AI Access policy
 destination selector
 Permission Object / Permission Group
-identity/target effective execution accounts and default cwd
+identity/target effective native Server execution accounts and default cwd (Managed Hosts retain Agent execution)
 local account eligibility and direct-file roots
 target OS permissions
 ```
@@ -150,7 +150,7 @@ Test:
 test ai-access source <AI_IDENTITY> destination <DESTINATION> permission <PERMISSION>
 ```
 
-Authentication failure is not corrected by disabling policy enforcement. Use effective target discovery to identify authorized accounts/default cwd before attempting execution. Do not guess paths, retry denied commands as root or widen access to fix diagnostics. Distinguish local readiness from live authenticated MCP success; use the explicit reviewed AI Access workflow for any needed changes.
+Authentication failure is not corrected by disabling policy enforcement. For native Server execution, use effective target discovery to identify authorized accounts/default cwd. For Managed Hosts check the central Rule and existing Agent readiness; no additional local AI setup. Do not guess paths, retry denied commands as root or widen access to fix diagnostics. Distinguish local readiness from live authenticated MCP success; use the explicit reviewed AI Access workflow for any needed changes.
 
 ## 8. ConfigurationBundle rejected
 

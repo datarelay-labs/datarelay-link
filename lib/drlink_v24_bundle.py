@@ -408,6 +408,8 @@ def _validate_access_rule(item: dict, *, family: str) -> dict:
             _bundle_error("Rule '%s' is missing required field 'permission'." % name)
         out["permission"] = perm.strip()
         if "execution" in item:
+            if out["destination"] != v24.SERVER_SELF_TARGET:
+                _bundle_error("Rule '%s': execution accounts apply only to server:self. Managed Hosts use central AI Access." % name)
             try:
                 out["execution"] = v24.normalize_ai_execution_binding(item["execution"])
             except ControlPlaneError as exc:

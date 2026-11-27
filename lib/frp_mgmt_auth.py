@@ -67,7 +67,6 @@ MGMT_OP_REMOTE_SERVICE_STATUS = 'remote-service.status'
 MGMT_OP_AGENT_LIFECYCLE = 'agent.lifecycle'
 MGMT_OP_AI_JOB_CLAIM = 'ai-job.claim'
 MGMT_OP_AI_JOB_COMPLETE = 'ai-job.complete'
-MGMT_OP_AI_JOB_VALIDATE = 'ai-job.validate'
 MGMT_NONCE_HEX_LEN = 64
 MGMT_MAX_CLOCK_SKEW = 300
 MGMT_NONCE_RE = re.compile(r'^[0-9a-f]{64}$')

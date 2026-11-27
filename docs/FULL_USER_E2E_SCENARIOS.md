@@ -1749,8 +1749,6 @@ From the supported AI/MCP client, verify:
 - disallowed exec/write/upload/download is denied for read-only permission;
 - path-scope traversal and symlink escape attempts are denied where applicable;
 - audit attribution identifies principal, target, tool, result, revision, and safe metadata;
-- discover the effective approved default and alternative OS accounts; complete a natural-language development task without supplying account/cwd, and perform an explicitly authorized administrative operation with verified UID and file ownership;
-- revoke a Rule during a tracked command on both Server-self and a Linux Managed Host; verify termination and no output/reuse of the revoked attempt; verify a downgraded Agent does not revert to service-user authority;
 
 
 For v2.4.0, AI/MCP is not optional. If MCP Bridge/AI Access is absent or a currently supported ChatGPT full-MCP owner/UI authentication path cannot be exercised, record this scenario `FAIL` or `BLOCKED` with exact evidence (including attempted plan/surface/date when known); do not mark it `NOT_APPLICABLE`. When the public MCP endpoint/certificate/bridge path is not functionally serving authenticated calls, gate dependent scenarios (C-006, P-011, and AI-mirror work that requires live MCP) on that same functional prerequisite and do not repeat unavailable-endpoint probes.
@@ -1835,10 +1833,10 @@ Real E2E must include, where supported:
 - exec timeout;
 - bounded output;
 - process cleanup;
-- account-selection boundary: root-only, default normal user, multiple additional users plus root; actual UID/GID, HOME, groups, Git ownership and file CRUD/transfer under selected account;
-- natural-language task without account/path instructions: fresh chat discovers default/account options, edits and tests as project owner, performs explicitly authorized system action as root, and returns to owner; no automatic root retry;
-- absent cwd selects validated default, explicit bad cwd/path/account returns actionable DENY; read-only cannot execute shell; overlapping grants do not combine, conflicting defaults fail closed; identity/target root isolation and tracked-job revocation;
-- local configuration/upgrade retains old effective accounts and paths, never silently grants root; validate Server-self and Linux Managed Host with actual calls; unsupported platforms reported accurately;
+- native Server account-selection boundary: root-only, default normal user, multiple additional users plus root; actual UID/GID, HOME, groups, Git ownership and file CRUD/transfer under selected account;
+- native Server natural-language task without account/path instructions: fresh chat discovers default/account options, edits and tests as project owner, performs explicitly authorized system action as root, and returns to owner; no automatic root retry;
+- native Server absent cwd selects validated default, explicit bad cwd/path/account returns actionable DENY; read-only cannot execute shell; overlapping grants do not combine, conflicting defaults fail closed; identity/target root isolation and tracked-job revocation;
+- local configuration/upgrade retains old effective accounts and paths, never silently grants root; validate Server-self with actual calls; Managed Host enrollment and central AI Access must work without local AI execution configuration or account binding; unsupported account overrides are denied;
 - policy change affects the next invocation;
 - a running command/session follows the documented existing-session semantics.
 
@@ -2386,7 +2384,7 @@ set ai-identity <IDENTITY> approve <PENDING-ID>
 set ai-identity <IDENTITY> deny <PENDING-ID>
 ~~~
 
-Verify authentication and authorization states are represented separately, reference-aware deletion works, and AI Access enforcement toggles have the documented functional effect. Run a clean beginner MCP Server Settings → AI Identity → AI Access flow with no TLS/no Identity, then a second AI with ready TLS, no-policy denial, a reviewed rule with built-in permission, selected-only versus explicit dynamic trusted-host scope, independent enrollment of a new host, explicit native server:self scope if enabled, and OAuth/credential failure recovery. Verify one reviewed account selection flow (default user, multiple additional users, explicit administrator or root-only), cancellation/rollback, incompatible/offline targets and future group members without local approval, configured versus live diagnostics, CLI/Bundle and existing Web parity. On the enrolled Linux Agent Host, exercise `set agent-execution` and `show agent-execution` from an initially unconfigured state; verify explicit local approval, signed account advertisement, cancellation, failed activation rollback, and no automatic grant of a new execution account to existing unbound management Rules. On the Server, select the advertised accounts in the Rule wizard; compare actual effective MCP execution with the policy-only test. A real new AI chat must complete a natural-language development/administration mission without account or cwd instructions. Confirm retired singleton account wizard requirements and grammar are not reintroduced; retain security negatives and exact-candidate gates.
+Verify authentication and authorization states are represented separately, reference-aware deletion works, and AI Access enforcement toggles have the documented functional effect. Run a clean beginner MCP Server Settings → AI Identity → AI Access flow with no TLS/no Identity, then a second AI with ready TLS, no-policy denial, a reviewed rule with built-in permission, selected-only versus explicit dynamic trusted-host scope, independent enrollment of a new host, explicit native server:self scope if enabled, and OAuth/credential failure recovery. Verify one reviewed native Server account selection flow (default user, multiple additional users, explicit administrator or root-only), cancellation/rollback, incompatible/offline targets and future group members with unchanged central policy, configured versus live diagnostics, CLI/Bundle and existing Web parity. A real new AI chat must complete a natural-language development/administration mission without account or cwd instructions. Confirm retired singleton account wizard requirements and grammar are not reintroduced; retain security negatives and exact-candidate gates.
 
 ## A-007 — Reference protection — MANDATORY
 

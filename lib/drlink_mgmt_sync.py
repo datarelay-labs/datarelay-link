@@ -541,8 +541,6 @@ def _canonical_operation(method: str, path: str) -> Optional[tuple[str, str]]:
         return MGMT.MGMT_OP_AI_JOB_CLAIM, parsed
     if method_u == "POST" and parsed == "/v1/ai-jobs/complete":
         return MGMT.MGMT_OP_AI_JOB_COMPLETE, parsed
-    if method_u == "POST" and parsed == "/v1/ai-jobs/validate":
-        return MGMT.MGMT_OP_AI_JOB_VALIDATE, parsed
     return None
 
 
@@ -857,7 +855,7 @@ CLAIM_HOLD_TIMEOUT_MARGIN_SECONDS = 10.0
 
 
 def claim_ai_jobs_on_server(
-    *, root: Optional[str] = None, limit: int = 4, wait_ms: int = 0, execution_profile=None
+    *, root: Optional[str] = None, limit: int = 4, wait_ms: int = 0
 ) -> dict:
     """Claim queued AI jobs for this enrolled Managed Host via management auth.
 
@@ -873,12 +871,6 @@ def claim_ai_jobs_on_server(
             "No changes were applied."
         )
     body = {"limit": int(limit)}
-    if execution_profile is not None:
-        from drlink_ai_agent import normalize_execution_profile
-        profile = normalize_execution_profile(execution_profile)
-        if profile["state"] == "configured" and not _load_response_mac(root):
-            raise MgmtSyncError("Account-bound Agent requires authenticated management responses")
-        body["execution_profile"] = profile
     timeout = 8.0
     hold = max(0, min(int(wait_ms or 0), CLAIM_HOLD_MAX_MS))
     if hold:
@@ -891,22 +883,6 @@ def claim_ai_jobs_on_server(
         root=root,
         timeout=timeout,
     )
-
-
-def validate_ai_job_on_server(*, root, job, execution_profile):
-    """Authenticate a fresh, attempt-bound grant decision; no new job is claimed."""
-    import secrets
-    if not _load_response_mac(root):
-        raise MgmtSyncError("Account-bound validation requires response integrity")
-    base=resolve_mgmt_base_url(root)
-    if not base:
-        raise MgmtSyncError("Server management URL unavailable")
-    challenge=secrets.token_hex(16)
-    body={"id":job["id"],"claim_token":job["claim_token"],"attempt_id":job["attempt_id"],
-          "execution_profile":execution_profile,"challenge":challenge}
-    response=_request_json("POST",base+"/v1/ai-jobs/validate",body,root=root,timeout=2.0)
-    return (response.get("id")==job["id"] and response.get("attempt_id")==job["attempt_id"]
-            and response.get("challenge")==challenge and response.get("allowed") is True)
 
 
 def complete_ai_job_on_server(
@@ -1863,35 +1839,14 @@ def server_claim_ai_jobs(plane, auth: MgmtAuthContext, body: dict) -> dict:
     if platform not in ("posix", "windows"):
         raise MgmtSyncError("unsupported AI executor platform")
     plane.record_ai_executor_platform(machine_id, platform)
-    profile = (body or {}).get("execution_profile")
-    if profile is not None:
-        from drlink_ai_agent import normalize_execution_profile
-        profile = normalize_execution_profile(profile)
-        if profile["state"] == "configured" and (platform != "posix" or not auth.client.get("mgmt_mac_key")):
-            raise MgmtSyncError("Account-bound jobs require a compatible authenticated Agent")
-    profile = plane.record_ai_execution_profile(machine_id, profile)
     limit = int((body or {}).get("limit") or 4)
     wait_ms = (body or {}).get("wait_ms")
     if wait_ms:
         # Held claim (AUD-21 step 2): answer when a job is queued, or empty after wait_ms.
-        jobs = plane.claim_ai_jobs_held(machine_id, limit, wait_ms=wait_ms, **({"execution_profile":profile} if profile is not None else {}))
+        jobs = plane.claim_ai_jobs_held(machine_id, limit, wait_ms=wait_ms)
     else:
-        jobs = plane.claim_ai_jobs(machine_id, limit, **({"execution_profile":profile} if profile is not None else {}))
+        jobs = plane.claim_ai_jobs(machine_id, limit)
     return {"jobs": jobs}
-
-
-def server_validate_ai_job(plane, auth: MgmtAuthContext, body: dict) -> dict:
-    from drlink_ai_agent import normalize_execution_profile
-    import re
-    if not auth.client.get("mgmt_mac_key"):
-        raise MgmtSyncError("Account-bound validation requires authenticated responses")
-    if set(body)!={"id","claim_token","attempt_id","execution_profile","challenge"} or not isinstance(body["challenge"],str) or not re.fullmatch("[0-9a-f]{32}",body["challenge"]):
-        raise MgmtSyncError("Invalid job validation request")
-    profile=normalize_execution_profile(body["execution_profile"])
-    allowed=plane.validate_bound_ai_job(auth.machine_id,body["id"],body["claim_token"],
-                                        body["attempt_id"],profile)
-    return {"id":body["id"],"attempt_id":body["attempt_id"],
-            "challenge":body["challenge"],"allowed":allowed}
 
 
 def server_complete_ai_job(plane, auth: MgmtAuthContext, body: dict) -> dict:
@@ -2315,11 +2270,6 @@ def handle_allocator_http(
                 return 400, {"error": "invalid JSON"}
             result = server_claim_ai_jobs(plane, auth, data)
             return 200, _with_response_mac(result, auth)
-        if method.upper() == "POST" and parsed == "/v1/ai-jobs/validate":
-            data=json.loads(raw.decode("utf-8") or "{}") if raw else {}
-            if not isinstance(data,dict):
-                return 400,{"error":"invalid JSON"}
-            return 200,_with_response_mac(server_validate_ai_job(plane,auth,data),auth)
         if method.upper() == "POST" and parsed == "/v1/ai-jobs/complete":
             data = json.loads(raw.decode("utf-8") or "{}") if raw else {}
             if not isinstance(data, dict):

@@ -554,10 +554,7 @@ def _tool_descriptor(name: str, title: str, desc: str, props: dict, annotations:
                     if name in SERVER_ARGUMENT_SCHEMAS else _input_schema(props))
     if name in _ACCOUNT_ALIASES:
         input_schema["properties"]["run_as"] = dict(_RUN_AS_SCHEMA, description=
-            _RUN_AS_SCHEMA["description"] + " For Managed Hosts, use get_host; requires an account-aware Agent.")
-        if name == "exec":
-            input_schema["properties"]["cwd"] = {"type":"string","minLength":1,
-                "description":"Optional absolute initial directory; omit for approved account default."}
+            _RUN_AS_SCHEMA["description"] + " Currently supported for server:self only.")
     return {
         "name": name,
         "title": title,
@@ -1379,28 +1376,6 @@ class MCPBridge:
             return _text_result("DENY: " + failure, is_error=True)
         return _structured_result(payload)
 
-    def _managed_execution_context(self, principal, target, profile):
-        if not profile or profile["state"] != "configured":
-            return {"state":"unavailable" if profile and profile["state"]=="unavailable" else "legacy_or_unsupported",
-                    "account_selection":False,"next_action":"On a supported Linux Agent, review set agent-execution and wait for authenticated advertisement."}
-        def resolve(account=None):
-            return v24.resolve_managed_execution_grant(self.plane, identity=principal["name"],
-                principal_id=principal["id"], destination=target, capability="exec",
-                arguments={}, profile=profile, run_as=account)
-        choices = []
-        for name, entry in profile["accounts"].items():
-            grant = resolve(name)
-            if grant["action"] == "ALLOW":
-                choices.append({"account":name,"uid":entry["uid"],"home":entry["home"],
-                                "default_cwd":entry["cwd"],"administrative":entry["uid"]==0,
-                                "paths":grant["patterns"]})
-        default = resolve()
-        if not choices:
-            return {"state":"not_authorized_or_unavailable","account_selection":True}
-        return {"state":"configured" if default["action"]=="ALLOW" else default["reason_code"],
-                "accounts":choices,"default_account":default.get("account"),
-                "default_cwd":default.get("cwd"),"account_selection":True,"os_access_verified":False}
-
     def _native_execution_context(self, principal, target: str) -> dict:
         """Expose only accounts with a complete command grant, not all local users."""
         import drlink_mcp_full_control as full
@@ -1424,8 +1399,7 @@ class MCPBridge:
                 if grant["action"] == "ALLOW":
                     choices.append({"account": name, "uid": account.uid, "home": account.home,
                                     "default_cwd": full.allowed_cwd(full.default_cwd(account), grant["patterns"], account),
-                                    "administrative": account.uid == 0, "paths":grant["patterns"],
-                                    "local_roots":list(account.roots)})
+                                    "administrative": account.uid == 0})
             default = resolve()
             if default["action"] != "ALLOW":
                 if choices:
@@ -1574,6 +1548,8 @@ class MCPBridge:
         endpoint = str(arguments.get("endpoint") or arguments.get("host") or "")
         if endpoint == v24.SERVER_SELF_TARGET:
             return self._call_server_self(principal, name, arguments)
+        if "run_as" in arguments or "cwd" in arguments:
+            return _text_result("DENY: run_as and cwd selection are supported for server:self only; Managed Hosts use existing Agent execution", is_error=True)
         if not endpoint:
             raise ControlPlaneError("endpoint is required")
         operand = arguments.get("path") or arguments.get("command") or arguments.get("operand")
@@ -1598,38 +1574,7 @@ class MCPBridge:
                 return _text_result("DENY\nReason: ambiguous endpoint selector", is_error=True)
             resolved_id = id_rows[0]["id"]
             endpoint = id_rows[0]["name"]
-        # Account-aware dispatch uses the signed profile for this exact target.
-        # The profile is an eligibility ceiling, not a policy grant.
-        ep_hint = self.plane.get_object(endpoint)
-        client_hint = self.plane.client_for_endpoint(ep_hint["id"]) if ep_hint is not None else None
-        profile = None
-        if client_hint is not None and "ai_execution_profile_json" in client_hint.keys() and client_hint["ai_execution_profile_json"]:
-            try:
-                from drlink_ai_agent import normalize_execution_profile
-                profile = normalize_execution_profile(json.loads(client_hint["ai_execution_profile_json"]))
-            except (ValueError, TypeError, ControlPlaneError):
-                profile = {"version":1,"state":"unavailable"}
-        binding = None
-        if name in _ACCOUNT_ALIASES and profile and profile["state"] != "legacy":
-            if "run_as" in arguments and (not isinstance(arguments["run_as"],str) or not arguments["run_as"]):
-                grant = {"action":"DENY","reason_code":"INVALID_EXECUTION_ACCOUNT","winner":None,"patterns":[]}
-            else:
-                grant = v24.resolve_managed_execution_grant(self.plane, identity=principal["name"],
-                    principal_id=principal["id"], destination=endpoint, capability=name,
-                    arguments=arguments, profile=profile, run_as=arguments.get("run_as"))
-            decision = dict(grant, endpoint_row=ep_hint, reason=grant["reason_code"])
-            if grant["action"] == "ALLOW":
-                binding = grant["binding"]
-                arguments = dict(arguments)
-                arguments.pop("run_as", None)
-                if name == "exec":
-                    arguments["cwd"] = grant["cwd"]
-                operand = "account=%s uid=%s %s" % (binding["account"],binding["uid"],operand or "")
-        elif "run_as" in arguments or "cwd" in arguments:
-            decision = {"action":"DENY","reason":"Managed Host account-aware execution unavailable",
-                        "winner":None,"endpoint_row":ep_hint}
-        else:
-            decision = self._authorize(principal, endpoint, name, operand)
+        decision = self._authorize(principal, endpoint, name, operand)
         if resolved_id is not None and (decision.get("endpoint_row") is None
                 or decision["endpoint_row"]["id"] != resolved_id):
             self.plane.record_ai_activity(principal=principal["name"], endpoint=requested_endpoint,
@@ -1686,7 +1631,6 @@ class MCPBridge:
                 "type": ep["type"],
                 "origin": ep["origin"],
             }
-            view["execution_context"] = self._managed_execution_context(principal, endpoint, profile)
             self.plane.record_ai_activity(
                 principal=principal["name"],
                 endpoint=endpoint,
@@ -1724,7 +1668,6 @@ class MCPBridge:
                 patterns=patterns,
                 timeout=int(timeout),
                 correlation_id=correlation_id,
-                **({"execution_binding":binding} if binding is not None else {}),
             )
             duration_ms = int((time.monotonic() - start) * 1000)
             op_result = payload.get("result") or "ALLOW"
@@ -1757,7 +1700,7 @@ class MCPBridge:
         return _text_result(json.dumps(safe, indent=2), is_error=is_error)
 
     def _dispatch_endpoint(self, *, principal, client_id, endpoint_object_id, capability, arguments,
-                           patterns, timeout, correlation_id, execution_binding=None):
+                           patterns, timeout, correlation_id):
         """Dispatch through the client AI agent job path; return ``(job_id, payload)``."""
         with self._lock:
             job_id = self.plane.enqueue_ai_job(
@@ -1769,7 +1712,6 @@ class MCPBridge:
                 patterns=patterns,
                 timeout=timeout,
                 correlation_id=correlation_id,
-                **({"execution_binding":execution_binding} if execution_binding is not None else {}),
             )
         try:
             return job_id, self._await_job_result(job_id, client_id, capability, arguments,

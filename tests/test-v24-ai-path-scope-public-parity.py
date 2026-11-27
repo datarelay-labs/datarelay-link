@@ -125,21 +125,34 @@ class AiPathScopePublicParity(unittest.TestCase):
         self.assertEqual(v24.ai_rule_execution(row), {"default":"aella","accounts":["aella","root"]})
         self.assertIn("Default execution account", "".join(script.out))
 
-    def test_managed_rule_wizard_uses_advertised_accounts(self):
-        profile={"version":1,"state":"configured","accounts":{
-            "aella":{"uid":1000,"home":"/home/aella","cwd":"/home/aella","roots":["/"]},
-            "root":{"uid":0,"home":"/root","cwd":"/root","roots":["/"]}},"reader":"aella"}
-        self.plane.record_ai_execution_profile("a"*32,profile)
-        self.plane.refresh_managed_host_liveness("a"*32)
-        self.assertEqual(v24.managed_execution_account_choices(self.plane,"ubuntu-prod"),["aella","root"])
-        self.assertEqual(v24.managed_execution_account_choices(self.plane,v24.TRUSTED_MANAGED_HOSTS_TARGET),["aella","root"])
-        v24.set_permission_object(self.plane,"ops",permissions=["host-info","command-exec","file-read"],oneshot=True)
-        script=ScriptedIO(["bot","ubuntu-prod","ops","/**","aella","y","y","1"])
-        set_wizard_io(script)
-        rc,out,err=self._run("set","ai-access","managed-wizard")
+    def test_managed_hosts_keep_central_policy_without_account_binding(self):
+        v24.set_permission_object(self.plane,"ops",permissions=["host-info","command-exec"],oneshot=True)
+        rc,out,err=self._run("set","ai-access","managed-ops","source","bot",
+            "destination","ubuntu-prod","permission","ops","enabled")
         self.assertEqual(rc,0,err)
-        row=self.plane.conn.execute("SELECT * FROM ai_policy_rules WHERE name='managed-wizard'").fetchone()
-        self.assertEqual(v24.ai_rule_execution(row),{"default":"aella","accounts":["aella","root"]})
+        self.assertEqual(self._auth("exec")["action"],"ALLOW")
+        revision=self.plane.current_revision()
+        rc,out,err=self._run("set","ai-access","managed-ops","accounts","root","default-account","root")
+        self.assertNotEqual(rc,0)
+        self.assertEqual(self.plane.current_revision(),revision)
+        self.assertEqual(self._auth("exec")["action"],"ALLOW")
+        import yaml
+        doc={"configurationBundle":{"context":"server","aiAccess":{"rules":[{
+            "name":"managed-ops","execution":{"default":"root","accounts":["root"]}}]}}}
+        with self.assertRaises(v24.ControlPlaneError):
+            prepare_v24_plan(self.plane,yaml.safe_dump(doc),role="server")
+        self.assertEqual(self.plane.current_revision(),revision)
+        with self.assertRaises(v24.ControlPlaneError):
+            v24.set_ai_access_rule(self.plane,"group-ops",source="bot",
+                destination=v24.TRUSTED_MANAGED_HOSTS_TARGET,permission="ops",
+                execution={"default":"root","accounts":["root"]},enabled=True,confirm=True)
+        v24.set_ai_access_rule(self.plane,"native-ops",source="bot",destination="server:self",
+            permission="ops",execution={"default":"root","accounts":["root"]},enabled=True,confirm=True)
+        with self.assertRaises(v24.ControlPlaneError):
+            v24.set_ai_access_rule(self.plane,"native-ops",destination="ubuntu-prod",confirm=True)
+        row=self.plane.conn.execute("SELECT * FROM ai_policy_rules WHERE name='native-ops'").fetchone()
+        self.assertEqual(row["destination_ref_kind"],"server")
+        self.assertEqual(v24.ai_rule_execution(row),{"default":"root","accounts":["root"]})
 
     def test_execution_binding_cli_bundle_roundtrip_and_omitted_edit(self):
         import yaml

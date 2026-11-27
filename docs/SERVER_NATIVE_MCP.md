@@ -3,7 +3,7 @@
 > **Status:** approved target redesign, not installed-runtime qualification.
 > Canonical user workflow and authorization semantics: [AI_ACCESS_MCP.md §4.1](AI_ACCESS_MCP.md#41-canonical-execution-account-contract).
 
-Native MCP controls `server:self` without an Agent on the Server; Managed Hosts use the authenticated Agent path. Both expose the same account-selection semantics and capability discovery. Existing Server and Managed Host tools remain compatible. No new gateway, sandbox, or OAuth model is required.
+Native MCP controls `server:self` without an Agent on the Server; Managed Hosts use the authenticated Agent path. Only native Server execution supports account selection; Managed Hosts retain existing Agent execution, with central AI Access and no additional local configuration. Existing Server and Managed Host tools remain compatible. No new gateway, sandbox, or OAuth model is required.
 
 General command execution grants the chosen OS account's actual authority. Native execution defaults off unless locally enabled. An explicit local root approval and a matching AI Access rule for root are both mandatory. A privileged Bridge does not implicitly grant root. Child execution preserves the selected account's UID/GID, groups, HOME, Git and file ownership context without inheriting Bridge credentials. Existing OS escalation privileges are real authority, not a DRLink sandbox.
 
@@ -39,12 +39,12 @@ The public rule wizard is the account configuration entry point. Review the loca
 | Tool family | Target contract |
 |---|---|
 | `get_server`, `get_host`, `list_hosts` | Discover identity-filtered effective execution context and capabilities; Server-self remains distinct from Managed Host inventory |
-| `server_run`, `server_exec`, `server_git`, Managed Host `exec` | Optional `run_as` and optional cwd; default account/cwd from authorized context |
-| Existing file read/write/delete/upload/download aliases | Optional `run_as`; identical rule/local path checks and OS ownership |
+| `server_run`, `server_exec`, `server_git` | Optional `run_as` and optional cwd; default account/cwd from authorized context |
+| Existing file read/write/delete/upload/download aliases | Optional `run_as` for server:self only; identical rule/local path checks and OS ownership |
 | `list_processes` | Read-only capability or approved account context, according to effective rule |
-| `server_job_poll/input/stop` and Managed Host job equivalents | Bound original job account and identity, no account override |
+| `server_job_poll/input/stop` | Bound original job account and identity, no account override |
 
-Keep existing tool names/argument compatibility, extend Managed Host parity without replacing the transport. Expose only supported capabilities. New optional parameters are genuinely optional in public JSON schemas. Existing clients omitting them use their explicitly authorized default. Tool descriptions explain account selection; do not classify command strings to choose root. All errors identify the failing boundary, with authorized context only. Command, writable Git, stdin and mutation tools retain accurate destructive/open-world annotations. The canonical path/default, overlapping-rule, root, migration and diagnostic semantics are in AI_ACCESS_MCP.md.
+Keep existing tool names/argument compatibility, retain existing Managed Host transport and execution semantics. Expose only supported capabilities. New optional parameters are genuinely optional in public JSON schemas. Existing clients omitting them use their explicitly authorized default. Tool descriptions explain account selection; do not classify command strings to choose root. All errors identify the failing boundary, with authorized context only. Command, writable Git, stdin and mutation tools retain accurate destructive/open-world annotations. The canonical path/default, overlapping-rule, root, migration and diagnostic semantics are in AI_ACCESS_MCP.md.
 
 ### Existing singleton profile migration
 
@@ -109,7 +109,7 @@ to demonstrate hostname/account, file CRUD, shell/argv, Git write/commit/push
 in a disposable repository, process input/output/stop, and the authorized
 service/deployment workflow with negative authorization checks.
 
-Extend the existing tests with multi-account/default selection, no implicit root, root opt-in per identity and target, conflicting rules, missing account/cwd, scoped paths, file ownership, migration without expansion, Agent parity and real natural-language workflow tests.
+Extend the existing tests with multi-account/default selection, no implicit root, root opt-in per identity and target, conflicting rules, missing account/cwd, scoped paths, file ownership, migration without expansion, unchanged Managed Host central-policy regressions and real natural-language workflow tests.
 
 Request tool refresh/reconnection only after implementation and deployment,
 and only if new tool discovery needs it. Keep Desktop Commander until actual

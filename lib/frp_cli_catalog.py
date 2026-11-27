@@ -2244,8 +2244,6 @@ NAVIGATION_TREE = {
     ),
     "client.agent": (
         ("client_agent_show", "Show Agent", "", "command", "show agent"),
-        ("client_agent_execution_show", "Show AI execution eligibility", "", "command", "show agent-execution"),
-        ("client_agent_execution_set", "Configure AI execution eligibility", "", "command", "set agent-execution"),
         ("client_sys_pause", "Pause", "", "command", "system pause"),
         ("client_sys_resume", "Resume", "", "command", "system resume"),
         ("client_sys_restart", "Restart", "", "command", "system restart"),

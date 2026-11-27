@@ -91,7 +91,6 @@ def test_backend_identity_ip_and_dns():
             'agent-lifecycle',
             'ai-jobs/claim',
             'ai-jobs/complete',
-            'ai-jobs/validate',
             'remote-services/[^/]+',
         ):
             if route not in conf:
