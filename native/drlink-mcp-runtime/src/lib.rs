@@ -16,14 +16,36 @@ pub struct DispatchBudget {
 type OutputChunk = extern "C" fn(i32, *const u8, usize, *mut std::ffi::c_void) -> bool;
 type WriteChunk = extern "C" fn(*const u8, usize, *mut std::ffi::c_void) -> isize;
 
-#[cfg(target_os = "macos")]
-struct ProcessEventQueue(libc::c_int);
-
-#[cfg(target_os = "macos")]
-impl Drop for ProcessEventQueue {
-    fn drop(&mut self) {
-        unsafe { libc::close(self.0); }
+/// Create a persistent macOS process-exit watcher. Python owns its lifetime
+/// across timeout/retry drain calls and closes it after final EOF or failure.
+#[no_mangle]
+pub unsafe extern "C" fn drlink_mcp_process_watch_new(pid: libc::pid_t) -> libc::c_int {
+    #[cfg(target_os = "macos")]
+    {
+        if pid <= 0 { return -1; }
+        let queue = libc::kqueue();
+        if queue < 0 { return -1; }
+        let mut change: libc::kevent = std::mem::zeroed();
+        change.ident = pid as libc::uintptr_t;
+        change.filter = libc::EVFILT_PROC;
+        change.flags = (libc::EV_ADD | libc::EV_ENABLE | libc::EV_CLEAR) as u16;
+        change.fflags = libc::NOTE_EXIT;
+        if libc::kevent(queue, &change, 1, std::ptr::null_mut(), 0, std::ptr::null()) < 0 {
+            libc::close(queue);
+            return -1;
+        }
+        queue
     }
+    #[cfg(not(target_os = "macos"))]
+    { let _ = pid; -1 }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn drlink_mcp_process_watch_free(queue: libc::c_int) {
+    #[cfg(target_os = "macos")]
+    if queue >= 0 { libc::close(queue); }
+    #[cfg(not(target_os = "macos"))]
+    let _ = queue;
 }
 
 struct OutputState {
@@ -264,6 +286,7 @@ pub unsafe extern "C" fn drlink_mcp_drain_child(
     pid: libc::pid_t,
     stdout_fd: libc::c_int,
     stderr_fd: libc::c_int,
+    _process_watch_fd: libc::c_int,
     timeout_ms: u64,
     wait_for_eof: bool,
     callback: Option<OutputChunk>,
@@ -280,30 +303,7 @@ pub unsafe extern "C" fn drlink_mcp_drain_child(
     // waitid(WNOWAIT) is not part of Apple's documented wait API. Observe
     // NOTE_EXIT through kqueue instead, leaving wait/reap ownership in Python.
     #[cfg(target_os = "macos")]
-    let process_events = {
-        let queue = libc::kqueue();
-        if queue < 0 {
-            return 2;
-        }
-        let mut change: libc::kevent = std::mem::zeroed();
-        change.ident = pid as libc::uintptr_t;
-        change.filter = libc::EVFILT_PROC;
-        change.flags = (libc::EV_ADD | libc::EV_ENABLE | libc::EV_ONESHOT) as u16;
-        change.fflags = libc::NOTE_EXIT;
-        let result = libc::kevent(
-            queue,
-            &change,
-            1,
-            std::ptr::null_mut(),
-            0,
-            std::ptr::null(),
-        );
-        if result < 0 {
-            libc::close(queue);
-            return 2;
-        }
-        ProcessEventQueue(queue)
-    };
+    if _process_watch_fd < 0 { return 4; }
     let mut stdout_open = true;
     let mut stderr_open = true;
     let mut buffer = [0u8; 8192];
@@ -323,7 +323,7 @@ pub unsafe extern "C" fn drlink_mcp_drain_child(
             } else {
                 let error = std::io::Error::last_os_error();
                 if error.kind() != std::io::ErrorKind::Interrupted {
-                    return 2;
+                    return 6;
                 }
             }
         }
@@ -332,7 +332,7 @@ pub unsafe extern "C" fn drlink_mcp_drain_child(
             let mut event: libc::kevent = std::mem::zeroed();
             let no_wait = libc::timespec { tv_sec: 0, tv_nsec: 0 };
             let result = libc::kevent(
-                process_events.0,
+                _process_watch_fd,
                 std::ptr::null(),
                 0,
                 &mut event,
@@ -381,7 +381,7 @@ pub unsafe extern "C" fn drlink_mcp_drain_child(
             if error.kind() == std::io::ErrorKind::Interrupted {
                 continue;
             }
-            return 2;
+            return 7;
         }
         if result == 0 && exited && !wait_for_eof {
             return 0;
@@ -402,7 +402,7 @@ pub unsafe extern "C" fn drlink_mcp_drain_child(
                 if error.kind() != std::io::ErrorKind::WouldBlock
                     && error.kind() != std::io::ErrorKind::Interrupted
                 {
-                    return 2;
+                    return 8;
                 }
             } else if !callback(index as i32 + 1, buffer.as_ptr(), count as usize, context) {
                 return 3;

@@ -5,12 +5,15 @@ import ctypes
 import os
 import signal
 import subprocess
+import sys
 import threading
 from pathlib import Path
 
 _PROCESS_LOCK = threading.Lock()
 _PROCESS_LIBRARY = None
 _PROCESS_DRAIN = None
+_PROCESS_WATCH_NEW = None
+_PROCESS_WATCH_FREE = None
 _PROCESS_CHECKED = False
 _OUTPUT_NEW = None
 _OUTPUT_APPEND = None
@@ -28,7 +31,7 @@ _WRITE_CALLBACK = ctypes.CFUNCTYPE(
 
 
 def _native_process_drain():
-    global _PROCESS_LIBRARY, _PROCESS_DRAIN, _PROCESS_CHECKED
+    global _PROCESS_LIBRARY, _PROCESS_DRAIN, _PROCESS_WATCH_NEW, _PROCESS_WATCH_FREE, _PROCESS_CHECKED
     mode = os.environ.get("DRLINK_MCP_RUNTIME", "auto").strip().lower()
     if mode == "python":
         return None
@@ -54,11 +57,18 @@ def _native_process_drain():
                 library = ctypes.CDLL(str(candidate))
                 drain = library.drlink_mcp_drain_child
                 drain.argtypes = [
-                    ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_uint64,
+                    ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_uint64,
                     ctypes.c_bool, _PROCESS_CALLBACK, ctypes.c_void_p,
                 ]
                 drain.restype = ctypes.c_int
+                watch_new = library.drlink_mcp_process_watch_new
+                watch_new.argtypes = [ctypes.c_int]
+                watch_new.restype = ctypes.c_int
+                watch_free = library.drlink_mcp_process_watch_free
+                watch_free.argtypes = [ctypes.c_int]
+                watch_free.restype = None
                 _PROCESS_LIBRARY, _PROCESS_DRAIN = library, drain
+                _PROCESS_WATCH_NEW, _PROCESS_WATCH_FREE = watch_new, watch_free
                 return drain
             except (OSError, AttributeError):
                 continue
@@ -243,17 +253,37 @@ def drain_process(process, *, on_stdout, on_stderr, timeout_seconds: float = 0,
 
     callback_ref = _PROCESS_CALLBACK(callback)
     timeout_ms = max(0, int(float(timeout_seconds) * 1000))
-    result = native(
-        process.pid, streams[0].fileno(), streams[1].fileno(),
-        timeout_ms, bool(wait_for_eof), callback_ref, None,
-    )
+    watch_fd = getattr(process, "_drlink_mcp_process_watch_fd", None)
+    if watch_fd is None:
+        watch_fd = _PROCESS_WATCH_NEW(process.pid)
+        if watch_fd < 0 and sys.platform == "darwin":
+            raise OSError("native child process watcher creation failed")
+        process._drlink_mcp_process_watch_fd = watch_fd
+    try:
+        result = native(
+            process.pid, streams[0].fileno(), streams[1].fileno(), watch_fd,
+            timeout_ms, bool(wait_for_eof), callback_ref, None,
+        )
+    except BaseException:
+        _free_process_watch(process)
+        raise
     if callback_error:
+        _free_process_watch(process)
         raise RuntimeError("native process output callback failed") from callback_error[0]
-    if result == 2:
-        raise OSError("native child process wait or pipe I/O failed")
+    if result == 2 or result >= 4:
+        _free_process_watch(process)
+        raise OSError("native child process wait or pipe I/O failed (status %s)" % result)
     if result == 3:
+        _free_process_watch(process)
         raise RuntimeError("native child process output callback stopped")
+    if result != 1 and wait_for_eof:
+        _free_process_watch(process)
     return result
+def _free_process_watch(process) -> None:
+    watch_fd = getattr(process, "_drlink_mcp_process_watch_fd", None)
+    if watch_fd is not None:
+        _PROCESS_WATCH_FREE(watch_fd)
+        del process._drlink_mcp_process_watch_fd
 
 
 def capture_process(process, *, input_data: bytes | None, timeout_seconds: float,
@@ -306,6 +336,13 @@ def capture_process(process, *, input_data: bytes | None, timeout_seconds: float
             os.killpg(process.pid, signal.SIGKILL)
         except ProcessLookupError:
             pass
+        except PermissionError:
+            # Do not hide a real process-group denial or leave the owned
+            # child behind while unwinding another native-drain failure.
+            try:
+                process.kill()
+            except OSError:
+                pass
         try:
             process.wait(timeout=5)
         except subprocess.TimeoutExpired:
@@ -316,6 +353,7 @@ def capture_process(process, *, input_data: bytes | None, timeout_seconds: float
                 stream.close()
         if writer is not None:
             writer.join(timeout=5)
+        _free_process_watch(process)
         raise
     timed_out = status == 1
     try:
@@ -324,6 +362,22 @@ def capture_process(process, *, input_data: bytes | None, timeout_seconds: float
             os.killpg(process.pid, signal.SIGKILL)
         except ProcessLookupError:
             pass
+        except PermissionError as exc:
+            # Preserve the group-cleanup denial as a hard failure, but ensure
+            # the directly owned child cannot leak while reporting it.
+            try:
+                process.kill()
+                process.wait(timeout=5)
+            except (OSError, subprocess.TimeoutExpired):
+                pass
+            for stream in (process.stdout, process.stderr):
+                if stream is not None and not stream.closed:
+                    stream.close()
+            _free_process_watch(process)
+            raise OSError(
+                "process-group cleanup denied after native drain (status %s, returncode %s)"
+                % (status, process.returncode)
+            ) from exc
         drain_status = drain_process(
             process, on_stdout=lambda data: append(0, data),
             on_stderr=lambda data: append(1, data), timeout_seconds=5,

@@ -12,8 +12,11 @@ own the socket/TLS connection. A blocked Python writer backpressures the
 handler; failed or stalled writes fail closed.
 
 On Linux, child exit is observed with non-reaping `waitid(WNOWAIT)`; on macOS,
-the helper uses a `kqueue` `EVFILT_PROC/NOTE_EXIT` event. Both paths leave the
-child waitable so Python retains reaping and process-group cleanup authority.
+the helper uses a persistent `kqueue` `EVFILT_PROC/NOTE_EXIT` watcher across
+timeout/retry drain calls. Python owns and closes that watcher after final EOF
+or error. Both paths leave the child waitable so Python retains reaping and
+process-group cleanup authority. Apple Silicon validation remains pending;
+process-group cleanup permission failures remain hard errors.
 
 The library is selected with `DRLINK_MCP_RUNTIME=rust` and
 `DRLINK_MCP_NATIVE_LIBRARY=/path/to/libdrlink_mcp_runtime.so`. `auto` loads an
@@ -25,8 +28,8 @@ included in Server bundles; native shared-library packaging is still pending.
 R2 currently covers dispatch admission, bounded streamed-result retention,
 and bounded outbound response writes. Native result-wait and inbound/connection
 I/O integration remain open. R3 process-pipe
-integration is present for Linux/macOS Agent and Server paths; Apple Silicon
-runtime qualification is being fixed and rerun.
+integration is present for Linux/macOS Agent and Server paths; Linux regression
+passes and Apple Silicon runtime qualification is being rerun.
 
 Build and unit test with the pinned Rust 1.75 toolchain:
 
