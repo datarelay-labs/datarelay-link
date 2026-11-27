@@ -75,7 +75,12 @@ for rel in (
     start = text.index("on:\n")
     end = text.index("\npermissions:", start)
     actual = text[start:end + 1]
-    if actual.strip() != EXPECTED_ON.strip():
+    expected = EXPECTED_ON
+    if rel == ".github/workflows/macos-client.yml":
+        # Apple Silicon is too expensive for ordinary PRs. Keep the job
+        # manually runnable against an exact owner-selected candidate.
+        expected += "  workflow_dispatch:\n"
+    if actual.strip() != expected.strip():
         raise SystemExit(f"{rel}: unexpected trigger block:\n{actual}")
 
 lint = Path(".github/workflows/lint.yml").read_text(encoding="utf-8")

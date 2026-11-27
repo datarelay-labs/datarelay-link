@@ -6,6 +6,7 @@ on:
     tags:
       - 'v*'
   pull_request:
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -24,7 +25,7 @@ jobs:
           bash scripts/check-public-metadata.sh
 
   apple-silicon:
-    if: github.event_name != 'pull_request' || github.base_ref == 'feature/v2.4.0-final-product-closure' || (github.base_ref == 'main' && (startsWith(github.head_ref, 'qualification/') || github.head_ref == 'feat/lperf-mcp-egress-bench-20261123'))
+    if: github.event_name != 'pull_request' || github.base_ref == 'feature/v2.4.0-final-product-closure' || (github.base_ref == 'main' && startsWith(github.head_ref, 'qualification/'))
     runs-on: macos-15
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683

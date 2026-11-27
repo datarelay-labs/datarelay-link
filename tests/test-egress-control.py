@@ -1960,7 +1960,17 @@ class EgressHardeningFeatureTests(unittest.TestCase):
                 except socket.timeout:
                     continue
             self.assertTrue(closed)
-            self.assertIn("POLICY_REVOKED", self._conn_log())
+            # The relay closes its sockets before the Python adapter appends
+            # the terminal policy audit; observe the receipt independently of
+            # the peer-close timing to avoid a false race on the native path.
+            audit_deadline = time.time() + 1.0
+            log = ""
+            while time.time() < audit_deadline:
+                log = self._conn_log()
+                if "POLICY_REVOKED" in log:
+                    break
+                time.sleep(0.02)
+            self.assertIn("POLICY_REVOKED", log)
         finally:
             try:
                 s.close()

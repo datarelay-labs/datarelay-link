@@ -10,6 +10,10 @@ evaluate AI Access, own durable jobs and audit, dispatch to Agents, choose
 timeouts, terminate process groups, reap children, and shape/send MCP
 responses.
 
+On Linux, child exit is observed with non-reaping `waitid(WNOWAIT)`; on macOS,
+the helper uses a `kqueue` `EVFILT_PROC/NOTE_EXIT` event. Both paths leave the
+child waitable so Python retains reaping and process-group cleanup authority.
+
 The library is selected with `DRLINK_MCP_RUNTIME=rust` and
 `DRLINK_MCP_NATIVE_LIBRARY=/path/to/libdrlink_mcp_runtime.so`. `auto` loads an
 available packaged library and otherwise uses the existing Python dispatch and
@@ -17,8 +21,10 @@ process/pipe lifecycle paths;
 `python` selects the rollback implementation. Explicit Rust selection fails
 service initialization if the library cannot be loaded. The Python adapter is
 included in Server bundles; native shared-library packaging is still pending.
-MCP connection I/O and result-wait work remain open under R2. Linux/macOS
-Agent and Server executor integration is in progress under R3.
+R2 currently covers dispatch admission and bounded streamed-result retention;
+connection I/O and result-wait integration remain open. R3 process-pipe
+integration is present for Linux/macOS Agent and Server paths; Apple Silicon
+runtime qualification is being fixed and rerun.
 
 Build and unit test with the pinned Rust 1.75 toolchain:
 

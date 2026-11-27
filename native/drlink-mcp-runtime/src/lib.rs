@@ -15,6 +15,16 @@ pub struct DispatchBudget {
 
 type OutputChunk = extern "C" fn(i32, *const u8, usize, *mut std::ffi::c_void) -> bool;
 
+#[cfg(target_os = "macos")]
+struct ProcessEventQueue(libc::c_int);
+
+#[cfg(target_os = "macos")]
+impl Drop for ProcessEventQueue {
+    fn drop(&mut self) {
+        unsafe { libc::close(self.0); }
+    }
+}
+
 struct OutputState {
     bytes: VecDeque<u8>,
     dropped: u64,
@@ -229,11 +239,40 @@ pub unsafe extern "C" fn drlink_mcp_drain_child(
     let started = Instant::now();
     let timeout = Duration::from_millis(timeout_ms);
     let mut exited = false;
+
+    // waitid(WNOWAIT) is not part of Apple's documented wait API. Observe
+    // NOTE_EXIT through kqueue instead, leaving wait/reap ownership in Python.
+    #[cfg(target_os = "macos")]
+    let process_events = {
+        let queue = libc::kqueue();
+        if queue < 0 {
+            return 2;
+        }
+        let mut change: libc::kevent = std::mem::zeroed();
+        change.ident = pid as libc::uintptr_t;
+        change.filter = libc::EVFILT_PROC;
+        change.flags = (libc::EV_ADD | libc::EV_ENABLE | libc::EV_ONESHOT) as u16;
+        change.fflags = libc::NOTE_EXIT;
+        let result = libc::kevent(
+            queue,
+            &change,
+            1,
+            std::ptr::null_mut(),
+            0,
+            std::ptr::null(),
+        );
+        if result < 0 {
+            libc::close(queue);
+            return 2;
+        }
+        ProcessEventQueue(queue)
+    };
     let mut stdout_open = true;
     let mut stderr_open = true;
     let mut buffer = [0u8; 8192];
 
     loop {
+        #[cfg(target_os = "linux")]
         if !exited {
             let mut info: libc::siginfo_t = std::mem::zeroed();
             let result = libc::waitid(
@@ -258,6 +297,25 @@ pub unsafe extern "C" fn drlink_mcp_drain_child(
             return 1;
         }
 
+        #[cfg(target_os = "macos")]
+        let mut fds = [
+            libc::pollfd {
+                fd: if stdout_open { stdout_fd } else { -1 },
+                events: (libc::POLLIN | libc::POLLHUP) as i16,
+                revents: 0,
+            },
+            libc::pollfd {
+                fd: if stderr_open { stderr_fd } else { -1 },
+                events: (libc::POLLIN | libc::POLLHUP) as i16,
+                revents: 0,
+            },
+            libc::pollfd {
+                fd: if exited { -1 } else { process_events.0 },
+                events: libc::POLLIN as i16,
+                revents: 0,
+            },
+        ];
+        #[cfg(target_os = "linux")]
         let mut fds = [
             libc::pollfd {
                 fd: if stdout_open { stdout_fd } else { -1 },
@@ -284,6 +342,12 @@ pub unsafe extern "C" fn drlink_mcp_drain_child(
         }
         if result == 0 && exited && !wait_for_eof {
             return 0;
+        }
+        #[cfg(target_os = "macos")]
+        if fds[2].revents & (libc::POLLERR | libc::POLLNVAL) != 0 {
+            return 2;
+        } else if fds[2].revents & (libc::POLLIN | libc::POLLHUP) != 0 {
+            exited = true;
         }
         for index in 0..2 {
             if fds[index].revents & (libc::POLLERR | libc::POLLNVAL) != 0 {
