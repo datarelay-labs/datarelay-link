@@ -246,6 +246,8 @@ HTTP/TLS와 실제 socket 소유권은 Python에 유지됩니다. 자동 모드�
 handoff 이후 세션을 Python relay로 재실행하지 않으며, 새 연결은 `DRLINK_EGRESS_RUNTIME=python`으로 기존 Python rollback 경로를
 선택할 수 있습니다. 각 방향의 relay queue는 256 KiB로 제한하며, peer hangup 뒤에도
 수신 EOF까지 대기 데이터를 전달하고 backpressure 중 유휴 descriptor를 poll에서 제외합니다.
+용량이 찬 relay buffer에 대한 zero-length `recv`를 EOF로 오인하지 않도록 양방향 처리를
+수정했으며, 1 MiB 요청 half-close와 tail 보존 회귀 테스트가 통과했습니다.
 Rust MCP helper는 dispatch admission, 1 MiB 결과 보존 창/64 KiB cursor page, 64 KiB 제한
 inbound request body 읽기와 response 쓰기를 제공합니다. HTTP/TLS stream, JSON parsing,
 권한 판단과 durable result waiting은 계속 Python이 담당합니다. Rust listener/accept lifecycle은 아직 남아 있습니다. R3 stdout/stderr drain은
