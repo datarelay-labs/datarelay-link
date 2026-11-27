@@ -28,6 +28,9 @@ DRLINK_MCP_NATIVE_LIBRARY="$ROOT/native/drlink-mcp-runtime/target/release/libdrl
 python3 tests/test-mcp-bridge-workers.py
 DRLINK_MCP_RUNTIME=rust \
 DRLINK_MCP_NATIVE_LIBRARY="$ROOT/native/drlink-mcp-runtime/target/release/libdrlink_mcp_runtime.so" \
+python3 tests/test-mcp-bridge-call-budget.py
+DRLINK_MCP_RUNTIME=rust \
+DRLINK_MCP_NATIVE_LIBRARY="$ROOT/native/drlink-mcp-runtime/target/release/libdrlink_mcp_runtime.so" \
 python3 tests/test-mcp-server-full-control.py
 DRLINK_MCP_RUNTIME=rust \
 DRLINK_MCP_NATIVE_LIBRARY="$ROOT/native/drlink-mcp-runtime/target/release/libdrlink_mcp_runtime.so" \

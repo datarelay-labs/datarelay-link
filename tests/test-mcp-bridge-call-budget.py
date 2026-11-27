@@ -23,6 +23,7 @@ from unittest import mock
 from mcp_dispatch_fixture import HOST, DispatchFixture
 
 from drlink_control_plane import ControlPlane  # noqa: E402
+from drlink_mcp_runtime import DispatchBudget  # noqa: E402
 
 
 class CallBudgetTests(DispatchFixture):
@@ -39,6 +40,13 @@ class CallBudgetTests(DispatchFixture):
         thread.start()
         return thread
 
+    def _set_budget(self, capacity):
+        # DispatchBudget capacity is fixed at construction, matching the
+        # process-start DRLINK_MCP_DISPATCH_BUDGET configuration.
+        self.bridge._dispatch_admission.close()
+        self.bridge.dispatch_budget = capacity
+        self.bridge._dispatch_admission = DispatchBudget(capacity)
+
     def _fill(self, count):
         results, threads = [], []
         for _ in range(count):
@@ -53,7 +61,7 @@ class CallBudgetTests(DispatchFixture):
         self.assertEqual(self.bridge.dispatch_budget, 64)
 
     def test_a_call_over_the_budget_is_refused_busy_before_audit_and_enqueue(self):
-        self.bridge.dispatch_budget = 2
+        self._set_budget(2)
         results, threads = self._fill(2)
         status, body = self._rpc("echo third")
         self.assertEqual(status, 200)
@@ -76,25 +84,25 @@ class CallBudgetTests(DispatchFixture):
         self.assertEqual(self.bridge.busy_refused, 1)
 
     def test_the_slot_is_released_when_the_call_completes(self):
-        self.bridge.dispatch_budget = 1
+        self._set_budget(1)
         results, threads = self._fill(1)
         self.assertEqual(self._rpc()[1]["error"]["code"], -32001)
         threads[0].join(timeout=10)
-        self.assertEqual(self.bridge.inflight, 0)
+        self.assertEqual(self.bridge._dispatch_admission.inflight, 0)
         status, body = self._rpc()
         self.assertNotIn("error", body)
 
     def test_the_slot_is_released_when_dispatch_fails(self):
-        self.bridge.dispatch_budget = 1
+        self._set_budget(1)
         with mock.patch.object(ControlPlane, "enqueue_ai_job", side_effect=RuntimeError("boom")):
             status, body = self._rpc()
         self.assertEqual(body["error"]["code"], -32603)
-        self.assertEqual(self.bridge.inflight, 0)
+        self.assertEqual(self.bridge._dispatch_admission.inflight, 0)
         status, body = self._rpc()
         self.assertNotIn("error", body)
 
     def test_calls_that_do_not_dispatch_are_not_counted(self):
-        self.bridge.dispatch_budget = 1
+        self._set_budget(1)
         results, threads = self._fill(1)
         body = {"jsonrpc": "2.0", "id": 3, "method": "tools/call",
                 "params": {"name": "list_hosts", "arguments": {}}}
@@ -120,7 +128,7 @@ class CallBudgetTests(DispatchFixture):
         logger = logging.getLogger("drlink.mcp_bridge")
         logger.addHandler(handler)
         self.addCleanup(logger.removeHandler, handler)
-        self.bridge.dispatch_budget = 1
+        self._set_budget(1)
         results, threads = self._fill(1)
         for _ in range(3):
             self._rpc("echo SECRET-ARGUMENT")
