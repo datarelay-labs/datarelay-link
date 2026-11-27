@@ -342,6 +342,7 @@ jobs:
       - name: Build bundles twice (deterministic parity)
         run: |
           set -euo pipefail
+          python3 scripts/verify-native-runtime-assets.py
           ./scripts/build-bundles.sh
           cp -a dist dist-build1
           ./scripts/build-bundles.sh

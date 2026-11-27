@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import importlib.util
 import os
+import platform
 import socket
+import sys
 import threading
 import time
 import unittest
@@ -12,7 +14,13 @@ from unittest import mock
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-LIBRARY = ROOT / "native/drlink-egress/target/release/libdrlink_egress.so"
+if sys.platform == "darwin" and platform.machine() in ("arm64", "aarch64"):
+    NATIVE_TARGET, NATIVE_EXTENSION = "aarch64-apple-darwin", "dylib"
+elif sys.platform.startswith("linux") and platform.machine() in ("aarch64", "arm64"):
+    NATIVE_TARGET, NATIVE_EXTENSION = "aarch64-unknown-linux-gnu", "so"
+else:
+    NATIVE_TARGET, NATIVE_EXTENSION = "x86_64-unknown-linux-gnu", "so"
+LIBRARY = ROOT / f"lib/native/{NATIVE_TARGET}/libdrlink_egress.{NATIVE_EXTENSION}"
 os.environ["DRLINK_EGRESS_RUNTIME"] = "rust"
 os.environ["DRLINK_EGRESS_NATIVE_LIBRARY"] = str(LIBRARY)
 spec = importlib.util.spec_from_file_location(

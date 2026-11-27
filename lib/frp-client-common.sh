@@ -5648,6 +5648,7 @@ frp_client_install_management_files() {
       echo "ERROR: missing ${source}/lib/${f}" >&2
       return 1
     }
+    mkdir -p "${libdir}/$(dirname -- "${f}")"
     install -m 0644 "${source}/lib/${f}" "${libdir}/${f}"
   done < <(PYTHONPATH="${source}/lib${PYTHONPATH:+:$PYTHONPATH}" python3 -c \
     'from drlink_agent_payload import agent_lib_files; print("\n".join(agent_lib_files()))')
@@ -5966,7 +5967,7 @@ frp_client_upgrade_validate_staged() {
 }
 
 frp_client_upgrade_backup_tools() {
-  local stamp dest live rel mode src base
+  local stamp dest live rel mode src backup_file
   stamp="$(date -u +%Y%m%dT%H%M%SZ)"
   dest="$(frp_client_upgrade_backup_root)/${stamp}"
   mkdir -p "$dest"
@@ -5975,12 +5976,13 @@ frp_client_upgrade_backup_tools() {
   while IFS=: read -r rel mode src; do
     [[ -n "$rel" ]] || continue
     live="$(frp_client_path "/${rel}")"
-    base="$(basename "$rel")"
+    backup_file="${dest}/files/${rel}"
     if [[ -f "$live" ]]; then
-      install -m "$mode" "$live" "${dest}/${base}"
-      printf 'present %s\n' "$base" >>"${dest}/manifest"
+      mkdir -p "$(dirname "$backup_file")"
+      install -m "$mode" "$live" "$backup_file"
+      printf 'present %s\n' "$rel" >>"${dest}/manifest"
     else
-      printf 'absent %s\n' "$base" >>"${dest}/manifest"
+      printf 'absent %s\n' "$rel" >>"${dest}/manifest"
     fi
   done < <(frp_client_upgrade_destinations)
   live="$(frp_client_version_file)"
@@ -6013,7 +6015,7 @@ PY
 }
 
 frp_client_upgrade_restore_tools() {
-  local backup="$1" live rel mode src base
+  local backup="$1" live rel mode src backup_file
   [[ -d "$backup" ]] || return 1
   # Tools backups always write a manifest. FRP binary backups must never be
   # treated as management-tool snapshots (they would delete live tools).
@@ -6028,9 +6030,10 @@ frp_client_upgrade_restore_tools() {
   while IFS=: read -r rel mode src; do
     [[ -n "$rel" ]] || continue
     live="$(frp_client_path "/${rel}")"
-    base="$(basename "$rel")"
-    if [[ -f "${backup}/${base}" ]]; then
-      install -m "$mode" "${backup}/${base}" "$live"
+    backup_file="${backup}/files/${rel}"
+    if [[ -f "$backup_file" ]]; then
+      mkdir -p "$(dirname "$live")"
+      install -m "$mode" "$backup_file" "$live"
     else
       rm -f "$live"
     fi
@@ -6057,16 +6060,16 @@ frp_client_upgrade_restore_tools() {
 }
 
 frp_client_upgrade_verify_restored() {
-  local backup="$1" live rel mode src base state
+  local backup="$1" live rel mode src state backup_file
   [[ -f "${backup}/manifest" ]] || return 1
   while IFS=: read -r rel mode src; do
     [[ -n "$rel" ]] || continue
     live="$(frp_client_path "/${rel}")"
-    base="$(basename "$rel")"
-    state="$(awk -v b="$base" '$2==b {print $1; exit}' "${backup}/manifest")"
+    state="$(awk -v r="$rel" '$2==r {print $1; exit}' "${backup}/manifest")"
+    backup_file="${backup}/files/${rel}"
     case "$state" in
       present)
-        [[ -f "$live" && "$(frp_client_digest "$live")" == "$(frp_client_digest "${backup}/${base}")" ]] \
+        [[ -f "$live" && "$(frp_client_digest "$live")" == "$(frp_client_digest "$backup_file")" ]] \
           || return 1
         ;;
       absent)

@@ -11,6 +11,7 @@ import importlib.util
 import ctypes
 import json
 import os
+import platform
 import select
 import socket
 import sys
@@ -66,6 +67,20 @@ def _native_relay():
         here = Path(__file__).resolve().parent
         configured = os.environ.get("DRLINK_EGRESS_NATIVE_LIBRARY", "").strip()
         candidates = [Path(configured)] if configured else []
+        machine = platform.machine().lower()
+        if sys.platform.startswith("linux") and machine in ("x86_64", "amd64"):
+            target = "x86_64-unknown-linux-gnu"
+        elif sys.platform.startswith("linux") and machine in ("aarch64", "arm64"):
+            target = "aarch64-unknown-linux-gnu"
+        elif sys.platform == "darwin" and machine in ("arm64", "aarch64"):
+            target = "aarch64-apple-darwin"
+        elif sys.platform == "darwin" and machine in ("x86_64", "amd64"):
+            target = "x86_64-apple-darwin"
+        else:
+            target = ""
+        if target:
+            extension = ".dylib" if sys.platform == "darwin" else ".so"
+            candidates.append(here / "native" / target / ("libdrlink_egress" + extension))
         candidates.extend((
             here / "native" / "libdrlink_egress.so",
             here / "native" / "libdrlink_egress.dylib",

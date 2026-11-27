@@ -30,8 +30,10 @@ versioned stateful drain ABI now carries the observed leader-exit flag in the
 Python-owned process object across calls, and group signaling is limited to
 incomplete drains. Drain status `9` identifies an exited leader whose
 descendants still hold a captured pipe; Python terminates the process group and
-performs a final EOF drain. Exact Apple Silicon retest is pending; denials on
-required cleanup paths remain hard errors. On macOS, `auto` skips an older
+performs a final EOF drain. The Apple Silicon workflow passed the stateful
+process lifecycle regression on exact candidate `08b62d9` (run
+`45958802619`). Denials on required cleanup paths remain hard
+errors. On macOS, `auto` skips an older
 library without the stateful ABI and uses Python; explicit Rust selection fails
 closed.
 
@@ -48,8 +50,13 @@ The library is selected with `DRLINK_MCP_RUNTIME=rust` and
 available packaged library and otherwise uses the existing Python dispatch and
 process/pipe lifecycle paths;
 `python` selects the rollback implementation. Explicit Rust selection fails
-service initialization if the library cannot be loaded. The Python adapter is
-included in Server bundles; native shared-library packaging is still pending.
+service initialization if the library cannot be loaded. The Linux x86_64
+Agent and Server bundles include both Rust shared libraries under the
+target-specific native directory and record the Rust version, source HEAD,
+Cargo.lock hashes, and library hashes in `runtime-build.json`. The Agent
+runtime lineage manifest covers these files; the Server project-file manifest
+includes them in install, update, and rollback. Linux ARM64 and macOS native
+library package assets remain to be qualified and added.
 R2 currently covers dispatch admission, one ready-listener accept, bounded
 streamed-result retention, bounded request-body reads and bounded outbound
 response writes, and the per-subscription condition wait used for bounded job
@@ -68,4 +75,5 @@ Build and unit test with the pinned Rust 1.75 toolchain:
 ```sh
 cargo test --locked --manifest-path native/drlink-mcp-runtime/Cargo.toml
 cargo build --release --locked --manifest-path native/drlink-mcp-runtime/Cargo.toml
+scripts/build-native-runtime-assets.sh
 ```

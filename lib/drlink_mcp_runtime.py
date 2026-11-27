@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import ctypes
 import os
+import platform
 import signal
 import subprocess
 import sys
@@ -36,6 +37,35 @@ _READ_CALLBACK = ctypes.CFUNCTYPE(
 )
 
 
+def _native_library_candidates(here: Path, configured: str) -> list[Path]:
+    candidates = [Path(configured)] if configured else []
+    machine = platform.machine().lower()
+    if sys.platform.startswith("linux") and machine in ("x86_64", "amd64"):
+        target = "x86_64-unknown-linux-gnu"
+    elif sys.platform.startswith("linux") and machine in ("aarch64", "arm64"):
+        target = "aarch64-unknown-linux-gnu"
+    elif sys.platform == "darwin" and machine in ("arm64", "aarch64"):
+        target = "aarch64-apple-darwin"
+    elif sys.platform == "darwin" and machine in ("x86_64", "amd64"):
+        target = "x86_64-apple-darwin"
+    else:
+        target = ""
+    if target:
+        extension = ".dylib" if sys.platform == "darwin" else ".so"
+        library_name = "libdrlink_mcp_runtime" + extension
+        candidates.extend((
+            here / "lib" / "native" / target / library_name,
+            Path("/usr/local/lib/drlink/native") / target / library_name,
+        ))
+    candidates.extend((
+        here / "native" / "libdrlink_mcp_runtime.so",
+        here / "native" / "libdrlink_mcp_runtime.dylib",
+        Path("/usr/local/lib/drlink/native/libdrlink_mcp_runtime.so"),
+        Path("/usr/local/lib/drlink/native/libdrlink_mcp_runtime.dylib"),
+    ))
+    return candidates
+
+
 def _native_process_drain():
     global _PROCESS_LIBRARY, _PROCESS_DRAIN, _PROCESS_DRAIN_STATEFUL, _PROCESS_WATCH_NEW, _PROCESS_WATCH_FREE, _PROCESS_CHECKED
     mode = os.environ.get("DRLINK_MCP_RUNTIME", "auto").strip().lower()
@@ -51,13 +81,7 @@ def _native_process_drain():
         _PROCESS_CHECKED = True
         here = Path(__file__).resolve().parent.parent
         configured = os.environ.get("DRLINK_MCP_NATIVE_LIBRARY", "").strip()
-        candidates = [Path(configured)] if configured else []
-        candidates.extend((
-            here / "native" / "libdrlink_mcp_runtime.so",
-            here / "native" / "libdrlink_mcp_runtime.dylib",
-            Path("/usr/local/lib/drlink/native/libdrlink_mcp_runtime.so"),
-            Path("/usr/local/lib/drlink/native/libdrlink_mcp_runtime.dylib"),
-        ))
+        candidates = _native_library_candidates(here, configured)
         for candidate in candidates:
             try:
                 library = ctypes.CDLL(str(candidate))
@@ -609,13 +633,7 @@ class DispatchBudget:
     def _load_native(self, *, required: bool) -> None:
         here = Path(__file__).resolve().parent.parent
         configured = os.environ.get("DRLINK_MCP_NATIVE_LIBRARY", "").strip()
-        candidates = [Path(configured)] if configured else []
-        candidates.extend((
-            here / "native" / "libdrlink_mcp_runtime.so",
-            here / "native" / "libdrlink_mcp_runtime.dylib",
-            Path("/usr/local/lib/drlink/native/libdrlink_mcp_runtime.so"),
-            Path("/usr/local/lib/drlink/native/libdrlink_mcp_runtime.dylib"),
-        ))
+        candidates = _native_library_candidates(here, configured)
         for candidate in candidates:
             try:
                 library = ctypes.CDLL(str(candidate))

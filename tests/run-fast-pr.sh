@@ -17,6 +17,8 @@ cargo +1.75.0 test --locked --manifest-path native/drlink-egress/Cargo.toml
 cargo +1.75.0 build --release --locked --manifest-path native/drlink-egress/Cargo.toml
 cargo +1.75.0 test --locked --manifest-path native/drlink-mcp-runtime/Cargo.toml
 cargo +1.75.0 build --release --locked --manifest-path native/drlink-mcp-runtime/Cargo.toml
+python3 scripts/verify-native-runtime-assets.py
+python3 tests/test-native-runtime-package-selection.py
 DRLINK_EGRESS_RUNTIME=rust \
 DRLINK_EGRESS_NATIVE_LIBRARY="$ROOT/native/drlink-egress/target/release/libdrlink_egress.so" \
 python3 tests/test-egress-rust-relay.py

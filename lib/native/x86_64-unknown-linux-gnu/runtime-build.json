@@ -1,0 +1,17 @@
+{
+  "build_script": "a71c145828778d2864c0cb0978ba4145618695d3df5f39872168b16f255c40d6",
+  "cargo_locks": {
+    "drlink-egress": "ae4bb66a56523c20e2e1d5806681747445ee7e9e3cfb6c6db0bb7a7fc56c6412",
+    "drlink-mcp-runtime": "11d2766469f396dd6af54653689735b2977099e59f0a2235e5efdea3d7df1f49"
+  },
+  "libraries": {
+    "libdrlink_egress.so": "62a1ac06388d39454d387841e34cf84e9d9c8f9c04994d1718d290b6180582b3",
+    "libdrlink_mcp_runtime.so": "9df31b3134fcb101196b3ecd4e8044e586bf25e29af39a8a5ddee18207461ee3"
+  },
+  "linker": "cc",
+  "linker_version": "cc (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0",
+  "rustc": "1.75.0",
+  "schema": 1,
+  "source_head": "08b62d90fa90064ab38925ba6353763d038f709d",
+  "target": "x86_64-unknown-linux-gnu"
+}
