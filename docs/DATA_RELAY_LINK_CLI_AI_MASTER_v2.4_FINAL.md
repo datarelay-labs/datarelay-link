@@ -794,6 +794,9 @@ MCP Server Settings
 0) Cancel
 ```
 
+Native Server execution is optional for Managed Host-only AI access. If a This Server Rule needs it, the same local setup is offered inline before Rule creation. Existing profiles offer additive changes or separately reviewed replacement. A native policy test separates configured policy, complete execution grants and actual live operation verification.
+
+
 The combined setup reuses valid TLS and reviews local execution eligibility after TLS readiness. The operator approves existing eligible accounts, including root only explicitly; preparation of the optional nonprivileged workspace does not grant AI access. The AI Access rule selects the authorized account subset and its default. See the canonical execution-account contract; target multi-account behavior is pending implementation and qualification.
 
 Connect and authenticate each AI independently:

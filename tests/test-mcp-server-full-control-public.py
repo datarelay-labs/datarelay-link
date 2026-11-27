@@ -425,14 +425,18 @@ class NativeFullControlPublicTests(unittest.TestCase):
             self.denied("server_exec", {"cwd": bad, "command": "pwd"})
         with patch.dict(os.environ, {"DRLINK_MCP_SERVER_DEFAULT_CWD": "/"}):
             self.assertEqual(self.allowed("get_server", {})["execution_context"],
-                             {"state": "not_authorized_or_unavailable"})
+                             {"state": "not_authorized_or_unavailable", "command_authorized":False,
+                              "note":"Command discovery only. File/process permissions are evaluated separately.",
+                              "os_access_verified":False})
             self.denied("server_exec", {"command": "pwd"})
             self.assertEqual(self.completed(self.allowed("server_exec", {
                 "cwd": str(self.root), "command": "pwd"}))["exit_status"], 0)
         self.cli("set", "permission-object", "hostinfo-only", "permissions", "host-info")
         self.cli("set", "ai-access", self.rule("other"), "permission", "hostinfo-only")
         self.assertEqual(self.allowed("get_server", {}, identity="other")["execution_context"],
-                         {"state": "not_authorized_or_unavailable"})
+                         {"state": "not_authorized_or_unavailable", "command_authorized":False,
+                              "note":"Command discovery only. File/process permissions are evaluated separately.",
+                              "os_access_verified":False})
         self.denied("server_run", {"argv": ["pwd"]}, identity="other")
 
     def test_public_argv_shell_receipts_and_audit(self):

@@ -6698,6 +6698,85 @@ class ControlPlane:
         except FullControlDenied:
             return []
 
+    def native_mcp_reader_ready(self) -> bool:
+        from drlink_mcp_full_control import _profile_accounts, execution_profile_status, FullControlDenied
+        import pwd
+        settings = self._native_mcp_runtime_settings()
+        if execution_profile_status(settings)["readiness"] != "Configured":
+            return False
+        try:
+            accounts = _profile_accounts(settings)
+            reader = settings.get("DRLINK_MCP_SERVER_READ_USER") or (
+                settings.get("DRLINK_MCP_SERVER_EXEC_USER") if "DRLINK_MCP_SERVER_EXEC_ACCOUNTS" not in settings else None)
+            return bool(reader in accounts and pwd.getpwnam(reader).pw_uid != 0)
+        except (FullControlDenied, KeyError):
+            return False
+
+    def native_mcp_account_details(self) -> list[dict]:
+        from drlink_mcp_full_control import _profile_accounts, execution_profile_status, FullControlDenied
+        import pwd
+        settings = self._native_mcp_runtime_settings()
+        if execution_profile_status(settings)["readiness"] != "Configured":
+            return []
+        try:
+            result = []
+            for name, entry in sorted(_profile_accounts(settings).items()):
+                user = pwd.getpwnam(name)
+                result.append({"account":name,"uid":user.pw_uid,
+                    "cwd":entry.get("cwd") or user.pw_dir,
+                    "roots":entry.get("roots") or settings["DRLINK_MCP_SERVER_ALLOWED_ROOTS"].split(os.pathsep)})
+            return result
+        except (FullControlDenied, KeyError, OSError):
+            return []
+
+    def native_mcp_grant_test(self, identity, permission, path=None) -> list[dict]:
+        """Resolve configured complete grants, not a live authenticated OS test."""
+        import drlink_v24 as v24
+        import drlink_mcp_full_control as full
+        settings = self._native_mcp_runtime_settings()
+        atoms = v24.expand_permissions(self, permission) if (
+            v24.get_permission_object(self, permission) or v24.get_permission_group(self, permission)) else {permission}
+        result = []
+        for atom in sorted(atoms):
+            if atom == "host-info":
+                allowed = v24.evaluate_ai_access_v24(self,identity=identity,destination="server:self",permission="host-info")["result"]=="ALLOW"
+                state = ("DENY" if not allowed else "NOT TESTED" if settings is None else
+                    "CONFIGURED" if settings.get("DRLINK_MCP_SERVER_SELF_ENABLED")=="1" else "DENY")
+                result.append({"permission":atom,"result":state,"reason":"Server-self endpoint; live call not tested"})
+                continue
+            if settings is None:
+                result.append({"permission":atom,"result":"NOT TESTED","reason":"Running Bridge configuration not verified"})
+                continue
+            try:
+                accounts = full.eligible_accounts(settings)
+                cap = v24.PERMISSION_TO_CAPS[atom][0]
+                if atom in v24.FILE_PERMISSIONS and not path:
+                    result.append({"permission":atom,"result":"NOT TESTED","reason":"Supply a concrete file path"})
+                    continue
+                # A supplied path denotes a file when testing a compound permission;
+                # test commands against their default cwd, not that file.
+                operand = path if atom in v24.FILE_PERMISSIONS or atom=="command-exec" and atoms=={"command-exec"} else None
+                def validate(name, patterns, value):
+                    try:
+                        account = accounts[name]
+                        if cap == "exec":
+                            full.allowed_cwd(value if value is not None else full.default_cwd(account),patterns,account)
+                        elif cap != "list_processes":
+                            full.allowed_path(value,patterns,account)
+                        return True
+                    except (full.FullControlDenied,OSError,ValueError,TypeError):
+                        return False
+                grant = v24.resolve_ai_execution_grant(self,identity=identity,destination="server:self",
+                    capability=cap,operand=operand,local_accounts=accounts,
+                    legacy_account=full.legacy_execution_account(settings),
+                    legacy_rule_ids=full.legacy_execution_rule_ids(settings),
+                    reader_account=full.reader_execution_account(accounts,settings),validate_operand=validate)
+                result.append({"permission":atom,"result":grant["action"],"reason":grant["reason_code"],
+                               "account":grant.get("account"),"choices":grant.get("accounts",[])})
+            except (full.FullControlDenied, OSError, ValueError, KeyError, TypeError, ControlPlaneError):
+                result.append({"permission":atom,"result":"DENY","reason":"Local execution profile unavailable"})
+        return result
+
     def _native_mcp_diagnostics(self) -> list[str]:
         status = self.native_mcp_runtime_status()
         lines = ["", "Native Server MCP (running Bridge)", "---------------------------------"]
@@ -6708,6 +6787,13 @@ class ControlPlane:
             lines.append("%-20s: %s" % (label, text))
         lines.append("Executor readiness  : %s" % status["readiness"])
         lines.append("Reason              : %s" % status["reason"])
+        for account in self.native_mcp_account_details():
+            lines.append("Account             : %s (UID %s)" % (account["account"], account["uid"]))
+            lines.append("  Default cwd       : " + account["cwd"])
+            lines.append("  Local roots       : " + ", ".join(account["roots"]))
+        if status["readiness"] == "Configured":
+            lines.append("Read-only reader    : " + ("Configured" if self.native_mcp_reader_ready() else "Unavailable (nonprivileged reader required)"))
+        lines.append("Live AI operation   : NOT TESTED by this diagnostic")
         lines.append("AI Access           : independently evaluated for every call")
         lines.append("Operator settings   : see docs/SERVER_NATIVE_MCP.md; explicit local opt-in required")
         return lines

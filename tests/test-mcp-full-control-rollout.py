@@ -166,6 +166,32 @@ class RolloutTests(unittest.TestCase):
             self.assertEqual(rollout._profile_environment(new)["DRLINK_MCP_SERVER_EXEC_USER"], "")
         self.assert_untouched()
 
+    def test_reviewed_replacement_can_remove_account_without_inheriting_legacy_grant(self):
+        self.installed_runtime()
+        target=self.layout.target(rollout.TARGETS[-1])
+        target.parent.mkdir(parents=True,exist_ok=True)
+        old_bytes=rollout.dropin(self.settings)
+        target.write_bytes(old_bytes)
+        old=rollout._profile_environment(self.settings)
+        user=self.account.pw_name
+        extra="root" if self.account.pw_uid else "nobody"
+        proposed=rollout.multi_account_profile([extra],["/"],True,
+            reader=extra if extra!="root" else None)
+        with patch.object(rollout,"running_profile_environment",return_value=old), \
+             patch.object(rollout,"read_legacy_rule_snapshot",return_value={"old":"a"*64}):
+            plan=rollout.prepare_profile_update(proposed,self.layout,replace=True)
+            self.assertTrue(plan["replacement"])
+            self.assertNotIn(user,plan["settings"]["exec_accounts"])
+            self.assertIsNone(plan["settings"]["legacy_account"])
+            self.assertEqual(plan["settings"]["legacy_rules"],{"old":""})
+            self.assertEqual(target.read_bytes(),old_bytes)
+            with patch.object(rollout,"verify_selected_worker"), \
+                 patch.object(rollout,"verify_installed_profile",side_effect=rollout.RolloutError("activation failure")):
+                with self.assertRaisesRegex(rollout.RolloutError,"rolled back"):
+                    rollout.configure_installed(plan["settings"],self.layout,reviewed=plan)
+            self.assertEqual(target.read_bytes(),old_bytes)
+        self.assert_untouched()
+
     def test_migration_rejects_omitted_old_account_and_stale_review(self):
         self.installed_runtime()
         target = self.layout.target(rollout.TARGETS[-1])

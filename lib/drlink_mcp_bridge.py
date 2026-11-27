@@ -1330,7 +1330,11 @@ class MCPBridge:
             if decision["action"] != "ALLOW":
                 if job_context is not None:
                     runtime.revoke(owner, arguments["job_id"])
-                raise full.FullControlDenied("AI Access: " + decision["reason_code"])
+                choices = decision.get("accounts") or []
+                hint = ("; choose an authorized run_as: " + ", ".join(choices)
+                        if decision["reason_code"] == "AMBIGUOUS_DEFAULT" and choices else
+                        "; check get_server execution_context and the reviewed AI Access Rule")
+                raise full.FullControlDenied("AI Access: " + decision["reason_code"] + hint)
             account = accounts[decision["account"]]
             patterns = list(decision["patterns"])
             if capability == "exec":
@@ -1379,7 +1383,9 @@ class MCPBridge:
     def _native_execution_context(self, principal, target: str) -> dict:
         """Expose only accounts with a complete command grant, not all local users."""
         import drlink_mcp_full_control as full
-        denied = {"state": "not_authorized_or_unavailable"}
+        denied = {"state": "not_authorized_or_unavailable", "command_authorized":False,
+                  "note":"Command discovery only. File/process permissions are evaluated separately.",
+                  "os_access_verified":False}
         try:
             accounts = full.eligible_accounts()
             def validate(account_name, patterns, value):
@@ -1399,7 +1405,9 @@ class MCPBridge:
                 if grant["action"] == "ALLOW":
                     choices.append({"account": name, "uid": account.uid, "home": account.home,
                                     "default_cwd": full.allowed_cwd(full.default_cwd(account), grant["patterns"], account),
-                                    "administrative": account.uid == 0})
+                                    "administrative": account.uid == 0,
+                                    "command_rule_paths":grant["patterns"],
+                                    "local_roots":list(account.roots)})
             default = resolve()
             if default["action"] != "ALLOW":
                 if choices:

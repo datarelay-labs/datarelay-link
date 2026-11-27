@@ -635,7 +635,7 @@ def _existing_profile_settings(values, previous_bytes):
     return previous
 
 
-def prepare_profile_update(settings, layout=Layout()):
+def prepare_profile_update(settings, layout=Layout(), *, replace=False):
     """Prepare a reviewed additive migration, retaining every old account's authority."""
     target = layout.target(TARGETS[-1])
     previous_state = state(target, layout)
@@ -649,8 +649,8 @@ def prepare_profile_update(settings, layout=Layout()):
     proposed = json.loads(json.dumps(settings))
     if "exec_accounts" in previous:
         existing = previous["exec_accounts"]
-        if previous.get("reader") != proposed.get("reader"):
-            raise RolloutError("Changing an existing read-only account requires explicit Rule migration; existing profile preserved")
+        if not replace and previous.get("reader") != proposed.get("reader"):
+            raise RolloutError("Changing an existing read-only account requires explicit profile replacement; existing profile preserved")
         if "legacy_account" in previous:
             proposed["legacy_account"] = previous["legacy_account"]
             proposed["legacy_rules"] = previous["legacy_rules"]
@@ -660,6 +660,24 @@ def prepare_profile_update(settings, layout=Layout()):
                            "roots": list(previous["roots"])}}
         proposed["legacy_account"] = name
         proposed["legacy_rules"] = read_legacy_rule_snapshot(layout)
+    if replace:
+        # A separately reviewed replacement may remove accounts or change roots.
+        # Never widen inherited singleton grants: invalidate their frozen grant
+        # when the former account's UID/cwd/roots changes or is removed.
+        legacy = proposed.get("legacy_account")
+        if legacy and legacy in existing:
+            prior = dict(existing[legacy])
+            prior.setdefault("roots", list(previous["roots"]))
+            current = proposed["exec_accounts"].get(legacy)
+            if current != prior:
+                proposed["legacy_rules"] = {key:"" for key in proposed.get("legacy_rules",{})}
+                if current is None:
+                    proposed["legacy_account"] = None
+        if previous.get("approval_identity"):
+            proposed["approval_identity"] = previous["approval_identity"]
+        return {"settings":proposed,"previous":previous_state,"migration":True,
+                "replacement":True,"previous_bytes":previous_bytes,"previous_values":previous_values,
+                "previous_settings":previous,"legacy_count":len(proposed.get("legacy_rules",{}))}
     for name, entry in existing.items():
         if name not in proposed["exec_accounts"]:
             raise RolloutError("Retain existing execution account '%s' during migration; no changes applied" % name)
@@ -785,6 +803,7 @@ def main(argv=None):
     parser.add_argument("--exec-user")
     parser.add_argument("--exec-account", action="append", default=[])
     parser.add_argument("--read-user")
+    parser.add_argument("--replace-profile", action="store_true", help="Review replacement of existing local accounts and roots")
     parser.add_argument("--allowed-root", action="append", default=[])
     parser.add_argument("--allow-root", action="store_true", help="Explicit opt-in for execution UID 0")
     parser.add_argument("--approval-ai-identity", help="Verified AI Identity shown in unbound OAuth operator commands (display only)")
@@ -808,9 +827,20 @@ def main(argv=None):
             if args.configure_installed:
                 if not sys.stdin.isatty() or not sys.stdout.isatty():
                     raise RolloutError("Installed execution setup requires a local interactive administrator")
-                reviewed = prepare_profile_update(settings)
+                if args.replace_profile and "exec_accounts" not in settings:
+                    raise RolloutError("Profile replacement requires explicit account selection")
+                reviewed = prepare_profile_update(settings, replace=args.replace_profile)
                 settings = reviewed["settings"]
-                if reviewed["migration"]:
+                if reviewed.get("replacement"):
+                    previous = reviewed["previous_settings"]
+                    old_accounts = previous.get("exec_accounts") or {previous["exec_user"]:{"uid":previous["uid"],"cwd":previous["roots"][0],"roots":previous["roots"]}}
+                    print("Previous approved local accounts:")
+                    for name, entry in old_accounts.items():
+                        print("  %s UID %s cwd %s roots %s" %
+                              (name, entry["uid"],entry.get("cwd"),", ".join(entry.get("roots",previous["roots"]))))
+                    print("Previous reader: " + str(previous.get("reader") or "not configured"))
+                    print("Replacement can change effective authority for existing This Server Rules. Review both local settings and affected Rules. Removed accounts are denied; changed legacy grants require explicit Rule review.")
+                elif reviewed["migration"]:
                     print("Existing accounts retain their exact local roots and default directories.")
                     print("Legacy Rule snapshots retained: %d; edited Rules need explicit account review." % reviewed["legacy_count"])
                 if "exec_accounts" in settings:
@@ -819,7 +849,7 @@ def main(argv=None):
                               (account, entry["uid"], entry["cwd"]))
                         print("  Approved roots: " + ", ".join(entry.get("roots", settings["roots"])))
                     print("Read-only executor: " + (settings.get("reader") or "not configured"))
-                    print("AI Access rules separately grant a subset and default; no AI rights are created.")
+                    print("AI Access Rules are unchanged. Changing local eligibility can change their effective authority.")
                 else:
                     print("Execution account: " + settings["exec_user"])
                 print("Allowed initial directories / file roots: " + ", ".join(settings["roots"]))

@@ -48,6 +48,8 @@ Keep existing tool names/argument compatibility, retain existing Managed Host tr
 
 ### Existing singleton profile migration
 
+Use the existing profile menu to add accounts while preserving existing scopes, or explicitly review replacement of accounts, paths and reader. A replacement shows previous and proposed settings and can change effective grants; removing an account denies its operations, and changing former singleton authority invalidates the inherited grant. The same activation/rollback procedure applies. Managed Hosts never require this local Server profile.
+
 The combined setup reviews the active managed profile against its exact local file and live Bridge settings. A reviewed additive migration pins the previous account's UID, default cwd and roots; additional accounts receive separately reviewed local roots. It retains only unchanged, previously effective Server-self legacy grants via a bounded fingerprint snapshot of rule identity, destination, permission capabilities and paths. Disabled or unverified legacy rules, edited rules and new management rules require explicit account binding. New accounts never inherit the previous grant. Existing local account scopes are not expanded by migration. Unrecognized external overrides or incompatible changes are refused without overwriting the previous profile. An activation failure restores the exact prior profile and verifies the running service. The legacy singleton environment value is cleared in a multi-account profile so an older native executor cannot silently substitute the previous default.
 
 ## Process and output contract

@@ -1982,6 +1982,17 @@ def handle_test(plane: ControlPlane, rest: list[str]) -> Optional[int]:
         }
         if "path" in kv:
             selectors["path"] = kv["path"]
-        sys.stdout.write(v24.format_policy_test("ai", evaluation, selectors))
+        rendered = v24.format_policy_test("ai", evaluation, selectors)
+        native = kv["destination"] == v24.SERVER_SELF_TARGET
+        if native:
+            rendered = rendered.replace("Readiness   :", "Policy readiness:").replace("Effective Result:", "Policy Result:")
+        sys.stdout.write(rendered)
+        if native:
+            sys.stdout.write("Configured execution grants (policy + local account + path):\n")
+            for grant in plane.native_mcp_grant_test(kv["source"],kv["permission"],kv.get("path")):
+                sys.stdout.write("  %s: %s (%s)%s\n" % (grant["permission"],grant["result"],grant["reason"],
+                                 " account="+grant["account"] if grant.get("account") else ""))
+            sys.stdout.write("Live OS execution: NOT TESTED (configured policy is not proof of successful execution).\n")
+            sys.stdout.write("Use system diagnostics mcp and an authenticated MCP operation to verify actual execution.\n")
         return 0
     return None

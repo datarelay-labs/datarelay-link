@@ -98,7 +98,7 @@ class WizardCancelAtomicty(unittest.TestCase):
                  "certificate": "VALID", "url": "https://mcp.example.test/mcp"}
         import drlink_mcp_tls as tls
         ready["certificate"] = tls.STATUS_VALID
-        for configured, answers, calls in ((False, ["1"], 1), (True, ["1", "n"], 0), (True, ["1", "y"], 1)):
+        for configured, answers, calls in ((False, ["1", "n"], 0), (False, ["1", "y"], 1), (True, ["1", "n"], 0), (True, ["1", "y"], 1)):
             set_wizard_io(ScriptedIO(answers))
             with mock.patch.object(cli, "_guide_mcp_server", return_value=0) as guide, \
                  mock.patch.object(tls, "status_view", return_value=ready), \

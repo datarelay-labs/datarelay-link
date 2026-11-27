@@ -125,6 +125,100 @@ class AiPathScopePublicParity(unittest.TestCase):
         self.assertEqual(v24.ai_rule_execution(row), {"default":"aella","accounts":["aella","root"]})
         self.assertIn("Default execution account", "".join(script.out))
 
+    def test_native_policy_test_distinguishes_policy_and_execution_grant(self):
+        import json
+        import pwd
+        from unittest.mock import patch
+        name=pwd.getpwuid(os.geteuid()).pw_name
+        v24.set_permission_object(self.plane,"command-only",permissions=["command-exec"],oneshot=True)
+        v24.set_ai_access_rule(self.plane,"native-diagnostic",source="bot",destination="server:self",
+            permission="command-only",execution={"default":name,"accounts":[name]},enabled=True,confirm=True)
+        settings={"DRLINK_MCP_SERVER_"+key:"1" for key in ("SELF_ENABLED","LOCAL_EXEC_ENABLED","FULL_CONTROL_ENABLED","ADMIN_ENABLED")}
+        settings["DRLINK_MCP_SERVER_ALLOWED_ROOTS"]=str(self.vendor)
+        settings["DRLINK_MCP_SERVER_EXEC_ACCOUNTS"]=json.dumps({name:{"uid":os.geteuid(),"cwd":str(self.vendor),"roots":[str(self.vendor)]}})
+        with patch.object(self.plane,"_native_mcp_runtime_settings",return_value=settings):
+            rc,out,err=self._run("test","ai-access","source","bot","destination","server:self","permission","command-only")
+            self.assertEqual(rc,0,err)
+            self.assertIn("Policy Result:\n  ALLOW",out)
+            self.assertIn("command-exec: DENY (NO_COMPLETE_EXECUTION_GRANT)",out)
+            self.assertIn("Live OS execution: NOT TESTED",out)
+            v24.set_ai_access_rule(self.plane,"native-diagnostic",paths=[self.vendor_glob],confirm=True)
+            rc,out,err=self._run("test","ai-access","source","bot","destination","server:self","permission","command-only")
+            self.assertEqual(rc,0,err)
+            self.assertIn("command-exec: ALLOW (ALLOWED) account="+name,out)
+            self.assertIn("Default cwd", "\n".join(self.plane._native_mcp_diagnostics()))
+
+    def test_native_readonly_without_reader_cancels_before_rule_creation(self):
+        from unittest.mock import patch
+        script=ScriptedIO(["bot","server:self","read-only",self.vendor_glob,"n"])
+        set_wizard_io(script)
+        with patch.object(self.plane,"native_mcp_reader_ready",return_value=False):
+            rc,out,err=self._run("set","ai-access","native-reader")
+        self.assertEqual(rc,0,err)
+        self.assertIn("nonprivileged reader","".join(script.out))
+        self.assertIsNone(self.plane.conn.execute("SELECT id FROM ai_policy_rules WHERE name='native-reader'").fetchone())
+
+    def test_native_command_only_wizard_includes_cwd_scope(self):
+        from unittest.mock import patch
+        v24.set_permission_object(self.plane,"command-only",permissions=["host-info","command-exec"],oneshot=True)
+        script=ScriptedIO(["bot","server:self","command-only",self.vendor_glob,"aella","y","1"])
+        set_wizard_io(script)
+        with patch.object(self.plane,"native_mcp_local_accounts",return_value=["aella"]):
+            rc,out,err=self._run("set","ai-access","native-command")
+        self.assertEqual(rc,0,err)
+        self.assertEqual(v24.resolve_ai_execution_grant(self.plane,identity="bot",
+            destination="server:self",capability="exec",local_accounts=["aella"],
+            operand=str(self.vendor))["action"],"ALLOW")
+
+    def test_missing_native_profile_never_saves_enabled_management_rule(self):
+        from unittest.mock import patch
+        v24.set_permission_object(self.plane,"command-only",permissions=["host-info","command-exec"],oneshot=True)
+        script=ScriptedIO(["bot","server:self","command-only",self.vendor_glob,"n"])
+        set_wizard_io(script)
+        with patch.object(self.plane,"native_mcp_local_accounts",return_value=[]):
+            rc,out,err=self._run("set","ai-access","missing-native")
+        self.assertIsNone(self.plane.conn.execute("SELECT id FROM ai_policy_rules WHERE name='missing-native'").fetchone())
+        self.assertIn("Configure Server execution now", "".join(script.out))
+
+    def test_native_rule_can_enter_same_server_setup_inline(self):
+        from unittest.mock import patch
+        v24.set_permission_object(self.plane,"command-only",permissions=["command-exec"],oneshot=True)
+        script=ScriptedIO(["bot","server:self","command-only",self.vendor_glob,"y","aella","y","1"])
+        set_wizard_io(script)
+        with patch.object(self.plane,"native_mcp_local_accounts",side_effect=[[],["aella"]]), \
+             patch("drlink_v24_wizard._configure_mcp_local_execution",return_value=0) as setup:
+            rc,out,err=self._run("set","ai-access","inline-native")
+        self.assertEqual(rc,0,err)
+        setup.assert_called_once()
+        row=self.plane.conn.execute("SELECT * FROM ai_policy_rules WHERE name='inline-native'").fetchone()
+        self.assertEqual(v24.ai_rule_execution(row),{"default":"aella","accounts":["aella"]})
+
+    def test_native_edit_shows_existing_and_proposed_accounts(self):
+        from unittest.mock import patch
+        v24.set_permission_object(self.plane,"command-only",permissions=["command-exec"],oneshot=True)
+        v24.set_ai_access_rule(self.plane,"native-edit",source="bot",destination="server:self",
+            permission="command-only",paths=[self.vendor_glob],
+            execution={"default":"aella","accounts":["aella","root"]},enabled=True,confirm=True)
+        script=ScriptedIO(["bot","server:self","command-only","","aella","n","y","1"])
+        set_wizard_io(script)
+        with patch.object(self.plane,"native_mcp_local_accounts",return_value=["aella","root"]):
+            rc,out,err=self._run("set","ai-access","native-edit")
+        self.assertEqual(rc,0,err)
+        rendered="".join(script.out)
+        self.assertIn("Before",rendered)
+        self.assertIn("Accounts : aella, root",rendered)
+        self.assertIn("Accounts : aella",rendered)
+        row=self.plane.conn.execute("SELECT * FROM ai_policy_rules WHERE name='native-edit'").fetchone()
+        self.assertEqual(v24.ai_rule_execution(row),{"default":"aella","accounts":["aella"]})
+
+    def test_full_management_default_paths_and_managed_no_account_prompt(self):
+        script=ScriptedIO(["bot","ubuntu-prod","Full management profile","","y","1"])
+        set_wizard_io(script)
+        rc,out,err=self._run("set","ai-access","managed-full")
+        self.assertEqual(rc,0,err)
+        self.assertEqual(v24.list_ai_policy_path_scopes(self.plane,"managed-full"),["/**"])
+        self.assertNotIn("Default execution account","".join(script.out))
+
     def test_managed_hosts_keep_central_policy_without_account_binding(self):
         v24.set_permission_object(self.plane,"ops",permissions=["host-info","command-exec"],oneshot=True)
         rc,out,err=self._run("set","ai-access","managed-ops","source","bot",

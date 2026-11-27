@@ -1066,10 +1066,12 @@ def run_ai_access_wizard(plane: ControlPlane, name: str, *, source_identity=None
     _emit(io, "AI Identity authenticates the client; an AI Access Rule grants its destination and permission.")
     _emit(io, "A Rule name is independent of the AI Identity name. Use a distinct Rule name for another destination.")
     previous_destination = None
+    previous_execution = None
     if existing:
         from drlink_v24_bundle import _ai_rule_view
         before = _ai_rule_view(plane, existing)
         previous_destination = before["destination"]
+        previous_execution = before.get("execution")
         session.before = {
             "Source": before["source"],
             "Destination": before["destination"],
@@ -1077,7 +1079,12 @@ def run_ai_access_wizard(plane: ControlPlane, name: str, *, source_identity=None
             "Paths": ", ".join(before["paths"]) or "-",
             "Enabled": "YES" if before["enabled"] else "NO",
         }
-        _emit(io, "Current destination: %s. Selecting another destination REPLACES it; create a new Rule to add another." % before["destination"])
+        if previous_execution:
+            session.before["Default account"] = previous_execution["default"]
+            session.before["Accounts"] = ", ".join(previous_execution["accounts"])
+            _emit(io, "This Server account-bound Rule cannot be converted to a Managed Host Rule. Create a separate Rule.")
+        else:
+            _emit(io, "Current destination: %s. Selecting another destination REPLACES it; create a new Rule to add another." % before["destination"])
     try:
         while True:
             session.inline.clear()
@@ -1129,6 +1136,9 @@ def run_ai_access_wizard(plane: ControlPlane, name: str, *, source_identity=None
                                       destinations + [trusted_label] + sorted(group_choices.values()), aliases=aliases)
             if destination == server_label:
                 destination = v24.SERVER_SELF_TARGET
+            if previous_execution and destination != v24.SERVER_SELF_TARGET:
+                _emit(io, "Create a separate Managed Host Rule; this account-bound Rule is unchanged.")
+                continue
             if destination in group_choices.values():
                 destination = next(key for key, label in group_choices.items() if label == destination)
                 if not _ask_yes_no(io, "Allow current and future trusted members of this Managed Host Group? Membership changes change access.", default=False):
@@ -1159,15 +1169,19 @@ def run_ai_access_wizard(plane: ControlPlane, name: str, *, source_identity=None
                 permission = choice
             paths: list[str] | None = None
             capabilities = _draft_permission_set(plane, session, permission)
-            if capabilities & v24.FILE_PERMISSIONS:
+            native = destination == v24.SERVER_SELF_TARGET
+            if capabilities & v24.FILE_PERMISSIONS or (native and "command-exec" in capabilities):
                 existing_paths = v24.list_ai_policy_path_scopes(plane, name) if existing is not None else []
-                default_paths = ",".join(existing_paths) if existing_paths else None
+                default_paths = ",".join(existing_paths) if existing_paths else (
+                    "/**" if existing is None and capabilities == set(v24.PERMISSIONS) else None)
                 def valid_scope(value):
                     patterns = v24.parse_ai_paths_field(value)
                     from drlink_control_plane import windows_absolute_path
                     def valid_pattern(p):
                         if p.startswith("/"):
                             return ".." not in p.split("/")
+                        if native:
+                            return False
                         base = p.replace(chr(92), "/")
                         if base.endswith("/**"):
                             base = base[:-3]
@@ -1180,7 +1194,8 @@ def run_ai_access_wizard(plane: ControlPlane, name: str, *, source_identity=None
                 examples = "All files: /**; specific directory: /home/**; multiple directories: /home/**,/opt/**"
                 _emit(io, examples)
                 _emit(io, "Path scopes restrict file operations; OS permissions and execution controls still apply.")
-                raw_paths = _ask_text(io, "Path scopes (required for file permissions)",
+                raw_paths = _ask_text(io, "Path scopes (file access and initial command directory)" if native else
+                                      "Path scopes (required for file permissions)",
                                       default=default_paths, validate=valid_scope,
                                       help_text=examples)
                 paths = v24.parse_ai_paths_field(raw_paths)
@@ -1188,19 +1203,44 @@ def run_ai_access_wizard(plane: ControlPlane, name: str, *, source_identity=None
             management = bool(capabilities & {"command-exec", "file-write", "file-upload", "file-download"})
             if destination == v24.SERVER_SELF_TARGET and management:
                 eligible = plane.native_mcp_local_accounts()
+                if not eligible:
+                    if not _ask_yes_no(io, "Configure Server execution now? Required for This Server management", default=False):
+                        raise WizardCancelled()
+                    if _configure_mcp_local_execution(plane, io) != 0:
+                        raise ControlPlaneError("Server execution setup failed; no Rule was applied.")
+                    eligible = plane.native_mcp_local_accounts()
+                    if not eligible:
+                        raise ControlPlaneError("Server execution is not verified; no Rule was applied.")
+                    _emit(io, "Server execution configured separately; cancelling the Rule does not undo that local configuration.")
                 if eligible:
                     default_account = _ask_choice(io, "Default execution account", eligible)
                     extra = []
                     for account in eligible:
                         if account != default_account and _ask_yes_no(
-                                io, "Also allow execution as %s?" % account, default=False):
+                                io, "Also allow execution as %s?" % account,
+                                default=bool(previous_execution and account in previous_execution["accounts"])):
                             extra.append(account)
                     execution = v24.normalize_ai_execution_binding({
                         "default": default_account, "accounts": [default_account, *extra]})
                     if "root" in execution["accounts"]:
                         _emit(io, "Root grants full OS administrative authority, including modification of Data Relay Link.")
-                else:
-                    _emit(io, "Local execution accounts are not verified. Configure MCP Server execution before using this Rule.")
+                    if "command-exec" in capabilities:
+                        # An explicitly scoped Rule may not include the local
+                        # account's default directory. Do not silently widen it.
+                        from drlink_control_plane import path_allowed
+                        details = {item["account"]:item for item in plane.native_mcp_account_details()}
+                        info = details.get(default_account)
+                        if info and not path_allowed(info["cwd"], paths or []):
+                            _emit(io, "Default cwd %s is outside this Rule. Commands without an explicit approved cwd will be denied." % info["cwd"])
+                            if not _ask_yes_no(io, "Keep this intentional explicit-cwd-only Rule?", default=False):
+                                continue
+            if native and not management and capabilities & {"process-read", "file-read"}:
+                if not plane.native_mcp_reader_ready():
+                    _emit(io, "Read-only file/process access needs a nonprivileged reader. A root-only profile cannot provide it.")
+                    if not _ask_yes_no(io, "Configure Server execution now to select a reader?", default=False):
+                        raise WizardCancelled()
+                    if _configure_mcp_local_execution(plane, io) != 0 or not plane.native_mcp_reader_ready():
+                        raise ControlPlaneError("Nonprivileged reader is not verified; no Rule was applied.")
             if "command-exec" in capabilities:
                 _emit(io, "Command execution uses the target OS account and is not a filesystem sandbox. Review the target execution controls.")
             enabled = _ask_yes_no(io, "Enabled", default=True)
@@ -1222,6 +1262,8 @@ def run_ai_access_wizard(plane: ControlPlane, name: str, *, source_identity=None
                 "Enabled     : %s" % ("YES" if enabled else "NO"),
             ]
             if execution is not None:
+                session.draft["Default account"] = execution["default"]
+                session.draft["Accounts"] = ", ".join(execution["accounts"])
                 review_lines.extend(["Default account: " + execution["default"],
                                      "Accounts: " + ", ".join(execution["accounts"])])
             review_lines.insert(0, "Operation   : %s Rule" % ("UPDATE existing" if existing is not None else "CREATE new"))
@@ -1282,7 +1324,7 @@ def _external_ai_connection(plane, name, io, provider):
         if not _cloud_mcp_ready(view):
             if not _ask_yes_no(io, "Public MCP TLS is not ready. Configure MCP Server now?", default=False):
                 raise WizardCancelled()
-            if _guide_mcp_server(plane, io=io) != 0:
+            if _guided_mcp_configuration(plane, io) != 0:
                 return 1
             view = tls.status_view(plane, plane.root)
             if not _cloud_mcp_ready(view):
@@ -1367,10 +1409,18 @@ def _configure_mcp_local_execution(plane, io):
             return "Execution account does not exist."
         return None
     previous = plane.native_mcp_local_accounts()
+    replace = False
+    if previous:
+        replace = _ask_choice(io, "Existing Server execution profile",
+            ["Add accounts (preserve existing scopes)", "Replace accounts and paths (review effective Rule impact)"]) == "Replace accounts and paths (review effective Rule impact)"
     users = _ask_text(io, "Eligible OS accounts (comma separated)",
                       default=",".join(previous) or None, validate=valid_users).split(",")
-    roots = _ask_text(io, "Direct file roots / initial directories (colon separated)", default="/")
+    old_roots = sorted({root for item in plane.native_mcp_account_details() for root in item["roots"]})
+    roots = _ask_text(io, "Direct file roots / initial directories (colon separated)",
+                      default=":".join(old_roots) or "/")
     argv = [sys.executable, "/usr/local/lib/drlink/operator-native-mcp-full-control.py", "--configure-installed"]
+    if replace:
+        argv.append("--replace-profile")
     for user in users:
         argv.extend(["--exec-account", user])
     for path in roots.split(":"):
@@ -1380,40 +1430,32 @@ def _configure_mcp_local_execution(plane, io):
         reader = normal[0] if len(normal) == 1 else _ask_choice(io, "Read-only executor", normal)
         argv.extend(["--read-user", reader])
     if any(pwd.getpwnam(user).pw_uid == 0 for user in users):
-        if not _ask_yes_no(io, "Permit explicitly granted administrative UID 0 execution?", default=False):
-            raise WizardCancelled()
+        _emit(io, "Administrative UID 0 requires explicit approval at the reviewed activation step.")
         argv.append("--allow-root")
     return subprocess.run(argv, check=False).returncode
 
 
-def run_mcp_server_setup(plane: ControlPlane) -> int:
-    """One guided connectivity and execution workflow; identity/policy remain separate."""
-    from drlink_control_cli import _guide_mcp_server, dispatch
+def _guided_mcp_configuration(plane, io):
+    from drlink_control_cli import _guide_mcp_server
     import drlink_mcp_tls as tls
-    if not wizard_available():
-        raise ControlPlaneError("MCP Server Settings requires a TTY session. No changes were applied.")
-    io = _io()
-    tls_completed = False
+    rc = _guide_mcp_server(plane, io=io)
+    if rc:
+        return rc
+    view = tls.status_view(plane, plane.root)
+    if not (view.get("frontend_available") and view.get("certificate") in (tls.STATUS_VALID, tls.STATUS_RENEWAL_DUE)
+            and str(view.get("url","")).startswith("https://")):
+        _emit(io, "MCP endpoint is not ready. Server execution was not changed.")
+        return 0
+    status = plane.native_mcp_runtime_status()
+    _emit(io, "Server execution: %s (%s)" % (status["readiness"], status["reason"]))
+    configured = status["readiness"] == "Configured" and status.get("full")
     try:
-        choice = _ask_choice(io, "MCP Server Settings", ["Configure endpoint, TLS and Server execution", "Diagnostics"])
-        if choice == "Diagnostics":
-            return dispatch(["system", "diagnostics", "mcp"], root=plane.root, plane=plane)
-        rc = _guide_mcp_server(plane, io=io)
-        if rc:
-            return rc
-        view = tls.status_view(plane, plane.root)
-        if not (view.get("frontend_available") and view.get("certificate") in (tls.STATUS_VALID, tls.STATUS_RENEWAL_DUE) and str(view.get("url","")).startswith("https://")):
-            _emit(io, "MCP endpoint is not ready. Server execution was not changed.")
+        prompt = ("Change existing Server execution profile?" if configured else
+                  "Configure execution on This Server now? Optional for Managed Host-only access")
+        if not _ask_yes_no(io, prompt, default=False):
+            _emit(io, "Existing execution profile retained." if configured else
+                  "Server execution not changed. Managed Host access uses central AI Access only.")
             return 0
-        tls_completed = True
-        status = plane.native_mcp_runtime_status()
-        _emit(io, "Server execution: %s (%s)" % (status["readiness"], status["reason"]))
-        configured = status["readiness"] == "Configured" and status.get("full")
-        if configured and not _ask_yes_no(io, "Change existing Server execution profile?", default=False):
-            _emit(io, "Existing execution profile retained.")
-            return 0
-        if not configured:
-            _emit(io, "Configure the Server execution account and roots now. Activation requires explicit approval; cancel to keep it disabled.")
         rc = _configure_mcp_local_execution(plane, io)
         status = plane.native_mcp_runtime_status()
         _emit(io, "Server execution: %s (%s)" % (status["readiness"], status["reason"]))
@@ -1421,10 +1463,23 @@ def run_mcp_server_setup(plane: ControlPlane) -> int:
             _emit(io, "Server execution is not confirmed ready. Use system diagnostics mcp.")
         return rc
     except (WizardCancelled, KeyboardInterrupt, EOFError):
-        if tls_completed:
-            _emit(io, "MCP TLS settings retained. No further execution changes were applied.")
-        else:
-            sys.stdout.write(_cancel_message())
+        _emit(io, "MCP TLS settings retained. No further execution changes were applied.")
+        return 0
+
+
+def run_mcp_server_setup(plane: ControlPlane) -> int:
+    """One shared connectivity and optional Server execution workflow."""
+    from drlink_control_cli import dispatch
+    if not wizard_available():
+        raise ControlPlaneError("MCP Server Settings requires a TTY session. No changes were applied.")
+    io = _io()
+    try:
+        choice = _ask_choice(io, "MCP Server Settings", ["Configure endpoint, TLS and Server execution", "Diagnostics"])
+        if choice == "Diagnostics":
+            return dispatch(["system", "diagnostics", "mcp"], root=plane.root, plane=plane)
+        return _guided_mcp_configuration(plane, io)
+    except (WizardCancelled, KeyboardInterrupt, EOFError):
+        sys.stdout.write(_cancel_message())
         return 0
 
 

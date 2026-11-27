@@ -145,19 +145,21 @@ def _profile_accounts(settings) -> dict:
     return entries
 
 
-def legacy_execution_account() -> str | None:
-    if "DRLINK_MCP_SERVER_EXEC_ACCOUNTS" in os.environ:
-        name = os.environ.get("DRLINK_MCP_SERVER_LEGACY_ACCOUNT")
-        return name if name and name in _profile_accounts(os.environ) else None
-    return os.environ.get("DRLINK_MCP_SERVER_EXEC_USER") or None
+def legacy_execution_account(settings=None) -> str | None:
+    settings = os.environ if settings is None else settings
+    if "DRLINK_MCP_SERVER_EXEC_ACCOUNTS" in settings:
+        name = settings.get("DRLINK_MCP_SERVER_LEGACY_ACCOUNT")
+        return name if name and name in _profile_accounts(settings) else None
+    return settings.get("DRLINK_MCP_SERVER_EXEC_USER") or None
 
 
-def legacy_execution_rule_ids() -> dict[str, str] | None:
+def legacy_execution_rule_ids(settings=None) -> dict[str, str] | None:
     """Frozen legacy grants; None means the unchanged singleton runtime."""
-    if "DRLINK_MCP_SERVER_EXEC_ACCOUNTS" not in os.environ:
+    settings = os.environ if settings is None else settings
+    if "DRLINK_MCP_SERVER_EXEC_ACCOUNTS" not in settings:
         return None
     try:
-        ids = json.loads(os.environ.get("DRLINK_MCP_SERVER_LEGACY_RULE_IDS", "{}") or "{}")
+        ids = json.loads(settings.get("DRLINK_MCP_SERVER_LEGACY_RULE_IDS", "{}") or "{}")
         if (not isinstance(ids, dict) or len(ids) > 256 or
                 any(not isinstance(key, str) or not key or not isinstance(value, str)
                     or (value and (len(value) != 64 or any(c not in "0123456789abcdef" for c in value)))
@@ -168,14 +170,15 @@ def legacy_execution_rule_ids() -> dict[str, str] | None:
         raise FullControlDenied("Invalid migrated execution rule scope") from None
 
 
-def configured_account(name: str | None = None) -> Account:
+def configured_account(name: str | None = None, *, settings=None) -> Account:
+    settings = os.environ if settings is None else settings
     required = ("DRLINK_MCP_SERVER_SELF_ENABLED", "DRLINK_MCP_SERVER_LOCAL_EXEC_ENABLED",
                 "DRLINK_MCP_SERVER_FULL_CONTROL_ENABLED")
-    if any(os.environ.get(key) != "1" for key in required):
+    if any(settings.get(key) != "1" for key in required):
         raise FullControlDenied("Native full-control profile is not enabled")
-    entries = _profile_accounts(os.environ)
-    if name is None and "DRLINK_MCP_SERVER_EXEC_ACCOUNTS" not in os.environ:
-        name = legacy_execution_account()
+    entries = _profile_accounts(settings)
+    if name is None and "DRLINK_MCP_SERVER_EXEC_ACCOUNTS" not in settings:
+        name = legacy_execution_account(settings)
     if name is None or name not in entries:
         raise FullControlDenied("Execution account not locally approved")
     spec = entries[name]
@@ -185,9 +188,9 @@ def configured_account(name: str | None = None) -> Account:
         raise FullControlDenied("Configured execution account does not exist") from None
     if spec["uid"] is not None and spec["uid"] != entry.pw_uid:
         raise FullControlDenied("Configured execution account UID changed")
-    if entry.pw_uid == 0 and os.environ.get("DRLINK_MCP_SERVER_ADMIN_ENABLED") != "1":
+    if entry.pw_uid == 0 and settings.get("DRLINK_MCP_SERVER_ADMIN_ENABLED") != "1":
         raise FullControlDenied("Administrative account requires explicit local operator opt-in")
-    raw = os.environ.get("DRLINK_MCP_SERVER_ALLOWED_ROOTS", "")
+    raw = settings.get("DRLINK_MCP_SERVER_ALLOWED_ROOTS", "")
     if not raw:
         raise FullControlDenied("Native allowed roots are not configured")
     roots = []
@@ -213,19 +216,21 @@ def configured_account(name: str | None = None) -> Account:
     return account
 
 
-def eligible_accounts() -> dict[str, Account]:
+def eligible_accounts(settings=None) -> dict[str, Account]:
     """Only locally configured, currently resolvable and launchable accounts."""
+    settings = os.environ if settings is None else settings
     result = {}
-    for name in _profile_accounts(os.environ):
+    for name in _profile_accounts(settings):
         try:
-            result[name] = configured_account(name)
+            result[name] = configured_account(name, settings=settings)
         except (FullControlDenied, OSError):
             continue
     return result
 
 
-def reader_execution_account(accounts: dict[str, Account]) -> str | None:
-    reader = os.environ.get("DRLINK_MCP_SERVER_READ_USER")
+def reader_execution_account(accounts: dict[str, Account], settings=None) -> str | None:
+    settings = os.environ if settings is None else settings
+    reader = settings.get("DRLINK_MCP_SERVER_READ_USER")
     if reader in accounts and accounts[reader].uid != 0:
         return reader
     return None
