@@ -369,6 +369,14 @@ SERVER_ARGUMENT_SCHEMAS = {
     entry[0]: dict(_input_schema(entry[3]), additionalProperties=False)
     for entry in TOOL_DEFS if entry[0] in SERVER_TOOLS
 }
+_NATIVE_ACCOUNT_TOOLS = frozenset({"server_run", "server_exec", "server_git",
+                                   "server_read_file", "server_write_file", "server_delete_file"})
+_ACCOUNT_ALIASES = frozenset({"exec", "read_file", "write_file", "delete_file",
+                               "upload_file", "download_file", "list_processes"})
+_RUN_AS_SCHEMA = {"type": "string", "minLength": 1,
+                  "description": "Optional approved OS account. Omit for the rule default; use get_server to discover authorized accounts. Never retry as root just because a command failed."}
+for _name in _NATIVE_ACCOUNT_TOOLS:
+    SERVER_ARGUMENT_SCHEMAS[_name]["properties"]["run_as"] = dict(_RUN_AS_SCHEMA)
 
 
 def _server_argument_error(name: str, arguments: dict) -> Optional[str]:
@@ -544,6 +552,9 @@ def _structured_result(data, *, text: Optional[str] = None, is_error: bool = Fal
 def _tool_descriptor(name: str, title: str, desc: str, props: dict, annotations: dict) -> dict:
     input_schema = (json.loads(json.dumps(SERVER_ARGUMENT_SCHEMAS[name]))
                     if name in SERVER_ARGUMENT_SCHEMAS else _input_schema(props))
+    if name in _ACCOUNT_ALIASES:
+        input_schema["properties"]["run_as"] = dict(_RUN_AS_SCHEMA, description=
+            _RUN_AS_SCHEMA["description"] + " Currently supported for server:self only.")
     return {
         "name": name,
         "title": title,
@@ -1274,28 +1285,56 @@ class MCPBridge:
             argument_error = _server_argument_error(name, arguments)
             if argument_error:
                 raise full.FullControlDenied(argument_error)
-            account = full.configured_account()
             owner = str(principal["id"] or "")
             runtime = self._full_control_runtime(full)
             operation = aliases.get(name, name)
+            accounts = full.eligible_accounts()
+            requested = arguments.get("run_as")
+            if "run_as" in arguments and (not isinstance(requested, str) or not requested):
+                raise full.FullControlDenied("Invalid execution account")
+            grant_rule = None
+            job_context = None
             if name in job_tools:
-                operand = runtime.context(owner, str(arguments.get("job_id") or ""))
+                if "run_as" in arguments:
+                    raise full.FullControlDenied("Job account cannot be overridden")
+                job_context = runtime.grant_context(owner, str(arguments.get("job_id") or ""))
+                operand = job_context["cwd"]
+                requested = job_context["account"]
+                grant_rule = job_context["rule_id"]
                 capability = "exec"
             elif name in command_tools:
-                operand = str(arguments["cwd"] if "cwd" in arguments else full.default_cwd(account))
+                operand = arguments["cwd"] if "cwd" in arguments else None
                 capability = "exec"
             elif operation in full.FILE_ACTIONS:
                 operand = str(arguments.get("path") or "")
                 capability = operation
             else:
                 raise full.FullControlDenied("Unsupported full-control operation")
-            decision = self._authorize(principal, target, capability, operand or None)
+            def validate_operand(account_name, patterns, value):
+                try:
+                    account = accounts[account_name]
+                    if capability == "exec":
+                        full.allowed_cwd(value if value is not None else full.default_cwd(account),
+                                         patterns, account)
+                    elif capability in full.FILE_ACTIONS and capability != "list_processes":
+                        full.allowed_path(value, patterns, account)
+                    return True
+                except (full.FullControlDenied, OSError, ValueError, TypeError, KeyError):
+                    return False
+
+            decision = v24.resolve_ai_execution_grant(
+                self.plane, identity=principal["name"], destination=target, capability=capability,
+                operand=operand, run_as=requested, local_accounts=accounts,
+                legacy_account=full.legacy_execution_account(), rule_id=grant_rule,
+                validate_operand=validate_operand)
             if decision["action"] != "ALLOW":
-                raise full.FullControlDenied(
-                    "AI Access path scope denied" if decision.get("path_ok") is False and decision.get("matched_rules")
-                    else "AI Access implicit DENY")
-            patterns = list(decision.get("patterns") or [])
+                if job_context is not None:
+                    runtime.revoke(owner, arguments["job_id"])
+                raise full.FullControlDenied("AI Access: " + decision["reason_code"])
+            account = accounts[decision["account"]]
+            patterns = list(decision["patterns"])
             if capability == "exec":
+                operand = operand if operand is not None else full.default_cwd(account)
                 # Initial working directory authorization is not a sandbox for
                 # a general shell. Full-control grants the selected account's
                 # real OS authority; both fact and user are explicit in tools.
@@ -1303,7 +1342,9 @@ class MCPBridge:
                 if name in command_tools:
                     options = dict(arguments)
                     options["cwd"] = canonical_cwd
-                    payload = runtime.start(owner, options, patterns, git=name == "server_git")
+                    options.pop("run_as", None)
+                    payload = runtime.start(owner, options, patterns, git=name == "server_git",
+                                            account_name=account.name, grant_rule=decision["winner"]["id"])
                 elif name == "server_job_poll":
                     payload = runtime.poll(owner, arguments["job_id"],
                                            stdout_cursor=arguments.get("stdout_cursor", 0),
@@ -1315,14 +1356,20 @@ class MCPBridge:
                 else:
                     payload = runtime.stop(owner, arguments["job_id"])
             else:
-                payload = full.execute_file_action(operation, dict(arguments), patterns)
+                options = dict(arguments)
+                options.pop("run_as", None)
+                payload = full.execute_file_action(operation, options, patterns, account_name=account.name)
             result = "ALLOW"
         except (full.FullControlDenied, OSError, ValueError, TypeError, KeyError,
                 ControlPlaneError) as exc:
             failure = str(exc)
+        audit_operand = operand or ""
+        if decision and decision.get("account"):
+            selected = accounts[decision["account"]]
+            audit_operand = "account=%s uid=%s %s" % (selected.name, selected.uid, audit_operand)
         self.plane.record_ai_activity(
             principal=principal["name"], endpoint=target, capability=name, result=result,
-            rule=self._rule_name(decision), operand=operand or None,
+            rule=self._rule_name(decision), operand=audit_operand or None,
             duration_ms=int((time.monotonic() - started) * 1000),
         )
         if result != "ALLOW":
@@ -1330,27 +1377,41 @@ class MCPBridge:
         return _structured_result(payload)
 
     def _native_execution_context(self, principal, target: str) -> dict:
-        """Expose only the current identity's approved legacy execution context.
-
-        Configured scope is not proof of live OS access. No policy changes or
-        arbitrary command probes are made by discovery.
-        """
+        """Expose only accounts with a complete command grant, not all local users."""
         import drlink_mcp_full_control as full
         denied = {"state": "not_authorized_or_unavailable"}
         try:
-            decision = self._authorize(principal, target, "exec")
-            if decision["action"] != "ALLOW":
+            accounts = full.eligible_accounts()
+            def validate(account_name, patterns, value):
+                try:
+                    full.allowed_cwd(full.default_cwd(accounts[account_name]), patterns, accounts[account_name])
+                    return True
+                except (full.FullControlDenied, OSError, ValueError, KeyError):
+                    return False
+            def resolve(requested=None):
+                return v24.resolve_ai_execution_grant(
+                    self.plane, identity=principal["name"], destination=target, capability="exec",
+                    run_as=requested, local_accounts=accounts, legacy_account=full.legacy_execution_account(),
+                    validate_operand=validate)
+            choices = []
+            for name, account in accounts.items():
+                grant = resolve(name)
+                if grant["action"] == "ALLOW":
+                    choices.append({"account": name, "uid": account.uid, "home": account.home,
+                                    "default_cwd": full.allowed_cwd(full.default_cwd(account), grant["patterns"], account),
+                                    "administrative": account.uid == 0})
+            default = resolve()
+            if default["action"] != "ALLOW":
+                if choices:
+                    return {"state": default["reason_code"], "accounts": choices,
+                            "command_authorized": True, "os_access_verified": False}
                 return denied
-            account = full.configured_account()
-            patterns = list(decision.get("patterns") or [])
-            cwd = full.allowed_cwd(full.default_cwd(account), patterns, account)
-            return {"state": "configured", "default_account": account.name,
-                    "uid": account.uid, "default_cwd": cwd,
-                    "administrative": account.uid == 0,
-                    "command_authorized": True,
-                    "os_access_verified": False}
-        except (full.FullControlDenied, OSError, ValueError, TypeError, KeyError,
-                ControlPlaneError):
+            account = accounts[default["account"]]
+            return {"state": "configured", "default_account": account.name, "uid": account.uid,
+                    "default_cwd": full.allowed_cwd(full.default_cwd(account), default["patterns"], account),
+                    "administrative": account.uid == 0, "accounts": choices,
+                    "command_authorized": True, "os_access_verified": False}
+        except (full.FullControlDenied, OSError, ValueError, TypeError, KeyError, ControlPlaneError):
             return denied
 
     def _call_server_self(self, principal, name: str, arguments: dict) -> dict:
@@ -1358,6 +1419,8 @@ class MCPBridge:
         if (os.environ.get("DRLINK_MCP_SERVER_FULL_CONTROL_ENABLED") == "1"
                 and name not in ("get_server", "get_system_info")):
             return self._call_server_full(principal, name, arguments)
+        if "run_as" in arguments:
+            return _text_result("DENY: execution account selection is unavailable on the restricted Server executor", is_error=True)
         target = v24.SERVER_SELF_TARGET
         start = time.monotonic()
         local_actions = {
@@ -1485,6 +1548,8 @@ class MCPBridge:
         endpoint = str(arguments.get("endpoint") or arguments.get("host") or "")
         if endpoint == v24.SERVER_SELF_TARGET:
             return self._call_server_self(principal, name, arguments)
+        if "run_as" in arguments:
+            return _text_result("DENY: execution account selection is unavailable on this Managed Host executor", is_error=True)
         if not endpoint:
             raise ControlPlaneError("endpoint is required")
         operand = arguments.get("path") or arguments.get("command") or arguments.get("operand")

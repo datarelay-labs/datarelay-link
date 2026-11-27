@@ -368,6 +368,10 @@ def resolve_permission_ref(plane_db, token: str) -> tuple[str, sqlite3.Row]:
 
 def ensure_v2_schema(conn: sqlite3.Connection) -> None:
     conn.executescript(V2_SCHEMA_SQL)
+    # NULL is a legacy singleton binding, never a wildcard account grant.
+    ai_rule_cols = {str(r[1]) for r in conn.execute("PRAGMA table_info(ai_policy_rules)")}
+    if "execution_json" not in ai_rule_cols:
+        conn.execute("ALTER TABLE ai_policy_rules ADD COLUMN execution_json TEXT")
     # Additive identity column for Managed Host Remote Service destinations.
     meta_cols = {str(r[1]) for r in conn.execute("PRAGMA table_info(remote_service_meta)")}
     if "destination_client_id" not in meta_cols:
@@ -1757,10 +1761,11 @@ def _enabled_rule_fingerprints(conn: sqlite3.Connection, plane: str) -> set[str]
                     paths.append(str(prow["pattern"]))
             except sqlite3.Error:
                 paths = []
-            out.add(
-                "ai|%s|src=%s|dst=%s|perm=%s|paths=%s"
-                % (row["name"], src, dst, perm, ",".join(paths) or "-")
-            )
+            fingerprint = "ai|%s|src=%s|dst=%s|perm=%s|paths=%s" % (
+                row["name"], src, dst, perm, ",".join(paths) or "-")
+            if "execution_json" in row.keys() and row["execution_json"] is not None:
+                fingerprint += "|execution=" + str(row["execution_json"])
+            out.add(fingerprint)
         return out
 
     rows = conn.execute(
@@ -4800,6 +4805,31 @@ def enroll_managed_host_in_owner_mcp_access(plane_db, client_id: str) -> dict:
     )
 
 
+def normalize_ai_execution_binding(value: dict) -> dict:
+    """Validate exact, case-sensitive OS account names and one explicit default."""
+    if not isinstance(value, dict) or set(value) != {"default", "accounts"}:
+        raise ControlPlaneError("Execution requires default and accounts")
+    accounts = value["accounts"]
+    default = value["default"]
+    if (not isinstance(accounts, list) or not accounts or len(accounts) > 128
+            or any(not isinstance(name, str) or not re.fullmatch(r"[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}[$]?", name)
+                   for name in accounts)
+            or len(set(accounts)) != len(accounts)
+            or not isinstance(default, str) or default not in accounts):
+        raise ControlPlaneError("Execution requires unique exact accounts and an allowed default")
+    return {"default": default, "accounts": sorted(accounts)}
+
+
+def ai_rule_execution(row) -> Optional[dict]:
+    raw = row["execution_json"]
+    if raw is None:
+        return None
+    try:
+        return normalize_ai_execution_binding(json.loads(raw))
+    except (ValueError, TypeError):
+        raise ControlPlaneError("Invalid stored AI execution binding") from None
+
+
 def set_ai_access_rule(
     plane_db,
     name: str,
@@ -4809,6 +4839,7 @@ def set_ai_access_rule(
     destination: Optional[str] = None,
     permission: Optional[str] = None,
     paths: Optional[list[str]] = None,
+    execution: Optional[dict] = None,
     enabled: Optional[bool] = None,
     oneshot: bool = False,
     confirm: Optional[bool] = None,
@@ -4817,6 +4848,8 @@ def set_ai_access_rule(
     existing = plane_db.conn.execute(
         "SELECT * FROM ai_policy_rules WHERE name = ? COLLATE NOCASE", (name,)
     ).fetchone()
+    if execution is not None:
+        execution = normalize_ai_execution_binding(execution)
     if oneshot and existing is None:
         missing = []
         if source is None:
@@ -4919,6 +4952,11 @@ def set_ai_access_rule(
         # empty) replaces. Create with omit leaves scopes empty (fail-closed).
         if paths is not None:
             _replace_ai_policy_path_scopes(plane_db, rule_id, paths)
+        if execution is not None:
+            plane_db.conn.execute(
+                "UPDATE ai_policy_rules SET execution_json=?, row_version=row_version+1, updated_at=? WHERE id=?",
+                (json.dumps(execution, sort_keys=True, separators=(",", ":")), now, rule_id),
+            )
         return {"entity": {"type": "ai-access", "id": rule_id, "name": name}, "operation": op}
 
     impact = None
@@ -4941,12 +4979,26 @@ def set_ai_access_rule(
             enabled=enabled,
         )
 
+    # Account selection is an authority-bearing rule change, even when all
+    # existing selectors remain unchanged. Require the usual reviewed apply.
+    if execution is not None and (existing is None or ai_rule_execution(existing) != execution):
+        if enabled is not False and (existing is None or enabled is True or bool(existing["enabled"])):
+            impact = {
+                "access_broadened": True, "access_narrowed": False,
+                "requires_confirmation": True,
+                "warning": "Review AI Access execution accounts and actual OS authority.",
+                "affected_rules": [name],
+                "before": "Previous execution binding",
+                "after": "Explicit accounts: " + ", ".join(execution["accounts"]),
+            }
     return plane_db._mutate(
         "set ai-access %s" % name,
         "set ai access rule",
         write,
         impact=impact,
         confirm=confirm,
+        expected={"rows": [("ai_policy_rules", existing["id"], existing["row_version"])]}
+                 if existing is not None and execution is not None else None,
     )
 
 
@@ -5416,6 +5468,79 @@ def _path_scopes_for_rules(plane_db, rule_rows) -> list[str]:
     return patterns
 
 
+def resolve_ai_execution_grant(
+    plane_db, *, identity: str, destination: str, capability: str,
+    local_accounts, run_as: Optional[str] = None, operand: Optional[str] = None,
+    legacy_account: Optional[str] = None, rule_id: Optional[str] = None,
+    validate_operand=None,
+) -> dict:
+    """Resolve a complete capability/account/path grant; no cross-rule union.
+
+    local_accounts and legacy_account originate from the target executor, never
+    MCP arguments. legacy_account may only represent a previously approved
+    singleton. An omitted command operand is discovery, not permission to skip
+    the final cwd check at launch. Files always need a concrete path.
+    """
+    from drlink_control_plane import FILE_CAPABILITIES, path_allowed, windows_path_allowed
+    def deny(code, choices=()):
+        return {"action": "DENY", "reason_code": code, "account": None,
+                "accounts": sorted(set(choices)), "patterns": [], "winner": None}
+    permission = CAP_TO_PERMISSION.get(capability)
+    if not permission or capability in ("get_system_info", "list_hosts", "get_host"):
+        return deny("UNSUPPORTED_CAPABILITY")
+    evaluation = evaluate_ai_access_v24(plane_db, identity=identity, destination=destination,
+                                      permission=permission)
+    if evaluation["result"] != "ALLOW":
+        return deny("AI_ACCESS_DENIED")
+    local = set(local_accounts)
+    matcher = path_allowed
+    if destination != SERVER_SELF_TARGET:
+        endpoint = plane_db.get_object(destination)
+        client = plane_db.client_for_endpoint(endpoint["id"]) if endpoint is not None else None
+        if client is not None and "ai_executor_platform" in client.keys() and client["ai_executor_platform"] == "windows":
+            matcher = windows_path_allowed
+    grants = []
+    for row in _matched_ai_rule_rows(plane_db, evaluation["matched_rules"]):
+        if rule_id is not None and row["id"] != rule_id:
+            continue
+        try:
+            binding = ai_rule_execution(row)
+        except ControlPlaneError:
+            continue
+        if binding is None:
+            if legacy_account is None:
+                continue
+            binding = {"default": legacy_account, "accounts": [legacy_account]}
+        eligible = set(binding["accounts"]) & local
+        patterns = _path_scopes_for_rules(plane_db, [row])
+        selected = run_as if run_as is not None else binding["default"]
+        if selected not in eligible:
+            continue
+        if capability in FILE_CAPABILITIES and not operand:
+            continue
+        if capability in FILE_CAPABILITIES or capability == "exec":
+            if not patterns:
+                continue
+            if validate_operand is not None:
+                if not validate_operand(selected, patterns, operand):
+                    continue
+            elif operand is not None and not matcher(operand, patterns):
+                continue
+        grants.append((selected, row, patterns, eligible))
+    if not grants:
+        return deny("NO_COMPLETE_EXECUTION_GRANT")
+    defaults = {g[0] for g in grants}
+    if len(defaults) != 1:
+        return deny("AMBIGUOUS_DEFAULT", defaults)
+    # Same account and operand may match multiple complete rules. Use exactly
+    # one deterministic grant, recording the rule that actually authorizes it.
+    account, row, patterns, _ = grants[0]
+    return {"action": "ALLOW", "reason_code": "ALLOWED", "account": account,
+            "accounts": sorted(set().union(*(g[3] for g in grants))),
+            "patterns": patterns, "winner": {"id": row["id"], "name": row["name"],
+                                                "row_version": row["row_version"]}}
+
+
 def authorize_ai_capability_v24(
     plane_db,
     *,
@@ -5512,6 +5637,14 @@ def authorize_ai_capability_v24(
         permission=permission,
     )
     matched_rows = _matched_ai_rule_rows(plane_db, evaluation.get("matched_rules") or [])
+    if cap not in ("get_system_info", "list_hosts", "get_host"):
+        # Old executors cannot enforce explicit account selection. Do not
+        # interpret a bound rule as a grant to their singleton OS account.
+        original_count = len(matched_rows)
+        matched_rows = [row for row in matched_rows if row["execution_json"] is None]
+        if original_count and not matched_rows and evaluation["result"] == "ALLOW":
+            evaluation = dict(evaluation, result="DENY", matched_rules=[])
+
     patterns = _path_scopes_for_rules(plane_db, matched_rows)
     winner = None
     if matched_rows:

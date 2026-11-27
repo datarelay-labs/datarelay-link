@@ -220,6 +220,127 @@ class NativeFullControlPublicTests(unittest.TestCase):
             self.assertIn("resource_metadata=", headers.get("WWW-Authenticate", ""))
             self.assertFalse(marker.exists())
 
+    def test_account_rule_binding_is_atomic_and_not_usable_by_legacy_executor(self):
+        binding = {"default": "aella", "accounts": ["aella", "root"]}
+        v24.set_ai_access_rule(self.plane, self.rule("owner"), execution=binding, confirm=True)
+        row = self.plane.conn.execute("SELECT * FROM ai_policy_rules WHERE name=?", (self.rule("owner"),)).fetchone()
+        self.assertEqual(v24.ai_rule_execution(row), binding)
+        v24.set_ai_access_rule(self.plane, self.rule("owner"), enabled=True, confirm=True)
+        row = self.plane.conn.execute("SELECT * FROM ai_policy_rules WHERE name=?", (self.rule("owner"),)).fetchone()
+        self.assertEqual(v24.ai_rule_execution(row), binding)
+        for invalid in ({"default":"root","accounts":["aella"]}, {"default":"aella","accounts":["aella","aella"]},
+                        {"default":"aella","accounts":["aella","root "]}):
+            with self.assertRaises(v24.ControlPlaneError):
+                v24.set_ai_access_rule(self.plane, self.rule("owner"), execution=invalid, confirm=True)
+        result = v24.authorize_ai_capability_v24(self.plane, identity=self.identities["owner"],
+                     destination="server:self", capability="exec", operand=str(self.root))
+        self.assertEqual(result["action"], "DENY")
+        self.assertEqual(v24.authorize_ai_capability_v24(self.plane, identity=self.identities["owner"],
+                     destination="server:self", capability="get_system_info")["action"], "ALLOW")
+
+    def test_complete_execution_grants_do_not_combine_account_and_path(self):
+        name = self.identities["owner"]
+        a = str(self.root / "a")
+        b = str(self.root / "b")
+        (self.root / "a").mkdir()
+        (self.root / "b").mkdir()
+        v24.set_ai_access_rule(self.plane, self.rule("owner"), paths=[a+"/**"],
+            execution={"default":"aella","accounts":["aella"]}, confirm=True)
+        v24.set_ai_access_rule(self.plane, "second-execution", source=name, destination="server:self",
+            permission="native-public-permissions", paths=[b+"/**"], enabled=True,
+            execution={"default":"root","accounts":["root"]}, confirm=True)
+        def decide(cap="read_file", operand=a+"/sample", run_as=None, local=("aella","root")):
+            return v24.resolve_ai_execution_grant(self.plane, identity=name, destination="server:self",
+                capability=cap, operand=operand, run_as=run_as, local_accounts=local)
+        self.assertEqual(decide()["account"], "aella")
+        self.assertEqual(decide(run_as="root")["action"], "DENY")
+        self.assertEqual(decide(operand=b+"/sample", run_as="root")["account"], "root")
+        self.assertEqual(decide(operand=b+"/sample", run_as="root", local=("aella",))["action"], "DENY")
+        self.assertEqual(decide(run_as="ubuntu")["action"], "DENY")
+        self.assertEqual(decide(cap="exec", operand=None)["reason_code"], "AMBIGUOUS_DEFAULT")
+        self.assertEqual(decide(cap="exec", operand=None, run_as="aella")["account"], "aella")
+        self.assertEqual(decide(cap="exec", operand=None, run_as="root")["account"], "root")
+        self.assertEqual(decide(cap="exec", operand=None, run_as="root", local=("aella",))["action"], "DENY")
+        self.plane.conn.execute("UPDATE ai_policy_rules SET enabled=0 WHERE name='second-execution'")
+        self.plane.conn.commit()
+        self.assertEqual(decide(cap="exec", operand=None)["account"], "aella")
+        self.assertEqual(decide(cap="exec", operand=None, run_as="root")["action"], "DENY")
+
+    def test_legacy_rule_does_not_grant_newly_eligible_accounts(self):
+        name = self.identities["owner"]
+        def decide(run_as=None, legacy=None):
+            return v24.resolve_ai_execution_grant(self.plane, identity=name, destination="server:self",
+                capability="exec", operand=None, run_as=run_as, local_accounts=["aella","root"],
+                legacy_account=legacy)
+        self.assertEqual(decide(legacy="aella")["account"], "aella")
+        self.assertEqual(decide(run_as="root", legacy="aella")["action"], "DENY")
+        self.assertEqual(decide()["action"], "DENY")
+
+    def test_explicit_binding_uses_current_uid_and_does_not_expand_legacy_rules(self):
+        user = pwd.getpwuid(os.geteuid())
+        profile = {user.pw_name: {"uid": user.pw_uid, "cwd": str(self.root)}}
+        with patch.dict(os.environ, {"DRLINK_MCP_SERVER_EXEC_ACCOUNTS": json.dumps(profile)}):
+            self.denied("server_run", {"argv": ["id"]})
+            v24.set_ai_access_rule(self.plane, self.rule("owner"), confirm=True,
+                execution={"default":user.pw_name,"accounts":[user.pw_name]})
+            ctx = self.allowed("get_server", {})["execution_context"]
+            self.assertEqual(ctx["default_account"], user.pw_name)
+            self.assertEqual([item["account"] for item in ctx["accounts"]], [user.pw_name])
+            job = self.completed(self.allowed("server_run", {"argv":["id","-u"]}))
+            self.assertEqual(job["stdout"]["text"].strip(), str(user.pw_uid))
+            self.denied("server_run", {"argv":["id"], "run_as":"nonexistent-account"})
+            self.denied("server_run", {"argv":["id"], "run_as":""})
+            self.denied("server_run", {"argv":["id"]}, identity="other")
+            with patch.dict(os.environ, {"DRLINK_MCP_SERVER_EXEC_ACCOUNTS": json.dumps(
+                    {user.pw_name: {"uid":user.pw_uid+1, "cwd":str(self.root)}})}):
+                self.denied("server_run", {"argv":["id"], "run_as":user.pw_name})
+
+    @unittest.skipUnless(os.geteuid() == 0, "actual two-account fixture requires root")
+    def test_real_two_account_uid_file_owner_and_job_grant(self):
+        ordinary = pwd.getpwuid(ROOT.stat().st_uid) if ROOT.stat().st_uid else pwd.getpwnam("nobody")
+        admin = pwd.getpwuid(0)
+        if ordinary.pw_uid == 0:
+            self.fail("ordinary fixture account is privileged")
+        # This is a new disposable test directory, not an installed service.
+        self.root.chmod(0o711)
+        workspace = self.root / "account-fixture"
+        workspace.mkdir(mode=0o700)
+        os.chown(workspace, ordinary.pw_uid, ordinary.pw_gid)
+        names = sorted([ordinary.pw_name, admin.pw_name])
+        local = {entry.pw_name: {"uid":entry.pw_uid, "cwd":str(workspace)}
+                 for entry in (ordinary, admin)}
+        v24.set_ai_access_rule(self.plane, self.rule("owner"), confirm=True,
+            execution={"default":ordinary.pw_name,"accounts":names})
+        with patch.dict(os.environ, {"DRLINK_MCP_SERVER_EXEC_ACCOUNTS":json.dumps(local)}):
+            ctx = self.allowed("get_server", {})["execution_context"]
+            self.assertEqual(ctx["default_account"], ordinary.pw_name)
+            self.assertEqual({x["uid"] for x in ctx["accounts"]}, {0, ordinary.pw_uid})
+            for name, uid in ((ordinary.pw_name, ordinary.pw_uid),(admin.pw_name, 0)):
+                args = {"argv":["id","-u"]}
+                if uid == 0:
+                    args["run_as"] = name
+                result = self.completed(self.allowed("server_run", args))
+                self.assertEqual(result["stdout"]["text"].strip(), str(uid))
+                self.assertEqual(result["execution_user"], name)
+            file = workspace / "owned.txt"
+            self.allowed("server_write_file", {"path":str(file),"content":"account test"})
+            self.assertEqual(file.stat().st_uid, ordinary.pw_uid)
+            self.allowed("server_read_file", {"path":str(file),"run_as":admin.pw_name})
+            self.denied("server_run", {"argv":["id"],"run_as":admin.pw_name}, identity="other")
+            with patch.dict(os.environ, {"DRLINK_MCP_SERVER_ADMIN_ENABLED":"0"}):
+                self.denied("server_run", {"argv":["id"], "run_as":admin.pw_name})
+                self.assertEqual(self.completed(self.allowed("server_run", {"argv":["id","-u"]}))["stdout"]["text"].strip(),
+                                 str(ordinary.pw_uid))
+            job = self.allowed("server_run", {"argv":[sys.executable,"-c","import time; time.sleep(60)"],"wait_ms":0})
+            self.denied("server_job_poll", {"job_id":job["job_id"],"run_as":admin.pw_name})
+            v24.set_ai_access_rule(self.plane, self.rule("owner"), confirm=True,
+                execution={"default":admin.pw_name,"accounts":[admin.pw_name]})
+            self.denied("server_job_poll", {"job_id":job["job_id"]})
+            runtime = self.bridge._full_control_runtime(__import__("drlink_mcp_full_control"))
+            original = runtime.poll(str(self.plane.get_principal(self.identities["owner"])["id"]), job["job_id"], wait_ms=1000)
+            self.assertEqual(original["state"], "completed")
+            self.assertLess(original["exit_status"], 0)
+
     def test_discover_context_and_omit_cwd_without_widening_scope(self):
         ctx = self.allowed("get_server", {})["execution_context"]
         self.assertEqual(ctx["state"], "configured")

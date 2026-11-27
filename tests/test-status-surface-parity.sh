@@ -54,7 +54,7 @@ assert len(actual) == len(pairs), "duplicate Server Settings field"
 unavailable = "Unavailable (qualified Server-local installer source is unconfigured)"
 expected = {
     "Public hostname": "Automatic (Public IP: 203.0.113.10)",
-    "Bootstrap hostname": "Automatic (pinned-CA zt1 bootstrap)",
+    "Bootstrap hostname": "Unavailable (allocator HTTPS authority)",
     "Linux/macOS Agent installer": unavailable,
     "Windows Agent installer": unavailable,
 }
