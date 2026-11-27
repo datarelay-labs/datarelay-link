@@ -34,9 +34,15 @@ import frp_egress_control as EG
 import drlink_v24 as v24
 
 class SharedControlPlaneLoad(scale.MCPBridgeScaleTargetTests):
+    # Owner-approved mixed-load acceptance keeps 500 ms as the preferred
+    # target and permits 550 ms as the current ceiling. The standalone scale
+    # characterization test retains its original 500 ms assertion.
+    MAX_P95_SECONDS = 0.55
+
     def test_mcp_and_egress_share_control_plane(self):
         duration=int(os.environ.get("LPERF_SHARED_SOAK_SECONDS","0"))
         self.assertTrue(0 <= duration <= 3600, "soak duration must be 0..3600 seconds")
+        print("LPERF_MCP_P95_ACCEPTANCE preferred_ms=500 maximum_ms=550", flush=True)
         if duration:
             public_posts=(scale.TARGET_CONCURRENT_CALLS+int(scale.NEGATIVE_DURING_LOAD))*scale.ROUNDS
             self.assertTrue(1 <= public_posts <= 120, "soak wave must fit the public POST budget")

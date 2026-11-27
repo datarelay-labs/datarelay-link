@@ -536,6 +536,10 @@ The latest #302 owner decision keeps MCP mixed-load p95 at 500 ms preferred and 
 
 The current authorized-host lookup still returns only `final-e2e-rocky9-pass2` with `connectivity=disconnected` and `ai_executor=not_ready`. Surface Reconciliation and real Direct/AI-assisted Full User E2E remain NOT_RUN. Local regressions do not substitute for those gates. Continue investigating the MCP p95 tail and rerun the same mixed workload/3,600-second soak only after the existing ceiling is met; continue unaffected integration and qualification work meanwhile.
 
+**Exact `dbac330` controlled mixed-load retest:** with no other local test running, 10 CPUs online, system CPU idle above 91%, no cgroup CPU throttling, and recent system CPU/memory/I/O pressure near zero, the Rust-selected shared-plane wave completed 90/90 MCP jobs, denied 3 unauthorized calls, acknowledged 20/20 Egress transfers, recorded 21 audit IDs, zero unauthorized jobs/upstream attempts, and 38 fixture FDs. MCP p95 was 543 ms: above the preferred 500 ms, within the owner-approved 550 ms mixed-load/soak ceiling. The 3,600-second run used the old 500 ms assertion and stopped on this first wave; it is not a soak PASS. The mixed-plane test now enforces the 550 ms ceiling and reports both thresholds. The standalone MCP scale characterization retains its 500 ms assertion. The conditional 600 ms allowance is not adopted: available evidence does not establish the required bottleneck diagnosis and best-reasonably-achievable safe tuning.
+
+The first two source-follow-up single-wave checks measured 466 ms and 453 ms, with all security and receipt counters unchanged. The second promoted `ResourceWarning` to an error and passed after the harness closed child-process streams at teardown. These are single-wave checks; a new 3,600-second run under the 550 ms ceiling remains required.
+
 ---
 
 ## 18. Post-v2.4 demand-driven work

@@ -302,6 +302,21 @@ macOS rollback, Server project update/rollback 전체 회귀가 통과했습니�
 #302의 550ms 최대 허용치도 넘었습니다. 3,600초 soak은 p95 초과로 첫 번째 또는 두 번째 wave에서
 중단됐으며 PASS로 기록하지 않습니다. workload, 보안 거부, 감사 영수증, 자원 한도는 바꾸지 않았습니다.
 
+`dbac330`의 격리된 Rust 혼합 부하 재측정에서는 다른 로컬 테스트가 실행되지 않았고,
+10개 CPU가 온라인이며 시스템 CPU 유휴율은 91% 초과, Bridge 서비스 cgroup CPU throttling은 없었고,
+최근 시스템 CPU/메모리/I/O 압력은 거의 0이었습니다. 동일 workload는 MCP job 90/90 완료,
+비인가 호출 3건 거부, Egress ACK 20/20, audit ID 21개, 비인가 job/upstream 0건,
+fixture FD 38개를 기록했습니다. MCP p95 543ms는 선호 목표 500ms를 넘었지만 승인된
+최대치 550ms 이내입니다. 이전 3,600초 실행은 기존 500ms 검사에서 첫 wave 후 중단되어
+soak PASS가 아닙니다. 혼합 부하 runner는 500ms 선호 목표와 550ms 허용 상한을 각각 표시하고
+상한을 검사하며, 독립 MCP scale 검사는 기존 500ms 기준을 유지합니다. 진단된 병목 및
+합리적으로 가능한 안전한 튜닝의 근거가 아직 충분하지 않아 조건부 600ms 기준은 채택하지 않았습니다.
+후속 source의 단일 wave 확인 결과 p95는 466ms와 453ms였고,
+job 90/90, 거부 3건, ACK 20/20, audit ID 21개, 비인가 job/upstream 0건,
+fixture FD 38개가 유지됐습니다. 두 번째 검사는 `ResourceWarning`을 오류로 처리했고,
+Agent/Server 자식 프로세스 stream을 teardown에서 닫은 뒤 통과했습니다. 이는 단일 wave 검사이며
+550ms 상한을 적용한 새 3,600초 실행은 아직 필요합니다.
+
 ### AI Access / MCP
 
 MCP Bridge는 v2.4.0 **target**에 포함되며, stable release 전에 qualification이 필요합니다. 이미 출시된 stable 기능으로 설명하지 마십시오.

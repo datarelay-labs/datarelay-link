@@ -210,6 +210,8 @@ BRIDGE_PROCS = int(os.environ.get("SCALE_BRIDGE_PROCS", "0") or 0)
 
 
 class MCPBridgeScaleTargetTests(unittest.TestCase):
+    MAX_P95_SECONDS = MAX_P95_SECONDS
+
     # Borrow the harness plumbing without inheriting (and re-running) its tests.
     _harness_setup = _E2E.MCPBridgeE2ETests.setUp
     _harness_teardown = _E2E.MCPBridgeE2ETests.tearDown
@@ -234,6 +236,9 @@ class MCPBridgeScaleTargetTests(unittest.TestCase):
             except Exception:
                 proc.kill()
                 proc.wait(timeout=10)
+            for stream in (proc.stdin, proc.stdout, proc.stderr):
+                if stream is not None:
+                    stream.close()
         supervisor = getattr(self, "_bridge_supervisor", None)
         if supervisor is not None:
             for proc in getattr(self, "_agent_procs", []):
@@ -261,6 +266,9 @@ class MCPBridgeScaleTargetTests(unittest.TestCase):
             except Exception:
                 proc.kill()
                 proc.wait(timeout=10)
+            for stream in (proc.stdin, proc.stdout, proc.stderr):
+                if stream is not None:
+                    stream.close()
         # Workers sit inside a held claim; let them finish it before the harness
         # joins them with its own short timeout.
         for stop in getattr(self, "_agent_stops", []):
@@ -660,9 +668,9 @@ class MCPBridgeScaleTargetTests(unittest.TestCase):
         )
         self.assertLessEqual(
             p95,
-            MAX_P95_SECONDS,
+            self.MAX_P95_SECONDS,
             "p95 %.0f ms exceeds %.0f ms (median %.0f ms)"
-            % (p95 * 1000, MAX_P95_SECONDS * 1000, statistics.median(durations) * 1000),
+            % (p95 * 1000, self.MAX_P95_SECONDS * 1000, statistics.median(durations) * 1000),
         )
 
 
