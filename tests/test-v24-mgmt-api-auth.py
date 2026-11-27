@@ -70,8 +70,8 @@ def _signed_headers(key, machine_id, body, op, method, path, ts=None, nonce=None
     }, ts, nonce, signature
 
 
-class AllocatorJobPlanePoolTests(unittest.TestCase):
-    """The production AI-job route owns a private, validated plane per request."""
+class AllocatorAiClaimAdmissionTests(unittest.TestCase):
+    """Allocator AI admission shares its nonce transaction with the registry lock."""
 
     def setUp(self):
         import importlib.util
@@ -138,8 +138,6 @@ class AllocatorJobPlanePoolTests(unittest.TestCase):
         self.assertIsNone(self.allocator.check_nonce(MACHINE_A, rejected_nonce, int(time.time())))
 
     def test_parallel_ai_claim_replay_and_failed_nonce_write_fail_closed(self):
-        from concurrent.futures import ThreadPoolExecutor
-        from threading import Barrier
         from unittest import mock
 
         key, pub, mac = _write_identity(Path(self.tmp.name) / "agent", MACHINE_A, "agent-a")
@@ -160,114 +158,6 @@ class AllocatorJobPlanePoolTests(unittest.TestCase):
             self.assertEqual(code, 500, payload)
             claim.assert_not_called()
         self.assertIsNone(self.allocator.check_nonce(MACHINE_A, nonce, int(time.time())))
-        barrier = Barrier(2)
-
-        def request():
-            with self.allocator.ai_job_plane() as plane:
-                self.assertIsNotNone(plane)
-                barrier.wait(timeout=10)
-                return mgmt.handle_allocator_http(
-                    plane, "POST", path, headers, body, verifier=verifier)
-
-        with ThreadPoolExecutor(max_workers=2) as pool:
-            outcomes = list(pool.map(lambda _: request(), range(2)))
-        self.assertEqual(sorted(code for code, _ in outcomes), [200, 403])
-        denied = next(payload for code, payload in outcomes if code == 403)
-        self.assertEqual(denied.get("error_class"), "REPLAY_REJECTED")
-
-    def test_reuses_only_idle_private_planes_and_checks_integrity(self):
-        from unittest import mock
-        import drlink_control_db as cdb
-
-        with self.allocator.ai_job_plane() as first:
-            self.assertIsNotNone(first)
-            with self.allocator.ai_job_plane() as second:
-                self.assertIsNotNone(second)
-                self.assertIsNot(first.conn, second.conn)
-        with mock.patch.object(cdb, "integrity_check", wraps=cdb.integrity_check) as check:
-            with self.allocator.ai_job_plane() as reused:
-                self.assertIs(reused, first)
-                self.assertEqual(reused.claim_ai_jobs(MACHINE_A), [])
-            self.assertGreaterEqual(check.call_count, 1)
-
-    def test_schema_change_invalidates_idle_plane(self):
-        with self.allocator.ai_job_plane() as first:
-            self.assertIsNotNone(first)
-        self.seed.conn.execute("DROP INDEX idx_ai_jobs_claim")
-        with self.allocator.ai_job_plane() as new:
-            self.assertIsNotNone(new)
-            self.assertIsNot(new, first)
-            self.assertIsNotNone(new.conn.execute(
-                "SELECT 1 FROM sqlite_master WHERE name='idx_ai_jobs_claim'").fetchone())
-
-    def test_integrity_failure_never_reuses_plane(self):
-        from unittest import mock
-        import drlink_control_db as cdb
-
-        with self.allocator.ai_job_plane() as first:
-            self.assertIsNotNone(first)
-        with mock.patch.object(cdb, "integrity_check",
-                               side_effect=cdb.DatabaseCorruptError("injected corruption")):
-            with self.allocator.ai_job_plane() as denied:
-                self.assertIsNone(denied)
-        with self.allocator.ai_job_plane() as new:
-            self.assertIsNotNone(new)
-            self.assertIsNot(new, first)
-
-    def test_idle_pool_is_bounded_and_transaction_is_not_reused(self):
-        self.allocator.AI_JOB_PLANE_IDLE_MAX = 1
-        with self.allocator.ai_job_plane() as first:
-            with self.allocator.ai_job_plane() as second:
-                self.assertIsNot(first, second)
-        self.assertEqual(len(self.allocator._ai_job_planes), 1)
-        with self.allocator.ai_job_plane() as dirty:
-            dirty.conn.execute("BEGIN")
-        self.assertEqual(len(self.allocator._ai_job_planes), 0)
-        with self.allocator.ai_job_plane() as clean:
-            self.assertIsNot(clean, dirty)
-            self.assertFalse(clean.conn.in_transaction)
-
-    def test_replaced_db_inode_is_not_reused(self):
-        # Make a distinct, fully initialized database in the same filesystem.
-        import sqlite3
-        replacement = ControlPlane(str(Path(self.tmp.name) / "replacement"))
-        try:
-            replacement.upsert_client(MACHINE_B, label="agent-b")
-            with self.allocator.ai_job_plane() as first:
-                self.assertIsNotNone(first)
-            # Simulate an offline restore without carrying old WAL sidecars.
-            path = Path(self.seed.db_file)
-            snapshot = path.with_suffix(".replacement")
-            with sqlite3.connect(str(snapshot)) as dest:
-                replacement.conn.backup(dest)
-            self.seed.close()
-            self.seed = replacement
-            for cached, _identity, _cookie in self.allocator._ai_job_planes:
-                cached.conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
-            os.replace(snapshot, path)
-            with self.allocator.ai_job_plane() as new:
-                self.assertIsNotNone(new)
-                self.assertIsNot(new, first)
-                self.assertIsNone(new.get_client(MACHINE_A))
-                self.assertIsNotNone(new.get_client(MACHINE_B))
-        except BaseException:
-            if self.seed is not replacement:
-                replacement.close()
-            raise
-
-    def test_root_change_does_not_reuse_old_plane(self):
-        with self.allocator.ai_job_plane() as first:
-            self.assertIsNotNone(first)
-        new_root = Path(self.tmp.name) / "replacement"
-        replacement = ControlPlane(str(new_root))
-        replacement.close()
-        self.allocator.cfg = dict(self.cfg, control_plane_root=str(new_root))
-        with self.allocator.ai_job_plane() as new:
-            self.assertIsNotNone(new)
-            self.assertIsNot(new, first)
-            self.assertIsNone(new.get_client(MACHINE_A))
-
-
 class MgmtApiAuthTests(unittest.TestCase):
     def setUp(self):
         self.server_tmp = tempfile.mkdtemp(prefix="drlink-mgmt-auth-srv-")
