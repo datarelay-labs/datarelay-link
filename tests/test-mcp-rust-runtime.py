@@ -461,6 +461,51 @@ class RustDispatchBudgetTests(unittest.TestCase):
             self.assertTrue(proc.stderr.closed)
             free_watch.assert_called_once_with(proc)
 
+    def test_macos_vanished_process_group_permission_race_is_distinguished(self):
+        with mock.patch.dict(os.environ, {
+            "DRLINK_MCP_RUNTIME": "rust",
+            "DRLINK_MCP_NATIVE_LIBRARY": str(LIBRARY),
+        }), mock.patch.object(runtime, "drain_process", side_effect=[9, 0]), \
+                mock.patch.object(runtime.os, "killpg", side_effect=[
+                    PermissionError("transient macOS process-group race"),
+                    ProcessLookupError("group vanished after reaping"),
+                ]):
+            proc = subprocess.Popen(
+                [sys.executable, "-c", "import time; time.sleep(30)"],
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True,
+            )
+            result = runtime.capture_process(
+                proc, input_data=None, timeout_seconds=3,
+                stdout_limit=128, stderr_limit=128,
+            )
+            self.assertIsNotNone(proc.returncode)
+            self.assertTrue(proc.stdout.closed)
+            self.assertTrue(proc.stderr.closed)
+            self.assertLess(result["exit_status"], 0)
+
+    def test_process_group_permission_denial_stays_fail_closed_if_group_remains(self):
+        with mock.patch.dict(os.environ, {
+            "DRLINK_MCP_RUNTIME": "rust",
+            "DRLINK_MCP_NATIVE_LIBRARY": str(LIBRARY),
+        }), mock.patch.object(runtime, "drain_process", side_effect=[9]), \
+                mock.patch.object(runtime.os, "killpg", side_effect=[
+                    PermissionError("process-group signal denied"), None,
+                ]), mock.patch.object(runtime, "free_process_watch") as free_watch:
+            proc = subprocess.Popen(
+                [sys.executable, "-c", "import time; time.sleep(30)"],
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True,
+            )
+            with self.assertRaisesRegex(OSError, "process-group cleanup denied"):
+                runtime.capture_process(
+                    proc, input_data=None, timeout_seconds=3,
+                    stdout_limit=128, stderr_limit=128,
+                )
+            self.assertIsNotNone(proc.returncode)
+            self.assertTrue(proc.stdout.closed)
+            self.assertTrue(proc.stderr.closed)
+            free_watch.assert_has_calls([mock.call(proc)])
+            self.assertGreaterEqual(free_watch.call_count, 1)
+
 
 if __name__ == "__main__":
     unittest.main()

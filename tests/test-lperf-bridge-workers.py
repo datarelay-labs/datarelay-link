@@ -148,6 +148,15 @@ class WorkerSelectionTests(unittest.TestCase):
             with mock.patch.object(mcp, "_worker_effective_cpus", return_value=10):
                 self.assertEqual(mcp._worker_count("auto"), 1)
 
+        # The true v2 hierarchy root may omit memory.max when memory is not
+        # enabled there; keep the closest visible service/parent limit.
+        root_unlimited = self._cgroup_v2_fixture(
+            child=str(8 * 1024 ** 3), parent=str(8 * 1024 ** 3)
+        )
+        root_unlimited.pop("/sys/fs/cgroup/memory.max")
+        with self._with_fake_proc(root_unlimited):
+            self.assertEqual(mcp._worker_memory_limit_bytes(), 8 * 1024 ** 3)
+
     def test_nested_v2_ancestor_limit_when_child_is_unlimited(self):
         files = self._cgroup_v2_fixture(child="max", parent=str(2 * 1024 ** 3))
         with self._with_fake_proc(files):

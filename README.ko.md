@@ -255,6 +255,9 @@ target 하나의 provenance를 확인하고, release 검증은 세 지원 target
 새 번들은 별도 artifact commit으로 갱신하고 Apple Silicon client-port 검증을 다시 실행해야 합니다.
 `DRLINK_MCP_WORKERS=auto`는 cgroup 메모리 한도를 읽을 수 없거나 값이 잘못된 경우 worker 하나만 선택하며,
 controller가 비활성화된 cgroup v2 최상위의 `memory.max` 부재만 예외로 처리합니다.
+Apple Silicon에서 이미 종료된 자식의 process group 신호가 `EPERM`을 반환하는 경합은 자식 reaping 후 group 부재를 확인한 경우에만 허용하며,
+접근할 수 없는 살아 있는 group은 계속 fail-closed 처리합니다. 수정 후 MCP runtime 21/21, worker selection 13/13,
+Server full-control 25/25 및 local executor 9/9 테스트가 통과했고, Apple Silicon CI 재실행은 진행 중입니다.
 handoff 이후 세션을 Python relay로 재실행하지 않으며, 새 연결은 `DRLINK_EGRESS_RUNTIME=python`으로 기존 Python rollback 경로를
 선택할 수 있습니다. 각 방향의 relay queue는 256 KiB로 제한하며, peer hangup 뒤에도
 수신 EOF까지 대기 데이터를 전달하고 backpressure 중 유휴 descriptor를 poll에서 제외합니다.

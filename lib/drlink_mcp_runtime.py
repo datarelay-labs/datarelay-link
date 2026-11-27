@@ -549,17 +549,39 @@ def capture_process(process, *, input_data: bytes | None, timeout_seconds: float
             except PermissionError as exc:
                 try:
                     process.kill()
-                    process.wait(timeout=5)
-                except (OSError, subprocess.TimeoutExpired):
+                except OSError:
                     pass
-                for stream in (process.stdout, process.stderr):
-                    if stream is not None and not stream.closed:
-                        stream.close()
-                free_process_watch(process)
-                raise OSError(
-                    "process-group cleanup denied after native drain (status %s, returncode %s)"
-                    % (status, process.returncode)
-                ) from exc
+                try:
+                    process.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+                    process.wait()
+                # On macOS, killpg may report EPERM for a just-exited,
+                # single-process group. Reap our child, then distinguish that
+                # vanished group from a still-present inaccessible group.
+                # A surviving group remains a hard cleanup failure.
+                try:
+                    os.killpg(process.pid, 0)
+                except ProcessLookupError:
+                    pass
+                except PermissionError:
+                    for stream in (process.stdout, process.stderr):
+                        if stream is not None and not stream.closed:
+                            stream.close()
+                    free_process_watch(process)
+                    raise OSError(
+                        "process-group cleanup denied after native drain (status %s, returncode %s)"
+                        % (status, process.returncode)
+                    ) from exc
+                else:
+                    for stream in (process.stdout, process.stderr):
+                        if stream is not None and not stream.closed:
+                            stream.close()
+                    free_process_watch(process)
+                    raise OSError(
+                        "process-group cleanup denied after native drain (status %s, returncode %s)"
+                        % (status, process.returncode)
+                    ) from exc
         drain_status = 0
         if status != 0:
             try:

@@ -526,6 +526,8 @@ verify clean stable install/bootstrap/update
 
 **Resource-bound review follow-up (2026-11-27):** MCP `auto` worker selection now returns an unknown memory ceiling when a cgroup memory limit is unreadable, missing below the true cgroup v2 hierarchy root, zero, or malformed. The true v2 root may omit `memory.max` when its controller is disabled; that narrow case remains supported. A deterministic regression asserts unknown memory forces one worker. This closes the exact-head independent review finding; focused worker-selection regression is 13/13.
 
+**Apple Silicon lifecycle follow-up (2026-11-27, source fix pending):** Exact workflow dispatch on `1f40804` passed native build, pinned Rust tests, target provenance and Linux x86_64/ARM64, but Apple Silicon MCP lifecycle found `killpg(SIGKILL)` returning `EPERM` after an exited leader. Cleanup now reaps the owned leader, probes whether the process group still exists, and ignores the signal race only when the group is proven absent; an inaccessible surviving group remains fail-closed. Focused lifecycle/runtime tests pass 21/21, worker-selection 13/13, MCP full-control 25/25 and Server-local executor 9/9. Exact Apple Silicon rerun and final full gate are pending.
+
 Reuse `tests/test-mcp-bridge-scale-target.py`, `tests/run-egress-benchmark.py` and current Engineering System acceptance contracts. Do not change production settings, OAuth/AI Access, sensitive secrets, or installed services without applicable separate authorization. Link-chat implementation should proceed from [#302](https://github.com/datarelay-labs/datarelay-link/issues/302) LPERF-0 through LPERF-6 after verifying source and active actor state.
 
 ---
