@@ -3,7 +3,7 @@
   "project_version": "2.4.0",
   "frp_version": "0.71.0",
   "channel": "development",
-  "git_ref": "e380c0257f0a5762ef7f15dadd3f1d7b45091b8d",
+  "git_ref": "43b118729a508942e8110c3396858b6f376e0f45",
   "owner": "datarelay-labs",
   "repo": "datarelay-link",
   "https_raw_base": "https://raw.githubusercontent.com/datarelay-labs/datarelay-link",
@@ -66,42 +66,42 @@
     "bootstrap-client.sh": {
       "path": "dist/bootstrap-client.sh",
       "url_path": "dist/bootstrap-client.sh",
-      "sha256": "306de493732310a2da7ac3da5cc6095fe1a0df87bafd9846e96cb2dd23bad4ab"
+      "sha256": "722f798a34ddbdd7d4e2db5020a2c07b0001db4b590a81440f5c6c81ebca4192"
     },
     "bootstrap-client.ps1": {
       "path": "dist/bootstrap-client.ps1",
       "url_path": "dist/bootstrap-client.ps1",
-      "sha256": "2587a907ce7ced97c6bccbb6f290853ddd18ccca16d163aa4e96e2d5e5f0808f"
+      "sha256": "04850486f0db2760c600ea1b94247eb87bd65540388bce4e315fe18e8f53c4e0"
     },
     "bootstrap-server.sh": {
       "path": "dist/bootstrap-server.sh",
       "url_path": "dist/bootstrap-server.sh",
-      "sha256": "f6c93054b59d182d3418447c5bf2814d642f8d9f8a2658e3e0053ba25d68bbc5"
+      "sha256": "7506c2dbb2041e4d1fc47b3f7d4b9bcf9e2606af30b1b68a86d70a401872de96"
     },
     "uninstall-client.sh": {
       "path": "dist/uninstall-client.sh",
       "url_path": "dist/uninstall-client.sh",
-      "sha256": "126a812882cc162b67b24fcc89d83ef6e24ac6b2693ddf2aa3483b4bdfd1d9b4"
+      "sha256": "f42fee9270cbade0d79c55532b0c0a09c246b2b40b74a5c33e6036787bb979a9"
     },
     "uninstall-server.sh": {
       "path": "dist/uninstall-server.sh",
       "url_path": "dist/uninstall-server.sh",
-      "sha256": "e49f8fbf55301fb00ce456cb880fb0e3083e216f7e44404f406e9de8362671c7"
+      "sha256": "6b268bb042d719ed7d2138f2636c5091e8cd1c7e644ed501ac7f0d67e2ca31ec"
     },
     "bootstrap-server-online.sh": {
       "path": "dist/bootstrap-server-online.sh",
       "url_path": "dist/bootstrap-server-online.sh",
-      "sha256": "b2af14c042058e5ca2823e2dc2754ce8e09f8e36eefb2eb36ed151eac2cce6eb"
+      "sha256": "cb6d04b4ef065f7c771d97e0391f012433e1e9e81a20b992709378b410040852"
     },
     "bootstrap-server-core.tar": {
       "path": "dist/bootstrap-server-core.tar",
       "url_path": "dist/bootstrap-server-core.tar",
-      "sha256": "2286069d690cb05d449c77b63ff50c32fc0d8f9249b059a8e08ca92c8a2a86f8"
+      "sha256": "8b1417af1b88d24d2704ea4ece6fc5008cdad86330b78e00b10d12ceb97e902c"
     }
   },
-  "source_head": "e380c0257f0a5762ef7f15dadd3f1d7b45091b8d",
+  "source_head": "43b118729a508942e8110c3396858b6f376e0f45",
   "features": {
     "mcp_included": true
   },
-  "immutable_source_ref": "e380c0257f0a5762ef7f15dadd3f1d7b45091b8d"
+  "immutable_source_ref": "43b118729a508942e8110c3396858b6f376e0f45"
 }
