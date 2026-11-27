@@ -253,6 +253,8 @@ build, runtime 선택 및 adapter 테스트를 통과했습니다. 명시적인 
 target 하나의 provenance를 확인하고, release 검증은 세 지원 target 전체를 확인합니다.
 2026-11-27 검증에서는 Linux x86_64/ARM64 native matrix와 Apple Silicon native MCP lifecycle 및 패키지 탐색이 통과했습니다.
 새 번들은 별도 artifact commit으로 갱신하고 Apple Silicon client-port 검증을 다시 실행해야 합니다.
+`DRLINK_MCP_WORKERS=auto`는 cgroup 메모리 한도를 읽을 수 없거나 값이 잘못된 경우 worker 하나만 선택하며,
+controller가 비활성화된 cgroup v2 최상위의 `memory.max` 부재만 예외로 처리합니다.
 handoff 이후 세션을 Python relay로 재실행하지 않으며, 새 연결은 `DRLINK_EGRESS_RUNTIME=python`으로 기존 Python rollback 경로를
 선택할 수 있습니다. 각 방향의 relay queue는 256 KiB로 제한하며, peer hangup 뒤에도
 수신 EOF까지 대기 데이터를 전달하고 backpressure 중 유휴 descriptor를 poll에서 제외합니다.

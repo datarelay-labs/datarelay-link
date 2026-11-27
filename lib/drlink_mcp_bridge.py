@@ -2240,10 +2240,21 @@ def _worker_memory_limit_bytes() -> int:
         while True:
             try:
                 value = (current / name).read_text().strip()
-                if value.isdecimal() and int(value) > 0:
+                if value == "max":
+                    pass
+                elif value.isdecimal() and int(value) > 0:
                     limits.append(int(value))
-            except (OSError, ValueError):
-                pass
+                else:
+                    return 0
+            except FileNotFoundError:
+                # The true cgroup v2 hierarchy root may omit memory.max when
+                # the memory controller is not enabled. Missing files on a
+                # service cgroup, bind-mounted subtree, or cgroup v1 mount
+                # leave the effective memory ceiling unknown.
+                if not (fs_type == "cgroup2" and current == base and mount_root == "/"):
+                    return 0
+            except OSError:
+                return 0
             if current == base:
                 break
             current = current.parent

@@ -183,6 +183,38 @@ class WorkerSelectionTests(unittest.TestCase):
                     with mock.patch.object(mcp, "_worker_effective_cpus", return_value=10):
                         self.assertEqual(mcp._worker_count("auto"), 1)
 
+    def test_unreadable_or_malformed_memory_limit_fails_closed(self):
+        leaf = "/sys/fs/cgroup/system.slice/drlink-mcp-bridge.service/memory.max"
+        for replacement in (None, "not-a-limit\n", "0\n"):
+            files = self._cgroup_v2_fixture(
+                child=str(8 * 1024 ** 3), parent=str(8 * 1024 ** 3)
+            )
+            if replacement is None:
+                files.pop(leaf)
+            else:
+                files[leaf] = replacement
+            with self.subTest(replacement=replacement):
+                with self._with_fake_proc(files):
+                    self.assertEqual(mcp._worker_memory_limit_bytes(), 0)
+                    with mock.patch.object(mcp, "_worker_effective_cpus", return_value=10):
+                        self.assertEqual(mcp._worker_count("auto"), 1)
+
+        files = self._cgroup_v2_fixture(
+            child=str(8 * 1024 ** 3), parent=str(8 * 1024 ** 3)
+        )
+        def permission_denied(path, *args, **kwargs):
+            if str(path) == leaf:
+                raise PermissionError("fixture denied memory limit read")
+            key = str(path)
+            if key not in files:
+                raise FileNotFoundError("fixture has no file: " + key)
+            return files[key]
+
+        with mock.patch.object(Path, "read_text", new=permission_denied):
+            self.assertEqual(mcp._worker_memory_limit_bytes(), 0)
+            with mock.patch.object(mcp, "_worker_effective_cpus", return_value=10):
+                self.assertEqual(mcp._worker_count("auto"), 1)
+
 
 if __name__ == "__main__":
     unittest.main()
