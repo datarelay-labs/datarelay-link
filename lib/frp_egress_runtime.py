@@ -58,7 +58,7 @@ def _native_relay():
     if mode == "python":
         return None
     if mode not in ("auto", "rust"):
-        return None
+        raise ValueError("DRLINK_EGRESS_RUNTIME must be auto, python or rust")
     with _NATIVE_RELAY_LOCK:
         if _NATIVE_RELAY_CHECKED:
             return _NATIVE_RELAY

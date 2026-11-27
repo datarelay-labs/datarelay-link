@@ -260,5 +260,12 @@ class RustRelayTests(unittest.TestCase):
             upstream_peer.close()
 
 
+class RuntimeSelectionTests(unittest.TestCase):
+    def test_invalid_runtime_selector_is_rejected_instead_of_falling_back(self):
+        with mock.patch.dict(os.environ, {"DRLINK_EGRESS_RUNTIME": "ruts"}):
+            with self.assertRaisesRegex(ValueError, "must be auto, python or rust"):
+                runtime._native_relay()
+
+
 if __name__ == "__main__":
     unittest.main()
