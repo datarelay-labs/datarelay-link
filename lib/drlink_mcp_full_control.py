@@ -228,6 +228,7 @@ class Job:
     lifecycle_lock: threading.Lock = field(default_factory=threading.Lock)
     readers_stop: threading.Event = field(default_factory=threading.Event)
     output_complete: bool = True
+    lifecycle_error: str | None = None
 
 
 def _drain(stream, output: Output, stop: threading.Event) -> None:
@@ -315,6 +316,10 @@ class FullControlRuntime:
                         raise OSError("native child process pipes did not reach EOF")
                 job.process.wait()
         except BaseException:
+            # The finish thread owns asynchronous I/O errors. Preserve a
+            # fail-closed receipt so a child that was reaped after a drain
+            # failure cannot appear as a successful complete capture.
+            job.lifecycle_error = "child process lifecycle did not complete"
             with job.lifecycle_lock:
                 if job.process.returncode is None:
                     try:
@@ -327,12 +332,14 @@ class FullControlRuntime:
                         except OSError:
                             pass
                     job.process.wait()
-            raise
         finally:
             timer.cancel()
             for reader in readers:
                 reader.join(timeout=1)
-            job.output_complete = not any(reader.is_alive() for reader in readers)
+            job.output_complete = (
+                job.lifecycle_error is None
+                and not any(reader.is_alive() for reader in readers)
+            )
             job.readers_stop.set()
             for reader in readers:
                 reader.join()
@@ -421,6 +428,7 @@ class FullControlRuntime:
         return {"job_id": job.identifier, "state": "completed" if job.done.is_set() else "running",
                 "exit_status": job.process.returncode, "timed_out": job.timed_out,
                 "output_complete": job.done.is_set() and job.output_complete,
+                "error": job.lifecycle_error,
                 "stdout": job.stdout.page(outpos), "stderr": job.stderr.page(errpos),
                 "execution_user": job.account.name, "cwd": job.cwd,
                 "fingerprint": job.fingerprint,

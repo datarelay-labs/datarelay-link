@@ -35,6 +35,14 @@ required cleanup paths remain hard errors. On macOS, `auto` skips an older
 library without the stateful ABI and uses Python; explicit Rust selection fails
 closed.
 
+The Python owner always releases the native process watcher when a capture
+ends, including a final EOF timeout when no stdin writer was created. A final
+drain failure is not reported as complete output: Agent capture raises after
+closing streams and reaping the child, and Server full-control returns
+`output_complete: false` with a bounded lifecycle error in the completed job
+receipt. The job, account, timeout, termination, and reap authority stays in
+Python.
+
 The library is selected with `DRLINK_MCP_RUNTIME=rust` and
 `DRLINK_MCP_NATIVE_LIBRARY=/path/to/libdrlink_mcp_runtime.so`. `auto` loads an
 available packaged library and otherwise uses the existing Python dispatch and

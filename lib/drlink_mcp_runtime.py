@@ -559,7 +559,10 @@ def capture_process(process, *, input_data: bytes | None, timeout_seconds: float
     finally:
         if writer is not None:
             writer.join(timeout=5)
-            free_process_watch(process)
+        # A final EOF timeout is terminal for this capture call; no caller
+        # retries it, so release the OS watcher even when stdin was absent and
+        # there was no writer thread.
+        free_process_watch(process)
     if status in (2, 3):
         raise OSError("native child process lifecycle failed")
     if final_drain_incomplete:

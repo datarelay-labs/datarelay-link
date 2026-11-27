@@ -271,6 +271,12 @@ timeout 선택, process-group 종료, wait/reap 권한은 Python에 유지됩니
 Python이 job 소유권과 cursor 검증, 응답 생성을 계속 담당합니다. native shared library의
 설치 패키징은 아직 완료되지 않았습니다.
 
+Rust process I/O의 최종 EOF drain이 실패하면 Agent capture는 stream을 닫고 자식을 reap한 뒤
+오류를 반환합니다. Server full-control도 해당 job을 `output_complete=false`와 제한된
+lifecycle 오류가 있는 완료 영수증으로 노출하며 성공적인 출력으로 표시하지 않습니다.
+stdin writer가 없거나 최종 drain이 시간 초과해도 Python이 소유한 process watcher를 해제합니다.
+계정, timeout, process-group 종료, wait/reap 권한은 계속 Python에 있습니다.
+
 ### AI Access / MCP
 
 MCP Bridge는 v2.4.0 **target**에 포함되며, stable release 전에 qualification이 필요합니다. 이미 출시된 stable 기능으로 설명하지 마십시오.
