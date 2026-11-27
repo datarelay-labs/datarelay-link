@@ -103,6 +103,11 @@ jobs:
           retention-days: 14
       - name: Verify client port
         run: |
+          # The native package built and exercised above is bound to this
+          # checkout's HEAD. The committed dist closure is bound to the
+          # previously committed source snapshot; restore only the tracked
+          # package files before checking that deterministic closure.
+          git restore --worktree --source=HEAD -- lib/native/aarch64-apple-darwin/
           test "$(uname -m)" = arm64
           for test in tests/test-macos-*.sh; do
             /bin/bash "$test"
