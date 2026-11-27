@@ -243,8 +243,9 @@ handoff 전에 Python relay를 사용하고, 명시적인 Rust 선택은 library
 handoff 이후 세션을 Python relay로 재실행하지 않으며, 새 연결은 `DRLINK_EGRESS_RUNTIME=python`으로 기존 Python rollback 경로를
 선택할 수 있습니다. 각 방향의 relay queue는 256 KiB로 제한하며, peer hangup 뒤에도
 수신 EOF까지 대기 데이터를 전달하고 backpressure 중 유휴 descriptor를 poll에서 제외합니다.
-Rust MCP helper는 dispatch admission과 1 MiB 결과 보존 창/64 KiB cursor page를 제공하지만,
-결과 대기와 MCP connection I/O 통합은 아직 남아 있습니다. R3 stdout/stderr drain은
+Rust MCP helper는 dispatch admission, 1 MiB 결과 보존 창/64 KiB cursor page, 64 KiB 제한
+response body 쓰기를 제공합니다. 실제 socket/TLS 쓰기, HTTP framing, backpressure는 Python
+handler가 담당합니다. 결과 대기와 inbound connection I/O 통합은 아직 남아 있습니다. R3 stdout/stderr drain은
 Linux/macOS Agent 및 Server 경로에 연결됐습니다. Linux 회귀는 통과했고, Apple Silicon은
 native capture 종료 처리 실패를 수정해 재검증 중입니다. 두 Rust library는 아직 설치 패키지에 포함되지 않았고 실제 사용자
 E2E qualification도 진행 중입니다. MCP rollback은 `DRLINK_MCP_RUNTIME=python`이며,

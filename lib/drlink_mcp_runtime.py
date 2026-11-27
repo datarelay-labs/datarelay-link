@@ -17,8 +17,13 @@ _OUTPUT_APPEND = None
 _OUTPUT_PAGE = None
 _OUTPUT_FREE = None
 _OUTPUT_CHECKED = False
+_WRITE_CHUNKS = None
+_WRITE_CHUNKS_CHECKED = False
 _PROCESS_CALLBACK = ctypes.CFUNCTYPE(
     ctypes.c_bool, ctypes.c_int, ctypes.c_void_p, ctypes.c_size_t, ctypes.c_void_p
+)
+_WRITE_CALLBACK = ctypes.CFUNCTYPE(
+    ctypes.c_ssize_t, ctypes.c_void_p, ctypes.c_size_t, ctypes.c_void_p
 )
 
 
@@ -144,6 +149,72 @@ def native_output_page(handle, cursor: int, page_limit: int) -> dict:
 def native_output_free(handle) -> None:
     if handle:
         _OUTPUT_FREE(handle)
+
+
+def write_mcp_response(writer, data: bytes, *, chunk_limit: int = 64 * 1024) -> None:
+    """Write an HTTP-framed response body with bounded Rust chunks when loaded.
+
+    HTTP framing, TLS, headers, and the socket remain owned by the Python
+    handler. The native helper only bounds each write and retries short writes;
+    a blocked Python writer naturally applies backpressure to the handler.
+    """
+    raw = bytes(data)
+    limit = max(1, min(64 * 1024, int(chunk_limit)))
+    if not raw:
+        return
+    if _native_process_drain() is None:
+        view = memoryview(raw)
+        while view:
+            written = writer.write(view)
+            if written is None or written <= 0 or written > len(view):
+                raise OSError("MCP response writer made no valid progress")
+            view = view[written:]
+        return
+
+    global _WRITE_CHUNKS, _WRITE_CHUNKS_CHECKED
+    with _PROCESS_LOCK:
+        if not _WRITE_CHUNKS_CHECKED:
+            try:
+                write_chunks = _PROCESS_LIBRARY.drlink_mcp_write_chunks
+                write_chunks.argtypes = [
+                    ctypes.c_void_p, ctypes.c_size_t, ctypes.c_size_t,
+                    _WRITE_CALLBACK, ctypes.c_void_p,
+                ]
+                write_chunks.restype = ctypes.c_int
+                _WRITE_CHUNKS = write_chunks
+            except AttributeError as exc:
+                if os.environ.get("DRLINK_MCP_RUNTIME", "auto").strip().lower() == "rust":
+                    raise RuntimeError("Rust MCP runtime lacks bounded response I/O") from exc
+            _WRITE_CHUNKS_CHECKED = True
+    if _WRITE_CHUNKS is None:
+        # Auto mode preserves the Python fallback when an older optional
+        # library lacks this additive response-write entry point.
+        view = memoryview(raw)
+        while view:
+            written = writer.write(view)
+            if written is None or written <= 0 or written > len(view):
+                raise OSError("MCP response writer made no valid progress")
+            view = view[written:]
+        return
+
+    callback_error = []
+
+    def write_callback(pointer, size, _context):
+        try:
+            chunk = ctypes.string_at(pointer, size)
+            written = writer.write(chunk)
+            return -1 if written is None else int(written)
+        except BaseException as exc:
+            callback_error.append(exc)
+            return -1
+
+    callback = _WRITE_CALLBACK(write_callback)
+    payload = ctypes.c_char_p(raw)
+    result = _WRITE_CHUNKS(payload, len(raw), limit, callback, None)
+    if callback_error:
+        raise OSError("MCP response write callback failed") from callback_error[0]
+    if result != 1:
+        raise OSError("Rust MCP response write failed or stalled")
 
 
 def drain_process(process, *, on_stdout, on_stderr, timeout_seconds: float = 0,

@@ -33,9 +33,47 @@ class PythonDispatchBudgetTests(unittest.TestCase):
         self.assertTrue(budget.try_acquire())
         self.assertEqual(budget.inflight, 2)
 
+    def test_python_response_writer_retries_short_writes(self):
+        class PartialWriter:
+            def __init__(self):
+                self.data = bytearray()
+
+            def write(self, chunk):
+                count = min(13, len(chunk))
+                self.data.extend(chunk[:count])
+                return count
+
+        writer = PartialWriter()
+        payload = bytes(range(251)) * 900
+        with mock.patch.dict(os.environ, {"DRLINK_MCP_RUNTIME": "python"}):
+            runtime.write_mcp_response(writer, payload)
+        self.assertEqual(writer.data, payload)
+
 
 @unittest.skipUnless(LIBRARY.is_file(), "build the locked Rust MCP runtime library first")
 class RustDispatchBudgetTests(unittest.TestCase):
+    def test_rust_response_writer_bounds_chunks_and_applies_short_write_backpressure(self):
+        class PartialWriter:
+            def __init__(self):
+                self.data = bytearray()
+                self.largest_write = 0
+
+            def write(self, chunk):
+                self.largest_write = max(self.largest_write, len(chunk))
+                count = min(997, len(chunk))
+                self.data.extend(chunk[:count])
+                return count
+
+        writer = PartialWriter()
+        payload = bytes(range(251)) * 900
+        with mock.patch.dict(os.environ, {
+            "DRLINK_MCP_RUNTIME": "rust",
+            "DRLINK_MCP_NATIVE_LIBRARY": str(LIBRARY),
+        }):
+            runtime.write_mcp_response(writer, payload)
+        self.assertEqual(writer.data, payload)
+        self.assertLessEqual(writer.largest_write, 64 * 1024)
+
     def test_rust_enforces_bound_and_release_restores_capacity(self):
         with mock.patch.dict(os.environ, {
             "DRLINK_MCP_RUNTIME": "rust",
@@ -146,13 +184,18 @@ class RustDispatchBudgetTests(unittest.TestCase):
             self.assertEqual(result, 1)
             self.assertIn(b"ready", captured)
             os.killpg(proc.pid, signal.SIGKILL)
-            self.assertEqual(runtime.drain_process(
-                proc, on_stdout=captured.extend, on_stderr=lambda _chunk: None,
-                timeout_seconds=3,
-            ), 0)
-            self.assertEqual(proc.wait(timeout=1), -signal.SIGKILL)
-            proc.stdout.close()
-            proc.stderr.close()
+            try:
+                self.assertEqual(runtime.drain_process(
+                    proc, on_stdout=captured.extend, on_stderr=lambda _chunk: None,
+                    timeout_seconds=3,
+                ), 0)
+                self.assertEqual(proc.wait(timeout=1), -signal.SIGKILL)
+            finally:
+                if proc.poll() is None:
+                    proc.kill()
+                    proc.wait(timeout=5)
+                proc.stdout.close()
+                proc.stderr.close()
 
     def test_rust_capture_process_bounds_output_and_reaps_child(self):
         with mock.patch.dict(os.environ, {
@@ -165,10 +208,17 @@ class RustDispatchBudgetTests(unittest.TestCase):
                     "sys.stderr.buffer.write(b'Y'*90000)"
                 )], stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True,
             )
-            result = runtime.capture_process(
-                proc, input_data=None, timeout_seconds=3,
-                stdout_limit=4096, stderr_limit=2048,
-            )
+            try:
+                result = runtime.capture_process(
+                    proc, input_data=None, timeout_seconds=3,
+                    stdout_limit=4096, stderr_limit=2048,
+                )
+            finally:
+                if proc.poll() is None:
+                    proc.kill()
+                    proc.wait(timeout=5)
+                proc.stdout.close()
+                proc.stderr.close()
         self.assertEqual(result["exit_status"], 0)
         self.assertFalse(result["timed_out"])
         self.assertEqual(result["stdout"], b"X" * 4096)

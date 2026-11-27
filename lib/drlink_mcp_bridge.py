@@ -37,7 +37,7 @@ from urllib.parse import parse_qs, urlencode, urlparse, urlsplit
 from drlink_ai_agent import AgentLoop, execute_local
 from drlink_db_watch import get_watcher
 from drlink_mcp_server_executor import ExecutorDenied, execute_as_unprivileged_user
-from drlink_mcp_runtime import DispatchBudget
+from drlink_mcp_runtime import DispatchBudget, write_mcp_response
 from drlink_control_db import ControlPlaneError, resolve_root
 from drlink_control_plane import (
     clamp_claim_wait_ms,
@@ -1729,7 +1729,7 @@ def make_handler(bridge: MCPBridge):
                 self.send_header(k, v)
             self.end_headers()
             if raw:
-                self.wfile.write(raw)
+                write_mcp_response(self.wfile, raw)
 
         def _public_cors(self):
             # Public metadata may be read cross-origin; credentials are never included.

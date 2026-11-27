@@ -14,6 +14,7 @@ pub struct DispatchBudget {
 }
 
 type OutputChunk = extern "C" fn(i32, *const u8, usize, *mut std::ffi::c_void) -> bool;
+type WriteChunk = extern "C" fn(*const u8, usize, *mut std::ffi::c_void) -> isize;
 
 #[cfg(target_os = "macos")]
 struct ProcessEventQueue(libc::c_int);
@@ -212,6 +213,42 @@ pub unsafe extern "C" fn drlink_mcp_output_free(output: *mut BoundedOutput) {
     }
 }
 
+/// Write an already-framed MCP response body in bounded chunks through the
+/// caller's socket/TLS writer. The callback owns the actual connection and
+/// may return short writes; zero, negative, or over-reported writes fail.
+///
+/// # Safety
+/// `data` must reference `len` readable bytes and `callback` must remain valid
+/// for the duration of this call. `context` is passed through unchanged.
+#[no_mangle]
+pub unsafe extern "C" fn drlink_mcp_write_chunks(
+    data: *const u8,
+    len: usize,
+    chunk_limit: usize,
+    callback: Option<WriteChunk>,
+    context: *mut std::ffi::c_void,
+) -> i32 {
+    if (len > 0 && data.is_null()) || chunk_limit == 0 || chunk_limit > 64 * 1024 {
+        return 0;
+    }
+    let Some(callback) = callback else { return 0 };
+    let mut offset = 0usize;
+    while offset < len {
+        let end = offset.saturating_add(chunk_limit).min(len);
+        let mut written = offset;
+        while written < end {
+            let remaining = end - written;
+            let count = callback(data.add(written), remaining, context);
+            if count <= 0 || count as usize > remaining {
+                return 0;
+            }
+            written += count as usize;
+        }
+        offset = end;
+    }
+    1
+}
+
 /// Drain a spawned child's stdout/stderr while observing its exit without
 /// reaping it. Python retains process creation, termination policy and reaping.
 /// Return 0 after the leader exits and currently available pipe bytes are
@@ -290,6 +327,31 @@ pub unsafe extern "C" fn drlink_mcp_drain_child(
                 }
             }
         }
+        #[cfg(target_os = "macos")]
+        if !exited {
+            let mut event: libc::kevent = std::mem::zeroed();
+            let no_wait = libc::timespec { tv_sec: 0, tv_nsec: 0 };
+            let result = libc::kevent(
+                process_events.0,
+                std::ptr::null(),
+                0,
+                &mut event,
+                1,
+                &no_wait,
+            );
+            if result == 1 {
+                if event.fflags & libc::NOTE_EXIT != 0 {
+                    exited = true;
+                } else if event.flags & libc::EV_ERROR != 0 {
+                    return 2;
+                }
+            } else if result < 0 {
+                let error = std::io::Error::last_os_error();
+                if error.kind() != std::io::ErrorKind::Interrupted {
+                    return 2;
+                }
+            }
+        }
         if exited && !stdout_open && !stderr_open {
             return 0;
         }
@@ -297,25 +359,6 @@ pub unsafe extern "C" fn drlink_mcp_drain_child(
             return 1;
         }
 
-        #[cfg(target_os = "macos")]
-        let mut fds = [
-            libc::pollfd {
-                fd: if stdout_open { stdout_fd } else { -1 },
-                events: (libc::POLLIN | libc::POLLHUP) as i16,
-                revents: 0,
-            },
-            libc::pollfd {
-                fd: if stderr_open { stderr_fd } else { -1 },
-                events: (libc::POLLIN | libc::POLLHUP) as i16,
-                revents: 0,
-            },
-            libc::pollfd {
-                fd: if exited { -1 } else { process_events.0 },
-                events: libc::POLLIN as i16,
-                revents: 0,
-            },
-        ];
-        #[cfg(target_os = "linux")]
         let mut fds = [
             libc::pollfd {
                 fd: if stdout_open { stdout_fd } else { -1 },
@@ -342,12 +385,6 @@ pub unsafe extern "C" fn drlink_mcp_drain_child(
         }
         if result == 0 && exited && !wait_for_eof {
             return 0;
-        }
-        #[cfg(target_os = "macos")]
-        if fds[2].revents & (libc::POLLERR | libc::POLLNVAL) != 0 {
-            return 2;
-        } else if fds[2].revents & (libc::POLLIN | libc::POLLHUP) != 0 {
-            exited = true;
         }
         for index in 0..2 {
             if fds[index].revents & (libc::POLLERR | libc::POLLNVAL) != 0 {
@@ -426,6 +463,43 @@ mod tests {
             assert_eq!(&buffer[..written], b"LMNO");
             assert_eq!((next, total, dropped, evicted), (15, 15, 7, false));
             drlink_mcp_output_free(output);
+        }
+    }
+
+    #[test]
+    fn response_writer_bounds_chunks_and_retries_short_writes() {
+        struct Sink {
+            bytes: Vec<u8>,
+            largest_chunk: usize,
+        }
+        extern "C" fn write_short(data: *const u8, len: usize, context: *mut std::ffi::c_void) -> isize {
+            let sink = unsafe { &mut *(context as *mut Sink) };
+            let count = len.min(7);
+            sink.largest_chunk = sink.largest_chunk.max(len);
+            sink.bytes.extend_from_slice(unsafe { std::slice::from_raw_parts(data, count) });
+            count as isize
+        }
+
+        let input: Vec<u8> = (0..200_000).map(|i| (i % 251) as u8).collect();
+        let mut sink = Sink { bytes: Vec::new(), largest_chunk: 0 };
+        unsafe {
+            assert_eq!(drlink_mcp_write_chunks(
+                input.as_ptr(), input.len(), 64 * 1024, Some(write_short),
+                (&mut sink as *mut Sink).cast(),
+            ), 1);
+        }
+        assert_eq!(sink.bytes, input);
+        assert_eq!(sink.largest_chunk, 64 * 1024);
+    }
+
+    #[test]
+    fn response_writer_rejects_invalid_bounds_and_stalled_writes() {
+        extern "C" fn stalled(_data: *const u8, _len: usize, _context: *mut std::ffi::c_void) -> isize { 0 }
+        let input = b"response";
+        unsafe {
+            assert_eq!(drlink_mcp_write_chunks(input.as_ptr(), input.len(), 0, Some(stalled), std::ptr::null_mut()), 0);
+            assert_eq!(drlink_mcp_write_chunks(input.as_ptr(), input.len(), 64 * 1024 + 1, Some(stalled), std::ptr::null_mut()), 0);
+            assert_eq!(drlink_mcp_write_chunks(input.as_ptr(), input.len(), 8, Some(stalled), std::ptr::null_mut()), 0);
         }
     }
 }
