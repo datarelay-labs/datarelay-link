@@ -46,4 +46,4 @@ registry.json.pre-frp-auto-deploy-*
 !server/config.example.json
 
 # Local Rust build output; only reproducible source and Cargo.lock are tracked.
-native/drlink-egress/target/
+native/*/target/
