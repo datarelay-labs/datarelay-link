@@ -243,11 +243,11 @@ Python rollback 권한은 Python에 둡니다. MCP R2는 Rust가 ready 상태의
 처리하며, Python DB watcher가 보내는 job wakeup을 Rust 조건 변수로 기다립니다. CLI,
 OAuth/AI Identity, AI Access 정책, SQLite, durable job, nonce, audit,
 HTTP/TLS와 실제 socket 소유권은 Python에 유지됩니다. 자동 모드는 설치된 native library가
-있을 때 Rust를 선택합니다. Linux x86_64 Agent/Server와 Apple Silicon macOS Agent bundle에는
+있을 때 Rust를 선택합니다. Linux x86_64/ARM64 Agent/Server와 Apple Silicon macOS Agent bundle에는
 두 Rust shared library가 target별 native 디렉터리에 포함되며, `runtime-build.json`에 Rust 버전, source HEAD,
 Cargo.lock 및 library hash를 기록합니다. Agent runtime lineage manifest와 Server project-file
-manifest가 install, update, rollback에서 해당 파일을 관리합니다. Linux ARM64 native library
-package는 아직 검증 및 추가가 필요합니다. 명시적인 Rust 선택은 library 부재 시 fail-closed입니다.
+manifest가 install, update, rollback에서 해당 파일을 관리합니다. Linux ARM64 package는 native runner에서
+build, runtime 선택 및 adapter 테스트를 통과했습니다. 명시적인 Rust 선택은 library 부재 시 fail-closed입니다.
 handoff 이후 세션을 Python relay로 재실행하지 않으며, 새 연결은 `DRLINK_EGRESS_RUNTIME=python`으로 기존 Python rollback 경로를
 선택할 수 있습니다. 각 방향의 relay queue는 256 KiB로 제한하며, peer hangup 뒤에도
 수신 EOF까지 대기 데이터를 전달하고 backpressure 중 유휴 descriptor를 poll에서 제외합니다.

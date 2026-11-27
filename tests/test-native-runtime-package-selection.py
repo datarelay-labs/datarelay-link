@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Verify default runtime discovery selects the shipped Linux x86_64 assets."""
+"""Verify default runtime discovery selects the shipped target-native assets."""
 from __future__ import annotations
 
 import importlib.util
@@ -36,7 +36,7 @@ def load_runtime(name: str, path: str):
     return module
 
 
-@unittest.skipUnless(SUPPORTED_RUNNER, "packaged Linux x86_64 native assets")
+@unittest.skipUnless(SUPPORTED_RUNNER, "packaged native assets for this platform")
 class PackagedRuntimeSelectionTests(unittest.TestCase):
     def test_default_egress_selector_loads_shipped_runtime(self):
         self.assertTrue(EGRESS_LIBRARY.is_file())

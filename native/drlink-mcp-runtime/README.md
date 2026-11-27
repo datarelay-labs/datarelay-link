@@ -50,14 +50,13 @@ The library is selected with `DRLINK_MCP_RUNTIME=rust` and
 available packaged library and otherwise uses the existing Python dispatch and
 process/pipe lifecycle paths;
 `python` selects the rollback implementation. Explicit Rust selection fails
-service initialization if the library cannot be loaded. Linux x86_64 Agent and
-Server bundles and the macOS Apple Silicon Agent bundle include both Rust
-shared libraries under their target-specific native directories and record
-the Rust version, source HEAD, linker, Cargo.lock hashes, and library hashes in
-`runtime-build.json`. The Agent runtime lineage manifest covers these files;
-the Server project-file manifest includes its Linux x86_64 libraries in
-install, update, and rollback. Linux ARM64 native package assets remain to be
-qualified and added.
+service initialization if the library cannot be loaded. Linux x86_64 and ARM64 Agent and Server bundles and the macOS Apple Silicon
+Agent bundle include both Rust shared libraries under their target-specific
+native directories and record the Rust version, source HEAD, linker, Cargo.lock
+hashes, and library hashes in `runtime-build.json`. The Agent runtime lineage
+manifest and Server project-file manifest cover these files in install,
+update, and rollback. Linux ARM64 assets were built and exercised on a native
+ARM64 runner.
 R2 currently covers dispatch admission, one ready-listener accept, bounded
 streamed-result retention, bounded request-body reads and bounded outbound
 response writes, and the per-subscription condition wait used for bounded job
