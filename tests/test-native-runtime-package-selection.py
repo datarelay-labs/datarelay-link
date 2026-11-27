@@ -7,7 +7,9 @@ import hashlib
 import json
 import os
 import platform
+import subprocess
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -67,6 +69,19 @@ class PackagedRuntimeSelectionTests(unittest.TestCase):
             runtime._PROCESS_DRAIN = None
             drain = runtime._native_process_drain()
         self.assertIsNotNone(drain)
+
+    def test_provenance_verifier_rejects_uncommitted_native_source(self):
+        source_dir = ROOT / "native/drlink-egress/src"
+        with tempfile.NamedTemporaryFile(prefix=".provenance-drift-", suffix=".rs",
+                                         dir=source_dir) as drift:
+            drift.write(b"// uncommitted native build input\n")
+            drift.flush()
+            result = subprocess.run(
+                [sys.executable, str(ROOT / "scripts/verify-native-runtime-assets.py")],
+                cwd=ROOT, text=True, capture_output=True, check=False,
+            )
+        self.assertNotEqual(result.returncode, 0, result.stdout)
+        self.assertIn("working-tree changes", result.stderr)
 
 
 if __name__ == "__main__":

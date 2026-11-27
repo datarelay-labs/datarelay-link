@@ -261,20 +261,22 @@ stream, JSON parsing, 권한 판단, SQLite 조회와 결과 소비, bind, socke
 Linux/macOS Agent 및 Server 경로에 연결됐습니다. Linux 회귀와 Apple Silicon workflow
 45958802619의 stateful kqueue lifecycle 검증이 통과했습니다. retry drain 사이에 exit event를
 유지하며, 정상 EOF 뒤 불필요한 process group signal을 보내지 않습니다. 실제 정리가
-필요한 경로의 권한 거부는 계속 오류로 처리합니다. Linux x86_64용 두 Rust library는 설치
-패키지에 포함되며, Linux ARM64/macOS native package와 실제 사용자 E2E qualification은
-진행 중이며, Linux ARM64 native package도 아직 남아 있습니다. MCP rollback은
-`DRLINK_MCP_RUNTIME=python`이며,
-`auto`는 library가 없으면 Python으로 돌아가고 명시적 `rust` 선택은 library 부재 시
-서비스 초기화를 fail-closed 합니다.
+필요한 경로의 권한 거부는 계속 오류로 처리합니다. Linux x86_64/ARM64 Agent 및 Server와
+Apple Silicon macOS Agent 패키지에 target별 Rust library가 포함됩니다. Linux 두 target은
+native runner의 build, provenance, runtime 선택, egress/MCP adapter 테스트를 통과했고,
+Apple Silicon은 runtime 발견 및 process lifecycle 테스트와 artifact upload를 통과했습니다.
+전체 macOS client portability workflow와 최종 exact-head 회귀/리뷰는 현재 후보에서 다시 확인해야
+합니다. MCP rollback은 `DRLINK_MCP_RUNTIME=python`이며, `auto`는 library가 없으면 Python으로
+돌아가고 명시적 `rust` 선택은 library 부재 시 서비스 초기화를 fail-closed 합니다.
 R3에서는 Python이 시작한 Linux/macOS Agent 및 Server executor 자식 프로세스의
 stdout/stderr pipe를 Rust가 poll하고 읽습니다. macOS는 timeout/retry drain 호출 사이에 유지되는 kqueue process-exit watcher로
 종료를 관찰하고, Linux는 waitid를 사용합니다. Apple Silicon 재검증에서 정상 EOF와 descendant-held-pipe retry가 통과했습니다. process 시작,
 timeout 선택, process-group 종료, wait/reap 권한은 Python에 유지됩니다.
 또한 MCP job 출력은 Rust가 기존 1 MiB 보존 창과 64 KiB cursor 페이지를 제공하고,
-Python이 job 소유권과 cursor 검증, 응답 생성을 계속 담당합니다. native shared library의
-Linux x86_64 Agent/Server와 Apple Silicon macOS Agent 설치 패키징이 완료됐습니다. Linux ARM64
-native library는 아직 추가 검증이 필요합니다.
+Python이 job 소유권과 cursor 검증, 응답 생성을 계속 담당합니다. Linux x86_64/ARM64 Agent 및
+Server와 Apple Silicon macOS Agent의 native library는 target별 설치 bundle, provenance record,
+Agent lineage manifest 및 Server update/rollback manifest에 포함됩니다. 실제 사용자 E2E와
+설치 서비스 load/soak qualification은 별도로 남아 있습니다.
 
 Rust process I/O의 최종 EOF drain이 실패하면 Agent capture는 stream을 닫고 자식을 reap한 뒤
 오류를 반환합니다. Server full-control도 해당 job을 `output_complete=false`와 제한된

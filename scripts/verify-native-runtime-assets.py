@@ -50,6 +50,11 @@ def main() -> int:
             raise SystemExit(f"ERROR: runtime source HEAD is not an ancestor of repository HEAD: {target}")
         if git("diff", "--quiet", source_head, "HEAD", "--", *CRATES).returncode != 0:
             raise SystemExit(f"ERROR: Rust source changed since native runtime build: {target}")
+        dirty = git("status", "--porcelain", "--untracked-files=all", "--", *CRATES)
+        if dirty.returncode != 0 or dirty.stdout:
+            raise SystemExit(
+                f"ERROR: native Rust build inputs have working-tree changes: {target}"
+            )
         for crate, rel in (("drlink-egress", "native/drlink-egress/Cargo.lock"),
                            ("drlink-mcp-runtime", "native/drlink-mcp-runtime/Cargo.lock")):
             if record.get("cargo_locks", {}).get(crate) != digest(ROOT / rel):

@@ -6023,6 +6023,13 @@ frp_client_upgrade_restore_tools() {
     echo "ERROR: snapshot is not a management-tools backup (missing manifest)." >&2
     return 1
   fi
+  # Older helpers stored backups by basename at the snapshot root. Since the
+  # current inventory contains nested native assets with repeated basenames,
+  # those snapshots cannot be mapped safely. Refuse before touching live files.
+  if [[ ! -d "${backup}/files" ]]; then
+    echo "ERROR: legacy basename-layout snapshot cannot be restored safely; installed files were not changed." >&2
+    return 1
+  fi
   if [[ "${FRP_CLIENT_UPGRADE_HOOK_ROLLBACK_FAIL:-}" == "1" ]]; then
     echo "ERROR: simulated update rollback failure" >&2
     return 1
@@ -6062,6 +6069,7 @@ frp_client_upgrade_restore_tools() {
 frp_client_upgrade_verify_restored() {
   local backup="$1" live rel mode src state backup_file
   [[ -f "${backup}/manifest" ]] || return 1
+  [[ -d "${backup}/files" ]] || return 1
   while IFS=: read -r rel mode src; do
     [[ -n "$rel" ]] || continue
     live="$(frp_client_path "/${rel}")"

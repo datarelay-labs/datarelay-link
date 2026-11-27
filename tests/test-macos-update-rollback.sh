@@ -43,4 +43,20 @@ frp_client_upgrade_verify_restored "$backup"
 grep -q '^original:' "$(frp_client_path /usr/local/bin/drlink)"
 grep -q '^original:' "$(frp_client_path /usr/local/lib/drlink/frpctl)"
 grep -q '^PROJECT_VERSION=2.2.1' "$version"
+
+# Legacy helpers stored files at the snapshot root by basename. Current
+# nested native inventories can reuse basenames, so recovery must fail before
+# mutating the live tree instead of deleting files absent from that layout.
+legacy="$TMP/legacy-snapshot"
+mkdir -m 700 "$legacy"
+printf 'present drlink\n' >"$legacy/manifest"
+printf 'legacy-cli\n' >"$legacy/drlink"
+live_cli="$(frp_client_path /usr/local/bin/drlink)"
+printf 'live-cli\n' >"$live_cli"
+if frp_client_upgrade_restore_tools "$legacy"; then
+  echo "FAIL: legacy basename snapshot was accepted" >&2
+  exit 1
+fi
+grep -q '^live-cli$' "$live_cli"
+echo "PASS LEGACY_SNAPSHOT_REJECTED_WITH_LIVE_FILES_PRESERVED"
 echo "MACOS_UPDATE_ROLLBACK_TEST=PASS"
