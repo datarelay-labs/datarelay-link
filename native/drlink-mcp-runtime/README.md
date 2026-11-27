@@ -15,8 +15,10 @@ On Linux, child exit is observed with non-reaping `waitid(WNOWAIT)`; on macOS,
 the helper uses a persistent `kqueue` `EVFILT_PROC/NOTE_EXIT` watcher across
 timeout/retry drain calls. Python owns and closes that watcher after final EOF
 or error. Both paths leave the child waitable so Python retains reaping and
-process-group cleanup authority. Apple Silicon validation remains pending;
-process-group cleanup permission failures remain hard errors.
+process-group cleanup authority. On the 2026-11-27 Apple Silicon retest, the
+timeout/retry watcher case passed, while capture-process cleanup received
+`EPERM` when signaling the completed child's process group. That denial remains
+a hard error; macOS executor qualification is blocked on this runner behavior.
 
 The library is selected with `DRLINK_MCP_RUNTIME=rust` and
 `DRLINK_MCP_NATIVE_LIBRARY=/path/to/libdrlink_mcp_runtime.so`. `auto` loads an
