@@ -138,6 +138,8 @@ class AllocatorAiClaimAdmissionTests(unittest.TestCase):
         self.assertIsNone(self.allocator.check_nonce(MACHINE_A, rejected_nonce, int(time.time())))
 
     def test_parallel_ai_claim_replay_and_failed_nonce_write_fail_closed(self):
+        from concurrent.futures import ThreadPoolExecutor
+        from threading import Barrier
         from unittest import mock
 
         key, pub, mac = _write_identity(Path(self.tmp.name) / "agent", MACHINE_A, "agent-a")
@@ -158,6 +160,30 @@ class AllocatorAiClaimAdmissionTests(unittest.TestCase):
             self.assertEqual(code, 500, payload)
             claim.assert_not_called()
         self.assertIsNone(self.allocator.check_nonce(MACHINE_A, nonce, int(time.time())))
+
+        # The merged allocator opens a request-local plane through this factory;
+        # it no longer exposes the retired Allocator.ai_job_plane() pool API.
+        ready = Barrier(2)
+        connection_ids = []
+
+        def request():
+            plane = self.mod._open_control_plane(self.allocator.cfg)
+            self.assertIsNotNone(plane)
+            connection_ids.append(id(plane.conn))
+            try:
+                ready.wait(timeout=10)
+                return mgmt.handle_allocator_http(
+                    plane, "POST", path, headers, body, verifier=verifier)
+            finally:
+                plane.close()
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            outcomes = list(pool.map(lambda _: request(), range(2)))
+        self.assertEqual(len(set(connection_ids)), 2)
+        self.assertEqual(sorted(code for code, _ in outcomes), [200, 403])
+        denied = next(payload for code, payload in outcomes if code == 403)
+        self.assertEqual(denied.get("error_class"), "REPLAY_REJECTED")
+
 class MgmtApiAuthTests(unittest.TestCase):
     def setUp(self):
         self.server_tmp = tempfile.mkdtemp(prefix="drlink-mgmt-auth-srv-")
