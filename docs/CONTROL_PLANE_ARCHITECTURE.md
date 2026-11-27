@@ -872,40 +872,15 @@ Canonical public rule shape:
 
 ```text
 name
-source      → AI Identity
-destination → Network Object / Network Group
+source      → verified AI Identity
+destination → server:self / trusted Managed Host / supported group selector
 permission  → Permission Object / Permission Group
+execution   → allowed OS accounts + one default for account-bearing tools
+paths       → direct-file scopes
 enabled / disabled
 ```
 
-Authentication happens before authorization. A display name alone is not an authenticated AI Identity.
-
-Policy evaluation:
-
-```text
-No Policy
-→ effective policy ALLOW
-→ authentication is still mandatory
-
-BLACKLIST
-→ any enabled matching Rule DENY
-→ no enabled Rule match ALLOW
-
-WHITELIST
-→ any enabled matching Rule ALLOW
-→ no enabled Rule match DENY
-
-Enforcement DISABLED
-→ effective policy ALLOW ALL
-→ saved Mode/Rules preserved
-→ authentication is still mandatory
-```
-
-AI Access Rules are not ordered and do not carry a per-rule ALLOW/DENY action.
-
-Fine-grained operations such as `exec`, `read_file`, `write_file`, `upload_file`, and `download_file`, including applicable path/operation constraints, are represented by Permission Objects / Permission Groups and are enforced on every new invocation.
-
-Targets are resolved through the canonical Network Object / Network Group model. Managed Hosts may participate through their Network Object projection where the AI Access destination rules permit it.
+AI Access is WHITELIST-only: no policy, disabled enforcement, unsupported mode or no complete matching enabled rule is DENY. Authentication is required, never sufficient. A single matching rule must authorize capability, selected account and path together, with independent target-local eligibility. No rule-order or cross-rule permission union. Conflicting implicit defaults fail closed; explicit account selection must satisfy a complete grant. Root is explicitly locally approved and granted to the identity/target, never inferred. See [AI_ACCESS_MCP.md §4.1](AI_ACCESS_MCP.md#41-canonical-execution-account-contract).
 
 ## 39. Initial MCP capability surface
 
@@ -956,7 +931,7 @@ Therefore:
 true read-only AI role => exec=false
 ```
 
-When `exec=true`, the target OS account, filesystem permissions, sudo policy, namespaces/sandboxing if used, command timeout, environment filtering, and process controls become part of the security boundary. Execution identity and privilege elevation should be explicit constraints where supported; granting `exec` alone never implies permission to elevate privileges.
+When `exec=true`, the chosen account's real OS authority, groups and any pre-existing escalation rights apply. Direct-file paths and initial cwd are not a shell sandbox. Root requires explicit local and per-rule approval; AI discovers allowed accounts, defaults to the authorized account and explicitly selects another only for the user's task. No automatic escalation. See the canonical execution-account contract.
 
 ## 41. AI authorization timing
 

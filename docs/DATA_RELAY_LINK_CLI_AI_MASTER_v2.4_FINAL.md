@@ -761,7 +761,7 @@ Review each referencing Rule with `set ai-access <RULE>` to select a replacement
 
 ### AI MCP Setup and AI Access workflow
 
-The single workflow specification is [AI_ACCESS_MCP.md](AI_ACCESS_MCP.md). Managed Hosts owns enrollment; AI MCP Setup manages infrastructure and connections; AI Identity retains verified authentication and credential lifecycle; AI Access Rules own Source → Destination → Permission authorization; System owns shared MCP settings and certificates. AI MCP Setup checks readiness and uses that same settings flow only when necessary, then optionally opens the separate Access Rule wizard. No automatic privilege grant from OAuth or first connection; explicitly reviewed Owner scope is optional. Basic permissions use built-in profiles; custom Objects/Groups are advanced. AI Access mode is fixed WHITELIST, not an operator input. Preserve existing state and all fail-closed controls. No duplicate public command/menu paths. These are target requirements, not installed-product evidence.
+The single normative workflow is [AI_ACCESS_MCP.md](AI_ACCESS_MCP.md). Managed Hosts owns enrollment; AI MCP Setup owns TLS, connection and verified AI Identity lifecycle; AI Access Rules own Source, Destination, Permission, allowed execution accounts, default account and direct-file paths. System owns shared infrastructure and the local execution safety ceiling, not a second independent user-facing account wizard. After OAuth, guide the operator into one reviewed Access Rule flow; skipping it leaves DENY. Built-in permissions need no custom Objects/Groups. AI Access is fixed WHITELIST. Normal requests describe work, not OS accounts: MCP discovers effective accounts and defaults; AI selects an explicitly granted account only when needed. Preserve existing state, public command compatibility and fail-closed enforcement. These are target requirements pending exact-candidate implementation and E2E.
 
 
 AI Access uses an authenticated AI Identity as its source.
@@ -1139,10 +1139,14 @@ Internet Access destination selectors reject a Managed Host and reject any Group
 ```text
 name
 source      → AI Identity
-destination → Network Object / Network Group
+destination → server:self / trusted Managed Host / supported group selector
 permission  → Permission Object / Permission Group
+execution   → allowed existing accounts + one default (account-bearing operations)
+paths       → direct-file scopes
 enabled / disabled
 ```
+
+One reviewed wizard selects the default OS user, additional users and explicit root where appropriate. Read-only has no general shell. The normative workflow, runtime selection and migration are defined in [AI_ACCESS_MCP.md §4.1](AI_ACCESS_MCP.md#41-canonical-execution-account-contract).
 
 ---
 
@@ -4462,65 +4466,9 @@ A destination Network Group is likewise rejected if it contains any Managed Host
 
 # 88. Scenario — AI MCP Setup and AI Access
 
-Server:
+Use `set ai-mcp` to complete verified authentication; reuse ready TLS. Open `set ai-access claude-prod` with Source preselected. Choose existing target, Full management, default project owner, additional OS accounts and explicitly approved root as needed; review direct-file paths and effective target-local execution. No mode prompt (WHITELIST only), no mandatory custom Permission Object or second account wizard.
 
-```text
-set ai-identity claude
-```
-
-Interactive authentication completes:
-
-```text
-AI Identity : claude
-Status      : VERIFIED
-```
-
-Create Permission Object:
-
-```text
-set permission-object read-only
-```
-
-Permissions:
-
-```text
-host-info
-process-read
-file-read
-```
-
-Create first AI Access Rule:
-
-```text
-set ai-access claude-prod
-```
-
-Choose:
-
-```text
-Whitelist
-```
-
-Rule:
-
-```text
-Source      : claude
-Destination : production-servers
-Permission  : read-only
-Enabled     : Yes
-```
-
-Effective:
-
-```text
-authenticated claude + matching destination/permission
-→ ALLOW
-
-unmatched AI Access request
-→ DENY
-```
-
-Unauthenticated access is not made valid by policy mode.
+From a fresh AI chat, ask to modify the project, run tests and perform the authorized deployment without specifying account names. Discover execution context; use the default/project owner for development and explicitly allowed root for required system operations. Verify actual UID, ownership, Git and job receipts. Deny unapproved accounts, ambiguous defaults and unmatched requests. For a read-only rule, verify reads and diagnostics with no shell or writes. See the canonical AI Access workflow.
 
 ---
 
@@ -5207,7 +5155,8 @@ A v2.4 CLI implementation is conformant only if the following can all be demonst
 - Interactive and automation authentication can bind an AI Identity.
 - Policy evaluation occurs only after identity authentication.
 - AI Access is WHITELIST-only and deny-by-default; authentication alone never grants a capability.
-- Policy disable does not remove authentication.
+- Policy disable is DENY ALL for AI operations; authentication remains separate.
+- Default and additional execution accounts, explicit root, direct-file scope and local readiness are reviewed once; AI discovers effective context and does not require account instructions for normal tasks.
 - AI Access Log supports identity/destination/permission filtering.
 
 ## AI CLI

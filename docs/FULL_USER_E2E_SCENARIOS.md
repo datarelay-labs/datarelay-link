@@ -1833,7 +1833,10 @@ Real E2E must include, where supported:
 - exec timeout;
 - bounded output;
 - process cleanup;
-- OS account/sudo boundary;
+- account-selection boundary: root-only, default normal user, multiple additional users plus root; actual UID/GID, HOME, groups, Git ownership and file CRUD/transfer under selected account;
+- natural-language task without account/path instructions: fresh chat discovers default/account options, edits and tests as project owner, performs explicitly authorized system action as root, and returns to owner; no automatic root retry;
+- absent cwd selects validated default, explicit bad cwd/path/account returns actionable DENY; read-only cannot execute shell; overlapping grants do not combine, conflicting defaults fail closed; identity/target root isolation and tracked-job revocation;
+- local configuration/upgrade retains old effective accounts and paths, never silently grants root; validate Server-self and Linux Managed Host with actual calls; unsupported platforms reported accurately;
 - policy change affects the next invocation;
 - a running command/session follows the documented existing-session semantics.
 
@@ -2381,7 +2384,7 @@ set ai-identity <IDENTITY> approve <PENDING-ID>
 set ai-identity <IDENTITY> deny <PENDING-ID>
 ~~~
 
-Verify authentication and authorization states are represented separately, reference-aware deletion works, and AI Access enforcement toggles have the documented functional effect. Run a clean beginner AI MCP Setup flow with no TLS/no Identity, then a second AI with ready TLS, no-policy denial, a reviewed rule with built-in permission, selected-only versus explicit dynamic trusted-host scope, independent enrollment of a new host, explicit native server:self scope if enabled, and OAuth/credential failure recovery. Confirm retired grammar is rejected and absent from help/completion/menu; retain the existing security-negative and exact-candidate gates.
+Verify authentication and authorization states are represented separately, reference-aware deletion works, and AI Access enforcement toggles have the documented functional effect. Run a clean beginner AI MCP Setup flow with no TLS/no Identity, then a second AI with ready TLS, no-policy denial, a reviewed rule with built-in permission, selected-only versus explicit dynamic trusted-host scope, independent enrollment of a new host, explicit native server:self scope if enabled, and OAuth/credential failure recovery. Verify one reviewed account selection flow (default user, multiple additional users, explicit administrator or root-only), cancellation/rollback, incompatible/offline targets and future group members without local approval, configured versus live diagnostics, CLI/Bundle and existing Web parity. A real new AI chat must complete a natural-language development/administration mission without account or cwd instructions. Confirm retired singleton account wizard requirements and grammar are not reintroduced; retain security negatives and exact-candidate gates.
 
 ## A-007 — Reference protection — MANDATORY
 
