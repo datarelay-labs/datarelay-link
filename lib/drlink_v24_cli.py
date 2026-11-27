@@ -1660,7 +1660,8 @@ def handle_set(plane: ControlPlane, rest: list[str]) -> Optional[int]:
     if res == "mcp-server":
         _require_server(plane, "MCP Server Settings")
         if len(rest) != 1:
-            raise ControlPlaneError("Usage: set mcp-server")
+            from drlink_control_cli import _set_mcp_tls
+            return _set_mcp_tls(plane, rest[1:])
         from drlink_v24_wizard import run_mcp_server_setup
         return run_mcp_server_setup(plane)
     if res == "ai-identity":

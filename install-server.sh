@@ -179,24 +179,8 @@ frp_apply_server_local_installer_urls() {
     frp_qualified_artifact_missing windows amd64
     return 1
   }
-  if [[ -z "${FRP_CLIENT_INSTALLER_URL:-}" ]]; then
-    if [[ -z "${CLIENT_INSTALLER_URL:-}" ]] || \
-       frp_is_public_github_installer_url "$CLIENT_INSTALLER_URL" || \
-       frp_is_former_product_installer_url "$CLIENT_INSTALLER_URL" || \
-       [[ "$CLIENT_INSTALLER_URL" == "$(frp_legacy_client_installer_url)" ]] || \
-       frp_is_official_main_installer_url "$CLIENT_INSTALLER_URL" || \
-       [[ "$CLIENT_INSTALLER_URL" == "$(frp_default_client_installer_url)" ]]; then
-      CLIENT_INSTALLER_URL="$linux_url"
-    fi
-  fi
-  if [[ -z "${FRP_WINDOWS_CLIENT_INSTALLER_URL:-}" ]]; then
-    if [[ -z "${WINDOWS_CLIENT_INSTALLER_URL:-}" ]] || \
-       frp_is_public_github_installer_url "$WINDOWS_CLIENT_INSTALLER_URL" || \
-       frp_is_former_product_installer_url "$WINDOWS_CLIENT_INSTALLER_URL" || \
-       [[ "$WINDOWS_CLIENT_INSTALLER_URL" == "$(frp_default_windows_client_installer_url)" ]]; then
-      WINDOWS_CLIENT_INSTALLER_URL="$windows_url"
-    fi
-  fi
+  CLIENT_INSTALLER_URL="$linux_url"
+  WINDOWS_CLIENT_INSTALLER_URL="$windows_url"
   if ! frp_validate_https_url "$CLIENT_INSTALLER_URL"; then
     echo "ERROR: client_installer_url must be a valid https:// URL" >&2
     exit 1
@@ -986,32 +970,8 @@ resolve_server_settings() {
   frp_infer_expected_source_from_release_manifest "$BASE_DIR"
   DEFAULT_CLIENT_INSTALLER_URL="$(frp_default_client_installer_url)"
   DEFAULT_WINDOWS_CLIENT_INSTALLER_URL="$(frp_default_windows_client_installer_url)"
-  CLIENT_INSTALLER_URL="${FRP_CLIENT_INSTALLER_URL:-${EXISTING_CLIENT_INSTALLER_URL:-$DEFAULT_CLIENT_INSTALLER_URL}}"
-  frp_migrate_legacy_client_installer_url
-  WINDOWS_CLIENT_INSTALLER_URL="${FRP_WINDOWS_CLIENT_INSTALLER_URL:-${EXISTING_WINDOWS_CLIENT_INSTALLER_URL:-$DEFAULT_WINDOWS_CLIENT_INSTALLER_URL}}"
-  if frp_is_former_product_installer_url "${WINDOWS_CLIENT_INSTALLER_URL:-}"; then
-    WINDOWS_CLIENT_INSTALLER_URL="$(frp_default_windows_client_installer_url)"
-  fi
-  # Existing config installer URLs are also provenance when env/git overrides are absent.
-  if [[ -z "${FRP_EXPECTED_SOURCE_REF:-}" ]]; then
-    _frp_resolved_ref=""
-    for _frp_resolved_url in "$CLIENT_INSTALLER_URL" "$WINDOWS_CLIENT_INSTALLER_URL"; do
-      if _frp_resolved_ref="$(frp_source_ref_from_github_raw_url "${_frp_resolved_url:-}")"; then
-        FRP_EXPECTED_SOURCE_REF="$_frp_resolved_ref"
-        export FRP_EXPECTED_SOURCE_REF
-        break
-      fi
-    done
-    unset _frp_resolved_ref _frp_resolved_url
-  fi
-  if ! frp_validate_https_url "$CLIENT_INSTALLER_URL"; then
-    echo "ERROR: client_installer_url must be a valid https:// URL" >&2
-    exit 1
-  fi
-  if ! frp_validate_https_url "$WINDOWS_CLIENT_INSTALLER_URL"; then
-    echo "ERROR: windows_client_installer_url must be a valid https:// URL" >&2
-    exit 1
-  fi
+  CLIENT_INSTALLER_URL="$DEFAULT_CLIENT_INSTALLER_URL"
+  WINDOWS_CLIENT_INSTALLER_URL="$DEFAULT_WINDOWS_CLIENT_INSTALLER_URL"
   FRP_MODE_SWITCH=0
 
   # Public vs listen: dedicated vars win; a single legacy FRP_CONTROL_PORT or

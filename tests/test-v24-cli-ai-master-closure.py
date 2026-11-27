@@ -82,29 +82,38 @@ class WizardCancelAtomicty(unittest.TestCase):
         self.assertEqual(grammar.match(["set", "mcp-server"], role="server")["status"], "ok")
         for tokens in (["set", "ai-mcp"], ["set", "server", "mcp"], ["set", "mcp-server", "extra"]):
             self.assertNotEqual(grammar.match(tokens, role="server")["status"], "ok")
-        self.assertEqual(grammar.match(["set", "server", "mcp", "hostname", "mcp.example.com"], role="server")["status"], "ok")
+        self.assertNotEqual(grammar.match(["set", "server", "mcp", "hostname", "mcp.example.com"], role="server")["status"], "ok")
+        self.assertEqual(grammar.match(["set", "mcp-server", "hostname", "mcp.example.com"], role="server")["status"], "ok")
         scripted = ScriptedIO(["0"])
         set_wizard_io(scripted)
         with redirect_stdout(io.StringIO()):
             self.assertEqual(cli.dispatch(["set", "mcp-server"], root=self.tmp, plane=self.plane), 0)
         rendered = "".join(scripted.out)
-        for label in ("MCP Server Settings", "Public endpoint and TLS", "Server execution", "Diagnostics"):
+        for label in ("MCP Server Settings", "Configure endpoint, TLS and Server execution", "Diagnostics"):
             self.assertIn(label, rendered)
-        for label in ("Connect or manage AI service", "List AI connections", "MCP Bridge settings"):
+        for label in ("2) Server execution", "Connect or manage AI service", "List AI connections", "MCP Bridge settings"):
             self.assertNotIn(label, rendered)
         self.assertEqual(self._rev(), rev)
-        set_wizard_io(ScriptedIO(["2"]))
-        with mock.patch("subprocess.run") as run, redirect_stderr(io.StringIO()) as err:
-            self.assertEqual(cli.dispatch(["set", "mcp-server"], root=self.tmp, plane=self.plane), 1)
-            self.assertIn("interactive administrator", err.getvalue())
-            run.assert_not_called()
-        self.assertEqual(self._rev(), rev)
+        ready = {"frontend_available": True, "cloud_compatible": True,
+                 "certificate": "VALID", "url": "https://mcp.example.test/mcp"}
+        import drlink_mcp_tls as tls
+        ready["certificate"] = tls.STATUS_VALID
+        for configured, answers, calls in ((False, ["1"], 1), (True, ["1", "n"], 0), (True, ["1", "y"], 1)):
+            set_wizard_io(ScriptedIO(answers))
+            with mock.patch.object(cli, "_guide_mcp_server", return_value=0) as guide, \
+                 mock.patch.object(tls, "status_view", return_value=ready), \
+                 mock.patch.object(self.plane, "native_mcp_runtime_status", return_value={"readiness":"Configured" if configured else "Disabled","reason":"fixture","full":configured}), \
+                 mock.patch("drlink_v24_wizard._configure_mcp_local_execution", return_value=0) as execution:
+                self.assertEqual(cli.dispatch(["set", "mcp-server"], root=self.tmp, plane=self.plane), 0)
+                guide.assert_called_once()
+                self.assertEqual(execution.call_count, calls)
         set_wizard_io(ScriptedIO(["1"]))
-        with mock.patch.object(cli, "_guide_mcp_server", return_value=0) as guide:
+        with mock.patch.object(cli, "_guide_mcp_server", return_value=0), \
+             mock.patch.object(tls, "status_view", return_value={}), \
+             mock.patch("drlink_v24_wizard._configure_mcp_local_execution") as execution:
             self.assertEqual(cli.dispatch(["set", "mcp-server"], root=self.tmp, plane=self.plane), 0)
-            guide.assert_called_once()
-        self.assertEqual(self._rev(), rev)
-        set_wizard_io(ScriptedIO(["3"]))
+            execution.assert_not_called()
+        set_wizard_io(ScriptedIO(["2"]))
         with mock.patch.object(self.plane, "diagnostics_mcp", return_value="MCP diagnostic\n") as diagnostic, mock.patch.object(cli, "_guide_mcp_server") as guide, redirect_stdout(io.StringIO()):
             self.assertEqual(cli.dispatch(["set", "mcp-server"], root=self.tmp, plane=self.plane), 0)
             diagnostic.assert_called_once()

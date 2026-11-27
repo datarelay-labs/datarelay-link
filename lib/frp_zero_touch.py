@@ -153,7 +153,7 @@ def bootstrap_hostname(cfg):
     """Optional Zero-Touch HTTPS entry authority (not public_hostname)."""
     if not isinstance(cfg, dict):
         return ''
-    return str(cfg.get('bootstrap_hostname') or '').strip().lower()
+    return str(cfg.get('bootstrap_hostname') or cfg.get('public_hostname') or '').strip().lower()
 
 
 

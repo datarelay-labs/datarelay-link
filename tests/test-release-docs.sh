@@ -38,12 +38,8 @@ for doc in docs/CLI_REFERENCE.md docs/DATA_RELAY_LINK_CLI_AI_MASTER_v2.4_FINAL.m
   for cmd in \
     'set server public-hostname <FQDN>' \
     'set server bootstrap-hostname <FQDN>' \
-    'set server installer-url <URL>' \
-    'set server windows-installer-url <URL>' \
     'unset server public-hostname' \
-    'unset server bootstrap-hostname' \
-    'unset server installer-url' \
-    'unset server windows-installer-url'; do
+    'unset server bootstrap-hostname'; do
     grep -qF "$cmd" "$doc" || fail "$doc missing canonical Server setting: $cmd"
   done
 done

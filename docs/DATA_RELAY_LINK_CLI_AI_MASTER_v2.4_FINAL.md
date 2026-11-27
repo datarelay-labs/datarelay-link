@@ -789,13 +789,12 @@ On the Server, configure endpoint/TLS and optional local Server execution once:
 set mcp-server
 
 MCP Server Settings
-1) Public endpoint and TLS
-2) Server execution
-3) Diagnostics
+1) Configure endpoint, TLS and Server execution
+2) Diagnostics
 0) Cancel
 ```
 
-The Server execution option requires the local administrator to select Run as User and existing local file roots / initial working directories, then explicitly approve. The default prepared account is drlink-mcp with /var/lib/drlink-mcp; preparation alone does not enable execution. UID 0 requires separate explicit approval.
+The combined setup prompts for Server execution after TLS readiness is confirmed. Execution activation requires the local administrator to select Run as User and existing local file roots / initial working directories, then explicitly approve. The default prepared account is drlink-mcp with /var/lib/drlink-mcp; preparation alone does not enable execution. UID 0 requires separate explicit approval.
 
 Connect and authenticate each AI independently:
 
@@ -2468,8 +2467,6 @@ set enrollment bulk
 
 set server public-hostname <FQDN>
 set server bootstrap-hostname <FQDN>
-set server installer-url <URL>
-set server windows-installer-url <URL>
 
 set managed-host-group <GROUP>
 set managed-host <HOST> group <GROUP>
@@ -2506,14 +2503,14 @@ set ai-access enabled
 set ai-access disabled
 
 
-set server mcp hostname <FQDN>
-set server mcp mode <auto-acme|user-certificate>
-set server mcp contact-email <EMAIL>
-set server mcp acme-environment <production|staging>
-set server mcp acme-directory <URL>
+set mcp-server hostname <FQDN>
+set mcp-server mode <auto-acme|user-certificate>
+set mcp-server contact-email <EMAIL>
+set mcp-server acme-environment <production|staging>
+set mcp-server acme-directory <URL>
 ```
 
-Human invocation enters Guided Create/Edit unless a complete one-shot form is supplied. Server settings remain action-first under `set server ...` / `unset server ...`; the guided placement for ordinary Server settings is System → Server Settings. MCP Server Settings has its single guided entry under AI Access; explicit TLS intent remains under `set server mcp <SETTING> <VALUE>`.
+Human invocation enters Guided Create/Edit unless a complete one-shot form is supplied. Bootstrap hostname inherits public hostname and retains the allocator HTTPS port unless explicitly configured; if both are unset, use the allocator HTTPS authority. Installer sources are automatic qualified Server-local artifacts. Server settings remain action-first under `set server ...` / `unset server ...`; the guided placement for ordinary Server settings is System → Server Settings. MCP Server Settings has its single guided entry under AI Access; explicit TLS intent is also under `set mcp-server <SETTING> <VALUE>`.
 
 A **Managed Host Group** is an inventory grouping for registered Managed Hosts and is not a **Network Group**. Network Groups are policy selectors built from Network Objects. Managed Host Group membership changes do not retire a host, alter Remote Services, reallocate public ports, or mutate Network Group policy state.
 
@@ -2529,8 +2526,6 @@ unset enrollment <ENROLLMENT>
 
 unset server public-hostname
 unset server bootstrap-hostname
-unset server installer-url
-unset server windows-installer-url
 
 unset network-object <OBJECT>
 unset network-group <GROUP>
@@ -2552,11 +2547,11 @@ unset permission-group <GROUP>
 unset ai-access <RULE>
 unset ai-access policy
 
-unset server mcp
-unset server mcp purge
+unset mcp-server
+unset mcp-server purge
 ```
 
-`unset server mcp` clears TLS intent and removes the active public MCP route while retaining DRLink-owned certificate and ACME account material. Active MCP/OAuth connections may be interrupted; the explicit command approves this change without an additional confirmation prompt. Check `system certificate status` and `system diagnostics mcp` afterward. `unset server mcp purge` removes that retained material only after interactive y/N confirmation; non-interactive use fails closed.
+`unset mcp-server` clears TLS intent and removes the active public MCP route while retaining DRLink-owned certificate and ACME account material. Active MCP/OAuth connections may be interrupted; the explicit command approves this change without an additional confirmation prompt. Check `system certificate status` and `system diagnostics mcp` afterward. `unset mcp-server purge` removes that retained material only after interactive y/N confirmation; non-interactive use fails closed.
 
 `unset enrollment <ENROLLMENT>`, `unset network-object`, `unset network-group`, `unset service-object`, `unset service-group`, `unset permission-object`, `unset permission-group`, and `unset ai-identity` are destructive lifecycle operations and require explicit `y/N` confirmation after existence/reference validation. Default is No and cancellation applies no change. These are normal `y_n` flows rather than TTY-only flows, so controlled automation may provide `y`/`yes` on stdin; there is no public hidden environment-variable or `--yes` bypass for these commands. Policy Rule deletion uses effect-aware `conditional_y_n`: confirmation is required when the calculated change broadens or materially narrows access, while full `unset <plane>-access policy` reset always requires explicit confirmation.
 
@@ -2624,7 +2619,7 @@ state.
 `system status` is the detailed Server read-only status and settings view. It includes current public/bootstrap hostnames and Linux/macOS/Windows Agent installer sources, with explicit automatic/default fallback text. `show status` remains the role-aware summary.
 
 
-`system certificate status` is the single public MCP TLS/certificate status surface. Configure TLS intent with `set server mcp ...`; there is no separate MCP TLS status read command.
+`system certificate status` is the single public MCP TLS/certificate status surface. Configure TLS intent with `set mcp-server ...`; there is no separate MCP TLS status read command.
 
 ---
 

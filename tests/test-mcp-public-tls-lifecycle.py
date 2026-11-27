@@ -401,7 +401,7 @@ class McpTlsLifecycleTests(unittest.TestCase):
                 time.sleep(0.05)
             self.assertTrue(pid.exists())
             host = 'mcp.example.test'
-            dispatch(['set', 'server', 'mcp', 'hostname', host], root=self.tmp)
+            dispatch(['set', 'mcp-server', 'hostname', host], root=self.tmp)
             cert, key = _synth_leaf(host)
             cert_path, key_path = base / 'import.crt', base / 'import.key'
             cert_path.write_bytes(cert)
@@ -441,7 +441,7 @@ class McpTlsLifecycleTests(unittest.TestCase):
             self.assertTrue(mcp_tls.active_dir(self.tmp).exists())
             with mock.patch('drlink_control_cli._stdin_is_interactive', return_value=True), \
                     mock.patch('drlink_control_cli._confirm_from_stdin', return_value=True):
-                dispatch(['unset', 'server', 'mcp', 'purge'], root=self.tmp)
+                dispatch(['unset', 'mcp-server', 'purge'], root=self.tmp)
             self.assertNotIn('server_name mcp.example.test;', conf.read_text())
             self.assertFalse(mcp_tls.active_dir(self.tmp).exists())
             self.assertEqual(mcp_tls.lock_path(self.tmp).stat().st_ino, lock_inode)
@@ -566,7 +566,7 @@ class McpTlsLifecycleTests(unittest.TestCase):
             os.environ.pop("DRLINK_MCP_PUBLIC_URL", None)
 
         with self.assertRaises(SystemExit) as ctx:
-            dispatch(["set", "server", "mcp", "hostname", "new.example.test"], root=self.tmp)
+            dispatch(["set", "mcp-server", "hostname", "new.example.test"], root=self.tmp)
         self.assertIn("single-443 HTTPS frontend", str(ctx.exception))
         self.assertIn("FRP_DEPLOYMENT_MODE=single443", str(ctx.exception))
         self.assertIn("FRP_CONFIRM_MODE_SWITCH=yes", str(ctx.exception))
@@ -582,8 +582,8 @@ class McpTlsLifecycleTests(unittest.TestCase):
 
     def test_user_certificate_import_match_and_rejects(self):
         host = "mcp.example.test"
-        dispatch(["set", "server", "mcp", "hostname", host], root=self.tmp)
-        dispatch(["set", "server", "mcp", "mode", "user-certificate"], root=self.tmp)
+        dispatch(["set", "mcp-server", "hostname", host], root=self.tmp)
+        dispatch(["set", "mcp-server", "mode", "user-certificate"], root=self.tmp)
         cert_pem, key_pem = _synth_leaf(host)
         cert_path = Path(self.tmp) / "import.crt"
         key_path = Path(self.tmp) / "import.key"
@@ -648,8 +648,8 @@ class McpTlsLifecycleTests(unittest.TestCase):
 
     def test_private_ca_issue_and_warning(self):
         host = "mcp-internal.example.test"
-        dispatch(["set", "server", "mcp", "hostname", host], root=self.tmp)
-        rc = dispatch(["set", "server", "mcp", "mode", "private-ca"], root=self.tmp)
+        dispatch(["set", "mcp-server", "hostname", host], root=self.tmp)
+        rc = dispatch(["set", "mcp-server", "mode", "private-ca"], root=self.tmp)
         self.assertEqual(rc, 0)
         state = mcp_tls.issue_and_activate(self.plane, self.tmp, reload=False)
         self.assertEqual(state["mode"], mcp_tls.MODE_PRIVATE_CA)
@@ -665,8 +665,8 @@ class McpTlsLifecycleTests(unittest.TestCase):
 
     def test_failed_activation_preserves_previous(self):
         host = "mcp.example.test"
-        dispatch(["set", "server", "mcp", "hostname", host], root=self.tmp)
-        dispatch(["set", "server", "mcp", "mode", "user-certificate"], root=self.tmp)
+        dispatch(["set", "mcp-server", "hostname", host], root=self.tmp)
+        dispatch(["set", "mcp-server", "mode", "user-certificate"], root=self.tmp)
         cert1, key1 = _synth_leaf(host, days=60)
         c1 = Path(self.tmp) / "c1.crt"
         k1 = Path(self.tmp) / "c1.key"
@@ -695,9 +695,9 @@ class McpTlsLifecycleTests(unittest.TestCase):
 
     def test_renewal_backoff_preserves_cert(self):
         host = "mcp.example.test"
-        dispatch(["set", "server", "mcp", "hostname", host], root=self.tmp)
-        dispatch(["set", "server", "mcp", "mode", "auto-acme"], root=self.tmp)
-        dispatch(["set", "server", "mcp", "acme-environment", "staging"], root=self.tmp)
+        dispatch(["set", "mcp-server", "hostname", host], root=self.tmp)
+        dispatch(["set", "mcp-server", "mode", "auto-acme"], root=self.tmp)
+        dispatch(["set", "mcp-server", "acme-environment", "staging"], root=self.tmp)
         # Seed a valid active cert as if previously issued.
         cert, key = _synth_leaf(host, days=10)
         meta = mcp_tls.validate_cert_key_pair(cert, key, hostname=host)
@@ -739,7 +739,7 @@ class McpTlsLifecycleTests(unittest.TestCase):
 
     def test_concurrency_lock(self):
         host = "mcp.example.test"
-        dispatch(["set", "server", "mcp", "hostname", host], root=self.tmp)
+        dispatch(["set", "mcp-server", "hostname", host], root=self.tmp)
         held = threading.Event()
         release = threading.Event()
 
@@ -822,8 +822,8 @@ spec:
 
     def test_cli_status_and_doctor(self):
         host = "mcp.example.test"
-        dispatch(["set", "server", "mcp", "hostname", host], root=self.tmp)
-        dispatch(["set", "server", "mcp", "mode", "auto-acme"], root=self.tmp)
+        dispatch(["set", "mcp-server", "hostname", host], root=self.tmp)
+        dispatch(["set", "mcp-server", "mode", "auto-acme"], root=self.tmp)
         import io
         from contextlib import redirect_stdout
 
@@ -842,10 +842,10 @@ spec:
         host = "mcp.example.test"
         # Make hostname resolve via /etc/hosts is not possible; preflight DNS may fail.
         # Bypass preflight by patching for this protocol test after configuring intent.
-        dispatch(["set", "server", "mcp", "hostname", host], root=self.tmp)
-        dispatch(["set", "server", "mcp", "mode", "auto-acme"], root=self.tmp)
-        dispatch(["set", "server", "mcp", "acme-environment", "staging"], root=self.tmp)
-        dispatch(["set", "server", "mcp", "contact-email", "ops@example.test"], root=self.tmp)
+        dispatch(["set", "mcp-server", "hostname", host], root=self.tmp)
+        dispatch(["set", "mcp-server", "mode", "auto-acme"], root=self.tmp)
+        dispatch(["set", "mcp-server", "acme-environment", "staging"], root=self.tmp)
+        dispatch(["set", "mcp-server", "contact-email", "ops@example.test"], root=self.tmp)
 
         acme = LocalAcmeServer()
         directory = acme.start()
@@ -907,7 +907,7 @@ spec:
                 mcp_tls.configure_intent(self.plane, mode=mcp_tls.MODE_AUTO_ACME)
             self.assertEqual(ctx2.exception.failure_class, "DEPENDENCY_MISSING")
             with self.assertRaises(SystemExit):
-                dispatch(["set", "server", "mcp", "mode", "auto-acme"], root=self.tmp)
+                dispatch(["set", "mcp-server", "mode", "auto-acme"], root=self.tmp)
         finally:
             mcp_tls.acme_runtime_status = orig
 
@@ -956,9 +956,9 @@ spec:
 
     def test_acme_account_conflict_reuses_existing_registration(self):
         host = "mcp.example.test"
-        dispatch(["set", "server", "mcp", "hostname", host], root=self.tmp)
-        dispatch(["set", "server", "mcp", "mode", "auto-acme"], root=self.tmp)
-        dispatch(["set", "server", "mcp", "acme-environment", "staging"], root=self.tmp)
+        dispatch(["set", "mcp-server", "hostname", host], root=self.tmp)
+        dispatch(["set", "mcp-server", "mode", "auto-acme"], root=self.tmp)
+        dispatch(["set", "mcp-server", "acme-environment", "staging"], root=self.tmp)
         acme = LocalAcmeServer()
         acme.conflict_on_reregister = True
         directory = acme.start()
@@ -1003,7 +1003,7 @@ spec:
 
     def test_acme_directory_unavailable_classification(self):
         host = "mcp.example.test"
-        dispatch(["set", "server", "mcp", "hostname", host], root=self.tmp)
+        dispatch(["set", "mcp-server", "hostname", host], root=self.tmp)
         with self.assertRaises(mcp_tls.McpTlsError) as ctx:
             mcp_tls.issue_acme_certificate(
                 self.tmp,
@@ -1016,9 +1016,9 @@ spec:
 
     def test_renewal_uses_same_acme_runtime_path(self):
         host = "mcp.example.test"
-        dispatch(["set", "server", "mcp", "hostname", host], root=self.tmp)
-        dispatch(["set", "server", "mcp", "mode", "auto-acme"], root=self.tmp)
-        dispatch(["set", "server", "mcp", "acme-environment", "staging"], root=self.tmp)
+        dispatch(["set", "mcp-server", "hostname", host], root=self.tmp)
+        dispatch(["set", "mcp-server", "mode", "auto-acme"], root=self.tmp)
+        dispatch(["set", "mcp-server", "acme-environment", "staging"], root=self.tmp)
         called = {"n": 0}
 
         def fake_issue(*a, **k):
@@ -1067,8 +1067,8 @@ spec:
             "detail": "missing python3-acme",
         }
         try:
-            dispatch(["set", "server", "mcp", "hostname", host], root=self.tmp)
-            dispatch(["set", "server", "mcp", "mode", "user-certificate"], root=self.tmp)
+            dispatch(["set", "mcp-server", "hostname", host], root=self.tmp)
+            dispatch(["set", "mcp-server", "mode", "user-certificate"], root=self.tmp)
             cert, key = _synth_leaf(host, days=60)
             c1 = Path(self.tmp) / "u.crt"
             k1 = Path(self.tmp) / "u.key"
@@ -1079,7 +1079,7 @@ spec:
                 self.plane, self.tmp, cert_path=str(c1), key_path=str(k1), reload=False
             )
             self.assertEqual(mcp_tls.load_state(self.plane)["mode"], mcp_tls.MODE_USER_CERTIFICATE)
-            dispatch(["set", "server", "mcp", "mode", "private-ca"], root=self.tmp)
+            dispatch(["set", "mcp-server", "mode", "private-ca"], root=self.tmp)
             mcp_tls.issue_and_activate(self.plane, self.tmp, reload=False)
             self.assertEqual(mcp_tls.load_state(self.plane)["mode"], mcp_tls.MODE_PRIVATE_CA)
         finally:
@@ -1087,8 +1087,8 @@ spec:
 
     def test_secret_scan_no_private_keys_in_status_export(self):
         host = "mcp.example.test"
-        dispatch(["set", "server", "mcp", "hostname", host], root=self.tmp)
-        dispatch(["set", "server", "mcp", "mode", "private-ca"], root=self.tmp)
+        dispatch(["set", "mcp-server", "hostname", host], root=self.tmp)
+        dispatch(["set", "mcp-server", "mode", "private-ca"], root=self.tmp)
         mcp_tls.issue_and_activate(self.plane, self.tmp, reload=False)
         view = mcp_tls.status_view(self.plane, self.tmp)
         blob = json.dumps(view)
@@ -1118,8 +1118,8 @@ spec:
             server_key=str(base / 'etc/drlink/pki/server.key'),
         )
         conf.write_text(before)
-        dispatch(['set', 'server', 'mcp', 'hostname', hostname], root=self.tmp)
-        dispatch(['set', 'server', 'mcp', 'mode', 'auto-acme'], root=self.tmp)
+        dispatch(['set', 'mcp-server', 'hostname', hostname], root=self.tmp)
+        dispatch(['set', 'mcp-server', 'mode', 'auto-acme'], root=self.tmp)
         self.assertFalse((mcp_tls.active_dir(self.tmp) / 'meta.json').exists())
         observed = []
 
@@ -1167,8 +1167,8 @@ spec:
             ca_cert=str(base / 'etc/drlink/pki/ca.crt'),
             server_cert=str(base / 'etc/drlink/pki/server.crt'),
             server_key=str(base / 'etc/drlink/pki/server.key')))
-        dispatch(['set', 'server', 'mcp', 'hostname', existing_host], root=self.tmp)
-        dispatch(['set', 'server', 'mcp', 'mode', 'auto-acme'], root=self.tmp)
+        dispatch(['set', 'mcp-server', 'hostname', existing_host], root=self.tmp)
+        dispatch(['set', 'mcp-server', 'mode', 'auto-acme'], root=self.tmp)
         cert, key = _synth_leaf(existing_host, days=90)
         meta = mcp_tls.validate_cert_key_pair(cert, key, hostname=existing_host)
         meta.update({'mode': mcp_tls.MODE_AUTO_ACME, 'hostname': existing_host,
@@ -1271,7 +1271,8 @@ spec:
                 mock.patch("drlink_control_cli._confirm_from_stdin", return_value=False), \
                 mock.patch.object(mcp_tls, "configure_intent") as config, \
                 mock.patch.object(mcp_tls, "issue_and_activate") as issue:
-            rc = dispatch(["set", "server", "mcp"], root=self.tmp, plane=self.plane)
+            from drlink_control_cli import _guide_mcp_server
+            rc = _guide_mcp_server(self.plane)
             self.assertEqual(rc, 0)
             config.assert_not_called()
             issue.assert_not_called()
@@ -1284,7 +1285,8 @@ spec:
                 mock.patch("builtins.input") as prompt, \
                 mock.patch.object(mcp_tls, "configure_intent") as config, \
                 mock.patch.object(mcp_tls, "issue_and_activate") as issue:
-            rc = dispatch(["set", "server", "mcp"], root=self.tmp, plane=self.plane)
+            from drlink_control_cli import _guide_mcp_server
+            rc = _guide_mcp_server(self.plane)
             self.assertEqual(rc, 0)
             prompt.assert_not_called()
             config.assert_not_called()
@@ -1297,7 +1299,8 @@ spec:
                 mock.patch.object(mcp_tls, "preflight_hostname", return_value={"ok": True}) as preflight, \
                 mock.patch.object(mcp_tls, "configure_intent") as config, \
                 mock.patch.object(mcp_tls, "issue_and_activate") as issue:
-            rc = dispatch(["set", "server", "mcp"], root=self.tmp, plane=self.plane)
+            from drlink_control_cli import _guide_mcp_server
+            rc = _guide_mcp_server(self.plane)
             self.assertEqual(rc, 0)
             preflight.assert_called_once_with("mcp.example.test", require_public_dns=True)
             config.assert_called_once()
@@ -1316,7 +1319,7 @@ spec:
         import frp_ctl_grammar as grammar
 
         self.assertIsNone(catalog.find(["show", "mcp-tls"], role="server"))
-        self.assertIsNotNone(catalog.find(["set", "server", "mcp"], role="server"))
+        self.assertIsNotNone(catalog.find(["set", "mcp-server"], role="server"))
         self.assertIsNotNone(catalog.find(["system", "certificate"], role="server"))
         m = grammar.match(["show", "mcp-tls"], role="server")
         self.assertEqual(m.get("status"), "error")
@@ -1329,8 +1332,8 @@ spec:
         from contextlib import redirect_stderr, redirect_stdout
         import frp_cli_catalog as catalog
 
-        base_cmd = catalog.find(["unset", "server", "mcp"], role="server")
-        purge_cmd = catalog.find(["unset", "server", "mcp", "purge"], role="server")
+        base_cmd = catalog.find(["unset", "mcp-server"], role="server")
+        purge_cmd = catalog.find(["unset", "mcp-server", "purge"], role="server")
         self.assertIsNotNone(base_cmd)
         self.assertIsNotNone(purge_cmd)
         self.assertTrue(base_cmd["destructive"])
@@ -1353,14 +1356,14 @@ spec:
         # Non-destructive unset clears intent but preserves certificate/account material.
         out = io.StringIO()
         with redirect_stdout(out):
-            rc = dispatch(["unset", "server", "mcp"], root=self.tmp, plane=self.plane)
+            rc = dispatch(["unset", "mcp-server"], root=self.tmp, plane=self.plane)
         self.assertEqual(rc, 0)
         self.assertTrue(marker_file.exists())
         self.assertIn("Certificate files retained", out.getvalue())
 
         # Compatibility spelling is not accepted on the greenfield v2.4 surface.
         with self.assertRaises(SystemExit):
-            dispatch(["unset", "server", "mcp", "--purge"], root=self.tmp, plane=self.plane)
+            dispatch(["unset", "mcp-server", "--purge"], root=self.tmp, plane=self.plane)
         self.assertTrue(marker_file.exists())
 
         # Non-TTY automation fails closed and does not delete secrets.
@@ -1370,7 +1373,7 @@ spec:
             out = io.StringIO()
             err = io.StringIO()
             with redirect_stdout(out), redirect_stderr(err):
-                rc = dispatch(["unset", "server", "mcp", "purge"], root=self.tmp, plane=self.plane)
+                rc = dispatch(["unset", "mcp-server", "purge"], root=self.tmp, plane=self.plane)
         finally:
             sys.stdin = old_stdin
         self.assertEqual(rc, 1)
@@ -1388,7 +1391,7 @@ spec:
             sys.stdin = FakeTty("n\n")
             out = io.StringIO()
             with redirect_stdout(out):
-                rc = dispatch(["unset", "server", "mcp", "purge"], root=self.tmp, plane=self.plane)
+                rc = dispatch(["unset", "mcp-server", "purge"], root=self.tmp, plane=self.plane)
         finally:
             sys.stdin = old_stdin
         self.assertEqual(rc, 1)
@@ -1402,7 +1405,7 @@ spec:
             sys.stdin = FakeTty("y\n")
             out = io.StringIO()
             with redirect_stdout(out):
-                rc = dispatch(["unset", "server", "mcp", "purge"], root=self.tmp, plane=self.plane)
+                rc = dispatch(["unset", "mcp-server", "purge"], root=self.tmp, plane=self.plane)
         finally:
             sys.stdin = old_stdin
         self.assertEqual(rc, 0)

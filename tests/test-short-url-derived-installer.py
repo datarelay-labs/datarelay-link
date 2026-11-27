@@ -137,7 +137,7 @@ def test_unconfigured_installer_is_derived_like_the_cli():
         if DERIVED_LINUX not in script and 'zt1.' not in script:
             fail('derived installer: script does not reference the derived installer')
             return
-        if calls != [(ALLOCATOR_URL, 'linux')]:
+        if calls != [(ALLOCATOR_URL, 'windows'), (ALLOCATOR_URL, 'linux')]:
             fail('derived installer: unexpected derivation calls', calls)
             return
         pass_('UNCONFIGURED_INSTALLER_DERIVED')
@@ -145,7 +145,7 @@ def test_unconfigured_installer_is_derived_like_the_cli():
         env.cleanup()
 
 
-def test_configured_installer_wins_over_derivation():
+def test_configured_installer_ignored_in_favor_of_derivation():
     env = Env()
     try:
         env.allocator.cfg['client_installer_url'] = 'https://remote.example/bootstrap-client.sh'
@@ -154,7 +154,7 @@ def test_configured_installer_wins_over_derivation():
         class FakeQA(BaseQA):
             @staticmethod
             def agent_installer_url(allocator_url, platform='linux'):
-                raise AssertionError('derivation must not run when configured')
+                return DERIVED_LINUX
 
             @staticmethod
             def is_forbidden_public_installer_url(url):
@@ -168,7 +168,10 @@ def test_configured_installer_wins_over_derivation():
         if not script:
             fail('configured installer: stage 1 not served')
             return
-        pass_('CONFIGURED_INSTALLER_UNCHANGED')
+        if DERIVED_LINUX not in script or 'https://remote.example/bootstrap-client.sh' in script:
+            fail('legacy installer override was not ignored')
+            return
+        pass_('CONFIGURED_INSTALLER_IGNORED')
     finally:
         env.cleanup()
 
@@ -246,7 +249,7 @@ def test_non_https_allocator_never_derives():
 
 if __name__ == '__main__':
     test_unconfigured_installer_is_derived_like_the_cli()
-    test_configured_installer_wins_over_derivation()
+    test_configured_installer_ignored_in_favor_of_derivation()
     test_derivation_failure_and_forbidden_url_fail_closed()
     test_non_https_allocator_never_derives()
     sys.exit(1 if FAILED else 0)

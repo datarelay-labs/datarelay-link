@@ -107,8 +107,6 @@ class DiscoveryTests(unittest.TestCase):
         for prop in (
             "public-hostname",
             "bootstrap-hostname",
-            "installer-url",
-            "windows-installer-url",
         ):
             self.assertIn(prop, text)
 
@@ -198,26 +196,17 @@ class CreateClientWorkflowTests(unittest.TestCase):
         self.assertNotIn("delete enrollment", lines)
 
     def test_w10_installer_preflight_404(self):
-        class FakeHTTPError(Exception):
-            def __init__(self):
-                self.code = 404
-
-        with mock.patch("urllib.request.urlopen", side_effect=FakeHTTPError()):
-            # Force import path used inside helper.
-            import urllib.error
-
-            err = urllib.error.HTTPError(
-                "https://example.test/missing", 404, "Not Found", hdrs=None, fp=None
-            )
-            with mock.patch("urllib.request.urlopen", side_effect=err):
-                with self.assertRaises(SystemExit) as caught:
-                    CREATE.preflight_installer_url(
-                        "https://example.test/missing", label="Client installer"
-                    )
-        msg = str(caught.exception)
+        import urllib.error
+        err = urllib.error.HTTPError("https://example.test/missing", 404, "Not Found", hdrs=None, fp=None)
+        with mock.patch("urllib.request.build_opener") as build:
+            build.return_value.open.side_effect = err
+            stderr = io.StringIO()
+            with contextlib.redirect_stderr(stderr), self.assertRaises(SystemExit):
+                CREATE.preflight_installer_url("https://example.test/missing", label="Client installer")
+        msg = stderr.getvalue()
         self.assertIn("404", msg)
-        self.assertIn("No enrollment ticket was created", msg)
-        self.assertIn("set server installer-url", msg)
+        self.assertIn("no enrollment ticket was issued", msg)
+        self.assertNotIn("set server installer-url", msg)
 
     def test_exact_sha_installer_resolve(self):
         alloc = "https://203.0.113.10:6099/enroll"

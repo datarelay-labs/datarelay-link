@@ -171,28 +171,13 @@ class OperationalUxClosureTests(unittest.TestCase):
         self.assertIn("status", completed)
         self.assertNotIn("server-status", completed)
 
-    def test_installer_url_set_unset_symmetry(self):
-        set_linux = _match(
-            ["set", "server", "installer-url", "https://example.test/install.sh"],
-            "server",
-        )
-        set_win = _match(
-            ["set", "server", "windows-installer-url", "https://example.test/install.ps1"],
-            "server",
-        )
-        unset_linux = _match(["unset", "server", "installer-url"], "server")
-        unset_win = _match(["unset", "server", "windows-installer-url"], "server")
-        self.assertEqual(set_linux.get("action"), "set_installer_url")
-        self.assertEqual(set_win.get("action"), "set_windows_installer_url")
-        self.assertEqual(unset_linux.get("action"), "unset_installer_url")
-        self.assertEqual(unset_win.get("action"), "unset_windows_installer_url")
-
-    def test_windows_installer_url_guided_discovery(self):
+    def test_installer_url_overrides_removed(self):
+        for name in ("installer-url", "windows-installer-url"):
+            for verb, extra in (("set", ["https://example.test/install"]), ("unset", [])):
+                result = _match([verb, "server", name] + extra, "server")
+                self.assertNotEqual(result.get("status"), "ok", result)
         entries = CATALOG.NAVIGATION_TREE.get("server.system.settings") or ()
-        labels = [row[1] for row in entries]
-        targets = [row[4] for row in entries if len(row) > 4]
-        self.assertTrue(any("Windows" in str(label) for label in labels), labels)
-        self.assertIn("set_windows_installer_url", targets)
+        self.assertFalse(any("installer URL" in row[1] for row in entries))
 
     def test_remote_service_workflows_use_canonical_grammar(self):
         for tokens in (

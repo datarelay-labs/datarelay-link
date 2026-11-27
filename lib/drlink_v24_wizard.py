@@ -1326,43 +1326,70 @@ def _external_ai_connection(plane, name, io, provider):
         _emit(io, "OAuth exchange not verified yet. Finish in the browser and check again.")
 
 
+def _configure_mcp_local_execution(plane, io):
+    # A real local administrator chooses OS authority. This is not
+    # an AI Access policy, and never derives privilege from a Rule.
+    if plane.root not in (None, "", "/") or os.geteuid() != 0 or not isinstance(io, TtyIO):
+        raise ControlPlaneError("Local execution setup requires an interactive administrator on the installed Server. No changes were applied.")
+    import subprocess
+    user = _ask_text(io, "Run as User", default="drlink-mcp")
+    default_roots = "/var/lib/drlink-mcp" if user == "drlink-mcp" else None
+    roots = _ask_text(io, "Local file roots / initial working directories (colon separated)", default=default_roots)
+    argv = [sys.executable, "/usr/local/lib/drlink/operator-native-mcp-full-control.py",
+            "--configure-installed", "--exec-user", user]
+    for path in roots.split(":"):
+        argv.extend(["--allowed-root", path])
+    import pwd
+    try:
+        admin = pwd.getpwnam(user).pw_uid == 0
+    except KeyError:
+        raise ControlPlaneError("Execution account does not exist. No changes were applied.") from None
+    if admin:
+        if not _ask_yes_no(io, "Select administrative UID 0 execution?", default=False):
+            raise WizardCancelled()
+        argv.append("--allow-root")
+    return subprocess.run(argv, check=False).returncode
+
+
 def run_mcp_server_setup(plane: ControlPlane) -> int:
-    """Configure MCP connectivity and local execution, never identity or policy."""
+    """One guided connectivity and execution workflow; identity/policy remain separate."""
     from drlink_control_cli import _guide_mcp_server, dispatch
+    import drlink_mcp_tls as tls
     if not wizard_available():
         raise ControlPlaneError("MCP Server Settings requires a TTY session. No changes were applied.")
     io = _io()
+    tls_completed = False
     try:
-        while True:
-            choice = _ask_choice(io, "MCP Server Settings", ["Public endpoint and TLS", "Server execution", "Diagnostics"])
-            if choice == "Server execution":
-                # A real local administrator chooses OS authority. This is not
-                # an AI Access policy, and never derives privilege from a Rule.
-                if plane.root not in (None, "", "/") or os.geteuid() != 0 or not isinstance(io, TtyIO):
-                    raise ControlPlaneError("Local execution setup requires an interactive administrator on the installed Server. No changes were applied.")
-                import subprocess
-                user = _ask_text(io, "Run as User", default="drlink-mcp")
-                default_roots = "/var/lib/drlink-mcp" if user == "drlink-mcp" else None
-                roots = _ask_text(io, "Local file roots / initial working directories (colon separated)", default=default_roots)
-                argv = [sys.executable, "/usr/local/lib/drlink/operator-native-mcp-full-control.py",
-                        "--configure-installed", "--exec-user", user]
-                for path in roots.split(":"):
-                    argv.extend(["--allowed-root", path])
-                import pwd
-                try:
-                    admin = pwd.getpwnam(user).pw_uid == 0
-                except KeyError:
-                    raise ControlPlaneError("Execution account does not exist. No changes were applied.") from None
-                if admin:
-                    if not _ask_yes_no(io, "Select administrative UID 0 execution?", default=False):
-                        raise WizardCancelled()
-                    argv.append("--allow-root")
-                return subprocess.run(argv, check=False).returncode
-            if choice == "Public endpoint and TLS":
-                return _guide_mcp_server(plane, io=io)
+        choice = _ask_choice(io, "MCP Server Settings", ["Configure endpoint, TLS and Server execution", "Diagnostics"])
+        if choice == "Diagnostics":
             return dispatch(["system", "diagnostics", "mcp"], root=plane.root, plane=plane)
+        rc = _guide_mcp_server(plane, io=io)
+        if rc:
+            return rc
+        view = tls.status_view(plane, plane.root)
+        if not (view.get("frontend_available") and view.get("certificate") in (tls.STATUS_VALID, tls.STATUS_RENEWAL_DUE) and str(view.get("url","")).startswith("https://")):
+            _emit(io, "MCP endpoint is not ready. Server execution was not changed.")
+            return 0
+        tls_completed = True
+        status = plane.native_mcp_runtime_status()
+        _emit(io, "Server execution: %s (%s)" % (status["readiness"], status["reason"]))
+        configured = status["readiness"] == "Configured" and status.get("full")
+        if configured and not _ask_yes_no(io, "Change existing Server execution profile?", default=False):
+            _emit(io, "Existing execution profile retained.")
+            return 0
+        if not configured:
+            _emit(io, "Configure the Server execution account and roots now. Activation requires explicit approval; cancel to keep it disabled.")
+        rc = _configure_mcp_local_execution(plane, io)
+        status = plane.native_mcp_runtime_status()
+        _emit(io, "Server execution: %s (%s)" % (status["readiness"], status["reason"]))
+        if status["readiness"] != "Configured":
+            _emit(io, "Server execution is not confirmed ready. Use system diagnostics mcp.")
+        return rc
     except (WizardCancelled, KeyboardInterrupt, EOFError):
-        sys.stdout.write(_cancel_message())
+        if tls_completed:
+            _emit(io, "MCP TLS settings retained. No further execution changes were applied.")
+        else:
+            sys.stdout.write(_cancel_message())
         return 0
 
 

@@ -46,7 +46,7 @@ class CLIDerivationContractTest(unittest.TestCase):
             self.assertRegex(direct,re.compile(r"^## "+re.escape(item)+r" — ",re.M))
         self.assertNotIn("AI_ASSISTED_RESULT/EVIDENCE",direct)
         self.assertNotIn("system diagnostics mcp",direct)
-        self.assertNotRegex(direct, re.compile(r"(?m)^(?:set|unset) server mcp\b"))
+        self.assertNotRegex(direct, re.compile(r"(?m)^(?:set|unset) mcp-server\b"))
         self.assertNotRegex(direct, re.compile(r"(?m)^set ai-identity\b"))
 
     def test_referenced_shared_rules_are_standalone(self):

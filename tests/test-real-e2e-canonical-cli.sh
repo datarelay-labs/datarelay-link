@@ -47,9 +47,8 @@ if grep -nE "config\.json.*client_installer_url|c\['client_installer_url'\]|c\['
 fi
 pass "NO_DIRECT_INSTALLER_JSON_PATCH"
 
-# Required: canonical installer pin + guided zero-touch via the public CLI.
-grep -q "set server installer-url" "$E2E" || fail "missing canonical set server installer-url pin"
-grep -q "set server windows-installer-url" "$E2E" || fail "missing canonical set server windows-installer-url pin"
+# Required: automatic qualified installer sources + guided zero-touch via public CLI.
+grep -q "verify_qualified_installer_urls" "$E2E" || fail "missing qualified installer source verification"
 grep -q 'drlink set enrollment zero-touch"' "$E2E" || fail "missing canonical set enrollment zero-touch onboarding"
 grep -q "FRP_CTL_TEST_INPUT" "$E2E" || fail "zero-touch must use FRP_CTL_TEST_INPUT under sudo use_pty"
 grep -q "base64" "$E2E" || fail "zero-touch TEST_INPUT must be base64-safe across remote shells"
@@ -121,21 +120,12 @@ sys.path.insert(0, str(Path(sys.argv[1]) / "lib"))
 import frp_cli_catalog as c
 import frp_ctl_grammar as g
 
-url = "https://example.com/install-client.sh"
-canonical = ["set", "server", "installer-url", url]
-cmd = c.find(canonical, role="server")
-if cmd is None or cmd["path"] != ("set", "server"):
-    raise SystemExit("canonical catalog path missing: %r" % (cmd,))
-matched = g.match(canonical, role="server")
-if matched.get("status") != "ok" or matched.get("action") != "set_installer_url":
-    raise SystemExit("canonical match failed: %r" % matched)
-
-legacy = ["set", "installer-url", url]
-if c.find(legacy, role="server") is not None:
-    raise SystemExit("standalone installer-url remains in public catalog")
-legacy_match = g.match(legacy, role="server")
-if legacy_match.get("status") == "ok":
-    raise SystemExit("standalone installer-url still executes: %r" % legacy_match)
+for name in ("installer-url", "windows-installer-url"):
+    for verb, extra in (("set", ["https://example.com/install-client.sh"]), ("unset", [])):
+        for prefix in ([verb, "server"], [verb]):
+            if g.match(prefix + [name] + extra, role="server").get("status") == "ok":
+                raise SystemExit("retired installer override accepted")
+assert set(g.completion_candidates("set server ", "server", [], {}, [])) == {"public-hostname", "bootstrap-hostname"}
 
 server_unset = c.find(["unset", "server"], role="server")
 server_unset_values = tuple((server_unset or {}).get("args", ({},))[0].get("complete") or ())
@@ -151,7 +141,7 @@ for legacy_hostname in (
         raise SystemExit("legacy server hostname spelling still executes: %r" % legacy_hostname_match)
 print("ok")
 PY
-pass "SERVER_INSTALLER_URL_SINGLE_CANONICAL_PATH"
+pass "SERVER_INSTALLER_URL_AUTOMATIC_ONLY"
 
 # v2.4 contract drift guards (found by the Full Real E2E campaign on the
 # release candidate): the harness must follow the shipped CLI/state contract

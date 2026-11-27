@@ -380,7 +380,7 @@ Expected: clear recovery, no traceback, no unintended mutation, and return to a 
 
 Using namespaced resources:
 
-- discover MCP Server Settings through `mcp-server` with the description `Configure MCP Server connectivity and execution`; verify only Public endpoint and TLS, Server execution and Diagnostics are present. Connect and authenticate through the separate AI Identity entry; verify no obsolete or duplicate guided setup entry.
+- discover MCP Server Settings through `mcp-server` with the description `Configure MCP Server connectivity and execution`; verify only Configure endpoint, TLS and Server execution; Diagnostics are present. Connect and authenticate through the separate AI Identity entry; verify no obsolete or duplicate guided setup entry.
 - verify `set ai-identity <IDENTITY>` discovers the single pending approval and credential lifecycle workflow, including approve/deny OAuth and rotate/revoke/authentication where supported; verify retired command paths are neither discoverable nor accepted;
 - verify credential rotate/configure/revoke on a nonexistent AI Identity fails without creating an identity or issuing a credential;
 - do not invent external OAuth approval;

@@ -854,7 +854,10 @@ try:
 except Exception:
     control = "unconfigured"
 public = mod.public_hostname(cfg)
-bootstrap = mod.bootstrap_hostname(cfg)
+try:
+    bootstrap = mod.bootstrap_authority(cfg)
+except (ValueError, TypeError):
+    bootstrap = mod.short_url_hostname(cfg)
 linux_url = str(cfg.get("client_installer_url") or "").strip()
 windows_url = str(cfg.get("windows_client_installer_url") or "").strip()
 spec = importlib.util.spec_from_file_location("_drlink_qualified_sources", sys.argv[3])
@@ -863,21 +866,19 @@ sys.modules[spec.name] = artifacts
 spec.loader.exec_module(artifacts)
 def effective_installer_source(configured, platform):
     # Same source rejection and Server-local derivation as enrollment output.
-    if configured and not artifacts.is_forbidden_public_installer_url(configured):
-        return configured
     try:
         effective = artifacts.agent_installer_url(cfg.get("allocator_public_url"), platform)
     except artifacts.ArtifactError:
         return "Unavailable (qualified Server-local installer source is unconfigured)"
     if artifacts.is_forbidden_public_installer_url(effective):
         return "Unavailable (qualified Server-local installer source is unconfigured)"
-    label = "configured former public source ignored" if configured else "automatic qualified source"
+    label = "legacy override ignored; automatic qualified source" if configured else "automatic qualified source"
     return "%s (%s)" % (effective, label)
 try:
     print("\nServer Settings")
     print("===============")
     print("Public hostname              : %s" % (public or ("Automatic (Public IP: %s)" % control)))
-    print("Bootstrap hostname           : %s" % (bootstrap or "Automatic (pinned-CA zt1 bootstrap)"))
+    print("Bootstrap hostname           : %s" % ((bootstrap + (" (inherited public hostname)" if public else " (allocator HTTPS authority)")) if bootstrap and not mod.bootstrap_hostname(cfg) else (bootstrap or "Unavailable (allocator HTTPS authority)")))
     print("Linux/macOS Agent installer : %s" % effective_installer_source(linux_url, "linux"))
     print("Windows Agent installer     : %s" % effective_installer_source(windows_url, "windows"))
     sys.stdout.flush()
@@ -1503,14 +1504,6 @@ PY
     set_bootstrap_hostname)
       value="$(frpctl_nav_prompt_id "Bootstrap hostname: ")" || return 1
       frpctl_dispatch set server bootstrap-hostname "$value" || true
-      ;;
-    set_installer_url)
-      value="$(frpctl_nav_prompt_id "Linux/macOS Agent installer URL: ")" || return 1
-      frpctl_dispatch set server installer-url "$value" || true
-      ;;
-    set_windows_installer_url)
-      value="$(frpctl_nav_prompt_id "Windows Agent installer URL: ")" || return 1
-      frpctl_dispatch set server windows-installer-url "$value" || true
       ;;
     restore_backup)
       path="$(frpctl_select_backup_archive)" || return 1
@@ -4636,14 +4629,6 @@ frpctl_dispatch_canonical() {
       frpctl_require_server || return 1
       frpctl_unset_client_from_canon "$result"
       ;;
-    set_installer_url)
-      frpctl_require_server || return 1
-      frpctl_invoke frp-set-client-installer-url "$(frpctl_json_get "$result" value)"
-      ;;
-    set_windows_installer_url)
-      frpctl_require_server || return 1
-      frpctl_invoke frp-set-client-installer-url --windows "$(frpctl_json_get "$result" value)"
-      ;;
     set_server_hostname)
       frpctl_require_server || return 1
       frpctl_invoke frp-server-set hostname "$(frpctl_json_get "$result" value)"
@@ -4659,14 +4644,6 @@ frpctl_dispatch_canonical() {
     unset_server_bootstrap_hostname)
       frpctl_require_server || return 1
       frpctl_invoke frp-server-set bootstrap-hostname --unset
-      ;;
-    unset_installer_url)
-      frpctl_require_server || return 1
-      frpctl_invoke frp-set-client-installer-url --unset
-      ;;
-    unset_windows_installer_url)
-      frpctl_require_server || return 1
-      frpctl_invoke frp-set-client-installer-url --windows --unset
       ;;
     set_service)
       frpctl_require_client || return 1

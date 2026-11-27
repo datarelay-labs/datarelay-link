@@ -117,8 +117,6 @@ set enrollment bulk
 
 set server public-hostname <FQDN>
 set server bootstrap-hostname <FQDN>
-set server installer-url <URL>
-set server windows-installer-url <URL>
 
 set managed-host-group <GROUP>
 set managed-host <HOST> group <GROUP>
@@ -155,16 +153,16 @@ set ai-access enabled
 set ai-access disabled
 
 
-set server mcp hostname <FQDN>
-set server mcp mode <auto-acme|user-certificate>
-set server mcp contact-email <EMAIL>
-set server mcp acme-environment <production|staging>
-set server mcp acme-directory <URL>
+set mcp-server hostname <FQDN>
+set mcp-server mode <auto-acme|user-certificate>
+set mcp-server contact-email <EMAIL>
+set mcp-server acme-environment <production|staging>
+set mcp-server acme-directory <URL>
 ```
 
 **ZT-P0-CONTRACT-20261026 — fixed eight-character entry target (owner revision 2026-11-25).** The customer starts with one OS-native command, one HTTPS authority (FQDN or IP), and one eight-character root-path file locator. Public and private HTTPS use the same target form. No preinstalled DataRelay software, inline configuration, separate enrollment ID, fingerprint, artifact hash, or installer body in the customer command. All subsequent configuration, downloads, verification, installation, recovery and enrollment belong to the multi-stage Bootstrap; their size and count are unrestricted. Issuing the command authorizes one automatic registration by the first valid signed Agent claim. Treat the short locator as a sensitive, expiring bearer capability; it is not the downstream enrollment code. See `docs/ZERO_TOUCH_REGRESSION_CONTROL.md` for exact target templates, the automatic first-claim policy, the explicit initial-transport risk and actual acceptance status. This is a design target, not installed-product qualification.
 
-Bare named `set` enters Guided Create/Edit. A complete one-shot form skips the Wizard. Server settings remain action-first under `set server ...` / `unset server ...`; the guided menu places the same settings under System → Server Settings.
+Bare named `set` enters Guided Create/Edit. A complete one-shot form skips the Wizard. Bootstrap hostname inherits public hostname and retains the allocator HTTPS port unless explicitly configured; if both are unset, use the allocator HTTPS authority. Linux/macOS and Windows installer sources are automatic qualified Server-local artifacts; previous installer URL overrides are ignored. Server settings remain action-first under `set server ...` / `unset server ...`; the guided menu places the same settings under System → Server Settings.
 
 Examples:
 
@@ -274,8 +272,6 @@ unset enrollment <ENROLLMENT>
 
 unset server public-hostname
 unset server bootstrap-hostname
-unset server installer-url
-unset server windows-installer-url
 
 unset network-object <OBJECT>
 unset network-group <GROUP>
@@ -297,11 +293,11 @@ unset permission-group <GROUP>
 unset ai-access <RULE>
 unset ai-access policy
 
-unset server mcp
-unset server mcp purge
+unset mcp-server
+unset mcp-server purge
 ```
 
-`unset server mcp` clears TLS intent and removes the active public MCP route while retaining DRLink-owned certificate and ACME account material. Active MCP/OAuth connections may be interrupted; the explicit command approves this change without an additional confirmation prompt. Check `system certificate status` and `system diagnostics mcp` afterward. `unset server mcp purge` removes that retained material only after interactive y/N confirmation; non-interactive use fails closed.
+`unset mcp-server` clears TLS intent and removes the active public MCP route while retaining DRLink-owned certificate and ACME account material. Active MCP/OAuth connections may be interrupted; the explicit command approves this change without an additional confirmation prompt. Check `system certificate status` and `system diagnostics mcp` afterward. `unset mcp-server purge` removes that retained material only after interactive y/N confirmation; non-interactive use fails closed.
 
 Referenced Objects/Groups/Identities/Managed Hosts are protected from deletion until references are removed.
 
@@ -389,7 +385,7 @@ verification. A heartbeat alone never establishes service health.
 `system status` is the detailed Server read-only view. In addition to runtime/control-plane health, it shows the current public hostname, bootstrap hostname, Linux/macOS Agent installer source, and Windows Agent installer source, including their automatic/default fallback semantics. `show status` remains the role-aware summary.
 
 
-`system certificate status` is the single public MCP TLS/certificate status surface. Configure TLS intent with `set server mcp ...`; there is no separate MCP TLS status read command.
+`system certificate status` is the single public MCP TLS/certificate status surface. Configure TLS intent with `set mcp-server ...`; there is no separate MCP TLS status read command.
 
 The explicit `system certificate issue`, `import` or `renew` command authorizes
 activation and required service changes without another confirmation prompt.

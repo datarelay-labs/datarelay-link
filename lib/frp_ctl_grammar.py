@@ -393,9 +393,9 @@ def reject_obsolete_surface(tokens):
     if focus[:2] == ["set", "ai-mcp"] or focus[:2] == ["help", "ai-mcp"]:
         return {"status": "error", "exit_code": 2,
                 "message": "Use set mcp-server for endpoint, TLS and Server execution; set ai-identity for AI connection and authentication."}
-    if focus == ["set", "server", "mcp"]:
+    if focus[:3] in (["set", "server", "mcp"], ["unset", "server", "mcp"]):
         return {"status": "error", "exit_code": 2,
-                "message": "Use set mcp-server for guided setup, or set server mcp <SETTING> <VALUE> for explicit TLS settings."}
+                "message": "Use set mcp-server or unset mcp-server for MCP settings."}
     if focus[:2] == ["test", "access"]:
         return {
             "status": "error", "exit_code": 2,
@@ -543,7 +543,7 @@ def reject_obsolete_surface(tokens):
             "exit_code": 2,
             "message": (
                 "Retired MCP TLS resource is not part of the current Data Relay Link grammar.\n"
-                "Use system certificate status or set server mcp / unset server mcp instead."
+                "Use system certificate status or set mcp-server / unset mcp-server instead."
             ),
         }
     if verb in ("show", "set", "unset", "test", "create", "add", "remove", "enable", "disable", "delete", "system") and len(raw) >= 2:
@@ -1279,7 +1279,7 @@ def _catalog_context_help(tokens, role, names=None, clients=None):
         ("unset", "remote-access"),
         ("unset", "internet-access"),
         ("unset", "ai-access"),
-        ("unset", "server", "mcp"),
+        ("unset", "mcp-server"),
         ("system", "diff"),
         ("system", "backup"),
         ("set", "remote-access"),
@@ -1630,9 +1630,7 @@ def context_help(tokens, role, names=None, clients=None):
                 return _fmt_available(
                     [
                         ("public-hostname", "Optional public DNS hostname for published services"),
-                        ("bootstrap-hostname", "Optional Zero-Touch HTTPS entry hostname"),
-                        ("installer-url", "Linux Agent installer URL"),
-                        ("windows-installer-url", "Windows Agent installer URL"),
+                        ("bootstrap-hostname", "Optional Zero-Touch HTTPS entry hostname (inherits public-hostname)"),
                     ]
                 )
             if tokens[2] == "bootstrap-hostname":
@@ -2832,13 +2830,9 @@ def _match_set(tokens, role, names=None):
     if resource == "mcp-server":
         if not server:
             return {"status": "role", "need": "server", "command": "set mcp-server"}
-        if len(tokens) != 2:
-            return incomplete("Unexpected argument.", ["set mcp-server"], [])
-        return _control_plane_ok(tokens)
-    if resource == "server" and tokens[2:3] == ["mcp"]:
-        if not server:
-            return {"status": "role", "need": "server", "command": "set server mcp"}
-        return _control_plane_ok(tokens)
+        if len(tokens) == 2 or (len(tokens) == 4 and tokens[2] in ("hostname", "mode", "contact-email", "acme-environment", "acme-directory")):
+            return _control_plane_ok(tokens)
+        return incomplete("Invalid MCP setting.", ["set mcp-server", "set mcp-server <SETTING> <VALUE>"], ["hostname", "mode", "contact-email", "acme-environment", "acme-directory"])
     if resource in CONTROL_PLANE_MUTATE:
         return _control_plane_ok(tokens)
     if resource == "client":
@@ -3118,12 +3112,10 @@ def _match_set(tokens, role, names=None):
     if resource == "server":
         if not server:
             return {"status": "role", "need": "server", "command": "set server"}
-        # Canonical: public-hostname / bootstrap-hostname / installer URLs.
+        # Canonical: public-hostname / bootstrap-hostname.
         server_settings = [
             "public-hostname",
             "bootstrap-hostname",
-            "installer-url",
-            "windows-installer-url",
         ]
         if len(tokens) < 3:
             return incomplete(
@@ -3131,53 +3123,17 @@ def _match_set(tokens, role, names=None):
                 [
                     "set server public-hostname <fqdn>",
                     "set server bootstrap-hostname <fqdn>",
-                    "set server installer-url <URL>",
-                    "set server windows-installer-url <URL>",
                 ],
                 server_settings,
                 tip="drlink help set",
             )
         setting = tokens[2]
-        if setting == "installer-url":
-            if len(tokens) < 4:
-                return incomplete(
-                    "Missing installer URL.",
-                    ["set server installer-url <URL>"],
-                )
-            if len(tokens) > 4:
-                return {
-                    "status": "error",
-                    "message": "Too many arguments. Quote values that contain spaces.",
-                }
-            return {
-                "status": "ok",
-                "action": "set_installer_url",
-                "value": tokens[3],
-            }
-        if setting == "windows-installer-url":
-            if len(tokens) < 4:
-                return incomplete(
-                    "Missing Windows installer URL.",
-                    ["set server windows-installer-url <URL>"],
-                )
-            if len(tokens) > 4:
-                return {
-                    "status": "error",
-                    "message": "Too many arguments. Quote values that contain spaces.",
-                }
-            return {
-                "status": "ok",
-                "action": "set_windows_installer_url",
-                "value": tokens[3],
-            }
         if setting not in ("public-hostname", "bootstrap-hostname"):
             return incomplete(
                 "Unknown server setting.",
                 [
                     "set server public-hostname <fqdn>",
                     "set server bootstrap-hostname <fqdn>",
-                    "set server installer-url <URL>",
-                    "set server windows-installer-url <URL>",
                 ],
                 server_settings,
             )
@@ -3216,9 +3172,11 @@ def _match_unset(tokens, role, names=None):
             avail,
         )
     resource = tokens[1]
-    if resource == "server" and tokens[2:3] == ["mcp"]:
+    if resource == "mcp-server":
         if not server:
-            return {"status": "role", "need": "server", "command": "unset server mcp"}
+            return {"status": "role", "need": "server", "command": "unset mcp-server"}
+        if tokens[2:] not in ([], ["purge"]):
+            return incomplete("Invalid MCP setting.", ["unset mcp-server", "unset mcp-server purge"], ["purge"])
         return _control_plane_ok(tokens)
     if resource in CONTROL_PLANE_MUTATE:
         return _control_plane_ok(tokens)
@@ -3242,8 +3200,6 @@ def _match_unset(tokens, role, names=None):
         settings = [
             "public-hostname",
             "bootstrap-hostname",
-            "installer-url",
-            "windows-installer-url",
         ]
         if len(tokens) < 3:
             return incomplete(
@@ -3251,8 +3207,6 @@ def _match_unset(tokens, role, names=None):
                 [
                     "unset server public-hostname",
                     "unset server bootstrap-hostname",
-                    "unset server installer-url",
-                    "unset server windows-installer-url",
                 ],
                 settings,
                 tip="drlink help unset",
@@ -3264,8 +3218,6 @@ def _match_unset(tokens, role, names=None):
                 [
                     "unset server public-hostname",
                     "unset server bootstrap-hostname",
-                    "unset server installer-url",
-                    "unset server windows-installer-url",
                 ],
                 settings,
             )
@@ -3275,9 +3227,6 @@ def _match_unset(tokens, role, names=None):
             return {"status": "ok", "action": "unset_server_hostname"}
         if setting == "bootstrap-hostname":
             return {"status": "ok", "action": "unset_server_bootstrap_hostname"}
-        if setting == "installer-url":
-            return {"status": "ok", "action": "unset_installer_url"}
-        return {"status": "ok", "action": "unset_windows_installer_url"}
     if resource == "enrollment":
         if len(tokens) < 3:
             return incomplete(
@@ -4335,9 +4284,7 @@ def _tab_desc_map(line, role, names=None, clients=None):
         if len(filled) == 2:
             return {
                 "public-hostname": "Optional public DNS hostname for published services",
-                "bootstrap-hostname": "Optional Zero-Touch HTTPS entry hostname",
-                "installer-url": "Linux/macOS Agent installer URL",
-                "windows-installer-url": "Windows Agent installer URL",
+                "bootstrap-hostname": "Optional Zero-Touch HTTPS entry hostname (inherits public-hostname)",
             }, "named"
     if verb == "set" and len(filled) >= 2 and filled[1] == "client":
         if len(filled) == 2:

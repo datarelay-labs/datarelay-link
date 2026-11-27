@@ -44,10 +44,7 @@ CLIENT_PROPS = ("label", "note", "tag")
 SERVER_SETTINGS = (
     "public-hostname",
     "bootstrap-hostname",
-    "installer-url",
-    "windows-installer-url",
 )
-INSTALLER_URL_SETTINGS = ("installer-url", "windows-installer-url")
 GROUP_PROPS = ("name", "description")
 SERVICE_PROPS = (
     "target-host",
@@ -213,7 +210,7 @@ ENROLL_FLAGS = (
         choices=("linux", "windows"),
         default="linux",
         description="Client platform for the one-line installer command",
-        effect="Windows requires windows_client_installer_url in server config",
+        effect="Windows uses qualified Server-local Agent artifacts",
         risk="metadata",
         type="enum",
     ),
@@ -1601,7 +1598,7 @@ def domain_help(topic, role):
         if not server:
             return "MCP Server Settings are available on a Data Relay Link server.\n"
         return ("MCP Server Settings\n===================\n\n"
-                "set mcp-server configures the public endpoint and TLS, Server execution, and diagnostics.\n"
+                "set mcp-server guides endpoint/TLS configuration and then reviews Server execution; diagnostics is separate.\n"
                 "Use set ai-identity to connect and authenticate an AI client; set ai-access to grant access.\n"
                 "Server execution requires explicit local administrator approval. It never creates an AI Access Rule.\n"
                 "menu → AI Access → MCP Server Settings\n")
@@ -1689,13 +1686,13 @@ def domain_help(topic, role):
                     "  set ai-identity <IDENTITY> approve <PENDING-ID>",
                     "  set ai-identity <IDENTITY> deny <PENDING-ID>",
                     "  system diagnostics mcp",
-                    "  set server mcp hostname <FQDN>",
-                    "  set server mcp mode <auto-acme|user-certificate>",
-                    "  set server mcp contact-email <EMAIL>",
-                    "  set server mcp acme-environment <production|staging>",
-                    "  set server mcp acme-directory <URL>",
-                    "  unset server mcp",
-                    "  unset server mcp purge",
+                    "  set mcp-server hostname <FQDN>",
+                    "  set mcp-server mode <auto-acme|user-certificate>",
+                    "  set mcp-server contact-email <EMAIL>",
+                    "  set mcp-server acme-environment <production|staging>",
+                    "  set mcp-server acme-directory <URL>",
+                    "  unset mcp-server",
+                    "  unset mcp-server purge",
                     "  system certificate issue",
                     "  system certificate import <CERT> <KEY> [CHAIN]",
                     "  system certificate renew",
@@ -1876,7 +1873,7 @@ _IMPACT_BY_PATH = {
         "Validates and atomically applies the ConfigurationBundle after diff "
         "and y/N confirmation; the applied configuration can broaden access."
     ),
-    ("unset", "server", "mcp"): (
+    ("unset", "mcp-server"): (
         "Clears the MCP TLS intent and removes the public MCP route; the "
         "DRLink-owned certificate and ACME account material is kept. Active "
         "MCP/OAuth connections may be interrupted."
@@ -2443,9 +2440,6 @@ NAVIGATION_TREE = {
         ("server_show_settings", "Show current Server settings", "", "command", "system status"),
         ("server_set_public", "Remote Service public hostname", "", "workflow", "set_public_hostname"),
         ("server_set_bootstrap", "Bootstrap hostname", "", "workflow", "set_bootstrap_hostname"),
-        ("server_set_installer", "Linux/macOS Agent installer URL", "", "workflow", "set_installer_url"),
-        ("server_set_win_installer", "Windows Agent installer URL", "", "workflow", "set_windows_installer_url"),
-        ("server_cert_status", "MCP Certificate Status", "", "command", "system certificate status"),
         ("back", "Back", "", "back", None),
     ),
     "server.system.backup": (
@@ -2912,8 +2906,6 @@ COMPLETION_DOMAIN_GROUPS = (
             "backup",
             "support-bundle",
             "info",
-            "installer-url",
-            "windows-installer-url",
             "server",
             "product",
             "engine",

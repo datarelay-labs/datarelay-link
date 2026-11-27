@@ -74,7 +74,7 @@ root-owned software directory using the native access ACL, without requiring
 A filesystem that cannot support the named ACL fails preparation without a
 world-access or privileged-group fallback.
 
-Use `set mcp-server` → Server execution on the installed Server as a local administrator. Select an existing
+Use `set mcp-server` → Configure endpoint, TLS and Server execution on the installed Server as a local administrator. Select an existing
 account and approved roots (the prepared account/workspace are defaults).
 The setup validates the selected worker, requests explicit local approval,
 restarts only the Bridge, and verifies the running profile. UID 0 requires

@@ -60,8 +60,9 @@ class PrivateCAFallbackTests(unittest.TestCase):
 
     def test_configured_authority_is_not_replaced_by_ip_fallback(self):
         self.assertEqual(CLI.entry_authority_for_cfg(self.cfg),FQDN)
+        self.assertEqual(CLI.entry_authority_for_cfg(dict(self.cfg,allocator_public_url="https://"+IP+":6099/enroll")),FQDN+":6099")
         self.assertEqual(CLI.entry_authority_for_cfg(dict(self.cfg,bootstrap_hostname="private.example")), "private.example")
-        self.assertEqual(CLI.entry_authority_for_cfg(dict(self.cfg,allocator_public_url="https://"+IP+"/enroll")),IP)
+        self.assertEqual(CLI.entry_authority_for_cfg(dict(self.cfg,public_hostname="",allocator_public_url="https://"+IP+"/enroll")),IP)
 
     def test_bad_authority_rejected_instead_of_fallback(self):
         for host in ("bad host","https://example.test","host/path","user@host"):

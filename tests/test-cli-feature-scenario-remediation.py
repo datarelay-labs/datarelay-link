@@ -1331,6 +1331,7 @@ frpctl_nav_workflow manage_host
             "role": "server",
             "public_ip": "203.0.113.10",
             "public_hostname": "access.example.test",
+            "allocator_public_url": "https://203.0.113.10:6099/enroll",
             "bootstrap_hostname": "bootstrap.example.test",
             "client_installer_url": "https://install.example.test/install.sh",
             "windows_client_installer_url": "https://install.example.test/install.ps1",
@@ -1345,8 +1346,10 @@ frpctl_nav_workflow manage_host
         self.assertIn("Server Settings", proc.stdout)
         self.assertIn("access.example.test", proc.stdout)
         self.assertIn("bootstrap.example.test", proc.stdout)
-        self.assertIn("https://install.example.test/install.sh", proc.stdout)
-        self.assertIn("https://install.example.test/install.ps1", proc.stdout)
+        self.assertIn("https://203.0.113.10:6099/artifacts/agent/bootstrap-client.sh", proc.stdout)
+        self.assertNotIn("https://install.example.test/install.sh", proc.stdout)
+        self.assertIn("https://203.0.113.10:6099/artifacts/agent/bootstrap-client.ps1", proc.stdout)
+        self.assertNotIn("https://install.example.test/install.ps1", proc.stdout)
         self.assertEqual(self.plane.current_revision(), before)
         menu = catalog.render_navigation_menu("server.system.settings", title="Server Settings")
         self.assertIn("Show current Server settings", menu)
@@ -1692,7 +1695,7 @@ frpctl_nav_workflow manage_host
             (["unset", "remote-access", "?"], "unset remote-access <RULE>", "policy"),
             (["unset", "internet-access", "?"], "unset internet-access <RULE>", "policy"),
             (["unset", "ai-access", "?"], "unset ai-access <RULE>", "policy"),
-            (["unset", "server", "mcp", "?"], "unset server mcp", "purge"),
+            (["unset", "mcp-server", "?"], "unset mcp-server", "purge"),
             (["system", "diff", "?"], "system diff <REVISION_A> <REVISION_B>", "configuration"),
             (["system", "backup", "?"], "system backup [<path>]", "validate"),
         )
@@ -1703,7 +1706,7 @@ frpctl_nav_workflow manage_host
             self.assertIn(usage, text, (tokens, text))
             self.assertIn(child, text, (tokens, text))
 
-        tls = grammar.match(["unset", "server", "mcp", "?"], role="server")
+        tls = grammar.match(["unset", "mcp-server", "?"], role="server")
         tls_text = tls.get("message") or ""
         self.assertIn("Risk: outage", tls_text)
         self.assertIn("retaining DRLink-owned certificate", tls_text)
@@ -1762,7 +1765,7 @@ frpctl_nav_workflow manage_host
     def test_mcp_tls_purge_metadata_explains_interactive_only_contract(self):
         rows = json.loads((LIB / "frp_cli_final_commands.json").read_text(encoding="utf-8"))
         by_path = {tuple(row["path"]): row for row in rows}
-        purge = by_path[("unset", "server", "mcp", "purge")]
+        purge = by_path[("unset", "mcp-server", "purge")]
         detail = str(purge.get("detail") or "").lower()
         self.assertTrue(purge["destructive"])
         self.assertEqual(purge["risk"], "irreversible")

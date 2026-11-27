@@ -843,7 +843,7 @@ Required contract:
 - no mutation before any required confirmation;
 - automation-safe exit status.
 
-Do **not** invent a universal TTY-only rule for all destructive commands. For example, current canonical documentation explicitly makes `unset server mcp purge` and `unset managed-host-group` interactive-only, while other y/N safety flows may accept documented stdin confirmation.
+Do **not** invent a universal TTY-only rule for all destructive commands. For example, current canonical documentation explicitly makes `unset mcp-server purge` and `unset managed-host-group` interactive-only, while other y/N safety flows may accept documented stdin confirmation.
 
 Missing isolated regression coverage for a security-sensitive/destructive contract may itself be a finding.
 

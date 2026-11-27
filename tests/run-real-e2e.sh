@@ -593,16 +593,9 @@ discover_client_identity_macos() {
   record discover-client-identity PASS 0 "$elapsed"
 }
 
-pin_linux_installer_urls() {
-  # Untagged RC: pin exact-commit installer URLs through the canonical CLI.
-  local url="https://raw.githubusercontent.com/datarelay-labs/datarelay-link/${INSTALLER_SHA:-$HEAD_SHA}/dist/bootstrap-client.sh"
-  local win="https://raw.githubusercontent.com/datarelay-labs/datarelay-link/${INSTALLER_SHA:-$HEAD_SHA}/dist/bootstrap-client.ps1"
-  run_server pin-installer-urls "sudo /usr/local/bin/drlink set server installer-url '$url' && sudo /usr/local/bin/drlink set server windows-installer-url '$win' && sudo systemctl restart drlink-allocator && sleep 1 && systemctl is-active drlink-allocator && echo '$url' && echo '$win'"
-}
-
-pin_windows_installer_url() {
-  local url="https://raw.githubusercontent.com/datarelay-labs/datarelay-link/${INSTALLER_SHA:-$HEAD_SHA}/dist/bootstrap-client.ps1"
-  run_server win-pin-installer "sudo /usr/local/bin/drlink set server windows-installer-url '$url' && sudo systemctl restart drlink-allocator && sleep 1 && systemctl is-active drlink-allocator && echo '$url'"
+verify_qualified_installer_urls() {
+  # Installed candidate must provide both Server-local OS artifacts; no overrides.
+  run_server qualified-installer-sources "sudo /usr/local/bin/drlink system status | tee /dev/stderr | grep -q '/artifacts/agent/bootstrap-client.sh' && sudo /usr/local/bin/drlink system status | grep -q '/artifacts/agent/bootstrap-client.ps1'"
 }
 
 scenario_windows_full() {
@@ -611,7 +604,7 @@ scenario_windows_full() {
   run_server 01-server-before "hostname; cat /etc/os-release; uname -a; sudo systemctl --no-pager --full status drlink-server 2>/dev/null || true; sudo /usr/local/bin/drlink show status 2>/dev/null || true" || fail_stop
   run_client 02-client-before 'powershell.exe -NoProfile -Command "$env:COMPUTERNAME; $PSVersionTable.PSVersion.ToString(); ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)"' || fail_stop
 
-  pin_windows_installer_url || fail_stop
+  verify_qualified_installer_urls || fail_stop
 
   local probe_enc
   probe_enc="$(python3 "$ROOT/tests/lib/real_e2e_windows_command.py" --encode-file "$ROOT/tests/lib/real_e2e_windows_preinstall_probe.ps1")" || fail_stop
@@ -759,7 +752,7 @@ scenario_install() {
   fi
   run_server 06-server-doctor "sudo /usr/local/bin/drlink show status; echo ====; sudo /usr/local/bin/drlink system diagnostics" || fail_stop
 
-  pin_linux_installer_urls || fail_stop
+  verify_qualified_installer_urls || fail_stop
 
   create_zero_touch "$OUT_DIR/07-zero-touch-create.log" "$OUT_DIR/07-zero-touch-command.sh" 07-zero-touch-create "automated-real-e2e-$PROFILE" || fail_stop
   run_local 08-zero-touch-run bash -lc "ssh ${SSH_OPTS[*]} '$CLIENT_ALIAS' 'bash -s' < '$OUT_DIR/07-zero-touch-command.sh'" || fail_stop

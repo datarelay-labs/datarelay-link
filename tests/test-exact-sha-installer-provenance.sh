@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Exact-SHA RC installs must preserve SOURCE_REF and Zero-Touch installer URLs.
-# Tagged installs must keep vX.Y.Z defaults. Explicit URL overrides win.
+# Tagged installs must keep vX.Y.Z defaults; retired installer overrides are ignored.
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 WORKDIR="$(mktemp -d)"
@@ -16,10 +16,11 @@ FAKE_SHA='0123456789abcdef0123456789abcdef01234567'
 . "$ROOT/lib/frp-common.sh"
 
 reset_provenance_env() {
-  unset FRP_EXPECTED_SOURCE_REF FRP_TXN_SOURCE_REF FRP_BOOTSTRAP_URL \
+  unset FRP_EXPECTED_SOURCE_REF FRP_EXPECTED_SOURCE_HEAD FRP_TXN_SOURCE_REF FRP_BOOTSTRAP_URL \
     FRP_CLIENT_INSTALLER_URL FRP_WINDOWS_CLIENT_INSTALLER_URL \
     FRP_RELEASE_CHANNEL FRP_DEPLOY_TEST_ROOT FRP_SERVER_TEST_ROOT \
     FRP_CTL_TEST_ROOT FRP_PUBLIC_HOST FRP_PUBLIC_IP FRP_PUBLIC_HOSTNAME \
+    FRP_ENROLLMENT_PUBLIC_HOST FRP_PUBLIC_URL_HOST FRP_ALLOCATOR_PUBLIC_URL FRP_ALLOCATOR_URL \
     FRP_INTERNAL_IP FRP_DEPLOYMENT_MODE FRP_CONTROL_PUBLIC_PORT \
     FRP_CONTROL_LISTEN_PORT FRP_ALLOCATOR_PUBLIC_PORT \
     FRP_ALLOCATOR_LISTEN_PORT FRP_PORT_START FRP_PORT_END || true
@@ -40,6 +41,7 @@ set_noninteractive_server_defaults() {
 # --- tagged / channel default preserved ---
 reset_provenance_env
 export FRP_RELEASE_CHANNEL=stable
+export FRP_DEPLOY_TEST_ROOT="$WORKDIR/fresh-tagged"
 [[ "$(frp_release_git_ref)" == "v${PROJECT_VERSION}" ]] || fail "stable default ref"
 case "$(frp_default_client_installer_url)" in
   *"/v${PROJECT_VERSION}/dist/bootstrap-client.sh") ;;
@@ -92,8 +94,8 @@ pass "INFER_FROM_BOOTSTRAP_URL"
 reset_provenance_env
 export FRP_CLIENT_INSTALLER_URL="https://raw.githubusercontent.com/datarelay-labs/datarelay-link/${FAKE_SHA}/dist/bootstrap-client.sh"
 frp_infer_expected_source_ref
-[[ "${FRP_EXPECTED_SOURCE_REF:-}" == "$FAKE_SHA" ]] || fail "infer from client installer URL"
-pass "INFER_FROM_CLIENT_INSTALLER_URL"
+[[ -z "${FRP_EXPECTED_SOURCE_REF:-}" ]] || fail "retired installer override influenced source ref"
+pass "IGNORE_RETIRED_INSTALLER_URL_PROVENANCE"
 
 # Pre-rename raw repository URLs must still yield SOURCE_REF for upgrade/provenance.
 reset_provenance_env
@@ -110,13 +112,13 @@ export FRP_SERVER_TEST_ROOT="$WORKDIR/install-root"
 mkdir -p "$FRP_SERVER_TEST_ROOT/etc/drlink"
 export FRP_PUBLIC_HOST='203.0.113.50'
 export FRP_SERVER_CONFIG="$WORKDIR/missing-config.json"
-export FRP_CLIENT_INSTALLER_URL="https://raw.githubusercontent.com/datarelay-labs/datarelay-link/${FAKE_SHA}/dist/bootstrap-client.sh"
+export FRP_BOOTSTRAP_URL="https://raw.githubusercontent.com/datarelay-labs/datarelay-link/${FAKE_SHA}/dist/bootstrap-server.sh"
 # shellcheck source=../install-server.sh
 . "$ROOT/install-server.sh"
 load_existing_server_config
 resolve_server_settings
 [[ "${FRP_EXPECTED_SOURCE_REF:-}" == "$FAKE_SHA" ]] || fail "install did not infer SOURCE_REF"
-[[ "$CLIENT_INSTALLER_URL" == *"/${FAKE_SHA}/dist/bootstrap-client.sh" ]] \
+[[ "$CLIENT_INSTALLER_URL" == *"/artifacts/agent/bootstrap-client.sh" ]] \
   || fail "install linux installer URL: $CLIENT_INSTALLER_URL"
 [[ "$WINDOWS_CLIENT_INSTALLER_URL" == *"/artifacts/"*"bootstrap-client.ps1" ]] \
   || fail "install windows installer URL: $WINDOWS_CLIENT_INSTALLER_URL"
@@ -191,7 +193,7 @@ EOF
 load_create_client "$TAG_ROOT" "v${PROJECT_VERSION}" || fail "tagged defaults"
 pass "FINAL_TAG_PATH_PRESERVED"
 
-# --- explicit override preserved ---
+# --- retired explicit overrides do not change automatic sources ---
 reset_provenance_env
 set_noninteractive_server_defaults
 export FRP_SERVER_SOURCED=1
@@ -207,12 +209,12 @@ export FRP_WINDOWS_CLIENT_INSTALLER_URL='https://example.test/custom-bootstrap-c
   . "$ROOT/install-server.sh"
   load_existing_server_config
   resolve_server_settings
-  [[ "$CLIENT_INSTALLER_URL" == 'https://example.test/custom-bootstrap-client.sh' ]] \
-    || fail "explicit linux override lost"
-  [[ "$WINDOWS_CLIENT_INSTALLER_URL" == 'https://example.test/custom-bootstrap-client.ps1' ]] \
-    || fail "explicit windows override lost"
+  [[ "$CLIENT_INSTALLER_URL" == "https://203.0.113.60:6099/artifacts/agent/bootstrap-client.sh" ]] \
+    || fail "retired linux override was used"
+  [[ "$WINDOWS_CLIENT_INSTALLER_URL" == "https://203.0.113.60:6099/artifacts/agent/bootstrap-client.ps1" ]] \
+    || fail "retired windows override was used"
 )
-pass "EXPLICIT_INSTALLER_URL_OVERRIDE_PRESERVED"
+pass "RETIRED_INSTALLER_URL_OVERRIDE_IGNORED"
 
 # --- exact SHA expected_ref accepted against development manifest git_ref ---
 reset_provenance_env

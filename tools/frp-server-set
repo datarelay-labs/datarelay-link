@@ -141,14 +141,14 @@ def main(argv):
 
     if unset:
         print('Bootstrap hostname unset.')
-        print('Zero-Touch uses the configured allocator HTTPS authority with the same eight-character entry format.')
+        print('Zero-Touch inherits the public hostname, or uses the configured allocator HTTPS authority if neither hostname is set.')
         print('No DNS, certificate, or reverse-proxy changes were made.')
         return 0
 
     alias = SCFG.bootstrap_hostname(cfg)
     print('Bootstrap hostname set: %s' % alias)
     print()
-    print('This name is an optional Zero-Touch HTTPS entry authority.')
+    print('This name overrides the inherited public hostname for Zero-Touch HTTPS entry.')
     print('It is not the published-service access alias (public hostname).')
     print('It is not the FRP control endpoint or Private CA identity.')
     print()

@@ -463,7 +463,7 @@ if host:
 alias = cfg.get('public_hostname')
 if alias is not None and str(alias).strip():
     print('public_hostname=' + shlex.quote(str(alias).strip()))
-bootstrap = cfg.get('bootstrap_hostname')
+bootstrap = cfg.get('bootstrap_hostname') or cfg.get('public_hostname')
 if bootstrap is not None and str(bootstrap).strip():
     print('bootstrap_hostname=' + shlex.quote(str(bootstrap).strip().lower()))
 public_port = coerce_port(cfg.get('frp_control_public_port')) or coerce_port(cfg.get('control_port'))

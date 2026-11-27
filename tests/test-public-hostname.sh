@@ -56,14 +56,16 @@ assert S.access_host(cfg) == 'frp.example.com'
 
 # Enrollment/public URL identity never opts into publicly trusted short-URL 443.
 assert S.public_url_host(cfg) == 'frp.example.com'  # falls back to public_hostname
-assert S.short_url_hostname(cfg) == ''
+assert S.short_url_hostname(cfg) == 'frp.example.com'
+cfg['allocator_public_url'] = 'https://203.0.113.10:6099/enroll'
+assert S.bootstrap_authority(cfg) == 'frp.example.com:6099'
 cfg['public_url_host'] = 'frp.example.com'
 assert S.public_url_host(cfg) == 'frp.example.com'
-assert S.short_url_hostname(cfg) == ''
+assert S.short_url_hostname(cfg) == 'frp.example.com'
 cfg['public_url_host'] = '203.0.113.10'
 assert S.public_url_host(cfg) == '203.0.113.10'
-assert S.short_url_hostname(cfg) == ''
-# bootstrap_hostname is the explicit short-URL opt-in.
+assert S.short_url_hostname(cfg) == 'frp.example.com'
+# bootstrap_hostname overrides the inherited public hostname.
 cfg['bootstrap_hostname'] = 'bootstrap.example.com'
 assert S.short_url_hostname(cfg) == 'bootstrap.example.com'
 assert S.public_url_host(cfg) == '203.0.113.10'
@@ -72,7 +74,7 @@ del cfg['bootstrap_hostname']
 del cfg['public_url_host']
 cfg['enrollment_public_host'] = 'legacy.example.com'
 assert S.public_url_host(cfg) == 'legacy.example.com'
-assert S.short_url_hostname(cfg) == ''
+assert S.short_url_hostname(cfg) == 'frp.example.com'
 
 assert S.format_http_url('https', '2001:db8::1', 6005) == 'https://[2001:db8::1]:6005'
 lines = S.render_access_lines('203.0.113.10', 'frp.example.com', 6000, preset='ssh')
