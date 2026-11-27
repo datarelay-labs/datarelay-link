@@ -21,6 +21,7 @@ from typing import Optional
 from datetime import datetime, timezone
 
 from drlink_control_plane import ControlPlaneError, path_allowed, validate_safe_path
+from drlink_mcp_runtime import capture_process
 
 
 def _deadline_passed(deadline_at: Optional[str]) -> bool:
@@ -149,20 +150,33 @@ def exec_command(command: str, timeout: int) -> dict:
         start_new_session=True,
     )
     result = "ALLOW"
-    try:
-        stdout, stderr = proc.communicate(timeout=timeout)
-        code = proc.returncode
-    except subprocess.TimeoutExpired:
+    native = capture_process(
+        proc, input_data=None, timeout_seconds=timeout,
+        stdout_limit=MAX_STDOUT_BYTES, stderr_limit=MAX_STDERR_BYTES,
+    )
+    if native is not None:
+        stdout, stderr = native["stdout"], native["stderr"]
+        code = native["exit_status"]
+        out_trunc, err_trunc = native["stdout_truncated"], native["stderr_truncated"]
+        if native["timed_out"]:
+            result = "TIMEOUT"
+    else:
         try:
-            os.killpg(proc.pid, signal.SIGKILL)
-        except Exception:
-            proc.kill()
-        stdout, stderr = proc.communicate()
-        code = -9
-        result = "TIMEOUT"
+            stdout, stderr = proc.communicate(timeout=timeout)
+            code = proc.returncode
+        except subprocess.TimeoutExpired:
+            try:
+                os.killpg(proc.pid, signal.SIGKILL)
+            except Exception:
+                proc.kill()
+            stdout, stderr = proc.communicate()
+            code = -9
+            result = "TIMEOUT"
+        stdout, out_trunc = _bound(stdout or b"", MAX_STDOUT_BYTES)
+        stderr, err_trunc = _bound(stderr or b"", MAX_STDERR_BYTES)
     duration_ms = int((time.monotonic() - start) * 1000)
-    out, out_trunc = _bound(stdout or b"", MAX_STDOUT_BYTES)
-    err, err_trunc = _bound(stderr or b"", MAX_STDERR_BYTES)
+    out = stdout or b""
+    err = stderr or b""
     return {
         "result": result if result == "TIMEOUT" else "ALLOW",
         "exit_status": code,

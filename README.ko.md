@@ -248,6 +248,9 @@ MCP의 결과 대기, connection I/O, streaming과 backpressure 전환도
 E2E qualification도 진행 중입니다. MCP rollback은 `DRLINK_MCP_RUNTIME=python`이며,
 `auto`는 library가 없으면 Python으로 돌아가고 명시적 `rust` 선택은 library 부재 시
 서비스 초기화를 fail-closed 합니다.
+R3에서는 Python이 시작한 Linux/macOS Agent 및 Server executor 자식 프로세스의
+stdout/stderr pipe를 Rust가 poll하고 읽는 작업을 통합 중입니다. process 시작,
+timeout 선택, process-group 종료, wait/reap 권한은 Python에 유지됩니다.
 
 ### AI Access / MCP
 

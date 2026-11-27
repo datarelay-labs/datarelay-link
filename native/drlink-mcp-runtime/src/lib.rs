@@ -3,12 +3,15 @@
 //! Python remains responsible for authentication, AI Access, durable jobs,
 //! audit and the dispatch itself. This library only tracks an in-process cap.
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::time::{Duration, Instant};
 
 #[repr(C)]
 pub struct DispatchBudget {
     capacity: usize,
     inflight: AtomicUsize,
 }
+
+type OutputChunk = extern "C" fn(i32, *const u8, usize, *mut std::ffi::c_void) -> bool;
 
 /// Create a budget. Invalid capacities return null and fail closed at caller.
 #[no_mangle]
@@ -80,6 +83,114 @@ pub unsafe extern "C" fn drlink_mcp_budget_release(budget: *mut DispatchBudget) 
 pub unsafe extern "C" fn drlink_mcp_budget_free(budget: *mut DispatchBudget) {
     if !budget.is_null() {
         drop(Box::from_raw(budget));
+    }
+}
+
+/// Drain a spawned child's stdout/stderr while observing its exit without
+/// reaping it. Python retains process creation, termination policy and reaping.
+/// Return 0 after the leader exits and currently available pipe bytes are
+/// drained, 1 on timeout, 2 on OS error, 3 if the output callback refuses data.
+/// A zero timeout means wait without a deadline. The caller can then terminate
+/// remaining process-group children and call again to drain pipes to EOF.
+///
+/// # Safety
+/// `pid` must identify a live child owned by the caller; both descriptors must
+/// be open read ends that remain valid for this call. `callback` must be valid.
+#[no_mangle]
+pub unsafe extern "C" fn drlink_mcp_drain_child(
+    pid: libc::pid_t,
+    stdout_fd: libc::c_int,
+    stderr_fd: libc::c_int,
+    timeout_ms: u64,
+    wait_for_eof: bool,
+    callback: Option<OutputChunk>,
+    context: *mut std::ffi::c_void,
+) -> i32 {
+    if pid <= 0 || stdout_fd < 0 || stderr_fd < 0 || callback.is_none() {
+        return 2;
+    }
+    let callback = callback.unwrap();
+    let started = Instant::now();
+    let timeout = Duration::from_millis(timeout_ms);
+    let mut exited = false;
+    let mut stdout_open = true;
+    let mut stderr_open = true;
+    let mut buffer = [0u8; 8192];
+
+    loop {
+        if !exited {
+            let mut info: libc::siginfo_t = std::mem::zeroed();
+            let result = libc::waitid(
+                libc::P_PID,
+                pid as libc::id_t,
+                &mut info,
+                libc::WEXITED | libc::WNOHANG | libc::WNOWAIT,
+            );
+            if result == 0 {
+                exited = info.si_pid() != 0;
+            } else {
+                let error = std::io::Error::last_os_error();
+                if error.kind() != std::io::ErrorKind::Interrupted {
+                    return 2;
+                }
+            }
+        }
+        if exited && !stdout_open && !stderr_open {
+            return 0;
+        }
+        if timeout_ms > 0 && started.elapsed() >= timeout {
+            return 1;
+        }
+
+        let mut fds = [
+            libc::pollfd {
+                fd: if stdout_open { stdout_fd } else { -1 },
+                events: (libc::POLLIN | libc::POLLHUP) as i16,
+                revents: 0,
+            },
+            libc::pollfd {
+                fd: if stderr_open { stderr_fd } else { -1 },
+                events: (libc::POLLIN | libc::POLLHUP) as i16,
+                revents: 0,
+            },
+        ];
+        let result = libc::poll(
+            fds.as_mut_ptr(),
+            fds.len() as libc::nfds_t,
+            if exited && !wait_for_eof { 0 } else { 10 },
+        );
+        if result < 0 {
+            let error = std::io::Error::last_os_error();
+            if error.kind() == std::io::ErrorKind::Interrupted {
+                continue;
+            }
+            return 2;
+        }
+        if result == 0 && exited && !wait_for_eof {
+            return 0;
+        }
+        for index in 0..2 {
+            if fds[index].revents & (libc::POLLERR | libc::POLLNVAL) != 0 {
+                return 2;
+            }
+            if fds[index].revents & (libc::POLLIN | libc::POLLHUP) == 0 {
+                continue;
+            }
+            let fd = fds[index].fd;
+            let count = libc::read(fd, buffer.as_mut_ptr().cast(), buffer.len());
+            if count == 0 {
+                if index == 0 { stdout_open = false; } else { stderr_open = false; }
+            } else if count < 0 {
+                let error = std::io::Error::last_os_error();
+                if error.kind() != std::io::ErrorKind::WouldBlock
+                    && error.kind() != std::io::ErrorKind::Interrupted
+                {
+                    return 2;
+                }
+            } else if !callback(index as i32 + 1, buffer.as_ptr(), count as usize, context) {
+                return 3;
+            }
+        }
     }
 }
 

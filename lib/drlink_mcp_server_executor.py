@@ -17,6 +17,7 @@ import signal
 import stat
 import subprocess
 import sys
+from drlink_mcp_runtime import capture_process
 
 MAX_BYTES = 1024 * 1024
 MAX_OUTPUT = 65536
@@ -376,12 +377,24 @@ def execute_as_unprivileged_user(request: dict) -> dict:
         extra_groups=[], close_fds=True, start_new_session=True,
     )
     wait_limit = 125 if request.get("action") == "run_dev_test" else MAX_TIMEOUT + 3
-    try:
-        out, _ = proc.communicate(json.dumps(request).encode("utf-8"), timeout=wait_limit)
-    except subprocess.TimeoutExpired:
-        os.killpg(proc.pid, signal.SIGKILL)
-        proc.communicate()
-        raise ExecutorDenied("Server-local worker timed out")
+    native = capture_process(
+        proc, input_data=json.dumps(request).encode("utf-8"),
+        timeout_seconds=wait_limit, stdout_limit=MAX_BYTES * 2,
+        stderr_limit=0,
+    )
+    if native is not None:
+        out = native["stdout"]
+        if native["timed_out"]:
+            raise ExecutorDenied("Server-local worker timed out")
+        if native["stdout_truncated"]:
+            raise ExecutorDenied("Oversized Server-local worker response")
+    else:
+        try:
+            out, _ = proc.communicate(json.dumps(request).encode("utf-8"), timeout=wait_limit)
+        except subprocess.TimeoutExpired:
+            os.killpg(proc.pid, signal.SIGKILL)
+            proc.communicate()
+            raise ExecutorDenied("Server-local worker timed out")
     if proc.returncode:
         raise ExecutorDenied("Server-local worker could not complete the request")
     if len(out) > MAX_BYTES * 2:

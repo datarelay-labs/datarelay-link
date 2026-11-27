@@ -26,6 +26,15 @@ python3 tests/test-mcp-rust-runtime.py
 DRLINK_MCP_RUNTIME=rust \
 DRLINK_MCP_NATIVE_LIBRARY="$ROOT/native/drlink-mcp-runtime/target/release/libdrlink_mcp_runtime.so" \
 python3 tests/test-mcp-bridge-workers.py
+DRLINK_MCP_RUNTIME=rust \
+DRLINK_MCP_NATIVE_LIBRARY="$ROOT/native/drlink-mcp-runtime/target/release/libdrlink_mcp_runtime.so" \
+python3 tests/test-mcp-server-full-control.py
+DRLINK_MCP_RUNTIME=rust \
+DRLINK_MCP_NATIVE_LIBRARY="$ROOT/native/drlink-mcp-runtime/target/release/libdrlink_mcp_runtime.so" \
+python3 tests/test-mcp-server-local-executor.py
+DRLINK_MCP_RUNTIME=rust \
+DRLINK_MCP_NATIVE_LIBRARY="$ROOT/native/drlink-mcp-runtime/target/release/libdrlink_mcp_runtime.so" \
+python3 tests/test-ai-access-mcp-e2e.py
 
 echo "=== human E2E finding → fast regression links (supporting only) ==="
 python3 tests/test_persona_findings.py

@@ -4,6 +4,9 @@ from __future__ import annotations
 
 import importlib.util
 import os
+import signal
+import subprocess
+import sys
 import threading
 import unittest
 from pathlib import Path
@@ -74,6 +77,62 @@ class RustDispatchBudgetTests(unittest.TestCase):
         for _ in admitted:
             budget.release()
         budget.close()
+
+    def test_rust_drains_both_pipes_without_unbounded_python_capture(self):
+        with mock.patch.dict(os.environ, {
+            "DRLINK_MCP_RUNTIME": "rust",
+            "DRLINK_MCP_NATIVE_LIBRARY": str(LIBRARY),
+        }):
+            proc = subprocess.Popen(
+                [sys.executable, "-c", (
+                    "import sys; sys.stdout.buffer.write(b'A'*120000); "
+                    "sys.stderr.buffer.write(b'B'*90000); sys.stdout.flush(); sys.stderr.flush()"
+                )], stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True,
+            )
+            captured = {"stdout": bytearray(), "stderr": bytearray(), "total": [0, 0]}
+
+            def append(name, index, chunk, limit):
+                captured["total"][index] += len(chunk)
+                captured[name].extend(chunk[:max(0, limit - len(captured[name]))])
+
+            result = runtime.drain_process(
+                proc,
+                on_stdout=lambda chunk: append("stdout", 0, chunk, 4096),
+                on_stderr=lambda chunk: append("stderr", 1, chunk, 2048),
+                timeout_seconds=3,
+            )
+            self.assertEqual(result, 0)
+            self.assertEqual(proc.wait(timeout=1), 0)
+            proc.stdout.close()
+            proc.stderr.close()
+        self.assertEqual(captured["total"], [120000, 90000])
+        self.assertEqual(captured["stdout"], b"A" * 4096)
+        self.assertEqual(captured["stderr"], b"B" * 2048)
+
+    def test_rust_wait_timeout_leaves_child_waitable_for_python_cleanup(self):
+        with mock.patch.dict(os.environ, {
+            "DRLINK_MCP_RUNTIME": "rust",
+            "DRLINK_MCP_NATIVE_LIBRARY": str(LIBRARY),
+        }):
+            proc = subprocess.Popen(
+                [sys.executable, "-c", "import time; print('ready', flush=True); time.sleep(10)"],
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True,
+            )
+            captured = bytearray()
+            result = runtime.drain_process(
+                proc, on_stdout=captured.extend, on_stderr=lambda _chunk: None,
+                timeout_seconds=0.1,
+            )
+            self.assertEqual(result, 1)
+            self.assertIn(b"ready", captured)
+            os.killpg(proc.pid, signal.SIGKILL)
+            self.assertEqual(runtime.drain_process(
+                proc, on_stdout=captured.extend, on_stderr=lambda _chunk: None,
+                timeout_seconds=3,
+            ), 0)
+            self.assertEqual(proc.wait(timeout=1), -signal.SIGKILL)
+            proc.stdout.close()
+            proc.stderr.close()
 
 
 if __name__ == "__main__":

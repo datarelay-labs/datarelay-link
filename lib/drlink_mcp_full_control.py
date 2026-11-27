@@ -34,6 +34,11 @@ if str(LIBRARY) not in sys.path:
     sys.path.insert(0, str(LIBRARY))
 from drlink_ai_agent import execute_local
 from drlink_control_plane import path_allowed
+from drlink_mcp_runtime import (
+    capture_process,
+    drain_process,
+    native_process_io_available,
+)
 
 WINDOW = 1024 * 1024
 PAGE = 65536
@@ -235,6 +240,7 @@ class FullControlRuntime:
     def __init__(self):
         self.jobs: dict[str, Job] = {}
         self.lock = threading.Lock()
+        self.native_process_io = native_process_io_available()
 
     def context(self, owner: str, identifier: str) -> str:
         return self._owned(owner, identifier).cwd
@@ -254,13 +260,38 @@ class FullControlRuntime:
         try:
             # Observe exit without reaping, then clean remaining same-group
             # descendants while the leader still pins the process-group ID.
-            os.waitid(os.P_PID, job.process.pid, os.WEXITED | os.WNOWAIT)
+            if self.native_process_io:
+                result = drain_process(
+                    job.process, on_stdout=job.stdout.append,
+                    on_stderr=job.stderr.append,
+                )
+                if result != 0:
+                    raise OSError("native child process I/O did not complete")
+            else:
+                os.waitid(os.P_PID, job.process.pid, os.WEXITED | os.WNOWAIT)
             with job.lifecycle_lock:
                 try:
                     os.killpg(job.process.pid, signal.SIGKILL)
                 except ProcessLookupError:
                     pass
+                if self.native_process_io:
+                    result = drain_process(
+                        job.process, on_stdout=job.stdout.append,
+                        on_stderr=job.stderr.append, timeout_seconds=5,
+                        wait_for_eof=True,
+                    )
+                    if result != 0:
+                        raise OSError("native child process pipes did not reach EOF")
                 job.process.wait()
+        except BaseException:
+            with job.lifecycle_lock:
+                if job.process.returncode is None:
+                    try:
+                        os.killpg(job.process.pid, signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass
+                    job.process.wait()
+            raise
         finally:
             timer.cancel()
             for reader in readers:
@@ -269,6 +300,10 @@ class FullControlRuntime:
             job.readers_stop.set()
             for reader in readers:
                 reader.join()
+            if self.native_process_io:
+                for stream in (job.process.stdout, job.process.stderr):
+                    if stream is not None and not stream.closed:
+                        stream.close()
             with job.input_lock:
                 if job.process.stdin is not None and not job.process.stdin.closed:
                     job.process.stdin.close()
@@ -323,8 +358,10 @@ class FullControlRuntime:
             job = Job(identifier, owner, account, cwd,
                       hashlib.sha256(json.dumps(argv).encode()).hexdigest()[:16], proc)
             self.jobs[identifier] = job
-        readers = [threading.Thread(target=_drain, args=(proc.stdout, job.stdout, job.readers_stop), daemon=True),
-                   threading.Thread(target=_drain, args=(proc.stderr, job.stderr, job.readers_stop), daemon=True)]
+        readers = [] if self.native_process_io else [
+            threading.Thread(target=_drain, args=(proc.stdout, job.stdout, job.readers_stop), daemon=True),
+            threading.Thread(target=_drain, args=(proc.stderr, job.stderr, job.readers_stop), daemon=True),
+        ]
         for thread in readers:
             thread.start()
         threading.Thread(target=self._finish, args=(job, timeout, readers), daemon=True).start()
@@ -410,12 +447,23 @@ def execute_file_action(action: str, arguments: dict, patterns: list[str]) -> di
                             cwd="/", env=account.environment(), stdin=subprocess.PIPE,
                             stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                             start_new_session=True, close_fds=True, **account.launch_options())
-    try:
-        raw, _ = proc.communicate(encoded, timeout=35)
-    except subprocess.TimeoutExpired:
-        os.killpg(proc.pid, signal.SIGKILL)
-        proc.communicate()
-        raise FullControlDenied("Native file operation timed out") from None
+    native = capture_process(
+        proc, input_data=encoded, timeout_seconds=35,
+        stdout_limit=2 * WINDOW, stderr_limit=0,
+    )
+    if native is not None:
+        raw = native["stdout"]
+        if native["timed_out"]:
+            raise FullControlDenied("Native file operation timed out") from None
+        if native["stdout_truncated"]:
+            raise FullControlDenied("Native file worker response too large")
+    else:
+        try:
+            raw, _ = proc.communicate(encoded, timeout=35)
+        except subprocess.TimeoutExpired:
+            os.killpg(proc.pid, signal.SIGKILL)
+            proc.communicate()
+            raise FullControlDenied("Native file operation timed out") from None
     if proc.returncode or len(raw) > 2 * WINDOW:
         raise FullControlDenied("Native file worker failed")
     try:

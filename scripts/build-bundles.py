@@ -68,6 +68,7 @@ files=[
  'lib/drlink_runtime_policy.py',
  'lib/drlink_upgrade_reconcile.py',
  'lib/drlink_ai_agent.py',
+ 'lib/drlink_mcp_runtime.py',
  'lib/drlink_mcp_bridge.py',
  'lib/drlink_mcp_server_executor.py',
  'lib/drlink_mcp_full_control.py',
