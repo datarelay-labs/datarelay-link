@@ -428,6 +428,78 @@ class AiJobSafetyTests(unittest.TestCase):
         self.assertEqual(dest.stat().st_uid,os.geteuid())
         self.assertEqual(dest.read_text(),"bound")
 
+    def test_agent_operator_setup_reviews_and_rolls_back(self):
+        import pwd
+        import io
+        from contextlib import redirect_stdout
+        from drlink_control_cli import dispatch
+        from drlink_v24_wizard import ScriptedIO,set_wizard_io
+        from drlink_ai_agent import local_execution_profile,save_local_execution_profile
+        user=pwd.getpwuid(os.geteuid()).pw_name
+        path=Path(self.agent_a_tmp,"etc/drlink/ai-execution.json")
+        self.assertFalse(path.parent.exists())
+        # Actual CLI dispatch; no installed host or production policy touched.
+        agent=ControlPlane(self.agent_a_tmp)
+        def wizard(confirm):
+            answers=[user,str(self.agent_a_root)]
+            answers+=["y"] if os.geteuid()==0 else ["1"]
+            answers += [confirm]
+            scripted=ScriptedIO(answers)
+            set_wizard_io(scripted)
+            try:
+                self.assertEqual(dispatch(["set","agent-execution"],root=self.agent_a_tmp,plane=agent),0)
+            finally:
+                set_wizard_io(None)
+            return "".join(scripted.out)
+        try:
+            self.assertIn("Cancelled",wizard("n"))
+            self.assertFalse(path.exists())
+            self.assertFalse(path.parent.exists())
+            self.assertIn("awaiting authenticated Agent advertisement",wizard("y"))
+            previous=path.read_bytes()
+            profile=local_execution_profile(self.agent_a_tmp)
+            self.assertEqual(profile["accounts"][user]["uid"],os.geteuid())
+            self.assertEqual(path.stat().st_mode&0o777,0o600)
+            with redirect_stdout(io.StringIO()) as out:
+                self.assertEqual(dispatch(["show","agent-execution"],root=self.agent_a_tmp,plane=agent),0)
+            self.assertEqual(json.loads(out.getvalue()),profile)
+            with mock.patch("drlink_ai_agent.local_execution_profile",return_value={"version":1,"state":"unavailable"}):
+                with self.assertRaisesRegex(ControlPlaneError,"restored"):
+                    save_local_execution_profile(self.agent_a_tmp,json.loads(previous),previous=previous)
+            self.assertEqual(path.read_bytes(),previous)
+            with self.assertRaisesRegex(ControlPlaneError,"changed after review"):
+                save_local_execution_profile(self.agent_a_tmp,json.loads(previous),previous=b"stale")
+            self.assertEqual(path.read_bytes(),previous)
+        finally:
+            agent.close()
+
+    def test_running_account_job_revoked_without_another_mcp_call(self):
+        import pwd
+        user=pwd.getpwuid(os.geteuid()).pw_name
+        profile=self._account_profile([user])
+        mgmt.claim_ai_jobs_on_server(root=self.agent_a_tmp,execution_profile=profile)
+        v24.set_ai_access_rule(self.plane,"ops-"+HOST_A,execution={"default":user,"accounts":[user]},confirm=True)
+        self._start_mgmt_worker(self.agent_a_tmp)
+        marker=self.agent_a_root/"started"
+        late=self.agent_a_root/"late"
+        result=[]
+        command="touch started; sleep 8; touch late"
+        thread=threading.Thread(target=lambda:result.append(self.bridge.call_tool(self.principal,"exec",
+            {"endpoint":HOST_A,"command":command})),daemon=True)
+        thread.start()
+        end=time.monotonic()+6
+        while not marker.exists() and time.monotonic()<end:
+            time.sleep(.05)
+        self.assertTrue(marker.exists(),"job never started")
+        v24.set_ai_access_rule(self.plane,"ops-"+HOST_A,enabled=False,confirm=True)
+        thread.join(6)
+        self.assertFalse(thread.is_alive(),"job did not stop on grant revocation")
+        self.assertTrue(result and result[0].get("isError"),result)
+        self.assertFalse(late.exists())
+        self.assertIn("DENY",result[0]["content"][0]["text"])
+        v24.set_ai_access_rule(self.plane,"ops-"+HOST_A,enabled=True,confirm=True)
+        self.assertFalse(late.exists())
+
     def test_profile_downgrade_cannot_restore_legacy_service_execution(self):
         import pwd
         user=pwd.getpwuid(os.geteuid()).pw_name

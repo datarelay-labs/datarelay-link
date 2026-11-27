@@ -422,6 +422,8 @@ setting. `system resume` restores automatic startup and starts the Agent.
 ```text
 show status
 show agent
+show agent-execution
+set agent-execution
 
 show remote-services
 show remote-service <NAME>

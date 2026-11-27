@@ -162,7 +162,7 @@ python3 tests/test-mcp-bridge-held-claim.py
 python3 tests/test-mcp-bridge-workers.py
 python3 tests/test-ai-access-eval-equivalence.py
 python3 tests/test-ai-jobs-schema-once.py
-python3 tests/test-v24-ai-job-safety.py AiJobSafetyTests.test_signed_account_profile_default_and_fail_closed_claim AiJobSafetyTests.test_profile_downgrade_cannot_restore_legacy_service_execution
+python3 tests/test-v24-ai-job-safety.py AiJobSafetyTests.test_signed_account_profile_default_and_fail_closed_claim AiJobSafetyTests.test_profile_downgrade_cannot_restore_legacy_service_execution AiJobSafetyTests.test_agent_operator_setup_reviews_and_rolls_back AiJobSafetyTests.test_running_account_job_revoked_without_another_mcp_call
 if [[ "$(id -u)" == 0 ]]; then
   python3 tests/test-v24-ai-job-safety.py AiJobSafetyTests.test_signed_two_real_os_accounts
 else

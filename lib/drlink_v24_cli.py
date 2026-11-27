@@ -433,6 +433,14 @@ def handle_show(plane: ControlPlane, rest: list[str]) -> Optional[int]:
     res = rest[0]
     if _legacy_backend_resource(res):
         return None
+    if res == "agent-execution":
+        _require_agent(plane)
+        if len(rest)!=1:
+            raise ControlPlaneError("Usage: show agent-execution")
+        from drlink_ai_agent import local_execution_profile
+        import json
+        sys.stdout.write(json.dumps(local_execution_profile(plane.root),indent=2)+"\n")
+        return 0
     if res == "status":
         sys.stdout.write(plane.format_status())
         return 0
@@ -829,6 +837,18 @@ def handle_show(plane: ControlPlane, rest: list[str]) -> Optional[int]:
                 "Runtime health details are reported by the Agent Host via:",
                 "  show status",
             ]
+            if "ai_execution_profile_json" in client.keys() and client["ai_execution_profile_json"]:
+                import json
+                from drlink_ai_agent import normalize_execution_profile
+                try:
+                    profile=normalize_execution_profile(json.loads(client["ai_execution_profile_json"]))
+                except (ValueError,TypeError,ControlPlaneError):
+                    profile={"state":"unavailable"}
+                lines.append("Execution profile: "+profile["state"]+" (last authenticated advertisement; not an AI grant)")
+                for name,entry in profile.get("accounts",{}).items():
+                    lines.append("  %s UID %s cwd %s roots %s" % (name,entry["uid"],entry["cwd"],", ".join(entry["roots"])))
+            else:
+                lines.append("Execution profile: Legacy or unsupported; on a supported Linux Agent use set agent-execution.")
             sys.stdout.write("\n".join(lines) + "\n")
             return 0
         if view == "addresses":
@@ -1364,6 +1384,12 @@ def handle_set(plane: ControlPlane, rest: list[str]) -> Optional[int]:
     res = rest[0]
     if _legacy_backend_resource(res):
         return None
+    if res == "agent-execution":
+        _require_agent(plane)
+        if len(rest)!=1:
+            raise ControlPlaneError("Usage: set agent-execution")
+        from drlink_v24_wizard import run_agent_execution_setup
+        return run_agent_execution_setup(plane)
     # Policy enable/disable without rule name
     if res in ("remote-access", "internet-access", "ai-access") and len(rest) == 2 and rest[1] in ("enabled", "disabled"):
         _require_server(plane, _policy_resource_label(res))

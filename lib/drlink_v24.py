@@ -5624,6 +5624,39 @@ def _resolve_ai_execution_grant(
                                                 "row_version": row["row_version"]}}
 
 
+def managed_execution_account_choices(plane, destination):
+    """Operator picker: union of eligible names, enforced separately per target."""
+    from drlink_ai_agent import normalize_execution_profile
+    target=plane.get_object(destination)
+    group=plane.get_object_group(destination)
+    choices=set()
+    for row in plane.conn.execute(
+        "SELECT o.name,c.* FROM objects o JOIN managed_endpoints e ON e.object_id=o.id "
+        "JOIN clients c ON c.id=e.client_id WHERE o.type='managed_endpoint' AND o.origin='managed' "
+        "AND o.status='active' AND c.trust_status='trusted'"):
+        name=row["name"]
+        if destination==TRUSTED_MANAGED_HOSTS_TARGET:
+            matches=_trusted_managed_host_matches(plane,name)
+        elif destination.startswith(MANAGED_HOST_GROUP_PREFIX):
+            matches=_managed_host_group_matches(plane,resolve_managed_host_group_target(plane,destination),
+                                               name,_managed_host_group_inventory(plane))
+        elif target is not None:
+            matches=target["name"]==name
+        elif group is not None:
+            matches=_ref_name_match(plane,"group",group["id"],name)
+        else:
+            matches=False
+        if not matches or not plane.client_effectively_connected(row):
+            continue
+        try:
+            profile=normalize_execution_profile(json.loads(row["ai_execution_profile_json"] or "null"))
+            if profile["state"]=="configured":
+                choices.update(profile["accounts"])
+        except (ValueError,TypeError,ControlPlaneError):
+            continue
+    return sorted(choices)
+
+
 def resolve_managed_execution_grant(plane_db, *, identity, principal_id, destination,
                                     capability, arguments, profile, run_as=None, rule_id=None):
     """Remote POSIX paths are lexical here; actual filesystem checks are Agent-local."""

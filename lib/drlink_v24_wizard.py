@@ -1055,6 +1055,58 @@ def _choose_ai_permission_profile(plane, session, choice):
     return name
 
 
+def run_agent_execution_setup(plane, io=None):
+    from pathlib import Path
+    from drlink_ai_agent import local_execution_profile, prepare_local_execution_profile, save_local_execution_profile
+    import pwd
+    import sys
+    io=io or _io()
+    if not sys.platform.startswith("linux"):
+        raise ControlPlaneError("Account-aware Agent execution is supported on Linux only")
+    if plane.root in (None,"","/") and os.geteuid()!=0:
+        raise ControlPlaneError("Run this local configuration as the administrator")
+    current=local_execution_profile(plane.root)
+    target=Path(plane.root or "/")/"etc/drlink/ai-execution.json"
+    if current["state"]=="unavailable":
+        raise ControlPlaneError("Existing Agent profile is unavailable; preserve it and review locally")
+    previous=target.read_bytes() if current["state"]=="configured" else None
+    try:
+        _emit(io,"Local Agent execution eligibility. Server AI Access Rules separately grant accounts and choose a default.")
+        _emit(io,"Existing unbound management Rules must be reviewed and explicitly bound after activation; no automatic account grant.")
+        old_names=sorted(current.get("accounts",{}))
+        names=_ask_text(io,"Eligible OS accounts (comma separated)",default=",".join(old_names) or None).split(",")
+        names=[n.strip() for n in names]
+        try:
+            admin=any(pwd.getpwnam(n).pw_uid==0 for n in names)
+        except KeyError:
+            raise ControlPlaneError("Selected OS account does not exist") from None
+        old_roots=sorted({r for entry in current.get("accounts",{}).values() for r in entry["roots"]})
+        roots=_ask_text(io,"Direct file roots / initial directories (colon separated)",default=":".join(old_roots) or "/").split(":")
+        if admin and not _ask_yes_no(io,"Explicitly allow administrative UID 0 execution when granted by a Rule?",default=False):
+            raise WizardCancelled()
+        normals=[n for n in names if pwd.getpwnam(n).pw_uid!=0]
+        reader=_ask_choice(io,"Read-only executor",normals+["None"]) if normals else "None"
+        proposed=prepare_local_execution_profile(plane.root,names,roots,
+            None if reader=="None" else reader,allow_root=admin)
+        if old_roots and sorted(set(roots))==old_roots:
+            for name,spec in current["accounts"].items():
+                if name in proposed["accounts"] and proposed["accounts"][name]["uid"]==spec["uid"]:
+                    proposed["accounts"][name]={"uid":spec["uid"],"cwd":spec["cwd"],"roots":spec["roots"]}
+        for name,spec in proposed["accounts"].items():
+            _emit(io,"Account %s UID %s, cwd %s, roots %s" %
+                  (name,spec["uid"],spec["cwd"],", ".join(spec["roots"])))
+        _emit(io,"Reader: "+str(proposed["reader"] or "not configured"))
+        _emit(io,"This changes the target-local ceiling only. Existing explicitly bound Rules may become effective; review them first.")
+        if not _ask_yes_no(io,"Apply reviewed local Agent execution profile?",default=False):
+            raise WizardCancelled()
+        save_local_execution_profile(plane.root,proposed,previous=previous)
+        _emit(io,"Configured locally; awaiting authenticated Agent advertisement and Server Rule verification.")
+        return 0
+    except WizardCancelled:
+        _emit(io,"Cancelled. No changes applied.")
+        return 0
+
+
 def run_ai_access_wizard(plane: ControlPlane, name: str, *, source_identity=None, io=None) -> int:
     io = io or _io()
     existing = plane.conn.execute(
@@ -1159,7 +1211,9 @@ def run_ai_access_wizard(plane: ControlPlane, name: str, *, source_identity=None
                 permission = choice
             paths: list[str] | None = None
             capabilities = _draft_permission_set(plane, session, permission)
-            if capabilities & v24.FILE_PERMISSIONS:
+            account_aware = (bool(plane.native_mcp_local_accounts()) if destination == v24.SERVER_SELF_TARGET
+                             else bool(v24.managed_execution_account_choices(plane,destination)))
+            if capabilities & v24.FILE_PERMISSIONS or ("command-exec" in capabilities and account_aware):
                 existing_paths = v24.list_ai_policy_path_scopes(plane, name) if existing is not None else []
                 default_paths = ",".join(existing_paths) if existing_paths else None
                 def valid_scope(value):
@@ -1180,14 +1234,15 @@ def run_ai_access_wizard(plane: ControlPlane, name: str, *, source_identity=None
                 examples = "All files: /**; specific directory: /home/**; multiple directories: /home/**,/opt/**"
                 _emit(io, examples)
                 _emit(io, "Path scopes restrict file operations; OS permissions and execution controls still apply.")
-                raw_paths = _ask_text(io, "Path scopes (required for file permissions)",
+                raw_paths = _ask_text(io, "Path scopes (required for file permissions and account-aware command cwd)",
                                       default=default_paths, validate=valid_scope,
                                       help_text=examples)
                 paths = v24.parse_ai_paths_field(raw_paths)
             execution = None
             management = bool(capabilities & {"command-exec", "file-write", "file-upload", "file-download"})
-            if destination == v24.SERVER_SELF_TARGET and management:
-                eligible = plane.native_mcp_local_accounts()
+            if management:
+                eligible = (plane.native_mcp_local_accounts() if destination == v24.SERVER_SELF_TARGET
+                            else v24.managed_execution_account_choices(plane,destination))
                 if eligible:
                     default_account = _ask_choice(io, "Default execution account", eligible)
                     extra = []
@@ -1200,7 +1255,9 @@ def run_ai_access_wizard(plane: ControlPlane, name: str, *, source_identity=None
                     if "root" in execution["accounts"]:
                         _emit(io, "Root grants full OS administrative authority, including modification of Data Relay Link.")
                 else:
-                    _emit(io, "Local execution accounts are not verified. Configure MCP Server execution before using this Rule.")
+                    _emit(io, "No verified local execution accounts. Existing legacy Rules retain legacy behavior; account-aware targets require local Agent setup and explicit binding.")
+                    if destination != v24.SERVER_SELF_TARGET and existing is not None and v24.ai_rule_execution(existing):
+                        _emit(io, "Existing explicit binding will be preserved.")
             if "command-exec" in capabilities:
                 _emit(io, "Command execution uses the target OS account and is not a filesystem sandbox. Review the target execution controls.")
             enabled = _ask_yes_no(io, "Enabled", default=True)

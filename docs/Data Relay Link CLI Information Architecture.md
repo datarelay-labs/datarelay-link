@@ -183,6 +183,7 @@ Data Relay Link — Agent Host
 The root and `show status` must identify the role as `Agent Host`.
 Diagnostics, support-bundle human output, menus, help, and errors use the same
 `Agent Host` label. `show agent` is a required read-only Agent Host command.
+Linux Agent execution eligibility is reviewed through `set agent-execution` and inspected through `show agent-execution`. This is a local ceiling, not a Server AI Access grant.
 
 ## 7. Canonical terminology
 

@@ -48,6 +48,52 @@
   {
     "path": [
       "show",
+      "agent-execution"
+    ],
+    "roles": "client",
+    "category": "Agent",
+    "summary": "Show local Agent execution eligibility",
+    "detail": "Show approved account metadata, not remote authorization.",
+    "examples": [
+      "show agent-execution"
+    ],
+    "args": [],
+    "tail": null,
+    "internal": null,
+    "aliases": [],
+    "destructive": false,
+    "hidden": false,
+    "risk": "none",
+    "confirmation": "none",
+    "surface": "",
+    "flags": []
+  },
+  {
+    "path": [
+      "set",
+      "agent-execution"
+    ],
+    "roles": "client",
+    "category": "Agent",
+    "summary": "Review local Linux Agent execution eligibility",
+    "detail": "Review existing OS accounts and direct file roots, explicitly approve root if selected, and apply local profile. Server AI Access Rules are independently required.",
+    "examples": [
+      "set agent-execution"
+    ],
+    "args": [],
+    "tail": null,
+    "internal": null,
+    "aliases": [],
+    "destructive": false,
+    "hidden": false,
+    "risk": "none",
+    "confirmation": "none",
+    "surface": "",
+    "flags": []
+  },
+  {
+    "path": [
+      "show",
       "managed-host-groups"
     ],
     "roles": "server",

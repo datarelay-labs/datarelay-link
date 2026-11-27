@@ -5497,7 +5497,17 @@ class ControlPlane:
         return True
 
     def ai_executor_status(self, client) -> str:
-        return "ready" if self.ai_executor_ready(client) else "not_ready"
+        if not self.ai_executor_ready(client):
+            return "not_ready"
+        if "ai_execution_profile_json" in client.keys() and client["ai_execution_profile_json"]:
+            try:
+                from drlink_ai_agent import normalize_execution_profile
+                profile=normalize_execution_profile(json.loads(client["ai_execution_profile_json"]))
+                if profile["state"]=="unavailable":
+                    return "not_ready"
+            except (ValueError,TypeError,ControlPlaneError):
+                return "not_ready"
+        return "ready"
 
     def refresh_managed_host_liveness(self, client_id: str) -> bool:
         """Record signed management activity on the AI-executor clock only.
@@ -5606,6 +5616,32 @@ class ControlPlane:
             run_as=binding["account"], rule_id=binding["rule_id"])
         return (grant["action"] == "ALLOW" and grant["binding"] == binding
                 and grant["patterns"] == payload["patterns"])
+
+    def validate_bound_ai_job(self, client_id, job_id, token, attempt, profile):
+        """Check the existing running attempt, never create or renew authority."""
+        import hmac
+        self.assert_ai_job_claimant(client_id)
+        self.refresh_managed_host_liveness(client_id)
+        owned=not self.conn.in_transaction
+        if owned:
+            self.conn.execute("BEGIN")
+        try:
+            row=self.conn.execute("SELECT * FROM ai_jobs WHERE id=? AND client_id=?",(job_id,client_id)).fetchone()
+            if (row is None or row["status"]!="running" or _ai_job_deadline_passed(row["deadline_at"])
+                    or not isinstance(token,str) or not token or not isinstance(attempt,str) or not attempt
+                    or not hmac.compare_digest(token,str(row["claim_token"] or ""))
+                    or not hmac.compare_digest(attempt,str(row["attempt_id"] or ""))):
+                return False
+            payload=json.loads(row["payload_json"] or "{}")
+            if not payload.get("execution_binding"):
+                return False
+            return bool(self._account_bound_claim(row,payload,profile))
+        except (ControlPlaneError,ValueError,TypeError,KeyError):
+            return False
+        finally:
+            if owned:
+                self.conn.rollback()
+
 
     def claim_ai_jobs(self, client_id: str, limit: int = 4, *, execution_profile=None) -> list[dict]:
         ensure_ai_jobs_safety_schema_once(self.conn)
@@ -6800,6 +6836,9 @@ class ControlPlane:
             lines.append("%-20s: %s" % (label, text))
         lines.append("Executor readiness  : %s" % status["readiness"])
         lines.append("Reason              : %s" % status["reason"])
+        accounts=self.native_mcp_local_accounts()
+        if accounts:
+            lines.append("Eligible OS accounts: %s (local ceiling only)" % ", ".join(accounts))
         lines.append("AI Access           : independently evaluated for every call")
         lines.append("Operator settings   : see docs/SERVER_NATIVE_MCP.md; explicit local opt-in required")
         return lines

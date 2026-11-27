@@ -328,7 +328,177 @@ def local_execution_profile(root):
         return {"version":1,"state":"unavailable"}
 
 
-def _account_job(root, job):
+def prepare_local_execution_profile(root, names, roots, reader=None, *, allow_root=False):
+    """Build a reviewed Linux Agent profile without changing the host."""
+    import pwd
+    import sys
+    if not sys.platform.startswith("linux"):
+        raise ControlPlaneError("Account-aware Agent execution is supported on Linux only")
+    if not names or len(set(names)) != len(names):
+        raise ControlPlaneError("Select unique existing OS accounts")
+    if not roots or any(not isinstance(r,str) or not r.startswith("/") for r in roots):
+        raise ControlPlaneError("Specify existing absolute roots")
+    try:
+        canonical = sorted(set(str(Path(r).resolve(strict=True)) for r in roots))
+        if not all(Path(r).is_dir() for r in canonical):
+            raise ControlPlaneError("Roots must be directories")
+        entries = {}
+        for name in names:
+            user = pwd.getpwnam(name)
+            if user.pw_uid == 0 and not allow_root:
+                raise ControlPlaneError("Root requires separate explicit approval")
+            if os.geteuid() != 0 and (user.pw_uid != os.geteuid() or user.pw_gid != os.getegid()):
+                raise ControlPlaneError("Local operator cannot assume selected account")
+            home = str(Path(user.pw_dir).resolve())
+            cwd = home if Path(home).is_dir() and any(
+                r=="/" or home==r or home.startswith(r+"/") for r in canonical) else canonical[0]
+            entries[name] = {"uid":user.pw_uid,"cwd":cwd,"roots":canonical}
+        normalize_execution_profile({"version":1,"state":"configured","accounts":{
+            n:dict(e,home=pwd.getpwnam(n).pw_dir) for n,e in entries.items()},"reader":reader})
+    except (OSError,KeyError,ValueError,TypeError) as exc:
+        raise ControlPlaneError("Invalid local account or directory") from exc
+    return {"version":1,"accounts":entries,"reader":reader,"allow_root":bool(allow_root)}
+
+
+def save_local_execution_profile(root, profile, *, previous):
+    """Replace only the reviewed local file; verify and roll back on failure."""
+    import tempfile
+    path=Path(root or "/")/"etc/drlink/ai-execution.json"
+    current=Path(root or "/")
+    for part in ("etc","drlink"):
+        current=current/part
+        if part=="drlink" and not current.exists() and not current.is_symlink():
+            try:
+                current.mkdir(mode=0o755)
+            except FileExistsError:
+                pass
+        info=current.lstat()
+        if not stat.S_ISDIR(info.st_mode) or info.st_uid!=os.geteuid() or info.st_mode&0o022:
+            raise ControlPlaneError("Unsafe Agent configuration directory")
+    def existing():
+        try:
+            info=path.lstat()
+        except FileNotFoundError:
+            return None
+        if not stat.S_ISREG(info.st_mode) or info.st_uid!=os.geteuid() or info.st_mode&0o022 or info.st_size>65536:
+            raise ControlPlaneError("Unsafe existing Agent profile")
+        return path.read_bytes()
+    if existing()!=previous:
+        raise ControlPlaneError("Agent profile changed after review")
+    # Serialize product-managed configuration edits; never follow symlinks.
+    import fcntl
+    fd=os.open(path.parent/".ai-execution.lock",os.O_CREAT|os.O_NOFOLLOW|os.O_RDWR,0o600)
+    try:
+        fcntl.flock(fd,fcntl.LOCK_EX)
+        if existing()!=previous:
+            raise ControlPlaneError("Agent profile changed after review")
+        def publish(content):
+            tmpfd,tmp=tempfile.mkstemp(prefix=".ai-execution-",dir=path.parent)
+            try:
+                with os.fdopen(tmpfd,"wb") as stream:
+                    stream.write(content)
+                    stream.flush()
+                    os.fsync(stream.fileno())
+                os.replace(tmp,path)
+            finally:
+                if os.path.exists(tmp):
+                    os.unlink(tmp)
+        encoded=(json.dumps(profile,sort_keys=True,indent=2)+"\n").encode()
+        publish(encoded)
+        live=local_execution_profile(root)
+        if live["state"]!="configured":
+            if previous is None:
+                path.unlink()
+            else:
+                publish(previous)
+            raise ControlPlaneError("Agent profile validation failed; previous configuration restored")
+        return live
+    finally:
+        os.close(fd)
+
+
+def _bounded_account_communicate(proc,data,timeout,check,out_limit,err_limit):
+    """Drain bounded streams while checking the current grant on a short interval."""
+    import selectors
+    selector=selectors.DefaultSelector()
+    buffers={"out":bytearray(),"err":bytearray()}
+    truncated={"out":False,"err":False}
+    limits={"out":out_limit,"err":err_limit}
+    def register(stream,events,tag):
+        os.set_blocking(stream.fileno(),False)
+        selector.register(stream,events,tag)
+    register(proc.stdout,selectors.EVENT_READ,"out")
+    register(proc.stderr,selectors.EVENT_READ,"err")
+    pending=memoryview(data or b"")
+    if proc.stdin is not None:
+        if pending:
+            register(proc.stdin,selectors.EVENT_WRITE,"in")
+        else:
+            proc.stdin.close()
+    started=time.monotonic()
+    next_check=started+0.5
+    status="ALLOW"
+    def kill():
+        try:
+            os.killpg(proc.pid,signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+    try:
+        while selector.get_map() or proc.poll() is None:
+            now=time.monotonic()
+            if now-started>=timeout:
+                status="TIMEOUT"
+                kill()
+                break
+            if now>=next_check:
+                if not check():
+                    status="DENY"
+                    kill()
+                    break
+                next_check=time.monotonic()+0.5
+            for key,_mask in selector.select(0.1):
+                stream=key.fileobj
+                if key.data=="in":
+                    try:
+                        sent=os.write(stream.fileno(),pending[:65536])
+                        pending=pending[sent:]
+                    except BlockingIOError:
+                        continue
+                    except BrokenPipeError:
+                        pending=pending[:0]
+                    if not pending:
+                        selector.unregister(stream)
+                        stream.close()
+                    continue
+                try:
+                    chunk=os.read(stream.fileno(),65536)
+                except BlockingIOError:
+                    continue
+                if not chunk:
+                    selector.unregister(stream)
+                    stream.close()
+                    continue
+                buf=buffers[key.data]
+                available=max(0,limits[key.data]-len(buf))
+                buf.extend(chunk[:available])
+                truncated[key.data] |= len(chunk)>available
+        if status=="ALLOW" and not check():
+            status="DENY"
+            kill()
+        proc.wait(timeout=2)
+    except BaseException:
+        kill()
+        proc.wait(timeout=2)
+        raise
+    finally:
+        selector.close()
+        for stream in (proc.stdin,proc.stdout,proc.stderr):
+            if stream is not None:
+                stream.close()
+    return status,bytes(buffers["out"]),bytes(buffers["err"]),truncated
+
+
+def _account_job(root, job, *, stop_event=None):
     """Recheck live local approval before running a bound operation."""
     import pwd
     import sys
@@ -384,25 +554,33 @@ def _account_job(root, job):
            "HOME":user.pw_dir,"USER":name,"LOGNAME":name,"LANG":"C.UTF-8"}
     identity = ({"user":user.pw_uid,"group":user.pw_gid,"extra_groups":os.getgrouplist(name,user.pw_gid)}
                 if os.geteuid() == 0 else {})
+    import drlink_mgmt_sync as mgmt
+    def check():
+        try:
+            if (stop_event is not None and stop_event.is_set()) or _deadline_passed(job.get("deadline_at")):
+                return False
+            current=local_execution_profile(root)
+            if execution_profile_digest(current)!=binding["profile_digest"]:
+                return False
+            return mgmt.validate_ai_job_on_server(root=root,job=job,execution_profile=current)
+        except Exception:
+            return False
+    if not check():
+        raise ControlPlaneError("Agent execution grant unavailable before launch")
     proc = subprocess.Popen(argv, cwd=cwd, env=env, stdin=subprocess.PIPE if data is not None else subprocess.DEVNULL,
                             stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True, close_fds=True, **identity)
-    try:
-        out, err = proc.communicate(data, timeout=max(1, min(int(job.get("timeout") or 30), 3600)))
-    except subprocess.TimeoutExpired:
-        try:
-            os.killpg(proc.pid, signal.SIGKILL)
-        except ProcessLookupError:
-            pass
-        proc.communicate()
-        return {"result":"TIMEOUT","exit_status":-9,"execution_user":name,"execution_uid":user.pw_uid}
+    status,out,err,truncated=_bounded_account_communicate(proc,data,
+        max(1,min(int(job.get("timeout") or 30),3600)),check,
+        MAX_STDOUT_BYTES if operation=="exec" else 2*MAX_FILE_BYTES,MAX_STDERR_BYTES)
+    if status!="ALLOW":
+        return {"result":status,"error":"Agent grant revoked or unavailable" if status=="DENY" else "Agent job timed out",
+                "exit_status":proc.returncode,"execution_user":name,"execution_uid":user.pw_uid}
     if operation == "exec":
-        stdout, trunc = _bound(out, MAX_STDOUT_BYTES)
-        stderr, err_trunc = _bound(err, MAX_STDERR_BYTES)
         return {"result":"ALLOW","exit_status":proc.returncode,
-                "stdout":stdout.decode("utf-8","replace"),"stderr":stderr.decode("utf-8","replace"),
-                "stdout_truncated":trunc,"stderr_truncated":err_trunc,"cwd":cwd,
+                "stdout":out.decode("utf-8","replace"),"stderr":err.decode("utf-8","replace"),
+                "stdout_truncated":truncated["out"],"stderr_truncated":truncated["err"],"cwd":cwd,
                 "execution_user":name,"execution_uid":user.pw_uid}
-    if proc.returncode or len(out) > 2*MAX_FILE_BYTES:
+    if proc.returncode or truncated["out"]:
         raise ControlPlaneError("Agent account file operation failed")
     result = json.loads(out)
     if not isinstance(result, dict) or result.get("result") != "ALLOW":
@@ -624,7 +802,7 @@ class AgentLoop:
                 if cap == ACCOUNT_JOB:
                     if not self.agent_root:
                         raise ControlPlaneError("Account-bound jobs require enrolled Agent management")
-                    result = _account_job(self.agent_root, job)
+                    result = _account_job(self.agent_root, job, stop_event=self.stop_event)
                 else:
                     if self.agent_root and cap in ACCOUNT_ACTIONS and local_execution_profile(self.agent_root)["state"] != "legacy":
                         raise ControlPlaneError("Agent requires an explicit account-bound job")

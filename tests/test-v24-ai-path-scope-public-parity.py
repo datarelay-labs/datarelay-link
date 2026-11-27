@@ -125,6 +125,22 @@ class AiPathScopePublicParity(unittest.TestCase):
         self.assertEqual(v24.ai_rule_execution(row), {"default":"aella","accounts":["aella","root"]})
         self.assertIn("Default execution account", "".join(script.out))
 
+    def test_managed_rule_wizard_uses_advertised_accounts(self):
+        profile={"version":1,"state":"configured","accounts":{
+            "aella":{"uid":1000,"home":"/home/aella","cwd":"/home/aella","roots":["/"]},
+            "root":{"uid":0,"home":"/root","cwd":"/root","roots":["/"]}},"reader":"aella"}
+        self.plane.record_ai_execution_profile("a"*32,profile)
+        self.plane.refresh_managed_host_liveness("a"*32)
+        self.assertEqual(v24.managed_execution_account_choices(self.plane,"ubuntu-prod"),["aella","root"])
+        self.assertEqual(v24.managed_execution_account_choices(self.plane,v24.TRUSTED_MANAGED_HOSTS_TARGET),["aella","root"])
+        v24.set_permission_object(self.plane,"ops",permissions=["host-info","command-exec","file-read"],oneshot=True)
+        script=ScriptedIO(["bot","ubuntu-prod","ops","/**","aella","y","y","1"])
+        set_wizard_io(script)
+        rc,out,err=self._run("set","ai-access","managed-wizard")
+        self.assertEqual(rc,0,err)
+        row=self.plane.conn.execute("SELECT * FROM ai_policy_rules WHERE name='managed-wizard'").fetchone()
+        self.assertEqual(v24.ai_rule_execution(row),{"default":"aella","accounts":["aella","root"]})
+
     def test_execution_binding_cli_bundle_roundtrip_and_omitted_edit(self):
         import yaml
         v24.set_permission_object(self.plane, "ops", permissions=["host-info", "command-exec"], oneshot=True)

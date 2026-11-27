@@ -445,7 +445,7 @@ def allocator_proxy_locations(allocator_listen_port, ca_cert):
     # separately so /v1/profiles and other allocator internals do not match.
     management = (
         'location ~ ^/v1/(?:catalog|remote-services-status|remote-services|agent-lifecycle|'
-        'ai-jobs/claim|ai-jobs/complete|remote-services/[^/]+)$'
+        'ai-jobs/claim|ai-jobs/complete|ai-jobs/validate|remote-services/[^/]+)$'
     )
     return (
         _allocator_https_proxy_location(

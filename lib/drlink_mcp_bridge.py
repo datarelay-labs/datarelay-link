@@ -1381,7 +1381,8 @@ class MCPBridge:
 
     def _managed_execution_context(self, principal, target, profile):
         if not profile or profile["state"] != "configured":
-            return {"state":"legacy_or_unavailable","account_selection":False}
+            return {"state":"unavailable" if profile and profile["state"]=="unavailable" else "legacy_or_unsupported",
+                    "account_selection":False,"next_action":"On a supported Linux Agent, review set agent-execution and wait for authenticated advertisement."}
         def resolve(account=None):
             return v24.resolve_managed_execution_grant(self.plane, identity=principal["name"],
                 principal_id=principal["id"], destination=target, capability="exec",
@@ -1423,7 +1424,8 @@ class MCPBridge:
                 if grant["action"] == "ALLOW":
                     choices.append({"account": name, "uid": account.uid, "home": account.home,
                                     "default_cwd": full.allowed_cwd(full.default_cwd(account), grant["patterns"], account),
-                                    "administrative": account.uid == 0})
+                                    "administrative": account.uid == 0, "paths":grant["patterns"],
+                                    "local_roots":list(account.roots)})
             default = resolve()
             if default["action"] != "ALLOW":
                 if choices:
