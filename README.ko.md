@@ -234,13 +234,18 @@ Fixed TCP through the same authority
 
 기술 능력명: **Controlled Egress**. 일반 CLI/resource 이름: **Internet Access**.
 
-현재 Rust 마이그레이션은 Python이 승인하고 연결한 뒤의 양방향 TCP relay로만
-범위를 제한합니다. CLI, OAuth/AI Identity, AI Access 정책, SQLite 및 durable job,
+현재 Rust 마이그레이션의 R1은 Python이 승인하고 연결한 뒤의 양방향 TCP relay로
+범위를 제한합니다. MCP R2는 기존 Python dispatch 예산을 원자적으로 제한하는 Rust
+helper를 추가합니다. CLI, OAuth/AI Identity, AI Access 정책, SQLite 및 durable job,
 nonce, audit 권한은 Python에 유지됩니다. Rust relay가 없거나 재검증 callback이
 실패하거나 정책이 철회되면 연결을 닫습니다. native library가 없는 자동 모드에서는
 handoff 전에 Python relay를 사용하고, 명시적인 Rust 선택은 library 부재 시 fail-closed입니다.
 handoff 이후 세션을 Python relay로 재실행하지 않으며, 새 연결은 `DRLINK_EGRESS_RUNTIME=python`으로 기존 Python rollback 경로를
-선택할 수 있습니다. 설치 패키지와 실제 사용자 E2E qualification은 아직 진행 중입니다.
+선택할 수 있습니다. MCP의 결과 대기, connection I/O, streaming과 backpressure 전환도
+아직 진행 중입니다. 두 Rust library는 아직 설치 패키지에 포함되지 않았고 실제 사용자
+E2E qualification도 진행 중입니다. MCP rollback은 `DRLINK_MCP_RUNTIME=python`이며,
+`auto`는 library가 없으면 Python으로 돌아가고 명시적 `rust` 선택은 library 부재 시
+서비스 초기화를 fail-closed 합니다.
 
 ### AI Access / MCP
 

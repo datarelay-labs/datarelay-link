@@ -1,0 +1,16 @@
+[package]
+name = "drlink-mcp-runtime"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.75"
+publish = false
+
+[lib]
+name = "drlink_mcp_runtime"
+crate-type = ["cdylib"]
+
+[profile.release]
+lto = true
+codegen-units = 1
+panic = "abort"
+

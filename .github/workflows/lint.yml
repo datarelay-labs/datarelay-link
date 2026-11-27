@@ -44,6 +44,9 @@ jobs:
             exit 1
           fi
           echo "DRLINK_MCP_SDK_PYTHON=$SDK_PY" >> "$GITHUB_ENV"
+      - name: Install pinned Rust runtime toolchain
+        if: github.event_name == 'pull_request'
+        run: rustup toolchain install 1.75.0 --profile minimal --no-self-update
       - name: Fast deterministic PR gate
         if: github.event_name == 'pull_request'
         run: bash tests/run-fast-pr.sh

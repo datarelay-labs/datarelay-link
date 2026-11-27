@@ -37,6 +37,7 @@ from urllib.parse import parse_qs, urlencode, urlparse, urlsplit
 from drlink_ai_agent import AgentLoop, execute_local
 from drlink_db_watch import get_watcher
 from drlink_mcp_server_executor import ExecutorDenied, execute_as_unprivileged_user
+from drlink_mcp_runtime import DispatchBudget
 from drlink_control_db import ControlPlaneError, resolve_root
 from drlink_control_plane import (
     clamp_claim_wait_ms,
@@ -692,9 +693,9 @@ class MCPBridge:
         self._shared_rate: Optional[SharedRateLimiter] = None
         # AUD-21 D5: per-process call budget for endpoint (Agent queue) dispatches.
         self.dispatch_budget = _dispatch_budget_from_env()
-        self.inflight = 0
+        self._dispatch_admission = DispatchBudget(self.dispatch_budget)
         self.busy_refused = 0
-        self._budget_lock = threading.Lock()
+        self._busy_lock = threading.Lock()
 
     @contextlib.contextmanager
     def _dispatch_slot(self, tool: str):
@@ -704,16 +705,11 @@ class MCPBridge:
         intent row and the enqueue, so it leaves no audit row and no job; it is only
         counted and logged (first refusal, then every 100th; never with arguments).
         """
-        with self._budget_lock:
-            if self.inflight >= self.dispatch_budget:
+        if not self._dispatch_admission.try_acquire():
+            with self._busy_lock:
                 self.busy_refused += 1
                 refused = self.busy_refused
-                inflight = self.inflight
-                refuse = True
-            else:
-                self.inflight += 1
-                refuse = False
-        if refuse:
+            inflight = self._dispatch_admission.inflight
             if refused == 1 or refused % _BUSY_LOG_EVERY == 0:
                 LOG.warning("mcp dispatch busy: refused=%d budget=%d inflight=%d tool=%s",
                             refused, self.dispatch_budget, inflight, tool)
@@ -721,8 +717,7 @@ class MCPBridge:
         try:
             yield
         finally:
-            with self._budget_lock:
-                self.inflight -= 1
+            self._dispatch_admission.release()
 
     def warm_up(self) -> None:
         """Build lazily created state once, so the first real calls do not pay for it."""

@@ -5,10 +5,12 @@
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 RUN_ALL="$ROOT/tests/run-all.sh"
+RUN_FAST="$ROOT/tests/run-fast-pr.sh"
 WIN_RUN_ALL="$ROOT/tests/windows/run-all.ps1"
 ALLOWLIST="$ROOT/tests/orphan-test-allowlist.txt"
 
 [[ -f "$RUN_ALL" ]] || { echo "FAIL: missing run-all.sh"; exit 1; }
+[[ -f "$RUN_FAST" ]] || { echo "FAIL: missing run-fast-pr.sh"; exit 1; }
 [[ -f "$ALLOWLIST" ]] || { echo "FAIL: missing orphan-test-allowlist.txt"; exit 1; }
 [[ -f "$WIN_RUN_ALL" ]] || { echo "FAIL: missing tests/windows/run-all.ps1"; exit 1; }
 
@@ -17,6 +19,7 @@ declare -A allow
 for a in "${ALLOWED[@]}"; do allow["$a"]=1; done
 
 run_all_text="$(cat "$RUN_ALL")"
+run_fast_text="$(cat "$RUN_FAST")"
 win_run_all_text="$(cat "$WIN_RUN_ALL")"
 
 covered_by_glob() {
@@ -39,7 +42,8 @@ for f in "${FOUND[@]}"; do
   if [[ "$f" == "test-orphan-suite-coverage.sh" ]]; then
     continue
   fi
-  if grep -qE "(^|[[:space:]/\"'])${f//./\\.}" <<<"$run_all_text"; then
+  if grep -qE "(^|[[:space:]/\"'])${f//./\\.}" <<<"$run_all_text" \
+    || grep -qE "(^|[[:space:]/\"'])${f//./\\.}" <<<"$run_fast_text"; then
     continue
   fi
   if covered_by_glob "$f"; then
