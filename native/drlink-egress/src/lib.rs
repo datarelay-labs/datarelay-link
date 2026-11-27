@@ -97,21 +97,25 @@ fn relay(
 
         if fds[0].revents & (libc::POLLIN | libc::POLLHUP) != 0 && cr {
             let cap = cbuf.len().min(c2u.available());
-            let n = unsafe { libc::recv(client, cbuf.as_mut_ptr().cast(), cap, 0) };
-            if n == 0 { cr = false; }
-            else if n < 0 {
-                let e = std::io::Error::last_os_error();
-                if e.kind() != std::io::ErrorKind::WouldBlock && e.kind() != std::io::ErrorKind::Interrupted { return IO_ERROR; }
-            } else { c2u.push(&cbuf[..n as usize]); last_data = Instant::now(); }
+            if cap > 0 {
+                let n = unsafe { libc::recv(client, cbuf.as_mut_ptr().cast(), cap, 0) };
+                if n == 0 { cr = false; }
+                else if n < 0 {
+                    let e = std::io::Error::last_os_error();
+                    if e.kind() != std::io::ErrorKind::WouldBlock && e.kind() != std::io::ErrorKind::Interrupted { return IO_ERROR; }
+                } else { c2u.push(&cbuf[..n as usize]); last_data = Instant::now(); }
+            }
         }
         if fds[1].revents & (libc::POLLIN | libc::POLLHUP) != 0 && ur {
             let cap = ubuf.len().min(u2c.available());
-            let n = unsafe { libc::recv(upstream, ubuf.as_mut_ptr().cast(), cap, 0) };
-            if n == 0 { ur = false; outcome = UPSTREAM_CLOSED; }
-            else if n < 0 {
-                let e = std::io::Error::last_os_error();
-                if e.kind() != std::io::ErrorKind::WouldBlock && e.kind() != std::io::ErrorKind::Interrupted { return IO_ERROR; }
-            } else { u2c.push(&ubuf[..n as usize]); last_data = Instant::now(); }
+            if cap > 0 {
+                let n = unsafe { libc::recv(upstream, ubuf.as_mut_ptr().cast(), cap, 0) };
+                if n == 0 { ur = false; outcome = UPSTREAM_CLOSED; }
+                else if n < 0 {
+                    let e = std::io::Error::last_os_error();
+                    if e.kind() != std::io::ErrorKind::WouldBlock && e.kind() != std::io::ErrorKind::Interrupted { return IO_ERROR; }
+                } else { u2c.push(&ubuf[..n as usize]); last_data = Instant::now(); }
+            }
         }
         if fds[1].revents & libc::POLLOUT != 0 && uw && !c2u.is_empty() {
             let n = unsafe { libc::send(upstream, c2u.pending().as_ptr().cast(), c2u.len(), libc::MSG_NOSIGNAL) };

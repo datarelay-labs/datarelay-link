@@ -123,6 +123,41 @@ class RustRelayTests(unittest.TestCase):
         self.assertEqual(returned, payload)
         self.assertEqual(outcome, runtime.EG.AUDIT_UPSTREAM_CLOSED)
 
+    def test_simultaneous_backpressured_half_close_preserves_both_tails(self):
+        client_payload = bytes(range(251)) * 4096  # 1 MiB; exceeds each relay buffer.
+        upstream_payload = b"response after request EOF"
+        client_received = bytearray()
+
+        def client_action(sock):
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 4096)
+            sock.sendall(client_payload)
+            sock.shutdown(socket.SHUT_WR)
+            while True:
+                part = sock.recv(4096)
+                if not part:
+                    break
+                client_received.extend(part)
+                time.sleep(0.0001)
+
+        def upstream_action(sock):
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 4096)
+            received = bytearray()
+            while True:
+                part = sock.recv(4096)
+                if not part:
+                    break
+                received.extend(part)
+                time.sleep(0.0001)
+            self.assertEqual(received, client_payload)
+            sock.sendall(upstream_payload)
+            sock.shutdown(socket.SHUT_WR)
+
+        outcome, _, _ = self._run(
+            lambda: True, client_action, upstream_action, idle=10, join_timeout=15,
+        )
+        self.assertEqual(client_received, upstream_payload)
+        self.assertEqual(outcome, runtime.EG.AUDIT_UPSTREAM_CLOSED)
+
     def test_drains_unread_payload_after_peer_hangup(self):
         payload = bytes(range(251)) * 800  # 200,800 bytes; larger than one relay read.
         returned = bytearray()
