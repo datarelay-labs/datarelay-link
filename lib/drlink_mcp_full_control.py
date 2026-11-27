@@ -37,6 +37,10 @@ from drlink_control_plane import path_allowed
 from drlink_mcp_runtime import (
     capture_process,
     drain_process,
+    native_output_append,
+    native_output_free,
+    native_output_new,
+    native_output_page,
     native_process_io_available,
 )
 
@@ -158,9 +162,16 @@ class Output:
     dropped: int = 0
     total: int = 0
     lock: threading.Lock = field(default_factory=threading.Lock)
+    _native_handle: int | None = field(default=None, init=False, repr=False)
+
+    def __post_init__(self):
+        self._native_handle = native_output_new(WINDOW)
 
     def append(self, value: bytes) -> None:
         with self.lock:
+            if self._native_handle is not None:
+                native_output_append(self._native_handle, value)
+                return
             self.data.extend(value)
             self.total += len(value)
             excess = max(0, len(self.data) - WINDOW)
@@ -170,6 +181,14 @@ class Output:
 
     def page(self, cursor: int) -> dict:
         with self.lock:
+            if self._native_handle is not None:
+                result = native_output_page(self._native_handle, cursor, PAGE)
+                chunk = result.pop("data")
+                return {
+                    "text": chunk.decode("utf-8", "replace"),
+                    "data_b64": base64.b64encode(chunk).decode("ascii"),
+                    **result,
+                }
             start = min(self.total, max(cursor, self.dropped))
             chunk = bytes(self.data[start - self.dropped:start - self.dropped + PAGE])
             return {"text": chunk.decode("utf-8", "replace"),
@@ -177,6 +196,17 @@ class Output:
                     "next_cursor": start + len(chunk),
                     "total_bytes": self.total, "truncated_before": self.dropped,
                     "cursor_was_evicted": cursor < self.dropped}
+
+    def close(self) -> None:
+        with self.lock:
+            native_output_free(self._native_handle)
+            self._native_handle = None
+
+    def __del__(self):
+        try:
+            self.close()
+        except Exception:
+            pass
 
 
 @dataclass

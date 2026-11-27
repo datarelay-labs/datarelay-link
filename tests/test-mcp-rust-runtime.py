@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib.util
+import base64
 import os
 import signal
 import subprocess
@@ -13,7 +14,9 @@ from pathlib import Path
 from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
-LIBRARY = ROOT / "native/drlink-mcp-runtime/target/release/libdrlink_mcp_runtime.so"
+LIBRARY_NAME = "libdrlink_mcp_runtime.dylib" if sys.platform == "darwin" else "libdrlink_mcp_runtime.so"
+LIBRARY = ROOT / "native/drlink-mcp-runtime/target/release" / LIBRARY_NAME
+sys.path.insert(0, str(ROOT / "lib"))
 spec = importlib.util.spec_from_file_location("drlink_mcp_runtime_test", ROOT / "lib/drlink_mcp_runtime.py")
 runtime = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(runtime)
@@ -78,6 +81,23 @@ class RustDispatchBudgetTests(unittest.TestCase):
             budget.release()
         budget.close()
 
+    def test_rust_bounded_output_matches_existing_cursor_contract(self):
+        from drlink_mcp_full_control import Output, PAGE, WINDOW
+
+        with mock.patch.dict(os.environ, {
+            "DRLINK_MCP_RUNTIME": "rust",
+            "DRLINK_MCP_NATIVE_LIBRARY": str(LIBRARY),
+        }):
+            output = Output()
+            output.append(b"A" * (WINDOW + 5))
+            first = output.page(0)
+            self.assertEqual(len(first["text"]), PAGE)
+            self.assertEqual(first["total_bytes"], WINDOW + 5)
+            self.assertEqual(first["truncated_before"], 5)
+            self.assertTrue(first["cursor_was_evicted"])
+            self.assertEqual(base64.b64decode(first["data_b64"]), b"A" * PAGE)
+            output.close()
+
     def test_rust_drains_both_pipes_without_unbounded_python_capture(self):
         with mock.patch.dict(os.environ, {
             "DRLINK_MCP_RUNTIME": "rust",
@@ -133,6 +153,28 @@ class RustDispatchBudgetTests(unittest.TestCase):
             self.assertEqual(proc.wait(timeout=1), -signal.SIGKILL)
             proc.stdout.close()
             proc.stderr.close()
+
+    def test_rust_capture_process_bounds_output_and_reaps_child(self):
+        with mock.patch.dict(os.environ, {
+            "DRLINK_MCP_RUNTIME": "rust",
+            "DRLINK_MCP_NATIVE_LIBRARY": str(LIBRARY),
+        }):
+            proc = subprocess.Popen(
+                [sys.executable, "-c", (
+                    "import sys; sys.stdout.buffer.write(b'X'*120000); "
+                    "sys.stderr.buffer.write(b'Y'*90000)"
+                )], stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True,
+            )
+            result = runtime.capture_process(
+                proc, input_data=None, timeout_seconds=3,
+                stdout_limit=4096, stderr_limit=2048,
+            )
+        self.assertEqual(result["exit_status"], 0)
+        self.assertFalse(result["timed_out"])
+        self.assertEqual(result["stdout"], b"X" * 4096)
+        self.assertEqual(result["stderr"], b"Y" * 2048)
+        self.assertTrue(result["stdout_truncated"])
+        self.assertTrue(result["stderr_truncated"])
 
 
 if __name__ == "__main__":

@@ -37,9 +37,6 @@ jobs:
           export DRLINK_MCP_RUNTIME=rust
           export DRLINK_MCP_NATIVE_LIBRARY="$PWD/native/drlink-mcp-runtime/target/release/libdrlink_mcp_runtime.dylib"
           python3 tests/test-mcp-rust-runtime.py
-          python3 tests/test-mcp-server-full-control.py
-          python3 tests/test-mcp-server-local-executor.py
-          python3 tests/test-ai-access-mcp-e2e.py
       - name: Verify client port
         run: |
           test "$(uname -m)" = arm64

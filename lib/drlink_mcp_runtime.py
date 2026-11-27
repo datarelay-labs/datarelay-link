@@ -12,6 +12,11 @@ _PROCESS_LOCK = threading.Lock()
 _PROCESS_LIBRARY = None
 _PROCESS_DRAIN = None
 _PROCESS_CHECKED = False
+_OUTPUT_NEW = None
+_OUTPUT_APPEND = None
+_OUTPUT_PAGE = None
+_OUTPUT_FREE = None
+_OUTPUT_CHECKED = False
 _PROCESS_CALLBACK = ctypes.CFUNCTYPE(
     ctypes.c_bool, ctypes.c_int, ctypes.c_void_p, ctypes.c_size_t, ctypes.c_void_p
 )
@@ -59,6 +64,86 @@ def _native_process_drain():
 
 def native_process_io_available() -> bool:
     return _native_process_drain() is not None
+
+
+def _native_output_api():
+    global _OUTPUT_NEW, _OUTPUT_APPEND, _OUTPUT_PAGE, _OUTPUT_FREE, _OUTPUT_CHECKED
+    mode = os.environ.get("DRLINK_MCP_RUNTIME", "auto").strip().lower()
+    if mode == "python":
+        return None
+    if _OUTPUT_CHECKED:
+        return _OUTPUT_NEW
+    if _native_process_drain() is None:
+        return None
+    library = _PROCESS_LIBRARY
+    try:
+        create = library.drlink_mcp_output_new
+        create.argtypes = [ctypes.c_size_t]
+        create.restype = ctypes.c_void_p
+        append = library.drlink_mcp_output_append
+        append.argtypes = [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_size_t]
+        append.restype = ctypes.c_int
+        page = library.drlink_mcp_output_page
+        page.argtypes = [
+            ctypes.c_void_p, ctypes.c_uint64, ctypes.c_size_t, ctypes.c_void_p,
+            ctypes.c_size_t, ctypes.POINTER(ctypes.c_size_t),
+            ctypes.POINTER(ctypes.c_uint64), ctypes.POINTER(ctypes.c_uint64),
+            ctypes.POINTER(ctypes.c_uint64), ctypes.POINTER(ctypes.c_bool),
+        ]
+        page.restype = ctypes.c_int
+        free = library.drlink_mcp_output_free
+        free.argtypes = [ctypes.c_void_p]
+        free.restype = None
+    except AttributeError as exc:
+        if os.environ.get("DRLINK_MCP_RUNTIME", "auto").strip().lower() == "rust":
+            raise RuntimeError("Rust MCP runtime lacks its bounded output API") from exc
+        return None
+    _OUTPUT_NEW, _OUTPUT_APPEND, _OUTPUT_PAGE, _OUTPUT_FREE = create, append, page, free
+    _OUTPUT_CHECKED = True
+    return _OUTPUT_NEW
+
+
+def native_output_new(capacity: int):
+    create = _native_output_api()
+    if create is None:
+        return None
+    handle = create(max(1, int(capacity)))
+    if not handle:
+        raise RuntimeError("Rust MCP runtime rejected bounded output capacity")
+    return handle
+
+
+def native_output_append(handle, value: bytes) -> None:
+    if not handle or not value:
+        return
+    buffer = ctypes.create_string_buffer(value, len(value))
+    if _OUTPUT_APPEND(handle, buffer, len(value)) != 1:
+        raise RuntimeError("Rust MCP runtime could not append bounded output")
+
+
+def native_output_page(handle, cursor: int, page_limit: int) -> dict:
+    if not handle:
+        raise ValueError("Rust MCP output handle is closed")
+    buffer = ctypes.create_string_buffer(max(1, int(page_limit)))
+    written, next_cursor = ctypes.c_size_t(), ctypes.c_uint64()
+    total, dropped = ctypes.c_uint64(), ctypes.c_uint64()
+    evicted = ctypes.c_bool()
+    if _OUTPUT_PAGE(
+        handle, max(0, int(cursor)), max(0, int(page_limit)), buffer,
+        len(buffer), ctypes.byref(written), ctypes.byref(next_cursor),
+        ctypes.byref(total), ctypes.byref(dropped), ctypes.byref(evicted),
+    ) != 1:
+        raise RuntimeError("Rust MCP runtime could not read bounded output")
+    return {
+        "data": buffer.raw[:written.value], "next_cursor": next_cursor.value,
+        "total_bytes": total.value, "truncated_before": dropped.value,
+        "cursor_was_evicted": bool(evicted.value),
+    }
+
+
+def native_output_free(handle) -> None:
+    if handle:
+        _OUTPUT_FREE(handle)
 
 
 def drain_process(process, *, on_stdout, on_stderr, timeout_seconds: float = 0,

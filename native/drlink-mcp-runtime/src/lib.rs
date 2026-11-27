@@ -3,6 +3,8 @@
 //! Python remains responsible for authentication, AI Access, durable jobs,
 //! audit and the dispatch itself. This library only tracks an in-process cap.
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::collections::VecDeque;
+use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 #[repr(C)]
@@ -12,6 +14,17 @@ pub struct DispatchBudget {
 }
 
 type OutputChunk = extern "C" fn(i32, *const u8, usize, *mut std::ffi::c_void) -> bool;
+
+struct OutputState {
+    bytes: VecDeque<u8>,
+    dropped: u64,
+    total: u64,
+}
+
+pub struct BoundedOutput {
+    capacity: usize,
+    state: Mutex<OutputState>,
+}
 
 /// Create a budget. Invalid capacities return null and fail closed at caller.
 #[no_mangle]
@@ -83,6 +96,109 @@ pub unsafe extern "C" fn drlink_mcp_budget_release(budget: *mut DispatchBudget) 
 pub unsafe extern "C" fn drlink_mcp_budget_free(budget: *mut DispatchBudget) {
     if !budget.is_null() {
         drop(Box::from_raw(budget));
+    }
+}
+
+/// Create a fixed-capacity byte window for a streamed MCP job result.
+#[no_mangle]
+pub extern "C" fn drlink_mcp_output_new(capacity: usize) -> *mut BoundedOutput {
+    if capacity == 0 || capacity > 16 * 1024 * 1024 {
+        return std::ptr::null_mut();
+    }
+    Box::into_raw(Box::new(BoundedOutput {
+        capacity,
+        state: Mutex::new(OutputState {
+            bytes: VecDeque::with_capacity(capacity),
+            dropped: 0,
+            total: 0,
+        }),
+    }))
+}
+
+/// Append output while retaining only the newest `capacity` bytes.
+/// Returns 1 on success and 0 for invalid arguments, overflow or poisoned state.
+///
+/// # Safety
+/// `output` must be a live handle from `drlink_mcp_output_new`; `data` must
+/// reference `len` readable bytes for the duration of this call.
+#[no_mangle]
+pub unsafe extern "C" fn drlink_mcp_output_append(
+    output: *mut BoundedOutput,
+    data: *const u8,
+    len: usize,
+) -> i32 {
+    let Some(output) = output.as_ref() else { return 0 };
+    if len > 0 && data.is_null() {
+        return 0;
+    }
+    let Ok(mut state) = output.state.lock() else { return 0 };
+    let Some(total) = state.total.checked_add(len as u64) else { return 0 };
+    if len == 0 {
+        return 1;
+    }
+    let dropped = if len > output.capacity {
+        let old_len = state.bytes.len();
+        state.bytes.clear();
+        let skip = len - output.capacity;
+        state.bytes.extend(std::slice::from_raw_parts(data.add(skip), output.capacity));
+        state.dropped.saturating_add(old_len as u64 + skip as u64)
+    } else {
+        state.bytes.extend(std::slice::from_raw_parts(data, len));
+        let excess = state.bytes.len().saturating_sub(output.capacity);
+        for _ in 0..excess { state.bytes.pop_front(); }
+        state.dropped.saturating_add(excess as u64)
+    };
+    state.total = total;
+    state.dropped = dropped;
+    1
+}
+
+/// Copy one bounded page using the existing cursor/eviction semantics.
+/// Returns 1 on success and 0 for invalid arguments or poisoned state.
+///
+/// # Safety
+/// `output` must be a live handle; `buffer` must reference `buffer_capacity`
+/// writable bytes, and all output pointers must be writable.
+#[no_mangle]
+pub unsafe extern "C" fn drlink_mcp_output_page(
+    output: *mut BoundedOutput,
+    cursor: u64,
+    page_limit: usize,
+    buffer: *mut u8,
+    buffer_capacity: usize,
+    written: *mut usize,
+    next_cursor: *mut u64,
+    total: *mut u64,
+    dropped: *mut u64,
+    cursor_was_evicted: *mut bool,
+) -> i32 {
+    let Some(output) = output.as_ref() else { return 0 };
+    if page_limit > buffer_capacity || (page_limit > 0 && buffer.is_null())
+        || written.is_null() || next_cursor.is_null() || total.is_null()
+        || dropped.is_null() || cursor_was_evicted.is_null()
+    {
+        return 0;
+    }
+    let Ok(state) = output.state.lock() else { return 0 };
+    let start = cursor.max(state.dropped).min(state.total);
+    let offset = (start - state.dropped) as usize;
+    let count = page_limit.min(state.bytes.len().saturating_sub(offset));
+    for (index, byte) in state.bytes.iter().skip(offset).take(count).enumerate() {
+        *buffer.add(index) = *byte;
+    }
+    *written = count;
+    *next_cursor = start.saturating_add(count as u64);
+    *total = state.total;
+    *dropped = state.dropped;
+    *cursor_was_evicted = cursor < state.dropped;
+    1
+}
+
+/// Free a bounded stream window after all readers have stopped.
+#[no_mangle]
+pub unsafe extern "C" fn drlink_mcp_output_free(output: *mut BoundedOutput) {
+    if !output.is_null() {
+        drop(Box::from_raw(output));
     }
 }
 
@@ -218,5 +334,34 @@ mod tests {
     #[test]
     fn invalid_capacity_fails_closed() {
         assert!(drlink_mcp_budget_new(0).is_null());
+    }
+
+    #[test]
+    fn output_window_evicts_old_bytes_and_preserves_cursor_semantics() {
+        let output = drlink_mcp_output_new(8);
+        assert!(!output.is_null());
+        unsafe {
+            assert_eq!(drlink_mcp_output_append(output, b"abcde".as_ptr(), 5), 1);
+            assert_eq!(drlink_mcp_output_append(output, b"FGHIJKLMNO".as_ptr(), 10), 1);
+            let mut buffer = [0u8; 4];
+            let mut written = 0usize;
+            let mut next = 0u64;
+            let mut total = 0u64;
+            let mut dropped = 0u64;
+            let mut evicted = false;
+            assert_eq!(drlink_mcp_output_page(
+                output, 0, 4, buffer.as_mut_ptr(), buffer.len(),
+                &mut written, &mut next, &mut total, &mut dropped, &mut evicted,
+            ), 1);
+            assert_eq!(&buffer[..written], b"HIJK");
+            assert_eq!((next, total, dropped, evicted), (11, 15, 7, true));
+            assert_eq!(drlink_mcp_output_page(
+                output, next, 4, buffer.as_mut_ptr(), buffer.len(),
+                &mut written, &mut next, &mut total, &mut dropped, &mut evicted,
+            ), 1);
+            assert_eq!(&buffer[..written], b"LMNO");
+            assert_eq!((next, total, dropped, evicted), (15, 15, 7, false));
+            drlink_mcp_output_free(output);
+        }
     }
 }

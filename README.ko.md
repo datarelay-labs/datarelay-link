@@ -251,6 +251,9 @@ E2E qualification도 진행 중입니다. MCP rollback은 `DRLINK_MCP_RUNTIME=py
 R3에서는 Python이 시작한 Linux/macOS Agent 및 Server executor 자식 프로세스의
 stdout/stderr pipe를 Rust가 poll하고 읽는 작업을 통합 중입니다. process 시작,
 timeout 선택, process-group 종료, wait/reap 권한은 Python에 유지됩니다.
+또한 MCP job 출력은 Rust가 기존 1 MiB 보존 창과 64 KiB cursor 페이지를 제공하고,
+Python이 job 소유권과 cursor 검증, 응답 생성을 계속 담당합니다. 연결 I/O와 결과 대기는
+R2에 남아 있으며, native shared library의 설치 패키징은 아직 완료되지 않았습니다.
 
 ### AI Access / MCP
 
