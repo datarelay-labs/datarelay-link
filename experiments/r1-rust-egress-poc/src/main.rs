@@ -1,12 +1,23 @@
 use std::{env, net::{SocketAddr, TcpListener as StdTcpListener}, sync::{Arc, atomic::{AtomicU64, Ordering}}, time::Duration};
 use socket2::{Domain, Protocol, Socket, Type};
-use tokio::{io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader}, net::{TcpListener, TcpStream}, sync::Semaphore, time::{sleep, sleep_until, timeout, Instant}};
+use tokio::{io::{AsyncReadExt, AsyncWriteExt, BufReader}, net::{TcpListener, TcpStream}, sync::Semaphore, time::{sleep, sleep_until, timeout, Instant}};
 
 const MAX_BUFFER: usize = 256 * 1024;
 const READ_CHUNK: usize = 64 * 1024;
 const CONTROL_TIMEOUT: Duration = Duration::from_secs(2);
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 static NEXT_ID: AtomicU64 = AtomicU64::new(1);
+
+fn policy_allows(response: &str) -> bool {
+    let Some(body) = response.strip_suffix('\n') else { return false; };
+    let mut fields = body.split(' ');
+    matches!((fields.next(), fields.next(), fields.next()),
+        (Some("ALLOW"), Some(generation), None) if generation.parse::<u64>().is_ok())
+}
+
+fn audit_acknowledged(response: &[u8]) -> bool {
+    response == b"OK\n"
+}
 
 #[derive(Clone)]
 struct Config { upstream: SocketAddr, policy: SocketAddr, revalidate: Duration, idle: Duration }
@@ -17,9 +28,21 @@ async fn policy(config: &Config, id: u64) -> std::io::Result<bool> {
         let (read, mut write) = stream.into_split();
         write.write_all(format!("CHECK {id}\n").as_bytes()).await?;
         let mut reader = BufReader::new(read);
-        let mut answer = String::with_capacity(16);
-        reader.read_line(&mut answer).await?;
-        Ok(answer.starts_with("ALLOW"))
+        // A u64 generation needs at most 21 bytes plus the verb and newline.
+        // The fixed cap also bounds memory if the control peer misbehaves.
+        let mut answer = [0u8; 32];
+        let mut len = 0;
+        while len < answer.len() {
+            let byte = reader.read_u8().await?;
+            answer[len] = byte;
+            len += 1;
+            if byte == b'\n' {
+                break;
+            }
+        }
+        Ok(std::str::from_utf8(&answer[..len])
+            .map(policy_allows)
+            .unwrap_or(false))
     }).await.map_err(|_| std::io::Error::new(std::io::ErrorKind::TimedOut, "policy control timeout"))?
 }
 
@@ -29,9 +52,9 @@ async fn audit(config: &Config, id: u64, event: &str, up: u64, down: u64) -> boo
         let (read, mut write) = stream.into_split();
         write.write_all(format!("AUDIT {id} {event} {up} {down}\n").as_bytes()).await?;
         let mut reader = BufReader::new(read);
-        let mut ack = String::with_capacity(4);
-        reader.read_line(&mut ack).await?;
-        Ok::<bool, std::io::Error>(ack == "OK\n")
+        let mut ack = [0u8; 3];
+        reader.read_exact(&mut ack).await?;
+        Ok::<bool, std::io::Error>(audit_acknowledged(&ack))
     }).await {
         Ok(Ok(acknowledged)) => acknowledged,
         _ => false,
@@ -129,5 +152,29 @@ async fn main() -> std::io::Result<()> {
         let cfg = config.clone();
         let permit = slots.clone().acquire_owned().await.expect("relay admission semaphore");
         tokio::spawn(async move { let _permit = permit; let _ = relay(stream, cfg).await; });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{audit_acknowledged, policy_allows};
+
+    #[test]
+    fn policy_protocol_accepts_only_exact_allow_receipt() {
+        assert!(policy_allows("ALLOW 12\n"));
+        assert!(!policy_allows("ALLOW\n"));
+        assert!(!policy_allows("ALLOW"));
+        assert!(!policy_allows("ALLOWING\n"));
+        assert!(!policy_allows("ALLOW nope\n"));
+        assert!(!policy_allows("ALLOW 12 extra\n"));
+        assert!(!policy_allows("DENY\n"));
+        assert!(!policy_allows(""));
+    }
+
+    #[test]
+    fn audit_protocol_requires_exact_acknowledgement() {
+        assert!(audit_acknowledged(b"OK\n"));
+        assert!(!audit_acknowledged(b"NO\n"));
+        assert!(!audit_acknowledged(b"OK!"));
     }
 }

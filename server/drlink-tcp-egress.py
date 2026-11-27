@@ -452,7 +452,7 @@ def handle_tcp_client(
                 idle_timeout=RT.IDLE_TIMEOUT,
                 authorize_fn=lambda: _session_still_authorized(state, session),
             )
-            if outcome != EG.AUDIT_POLICY_REVOKED:
+            if outcome not in (EG.AUDIT_POLICY_REVOKED, EG.AUDIT_RELAY_FAILURE):
                 EG.emit_conn_log(
                     {
                         "timestamp": EG.utc_now_iso(),

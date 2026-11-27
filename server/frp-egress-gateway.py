@@ -1465,7 +1465,7 @@ def _handle_client_inner(gw: GatewayState, request: socket.socket, client_addres
             _state, _err, cfg, _snap = gw.cache.snapshot()
             outcome = _relay_bidirectional(request, upstream, gw=gw, session=session, cfg=cfg)
             # POLICY_REVOKED already emitted a correlated deny record inside relay.
-            if outcome != EG.AUDIT_POLICY_REVOKED and cfg is not None:
+            if outcome not in (EG.AUDIT_POLICY_REVOKED, EG.AUDIT_RELAY_FAILURE) and cfg is not None:
                 EG.emit_conn_log(
                     {
                         "timestamp": EG.utc_now_iso(),

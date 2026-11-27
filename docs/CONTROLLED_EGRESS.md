@@ -109,6 +109,18 @@ parse request
 → connect only to the authorized candidate set (no re-resolve)
 ```
 
+The selected Rust migration is limited to the post-authorization bidirectional
+TCP relay. Python remains authoritative for request parsing, identity, policy,
+DNS/SSRF validation, exact-IP connection setup, session generation and audit.
+The Rust relay receives only the already-authorized client/upstream sockets and
+calls back into Python for periodic reauthorization. In automatic mode, an
+unavailable native library selects the existing Python relay before socket
+handoff. Explicit Rust selection fails closed when the library is unavailable.
+Control callback failure or policy revocation closes the active stream. A
+session is never replayed through the Python relay after native handoff. The
+scoped `DRLINK_EGRESS_RUNTIME=python` setting selects the known Python rollback
+path before a new session starts; it does not weaken authorization.
+
 A CIDR/IP destination rule may authorize a hostname when a validated resolved
 address falls inside that selector. Authorization of one candidate never widens
 authorization to other candidates outside the allowed IP/CIDR scope.
