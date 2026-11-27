@@ -84,9 +84,13 @@ class Subscription:
 
     def _signal(self) -> None:
         self._event.set()
-        if self._native_signal is not None:
+        # close() can clear the field while notifications are delivered outside
+        # the watcher's topic lock. Keep one reference for the complete call;
+        # NativeWaitSignal makes a concurrent close safe under its own lock.
+        native_signal = self._native_signal
+        if native_signal is not None:
             try:
-                self._native_signal.signal()
+                native_signal.signal()
             except RuntimeError:
                 # A later SQLite read or bounded fallback poll remains authoritative.
                 pass
