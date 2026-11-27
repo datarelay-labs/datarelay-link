@@ -5,13 +5,13 @@
     "drlink-mcp-runtime": "11d2766469f396dd6af54653689735b2977099e59f0a2235e5efdea3d7df1f49"
   },
   "libraries": {
-    "libdrlink_egress.so": "62a1ac06388d39454d387841e34cf84e9d9c8f9c04994d1718d290b6180582b3",
-    "libdrlink_mcp_runtime.so": "9df31b3134fcb101196b3ecd4e8044e586bf25e29af39a8a5ddee18207461ee3"
+    "libdrlink_egress.so": "65be19a86718b91b52dd6c95091fd8b4a42bd1a232d7c155d3fd4515a3590513",
+    "libdrlink_mcp_runtime.so": "255dd41d4e7903ed3c8bd74e61b1b1f3ffa8e4f030ec72ff299be5b68d70e6d1"
   },
   "linker": "cc",
   "linker_version": "cc (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0",
   "rustc": "1.75.0",
   "schema": 1,
-  "source_head": "d6fde89c3f5f709e36b014bfd741159ac478469b",
+  "source_head": "cbb7e175e74fffea929159856165b721dd608f93",
   "target": "x86_64-unknown-linux-gnu"
 }

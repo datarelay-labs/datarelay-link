@@ -6,12 +6,12 @@
   },
   "libraries": {
     "libdrlink_egress.dylib": "470ba85bcb4f353b010f4afb99249d7f8a648938e4a89bcb5868d93e868c2c8e",
-    "libdrlink_mcp_runtime.dylib": "5f5ff4258330305c4526db400ded5d38b33ea96246c55844f605002762232cea"
+    "libdrlink_mcp_runtime.dylib": "6d28b0b984adbc6abb4ab9111599dc6eaadd1437f0bdda2b846916978ffe5de6"
   },
   "linker": "cc",
   "linker_version": "Apple clang version 17.0.0 (clang-1700.0.13.5)",
   "rustc": "1.75.0",
   "schema": 1,
-  "source_head": "6cdf917f9c7f431b0004bd293a5a673b3aa29c20",
+  "source_head": "cbb7e175e74fffea929159856165b721dd608f93",
   "target": "aarch64-apple-darwin"
 }

@@ -6,12 +6,12 @@
   },
   "libraries": {
     "libdrlink_egress.so": "30905efede048978cb2a2c297d514e622f5254b6fe0b828b0167e707b8ae8006",
-    "libdrlink_mcp_runtime.so": "257bc8b667a3233b9ac4fe5b231f5912ee3ac8a3bdb27c13e40274018ad740c4"
+    "libdrlink_mcp_runtime.so": "8a09dbebb7deacddf3d001d278c6da706e30b437791ef502926b9cf365b94e83"
   },
   "linker": "cc",
   "linker_version": "cc (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0",
   "rustc": "1.75.0",
   "schema": 1,
-  "source_head": "6b5f4c7ba95f091e62ecfa84d5f82af662720d3d",
+  "source_head": "cbb7e175e74fffea929159856165b721dd608f93",
   "target": "aarch64-unknown-linux-gnu"
 }
