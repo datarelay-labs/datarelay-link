@@ -13,10 +13,19 @@ from pathlib import Path
 from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
-NATIVE = ROOT / "lib/native/x86_64-unknown-linux-gnu"
-EGRESS_LIBRARY = NATIVE / "libdrlink_egress.so"
-MCP_LIBRARY = NATIVE / "libdrlink_mcp_runtime.so"
-SUPPORTED_RUNNER = sys.platform.startswith("linux") and platform.machine() in ("x86_64", "amd64")
+machine = platform.machine().lower()
+if sys.platform.startswith("linux") and machine in ("x86_64", "amd64"):
+    TARGET, EXTENSION = "x86_64-unknown-linux-gnu", "so"
+elif sys.platform.startswith("linux") and machine in ("aarch64", "arm64"):
+    TARGET, EXTENSION = "aarch64-unknown-linux-gnu", "so"
+elif sys.platform == "darwin" and machine in ("arm64", "aarch64"):
+    TARGET, EXTENSION = "aarch64-apple-darwin", "dylib"
+else:
+    TARGET, EXTENSION = "", ""
+NATIVE = ROOT / "lib/native" / TARGET if TARGET else ROOT / "lib/native/unsupported"
+EGRESS_LIBRARY = NATIVE / ("libdrlink_egress." + EXTENSION)
+MCP_LIBRARY = NATIVE / ("libdrlink_mcp_runtime." + EXTENSION)
+SUPPORTED_RUNNER = bool(TARGET)
 
 
 def load_runtime(name: str, path: str):
@@ -43,7 +52,7 @@ class PackagedRuntimeSelectionTests(unittest.TestCase):
         record_path = NATIVE / "runtime-build.json"
         self.assertTrue(record_path.is_file())
         record = json.loads(record_path.read_text(encoding="utf-8"))
-        self.assertEqual(record["target"], "x86_64-unknown-linux-gnu")
+        self.assertEqual(record["target"], TARGET)
         self.assertEqual(record["rustc"], "1.75.0")
         for name, expected in record["libraries"].items():
             actual = hashlib.sha256((NATIVE / name).read_bytes()).hexdigest()

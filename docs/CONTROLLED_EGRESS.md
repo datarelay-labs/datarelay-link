@@ -122,11 +122,12 @@ scoped `DRLINK_EGRESS_RUNTIME=python` setting selects the known Python rollback
 path before a new session starts; it does not weaken authorization.
 
 The Linux x86_64 Agent and Server bundles ship the pinned Rust egress library
-under `native/x86_64-unknown-linux-gnu/`. Its build record includes the source
-HEAD, Rust 1.75.0, Cargo.lock digest, and library digest. Runtime discovery is
-target-specific; `auto` selects Rust when this packaged asset loads and keeps
-the Python relay available for rollback. Linux ARM64 and macOS packaged egress
-libraries remain under qualification.
+under `native/x86_64-unknown-linux-gnu/`; the Apple Silicon Agent bundle ships
+the macOS library under `native/aarch64-apple-darwin/`. Each build record
+includes the source HEAD, Rust 1.75.0, linker, Cargo.lock digests, and library
+digests. Runtime discovery is target-specific; `auto` selects Rust when the
+packaged asset loads and keeps the Python relay available for rollback. Linux
+ARM64 packaged egress remains under qualification.
 
 Each direction uses a fixed 256 KiB queue with 64 KiB read chunks. The relay
 continues reading after a socket hangup until `recv` reaches EOF, so queued

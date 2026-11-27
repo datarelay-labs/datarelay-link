@@ -243,10 +243,10 @@ Python rollback 권한은 Python에 둡니다. MCP R2는 Rust가 ready 상태의
 처리하며, Python DB watcher가 보내는 job wakeup을 Rust 조건 변수로 기다립니다. CLI,
 OAuth/AI Identity, AI Access 정책, SQLite, durable job, nonce, audit,
 HTTP/TLS와 실제 socket 소유권은 Python에 유지됩니다. 자동 모드는 설치된 native library가
-있을 때 Rust를 선택합니다. Linux x86_64 Agent와 Server bundle에는 두 Rust shared library가
-target별 native 디렉터리에 포함되며, `runtime-build.json`에 Rust 버전, source HEAD,
+있을 때 Rust를 선택합니다. Linux x86_64 Agent/Server와 Apple Silicon macOS Agent bundle에는
+두 Rust shared library가 target별 native 디렉터리에 포함되며, `runtime-build.json`에 Rust 버전, source HEAD,
 Cargo.lock 및 library hash를 기록합니다. Agent runtime lineage manifest와 Server project-file
-manifest가 install, update, rollback에서 해당 파일을 관리합니다. Linux ARM64와 macOS library
+manifest가 install, update, rollback에서 해당 파일을 관리합니다. Linux ARM64 native library
 package는 아직 검증 및 추가가 필요합니다. 명시적인 Rust 선택은 library 부재 시 fail-closed입니다.
 handoff 이후 세션을 Python relay로 재실행하지 않으며, 새 연결은 `DRLINK_EGRESS_RUNTIME=python`으로 기존 Python rollback 경로를
 선택할 수 있습니다. 각 방향의 relay queue는 256 KiB로 제한하며, peer hangup 뒤에도
@@ -263,7 +263,7 @@ Linux/macOS Agent 및 Server 경로에 연결됐습니다. Linux 회귀와 Apple
 유지하며, 정상 EOF 뒤 불필요한 process group signal을 보내지 않습니다. 실제 정리가
 필요한 경로의 권한 거부는 계속 오류로 처리합니다. Linux x86_64용 두 Rust library는 설치
 패키지에 포함되며, Linux ARM64/macOS native package와 실제 사용자 E2E qualification은
-진행 중입니다. MCP rollback은
+진행 중이며, Linux ARM64 native package도 아직 남아 있습니다. MCP rollback은
 `DRLINK_MCP_RUNTIME=python`이며,
 `auto`는 library가 없으면 Python으로 돌아가고 명시적 `rust` 선택은 library 부재 시
 서비스 초기화를 fail-closed 합니다.
@@ -273,8 +273,8 @@ stdout/stderr pipe를 Rust가 poll하고 읽습니다. macOS는 timeout/retry dr
 timeout 선택, process-group 종료, wait/reap 권한은 Python에 유지됩니다.
 또한 MCP job 출력은 Rust가 기존 1 MiB 보존 창과 64 KiB cursor 페이지를 제공하고,
 Python이 job 소유권과 cursor 검증, 응답 생성을 계속 담당합니다. native shared library의
-Linux x86_64 설치 패키징이 완료됐습니다. Linux ARM64와 macOS native library는 아직 추가
-검증이 필요합니다.
+Linux x86_64 Agent/Server와 Apple Silicon macOS Agent 설치 패키징이 완료됐습니다. Linux ARM64
+native library는 아직 추가 검증이 필요합니다.
 
 Rust process I/O의 최종 EOF drain이 실패하면 Agent capture는 stream을 닫고 자식을 reap한 뒤
 오류를 반환합니다. Server full-control도 해당 job을 `output_complete=false`와 제한된

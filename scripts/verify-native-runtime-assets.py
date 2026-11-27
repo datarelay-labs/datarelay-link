@@ -9,7 +9,7 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-REQUIRED = {"x86_64-unknown-linux-gnu"}
+REQUIRED = {"x86_64-unknown-linux-gnu", "aarch64-apple-darwin"}
 CRATES = (
     "native/drlink-egress/Cargo.toml",
     "native/drlink-egress/Cargo.lock",
