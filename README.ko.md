@@ -251,8 +251,7 @@ build, runtime 선택 및 adapter 테스트를 통과했습니다. 명시적인 
 구형 basename 평면 스냅샷은 manifest 경로와 저장 파일의 유일성을 먼저 검증한 경우에만 복구합니다.
 중복되거나 안전하게 연결할 수 없는 경로는 live 파일 변경 전에 거부합니다. Rust 패키지 CI는 새로 빌드한
 target 하나의 provenance를 확인하고, release 검증은 세 지원 target 전체를 확인합니다.
-2026-11-27 검증에서는 Linux x86_64/ARM64 native matrix와 Apple Silicon native MCP lifecycle 및 패키지 탐색이 통과했습니다.
-새 번들은 별도 artifact commit으로 갱신하고 Apple Silicon client-port 검증을 다시 실행해야 합니다.
+2026-11-27 exact candidate에서는 Linux x86_64/ARM64 native matrix, Apple Silicon native MCP lifecycle 및 client-port 검증이 통과했습니다.
 `DRLINK_MCP_WORKERS=auto`는 cgroup 메모리 한도를 읽을 수 없거나 값이 잘못된 경우 worker 하나만 선택하며,
 controller가 비활성화된 cgroup v2 최상위의 `memory.max` 부재만 예외로 처리합니다.
 Apple Silicon에서 이미 종료된 자식의 process group 신호가 `EPERM`을 반환하는 경합은 자식 reaping 후 group 부재를 확인한 경우에만 허용하며,
@@ -274,9 +273,9 @@ Linux/macOS Agent 및 Server 경로에 연결됐습니다. Linux 회귀와 Apple
 필요한 경로의 권한 거부는 계속 오류로 처리합니다. Linux x86_64/ARM64 Agent 및 Server와
 Apple Silicon macOS Agent 패키지에 target별 Rust library가 포함됩니다. Linux 두 target은
 native runner의 build, provenance, runtime 선택, egress/MCP adapter 테스트를 통과했고,
-Apple Silicon은 runtime 발견 및 process lifecycle 테스트와 artifact upload를 통과했습니다.
-전체 macOS client portability workflow와 최종 exact-head 회귀/리뷰는 현재 후보에서 다시 확인해야
-합니다. MCP rollback은 `DRLINK_MCP_RUNTIME=python`이며, `auto`는 library가 없으면 Python으로
+Apple Silicon은 runtime 발견, process lifecycle, client-port 및 artifact 검증을 통과했습니다.
+정확한 artifact HEAD `b4e9fd2f`의 `tests/run-fast-pr.sh`는 `FAST_PR=PASS`이고,
+해당 PR CI와 Codex 검토에서는 major finding이 없었습니다. MCP rollback은 `DRLINK_MCP_RUNTIME=python`이며, `auto`는 library가 없으면 Python으로
 돌아가고 명시적 `rust` 선택은 library 부재 시 서비스 초기화를 fail-closed 합니다.
 R3에서는 Python이 시작한 Linux/macOS Agent 및 Server executor 자식 프로세스의
 stdout/stderr pipe를 Rust가 poll하고 읽습니다. macOS는 timeout/retry drain 호출 사이에 유지되는 kqueue process-exit watcher로
@@ -293,8 +292,15 @@ Rust process I/O의 최종 EOF drain이 실패하면 Agent capture는 stream을 
 lifecycle 오류가 있는 완료 영수증으로 노출하며 성공적인 출력으로 표시하지 않습니다.
 stdin writer가 없거나 최종 drain이 시간 초과해도 Python이 소유한 process watcher를 해제합니다.
 계정, timeout, process-group 종료, wait/reap 권한은 계속 Python에 있습니다.
-이전 Agent helper가 만든 basename-layout rollback snapshot은 중첩 native 경로와 중복 파일명을
-안전하게 대응할 수 없으므로, 복구 시 설치 파일을 변경하기 전에 거부합니다.
+이전 Agent helper의 flat snapshot은 manifest 경로가 파일 basename 하나에 유일하게 대응할 때만
+복구합니다. 새 native 파일은 Python fallback을 복구하도록 제거합니다. 중복 basename이나
+모호한 경로는 설치 파일을 변경하기 전에 거부합니다.
+exact candidate의 native package selector/provenance 6/6, Agent payload lineage/install/upgrade,
+macOS rollback, Server project update/rollback 전체 회귀가 통과했습니다.
+현재 `final-e2e-rocky9-pass2`는 연결이 끊겼고 AI executor가 준비되지 않아 실제 사용자 E2E는 실행하지 않았습니다.
+동일한 Rust 혼합 부하에서 MCP p95 409/494ms는 기존 500ms 목표를 통과했지만, 562/569/592ms는
+#302의 550ms 최대 허용치도 넘었습니다. 3,600초 soak은 p95 초과로 첫 번째 또는 두 번째 wave에서
+중단됐으며 PASS로 기록하지 않습니다. workload, 보안 거부, 감사 영수증, 자원 한도는 바꾸지 않았습니다.
 
 ### AI Access / MCP
 

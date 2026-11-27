@@ -156,30 +156,47 @@ class BridgeHeldClaimTests(unittest.TestCase):
         done.wait(5.0)
 
     def test_result_wait_still_returns_when_the_change_feed_is_silent(self):
+        fallback_waits = []
+
+        class SilentSubscription:
+            def clear(self):
+                pass
+
+            def wait(self, timeout):
+                fallback_waits.append(timeout)
+                time.sleep(timeout)
+                return False
+
+            def close(self):
+                pass
+
         class Silent:
             """A watcher that is ready but never signals (lost signals)."""
 
             ready = True
-            generation = 0
-
-            def wait(self, since, timeout):
-                time.sleep(timeout)
-                return since
 
             def subscribe(self, kind, key):
-                return _SilentSubscription()
+                return SilentSubscription()
 
-        with mock.patch.object(drlink_mcp_bridge, "get_watcher", return_value=Silent()):
-            started = time.monotonic()
-            status, payload = self.call(
-                self.cursor, "exec", {"endpoint": "lab1", "command": "echo fallback"}
+        with (
+            mock.patch.object(drlink_mcp_bridge, "get_watcher", return_value=Silent()),
+            mock.patch.object(
+                self.bridge.plane,
+                "get_ai_job",
+                side_effect=[{"status": "queued"}, {"status": "done"}],
+            ),
+            mock.patch.object(
+                self.bridge.plane,
+                "consume_ai_job_result",
+                return_value={"result": "ALLOW", "stdout": "fallback"},
+            ),
+        ):
+            result = self.bridge._await_job_result(
+                "job-fallback", HELD_CLIENT, "exec", {}, [], 30
             )
-            elapsed = time.monotonic() - started
-        self.assertEqual(status, 200)
-        self.assertNotIn("error", payload)
-        self.assertIn("fallback", self.text_of(payload))
-        # Worker poll (<= 2 s) plus at most one fallback interval.
-        self.assertLess(elapsed, 2.0 + drlink_mcp_bridge.RESULT_WAIT_FALLBACK_SECONDS + 1.0)
+        self.assertEqual(result, {"result": "ALLOW", "stdout": "fallback"})
+        self.assertTrue(fallback_waits)
+        self.assertLessEqual(max(fallback_waits), 1.0)
 
     def test_result_wait_works_without_a_change_feed(self):
         class NotReady:
