@@ -11,6 +11,7 @@ import socket
 import subprocess
 import sys
 import threading
+import time
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -54,6 +55,42 @@ class PythonDispatchBudgetTests(unittest.TestCase):
 
 @unittest.skipUnless(LIBRARY.is_file(), "build the locked Rust MCP runtime library first")
 class RustDispatchBudgetTests(unittest.TestCase):
+    def test_rust_wait_signal_wakes_on_topic_change_and_times_out(self):
+        with mock.patch.dict(os.environ, {
+            "DRLINK_MCP_RUNTIME": "rust",
+            "DRLINK_MCP_NATIVE_LIBRARY": str(LIBRARY),
+        }):
+            budget = runtime.DispatchBudget(2)
+            signal = budget.new_signal()
+        self.assertIsNotNone(signal)
+        try:
+            observed = signal.snapshot()
+            sender = threading.Thread(target=lambda: (time.sleep(0.03), signal.signal()))
+            sender.start()
+            self.assertTrue(signal.wait(observed, 1.0))
+            sender.join(timeout=1)
+            self.assertFalse(signal.wait(signal.snapshot(), 0.01))
+        finally:
+            signal.close()
+            budget.close()
+
+    def test_rust_wait_ticket_survives_subscription_close(self):
+        with mock.patch.dict(os.environ, {
+            "DRLINK_MCP_RUNTIME": "rust",
+            "DRLINK_MCP_NATIVE_LIBRARY": str(LIBRARY),
+        }):
+            budget = runtime.DispatchBudget(2)
+            signal = budget.new_signal()
+        observed = signal.snapshot()
+        result = []
+        waiter = threading.Thread(target=lambda: result.append(signal.wait(observed, 0.1)))
+        waiter.start()
+        time.sleep(0.02)
+        signal.close()
+        waiter.join(timeout=1)
+        budget.close()
+        self.assertEqual(result, [False])
+
     def test_rust_accepts_one_ready_socket_and_sets_close_on_exec(self):
         listener = socket.socket()
         listener.bind(("127.0.0.1", 0))

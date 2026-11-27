@@ -375,6 +375,74 @@ def free_process_watch(process) -> None:
         del process._drlink_mcp_leader_exited
 
 
+class NativeWaitSignal:
+    """Rust condition variable with a Python-owned subscription lifetime."""
+
+    def __init__(self, library):
+        self._library = library
+        self._lock = threading.Lock()
+        create = library.drlink_mcp_wait_signal_new
+        create.argtypes = []
+        create.restype = ctypes.c_void_p
+        self._snapshot = library.drlink_mcp_wait_signal_snapshot
+        self._snapshot.argtypes = [ctypes.c_void_p]
+        self._snapshot.restype = ctypes.c_uint64
+        self._notify = library.drlink_mcp_wait_signal_notify
+        self._notify.argtypes = [ctypes.c_void_p]
+        self._notify.restype = ctypes.c_int
+        self._ticket_new = library.drlink_mcp_wait_signal_ticket_new
+        self._ticket_new.argtypes = [ctypes.c_void_p]
+        self._ticket_new.restype = ctypes.c_void_p
+        self._ticket_wait = library.drlink_mcp_wait_signal_ticket_wait
+        self._ticket_wait.argtypes = [ctypes.c_void_p, ctypes.c_uint64, ctypes.c_uint64]
+        self._ticket_wait.restype = ctypes.c_int
+        self._ticket_free = library.drlink_mcp_wait_signal_ticket_free
+        self._ticket_free.argtypes = [ctypes.c_void_p]
+        self._ticket_free.restype = None
+        self._free = library.drlink_mcp_wait_signal_free
+        self._free.argtypes = [ctypes.c_void_p]
+        self._free.restype = None
+        self._handle = create()
+        if not self._handle:
+            raise RuntimeError("Rust MCP wait signal allocation failed")
+
+    def snapshot(self) -> int:
+        with self._lock:
+            if not self._handle:
+                return 0
+            value = int(self._snapshot(self._handle))
+            if value == (1 << 64) - 1:
+                raise RuntimeError("Rust MCP wait signal snapshot failed")
+            return value
+
+    def signal(self) -> None:
+        with self._lock:
+            if self._handle and not self._notify(self._handle):
+                raise RuntimeError("Rust MCP wait signal notification failed")
+
+    def wait(self, observed: int, timeout: float) -> bool:
+        with self._lock:
+            if not self._handle:
+                return False
+            ticket = self._ticket_new(self._handle)
+        if not ticket:
+            raise RuntimeError("Rust MCP wait ticket allocation failed")
+        timeout_ms = max(0, int(max(0.0, float(timeout)) * 1000))
+        try:
+            result = int(self._ticket_wait(ticket, int(observed), timeout_ms))
+        finally:
+            self._ticket_free(ticket)
+        if result < 0:
+            raise RuntimeError("Rust MCP wait signal wait failed")
+        return result == 1
+
+    def close(self) -> None:
+        with self._lock:
+            if self._handle:
+                self._free(self._handle)
+                self._handle = None
+
+
 def capture_process(process, *, input_data: bytes | None, timeout_seconds: float,
                     stdout_limit: int, stderr_limit: int):
     """Run bounded pipe capture through the native helper, or return None.
@@ -601,6 +669,30 @@ class DispatchBudget:
             error = -result
             raise OSError(error, os.strerror(error))
         return result
+
+    def new_signal(self) -> NativeWaitSignal | None:
+        """Create a native topic signal when the selected library supports it."""
+        if self._handle is None:
+            return None
+        required = (
+            "drlink_mcp_wait_signal_new",
+            "drlink_mcp_wait_signal_snapshot",
+            "drlink_mcp_wait_signal_notify",
+            "drlink_mcp_wait_signal_ticket_new",
+            "drlink_mcp_wait_signal_ticket_wait",
+            "drlink_mcp_wait_signal_ticket_free",
+            "drlink_mcp_wait_signal_free",
+        )
+        if any(not hasattr(self._library, name) for name in required):
+            if self._required:
+                raise RuntimeError("Rust MCP runtime lacks bounded wait signal support")
+            return None
+        try:
+            return NativeWaitSignal(self._library)
+        except RuntimeError:
+            if self._required:
+                raise
+            return None
 
     def close(self) -> None:
         if self._handle:

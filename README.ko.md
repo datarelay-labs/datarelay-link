@@ -240,7 +240,8 @@ Python이 승인하고 연결한 뒤 양방향 TCP relay를 Rust로 처리하고
 Python rollback 권한은 Python에 둡니다. MCP R2는 Rust가 ready 상태의 Python 소유 listener에서
 연결을 accept하고 dispatch admission, 1 MiB 결과
 보존 창/64 KiB cursor page, 64 KiB 요청 본문 읽기와 응답 쓰기 및 짧은 쓰기 재시도를
-처리합니다. CLI, OAuth/AI Identity, AI Access 정책, SQLite, durable job, nonce, audit,
+처리하며, Python DB watcher가 보내는 job wakeup을 Rust 조건 변수로 기다립니다. CLI,
+OAuth/AI Identity, AI Access 정책, SQLite, durable job, nonce, audit,
 HTTP/TLS와 실제 socket 소유권은 Python에 유지됩니다. 자동 모드는 설치된 native library가
 있을 때만 Rust를 선택하며, 현재 installer에는 해당 `.so`/`.dylib`가 없어 Python을
 사용합니다. 명시적인 Rust 선택은 library 부재 시 fail-closed입니다.
@@ -250,9 +251,10 @@ handoff 이후 세션을 Python relay로 재실행하지 않으며, 새 연결�
 용량이 찬 relay buffer에 대한 zero-length `recv`를 EOF로 오인하지 않도록 양방향 처리를
 수정했으며, 1 MiB 요청 half-close와 tail 보존 회귀 테스트가 통과했습니다.
 Rust MCP helper는 dispatch admission, 1 MiB 결과 보존 창/64 KiB cursor page, 64 KiB 제한
-inbound request body 읽기와 response 쓰기를 제공합니다. HTTP/TLS stream, JSON parsing,
-권한 판단, durable result waiting, bind, socket/TLS 및 요청 처리는 계속 Python이 담당합니다.
-Rust accept는 bounded runtime helper이며 연결 수명 주기와 TLS 소유권은 Python에 있습니다. R3 stdout/stderr drain은
+inbound request body 읽기와 response 쓰기, bounded job wakeup 대기를 제공합니다. HTTP/TLS
+stream, JSON parsing, 권한 판단, SQLite 조회와 결과 소비, bind, socket/TLS 및 요청 처리는
+계속 Python이 담당합니다. Rust accept는 bounded runtime helper이며 연결 수명 주기와 TLS
+소유권은 Python에 있습니다. R3 stdout/stderr drain은
 Linux/macOS Agent 및 Server 경로에 연결됐습니다. Linux 회귀와 Apple Silicon workflow
 45936908695의 stateful kqueue lifecycle 검증이 통과했습니다. retry drain 사이에 exit event를
 유지하며, 정상 EOF 뒤 불필요한 process group signal을 보내지 않습니다. 실제 정리가
@@ -266,9 +268,8 @@ stdout/stderr pipe를 Rust가 poll하고 읽습니다. macOS는 timeout/retry dr
 종료를 관찰하고, Linux는 waitid를 사용합니다. Apple Silicon 재검증에서 정상 EOF와 descendant-held-pipe retry가 통과했습니다. process 시작,
 timeout 선택, process-group 종료, wait/reap 권한은 Python에 유지됩니다.
 또한 MCP job 출력은 Rust가 기존 1 MiB 보존 창과 64 KiB cursor 페이지를 제공하고,
-Python이 job 소유권과 cursor 검증, 응답 생성을 계속 담당합니다. durable result waiting과
-native shared library의 설치 패키징은
-아직 완료되지 않았습니다.
+Python이 job 소유권과 cursor 검증, 응답 생성을 계속 담당합니다. native shared library의
+설치 패키징은 아직 완료되지 않았습니다.
 
 ### AI Access / MCP
 

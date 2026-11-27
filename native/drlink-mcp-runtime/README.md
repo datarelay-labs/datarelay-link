@@ -44,8 +44,11 @@ service initialization if the library cannot be loaded. The Python adapter is
 included in Server bundles; native shared-library packaging is still pending.
 R2 currently covers dispatch admission, one ready-listener accept, bounded
 streamed-result retention, bounded request-body reads and bounded outbound
-response writes. HTTP/TLS stream ownership, JSON parsing, authorization,
-connection lifecycle and durable result waiting remain in Python. R3 process-pipe
+response writes, and the per-subscription condition wait used for bounded job
+result wakeups. Python's DB watcher sends the signal and Python re-reads SQLite,
+checks job ownership/status and consumes the durable result. HTTP/TLS stream
+ownership, JSON parsing, authorization and connection lifecycle remain in Python.
+R3 process-pipe
 integration is present for Linux/macOS Agent and Server paths; Linux regression
 passes. Apple Silicon testing exposed retry watcher state loss and unnecessary
 group signaling after successful EOF; the stateful ABI and cleanup scope are

@@ -55,23 +55,47 @@ KIND_JOB = "job"
 class Subscription:
     """One waiter's interest in a topic (see ``DbChangeWatcher.subscribe``)."""
 
-    def __init__(self, watcher: "DbChangeWatcher", kind: str, key: str):
+    def __init__(self, watcher: "DbChangeWatcher", kind: str, key: str,
+                 native_signal_factory=None):
         self.kind = kind
         self.key = key
         self._watcher = watcher
         self._event = threading.Event()
+        self._native_signal = native_signal_factory() if native_signal_factory else None
+        self._observed = 0
         watcher._register(self)
 
     def clear(self) -> None:
         """Forget earlier signals. Call before looking at the database."""
         self._event.clear()
+        if self._native_signal is not None:
+            self._observed = self._native_signal.snapshot()
 
     def wait(self, timeout: float) -> bool:
         """Block until the topic is signalled or ``timeout``; True if signalled."""
+        if self._native_signal is not None:
+            try:
+                return self._native_signal.wait(self._observed, timeout)
+            except RuntimeError:
+                # The durable Python DB read loop remains the fallback authority.
+                # The mirrored Event also preserves a real notification.
+                return self._event.wait(max(0.0, float(timeout)))
         return self._event.wait(max(0.0, float(timeout)))
+
+    def _signal(self) -> None:
+        self._event.set()
+        if self._native_signal is not None:
+            try:
+                self._native_signal.signal()
+            except RuntimeError:
+                # A later SQLite read or bounded fallback poll remains authoritative.
+                pass
 
     def close(self) -> None:
         self._watcher._unregister(self)
+        if self._native_signal is not None:
+            self._native_signal.close()
+            self._native_signal = None
 
     def __enter__(self) -> "Subscription":
         return self
@@ -161,9 +185,9 @@ class DbChangeWatcher:
             return self._generation
 
     # -- topics ------------------------------------------------------------
-    def subscribe(self, kind: str, key: str) -> Subscription:
+    def subscribe(self, kind: str, key: str, native_signal_factory=None) -> Subscription:
         """Register for wake-ups about ``key``. Register BEFORE looking at the DB."""
-        return Subscription(self, str(kind), str(key))
+        return Subscription(self, str(kind), str(key), native_signal_factory)
 
     def subscription_count(self) -> int:
         with self._topic_lock:
@@ -189,7 +213,7 @@ class DbChangeWatcher:
         with self._topic_lock:
             everyone = [sub for subs in self._topics.values() for sub in subs]
         for sub in everyone:
-            sub._event.set()
+            sub._signal()
 
     def _wake_topics(self, topics) -> None:
         woken = []
@@ -197,7 +221,7 @@ class DbChangeWatcher:
             for topic in topics:
                 woken.extend(self._topics.get(topic, ()))
         for sub in woken:
-            sub._event.set()
+            sub._signal()
         self.stats["wakeups"] += len(woken)
 
     def _dispatch_topics(self, conn: sqlite3.Connection) -> None:

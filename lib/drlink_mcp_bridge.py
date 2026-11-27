@@ -1608,7 +1608,9 @@ class MCPBridge:
         watcher = get_watcher(self.plane.db_file)
         # Wake only for THIS job reaching a terminal status, not for every
         # commit in the Control DB (a herd of waits made 30 calls take seconds).
-        sub = watcher.subscribe("job", job_id)
+        sub = watcher.subscribe(
+            "job", job_id, native_signal_factory=self._dispatch_admission.new_signal,
+        )
         try:
             while time.monotonic() < deadline:
                 # Clear the signal BEFORE looking, so a completion that commits

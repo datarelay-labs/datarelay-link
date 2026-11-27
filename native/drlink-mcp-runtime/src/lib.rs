@@ -4,7 +4,7 @@
 //! audit and the dispatch itself. This library only tracks an in-process cap.
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::collections::VecDeque;
-use std::sync::Mutex;
+use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
 
 #[repr(C)]
@@ -16,6 +16,111 @@ pub struct DispatchBudget {
 type OutputChunk = extern "C" fn(i32, *const u8, usize, *mut std::ffi::c_void) -> bool;
 type WriteChunk = extern "C" fn(*const u8, usize, *mut std::ffi::c_void) -> isize;
 type ReadChunk = extern "C" fn(*mut u8, usize, *mut std::ffi::c_void) -> isize;
+
+pub struct WaitSignal {
+    generation: Mutex<u64>,
+    changed: Condvar,
+}
+
+/// Create a bounded notification signal for one Python-owned DB subscription.
+/// Database polling, job state, and result consumption remain in Python.
+#[no_mangle]
+pub extern "C" fn drlink_mcp_wait_signal_new() -> *mut Arc<WaitSignal> {
+    Box::into_raw(Box::new(Arc::new(WaitSignal {
+        generation: Mutex::new(0),
+        changed: Condvar::new(),
+    })))
+}
+
+/// Read the current signal generation before the caller checks SQLite.
+///
+/// # Safety
+/// `handle` must be null or a live pointer returned by
+/// `drlink_mcp_wait_signal_new`, with no concurrent free.
+#[no_mangle]
+pub unsafe extern "C" fn drlink_mcp_wait_signal_snapshot(
+    handle: *const Arc<WaitSignal>,
+) -> u64 {
+    match handle.as_ref().and_then(|signal| signal.generation.lock().ok()) {
+        Some(generation) => *generation,
+        None => u64::MAX,
+    }
+}
+
+/// Wake waiters after Python's DB watcher reports a relevant committed change.
+///
+/// # Safety
+/// `handle` must be null or a live pointer returned by
+/// `drlink_mcp_wait_signal_new`, with no concurrent free.
+#[no_mangle]
+pub unsafe extern "C" fn drlink_mcp_wait_signal_notify(
+    handle: *const Arc<WaitSignal>,
+) -> i32 {
+    let Some(signal) = handle.as_ref() else { return 0 };
+    let Ok(mut generation) = signal.generation.lock() else { return 0 };
+    *generation = generation.wrapping_add(1);
+    signal.changed.notify_all();
+    1
+}
+
+/// Clone the signal's Arc before waiting so Python may close the subscription.
+///
+/// # Safety
+/// `handle` must be null or a live pointer returned by
+/// `drlink_mcp_wait_signal_new`, with no concurrent free.
+#[no_mangle]
+pub unsafe extern "C" fn drlink_mcp_wait_signal_ticket_new(
+    handle: *const Arc<WaitSignal>,
+) -> *mut Arc<WaitSignal> {
+    match handle.as_ref() {
+        Some(signal) => Box::into_raw(Box::new(Arc::clone(signal))),
+        None => std::ptr::null_mut(),
+    }
+}
+
+/// Wait for a generation change, releasing the Rust lock while blocked.
+///
+/// # Safety
+/// `ticket` must be null or a live pointer returned by
+/// `drlink_mcp_wait_signal_ticket_new`, with no concurrent free.
+#[no_mangle]
+pub unsafe extern "C" fn drlink_mcp_wait_signal_ticket_wait(
+    ticket: *const Arc<WaitSignal>,
+    observed: u64,
+    timeout_ms: u64,
+) -> i32 {
+    let Some(signal) = ticket.as_ref() else { return -1 };
+    let Ok(generation) = signal.generation.lock() else { return -1 };
+    if *generation != observed { return 1; }
+    let Ok((generation, _)) = signal.changed.wait_timeout_while(
+        generation,
+        Duration::from_millis(timeout_ms),
+        |generation| *generation == observed,
+    ) else { return -1 };
+    if *generation != observed { 1 } else { 0 }
+}
+
+/// Release one independent wait ticket.
+///
+/// # Safety
+/// `ticket` must be null or a live pointer returned by
+/// `drlink_mcp_wait_signal_ticket_new`, and must be freed exactly once.
+#[no_mangle]
+pub unsafe extern "C" fn drlink_mcp_wait_signal_ticket_free(
+    ticket: *mut Arc<WaitSignal>,
+) {
+    if !ticket.is_null() { drop(Box::from_raw(ticket)); }
+}
+
+/// Release the subscription's owning reference; active tickets remain valid.
+///
+/// # Safety
+/// `handle` must be null or a live pointer returned by
+/// `drlink_mcp_wait_signal_new`, and must be freed exactly once.
+#[no_mangle]
+pub unsafe extern "C" fn drlink_mcp_wait_signal_free(handle: *mut Arc<WaitSignal>) {
+    if !handle.is_null() { drop(Box::from_raw(handle)); }
+}
 
 /// Accept one connection from a Python-owned, already-ready listener.
 /// The listener bind/backlog and connection/TLS authority stay in Python.
