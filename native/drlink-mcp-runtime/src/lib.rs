@@ -29,9 +29,8 @@ pub unsafe extern "C" fn drlink_mcp_process_watch_new(pid: libc::pid_t) -> libc:
         let mut change: libc::kevent = std::mem::zeroed();
         change.ident = pid as libc::uintptr_t;
         change.filter = libc::EVFILT_PROC;
-        // Keep NOTE_EXIT readable across drain calls. Python may first drain
-        // the leader's output and then retry while descendants still hold the
-        // inherited pipes open; EV_CLEAR would consume the only exit event.
+        // Install NOTE_EXIT once; the stateful drain API carries the observed
+        // exit across calls because kqueue delivers this process event once.
         change.flags = (libc::EV_ADD | libc::EV_ENABLE) as u16;
         change.fflags = libc::NOTE_EXIT;
         if libc::kevent(queue, &change, 1, std::ptr::null_mut(), 0, std::ptr::null()) < 0 {
@@ -317,13 +316,14 @@ pub unsafe extern "C" fn drlink_mcp_read_request_body(
 /// `pid` must identify a live child owned by the caller; both descriptors must
 /// be open read ends that remain valid for this call. `callback` must be valid.
 #[no_mangle]
-pub unsafe extern "C" fn drlink_mcp_drain_child(
+pub unsafe extern "C" fn drlink_mcp_drain_child_stateful(
     pid: libc::pid_t,
     stdout_fd: libc::c_int,
     stderr_fd: libc::c_int,
     _process_watch_fd: libc::c_int,
     timeout_ms: u64,
     wait_for_eof: bool,
+    leader_exited: *mut bool,
     callback: Option<OutputChunk>,
     context: *mut std::ffi::c_void,
 ) -> i32 {
@@ -333,7 +333,7 @@ pub unsafe extern "C" fn drlink_mcp_drain_child(
     let callback = callback.unwrap();
     let started = Instant::now();
     let timeout = Duration::from_millis(timeout_ms);
-    let mut exited = false;
+    let mut exited = if leader_exited.is_null() { false } else { *leader_exited };
 
     // waitid(WNOWAIT) is not part of Apple's documented wait API. Observe
     // NOTE_EXIT through kqueue instead, leaving wait/reap ownership in Python.
@@ -355,6 +355,7 @@ pub unsafe extern "C" fn drlink_mcp_drain_child(
             );
             if result == 0 {
                 exited = info.si_pid() != 0;
+                if exited && !leader_exited.is_null() { *leader_exited = true; }
             } else {
                 let error = std::io::Error::last_os_error();
                 if error.kind() != std::io::ErrorKind::Interrupted {
@@ -377,6 +378,7 @@ pub unsafe extern "C" fn drlink_mcp_drain_child(
             if result == 1 {
                 if event.fflags & libc::NOTE_EXIT != 0 {
                     exited = true;
+                    if !leader_exited.is_null() { *leader_exited = true; }
                 } else if event.flags & libc::EV_ERROR != 0 {
                     return 2;
                 }
@@ -444,6 +446,24 @@ pub unsafe extern "C" fn drlink_mcp_drain_child(
             }
         }
     }
+}
+
+/// Backward-compatible entry point for callers without persistent exit state.
+#[no_mangle]
+pub unsafe extern "C" fn drlink_mcp_drain_child(
+    pid: libc::pid_t,
+    stdout_fd: libc::c_int,
+    stderr_fd: libc::c_int,
+    process_watch_fd: libc::c_int,
+    timeout_ms: u64,
+    wait_for_eof: bool,
+    callback: Option<OutputChunk>,
+    context: *mut std::ffi::c_void,
+) -> i32 {
+    drlink_mcp_drain_child_stateful(
+        pid, stdout_fd, stderr_fd, process_watch_fd, timeout_ms, wait_for_eof,
+        std::ptr::null_mut(), callback, context,
+    )
 }
 
 #[cfg(test)]

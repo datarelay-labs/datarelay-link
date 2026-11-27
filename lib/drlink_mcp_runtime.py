@@ -12,6 +12,7 @@ from pathlib import Path
 _PROCESS_LOCK = threading.Lock()
 _PROCESS_LIBRARY = None
 _PROCESS_DRAIN = None
+_PROCESS_DRAIN_STATEFUL = False
 _PROCESS_WATCH_NEW = None
 _PROCESS_WATCH_FREE = None
 _PROCESS_CHECKED = False
@@ -36,7 +37,7 @@ _READ_CALLBACK = ctypes.CFUNCTYPE(
 
 
 def _native_process_drain():
-    global _PROCESS_LIBRARY, _PROCESS_DRAIN, _PROCESS_WATCH_NEW, _PROCESS_WATCH_FREE, _PROCESS_CHECKED
+    global _PROCESS_LIBRARY, _PROCESS_DRAIN, _PROCESS_DRAIN_STATEFUL, _PROCESS_WATCH_NEW, _PROCESS_WATCH_FREE, _PROCESS_CHECKED
     mode = os.environ.get("DRLINK_MCP_RUNTIME", "auto").strip().lower()
     if mode == "python":
         return None
@@ -60,11 +61,24 @@ def _native_process_drain():
         for candidate in candidates:
             try:
                 library = ctypes.CDLL(str(candidate))
-                drain = library.drlink_mcp_drain_child
-                drain.argtypes = [
-                    ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_uint64,
-                    ctypes.c_bool, _PROCESS_CALLBACK, ctypes.c_void_p,
-                ]
+                try:
+                    drain = library.drlink_mcp_drain_child_stateful
+                    drain.argtypes = [
+                        ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_uint64,
+                        ctypes.c_bool, ctypes.POINTER(ctypes.c_bool), _PROCESS_CALLBACK, ctypes.c_void_p,
+                    ]
+                    _PROCESS_DRAIN_STATEFUL = True
+                except AttributeError:
+                    if sys.platform == "darwin":
+                        # A legacy ABI cannot retain the one-shot NOTE_EXIT
+                        # observation across retries. Skip it so auto mode
+                        # falls back to Python and explicit Rust fails closed.
+                        raise
+                    drain = library.drlink_mcp_drain_child
+                    drain.argtypes = [
+                        ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_uint64,
+                        ctypes.c_bool, _PROCESS_CALLBACK, ctypes.c_void_p,
+                    ]
                 drain.restype = ctypes.c_int
                 watch_new = library.drlink_mcp_process_watch_new
                 watch_new.argtypes = [ctypes.c_int]
@@ -323,10 +337,18 @@ def drain_process(process, *, on_stdout, on_stderr, timeout_seconds: float = 0,
             raise OSError("native child process watcher creation failed")
         process._drlink_mcp_process_watch_fd = watch_fd
     try:
-        result = native(
-            process.pid, streams[0].fileno(), streams[1].fileno(), watch_fd,
-            timeout_ms, bool(wait_for_eof), callback_ref, None,
-        )
+        if _PROCESS_DRAIN_STATEFUL:
+            exited = ctypes.c_bool(getattr(process, "_drlink_mcp_leader_exited", False))
+            result = native(
+                process.pid, streams[0].fileno(), streams[1].fileno(), watch_fd,
+                timeout_ms, bool(wait_for_eof), ctypes.byref(exited), callback_ref, None,
+            )
+            process._drlink_mcp_leader_exited = exited.value
+        else:
+            result = native(
+                process.pid, streams[0].fileno(), streams[1].fileno(), watch_fd,
+                timeout_ms, bool(wait_for_eof), callback_ref, None,
+            )
     except BaseException:
         free_process_watch(process)
         raise
@@ -349,6 +371,8 @@ def free_process_watch(process) -> None:
     if watch_fd is not None:
         _PROCESS_WATCH_FREE(watch_fd)
         del process._drlink_mcp_process_watch_fd
+    if hasattr(process, "_drlink_mcp_leader_exited"):
+        del process._drlink_mcp_leader_exited
 
 
 def capture_process(process, *, input_data: bytes | None, timeout_seconds: float,
