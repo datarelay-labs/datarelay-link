@@ -388,6 +388,27 @@ class RustDispatchBudgetTests(unittest.TestCase):
             self.assertIsNotNone(proc.returncode)
             free_watch.assert_called_once_with(proc)
 
+    def test_final_pipe_drain_error_reaps_child_closes_streams_and_frees_watcher(self):
+        drain_error = OSError("mock final drain I/O failure")
+        with mock.patch.dict(os.environ, {
+            "DRLINK_MCP_RUNTIME": "rust",
+            "DRLINK_MCP_NATIVE_LIBRARY": str(LIBRARY),
+        }), mock.patch.object(runtime, "drain_process", side_effect=[9, drain_error]), \
+                mock.patch.object(runtime, "free_process_watch") as free_watch:
+            proc = subprocess.Popen(
+                [sys.executable, "-c", "pass"], stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE, start_new_session=True,
+            )
+            with self.assertRaisesRegex(OSError, "mock final drain I/O failure"):
+                runtime.capture_process(
+                    proc, input_data=None, timeout_seconds=3,
+                    stdout_limit=128, stderr_limit=128,
+                )
+            self.assertIsNotNone(proc.returncode)
+            self.assertTrue(proc.stdout.closed)
+            self.assertTrue(proc.stderr.closed)
+            free_watch.assert_called_once_with(proc)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -538,11 +538,25 @@ def capture_process(process, *, input_data: bytes | None, timeout_seconds: float
                 ) from exc
         drain_status = 0
         if status != 0:
-            drain_status = drain_process(
-                process, on_stdout=lambda data: append(0, data),
-                on_stderr=lambda data: append(1, data), timeout_seconds=5,
-                wait_for_eof=True,
-            )
+            try:
+                drain_status = drain_process(
+                    process, on_stdout=lambda data: append(0, data),
+                    on_stderr=lambda data: append(1, data), timeout_seconds=5,
+                    wait_for_eof=True,
+                )
+            except BaseException:
+                # Native I/O failures must propagate, but only after Python
+                # releases the child and pipe resources it owns. The process
+                # group was already signalled above when this is a final drain.
+                try:
+                    process.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+                    process.wait()
+                for stream in (process.stdout, process.stderr):
+                    if stream is not None and not stream.closed:
+                        stream.close()
+                raise
         final_drain_incomplete = drain_status not in (0, None)
         if drain_status not in (0, None):
             for stream in (process.stdout, process.stderr):
