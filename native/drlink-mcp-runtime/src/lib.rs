@@ -590,13 +590,13 @@ pub unsafe extern "C" fn drlink_mcp_drain_child_stateful(
                 return 3;
             }
         }
-        // Once the leader exits, a descendant can keep an inherited pipe
-        // continuously readable forever. Return after this bounded poll/read
-        // pass so Python can terminate the process group, then perform the
-        // final EOF drain with its separate deadline.
-        if exited && !wait_for_eof && (stdout_open || stderr_open) {
-            return 9;
-        }
+        // Keep draining while either pipe remains immediately readable after
+        // the leader exits. A normal child can leave more than one buffer of
+        // output behind; treating the first partial read as descendant-held
+        // would incorrectly return status 9 before reaching EOF. The zero
+        // timeout poll above returns 9 only after buffered output is drained
+        // and a pipe still has no EOF, which is the inherited-pipe case that
+        // Python must clean up at process-group scope.
     }
 }
 
