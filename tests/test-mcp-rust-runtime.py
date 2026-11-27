@@ -396,7 +396,7 @@ class RustDispatchBudgetTests(unittest.TestCase):
         }), mock.patch.object(runtime, "drain_process", side_effect=[9, drain_error]), \
                 mock.patch.object(runtime, "free_process_watch") as free_watch:
             proc = subprocess.Popen(
-                [sys.executable, "-c", "pass"], stdout=subprocess.PIPE,
+                [sys.executable, "-c", "import time; time.sleep(30)"], stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE, start_new_session=True,
             )
             with self.assertRaisesRegex(OSError, "mock final drain I/O failure"):
