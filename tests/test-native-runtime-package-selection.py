@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import importlib.util
 import hashlib
+import contextlib
+import io
 import json
 import os
 import platform
@@ -71,17 +73,76 @@ class PackagedRuntimeSelectionTests(unittest.TestCase):
         self.assertIsNotNone(drain)
 
     def test_provenance_verifier_rejects_uncommitted_native_source(self):
-        source_dir = ROOT / "native/drlink-egress/src"
-        with tempfile.NamedTemporaryFile(prefix=".provenance-drift-", suffix=".rs",
-                                         dir=source_dir) as drift:
-            drift.write(b"// uncommitted native build input\n")
-            drift.flush()
-            result = subprocess.run(
-                [sys.executable, str(ROOT / "scripts/verify-native-runtime-assets.py")],
-                cwd=ROOT, text=True, capture_output=True, check=False,
-            )
-        self.assertNotEqual(result.returncode, 0, result.stdout)
-        self.assertIn("working-tree changes", result.stderr)
+        verifier, fixture, target = self._fresh_target_fixture()
+        dirty_git = mock.Mock(side_effect=lambda *args: subprocess.CompletedProcess(
+            [], 0, " M native/drlink-mcp-runtime/src/lib.rs\n", "")
+            if args and args[0] == "status" else subprocess.CompletedProcess([], 0, "", ""))
+        with mock.patch.object(verifier, "ROOT", fixture), \
+                mock.patch.object(verifier, "git", dirty_git), \
+                mock.patch.object(sys, "argv", ["verify-native-runtime-assets.py", "--target", target]):
+            with self.assertRaisesRegex(SystemExit, "working-tree changes"):
+                verifier.main()
+
+    def _fresh_target_fixture(self):
+        spec = importlib.util.spec_from_file_location(
+            "native_runtime_verifier_fixture", ROOT / "scripts/verify-native-runtime-assets.py")
+        verifier = importlib.util.module_from_spec(spec)
+        assert spec and spec.loader
+        spec.loader.exec_module(verifier)
+        temp = tempfile.TemporaryDirectory(prefix="native-target-provenance-")
+        self.addCleanup(temp.cleanup)
+        fixture = Path(temp.name)
+        target = "x86_64-unknown-linux-gnu"
+        target_dir = fixture / "lib/native" / target
+        target_dir.mkdir(parents=True)
+        files = {
+            "scripts/build-native-runtime-assets.sh": b"build script",
+            "native/drlink-egress/Cargo.lock": b"egress lock",
+            "native/drlink-mcp-runtime/Cargo.lock": b"mcp lock",
+        }
+        for relative, content in files.items():
+            path = fixture / relative
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(content)
+        libraries = {}
+        for name, content in (("libdrlink_egress.so", b"egress library"),
+                              ("libdrlink_mcp_runtime.so", b"mcp library")):
+            (target_dir / name).write_bytes(content)
+            libraries[name] = hashlib.sha256(content).hexdigest()
+        record = {
+            "target": target,
+            "source_head": "a" * 40,
+            "cargo_locks": {
+                "drlink-egress": hashlib.sha256(files["native/drlink-egress/Cargo.lock"]).hexdigest(),
+                "drlink-mcp-runtime": hashlib.sha256(files["native/drlink-mcp-runtime/Cargo.lock"]).hexdigest(),
+            },
+            "build_script": hashlib.sha256(files["scripts/build-native-runtime-assets.sh"]).hexdigest(),
+            "libraries": libraries,
+        }
+        (target_dir / "runtime-build.json").write_text(json.dumps(record), encoding="utf-8")
+        return verifier, fixture, target
+
+    def test_target_scoped_verifier_accepts_one_fresh_matrix_package(self):
+        verifier, fixture, target = self._fresh_target_fixture()
+        with mock.patch.object(verifier, "ROOT", fixture), \
+                mock.patch.object(verifier, "git", return_value=subprocess.CompletedProcess([], 0, "", "")), \
+                mock.patch.object(sys, "argv", ["verify-native-runtime-assets.py", "--target", target]), \
+                contextlib.redirect_stdout(io.StringIO()) as output:
+            self.assertEqual(verifier.main(), 0)
+        self.assertIn("mode=target", output.getvalue())
+
+    def test_full_provenance_verifier_still_requires_every_supported_target(self):
+        spec = importlib.util.spec_from_file_location(
+            "native_runtime_verifier_full_test", ROOT / "scripts/verify-native-runtime-assets.py")
+        verifier = importlib.util.module_from_spec(spec)
+        assert spec and spec.loader
+        spec.loader.exec_module(verifier)
+        with tempfile.TemporaryDirectory(prefix="native-full-provenance-") as temp, \
+                mock.patch.object(verifier, "ROOT", Path(temp)), \
+                mock.patch.object(sys, "argv", ["verify-native-runtime-assets.py"]), \
+                contextlib.redirect_stderr(io.StringIO()) as error:
+            self.assertEqual(verifier.main(), 1)
+        self.assertIn("target(s) missing", error.getvalue())
 
 
 if __name__ == "__main__":

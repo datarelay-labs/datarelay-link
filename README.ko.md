@@ -248,6 +248,9 @@ HTTP/TLS와 실제 socket 소유권은 Python에 유지됩니다. 자동 모드�
 Cargo.lock 및 library hash를 기록합니다. Agent runtime lineage manifest와 Server project-file
 manifest가 install, update, rollback에서 해당 파일을 관리합니다. Linux ARM64 package는 native runner에서
 build, runtime 선택 및 adapter 테스트를 통과했습니다. 명시적인 Rust 선택은 library 부재 시 fail-closed입니다.
+구형 basename 평면 스냅샷은 manifest 경로와 저장 파일의 유일성을 먼저 검증한 경우에만 복구합니다.
+중복되거나 안전하게 연결할 수 없는 경로는 live 파일 변경 전에 거부합니다. Rust 패키지 CI는 새로 빌드한
+target 하나의 provenance를 확인하고, release 검증은 세 지원 target 전체를 확인합니다.
 handoff 이후 세션을 Python relay로 재실행하지 않으며, 새 연결은 `DRLINK_EGRESS_RUNTIME=python`으로 기존 Python rollback 경로를
 선택할 수 있습니다. 각 방향의 relay queue는 256 KiB로 제한하며, peer hangup 뒤에도
 수신 EOF까지 대기 데이터를 전달하고 backpressure 중 유휴 descriptor를 poll에서 제외합니다.

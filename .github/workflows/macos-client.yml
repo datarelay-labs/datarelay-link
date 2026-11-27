@@ -41,7 +41,7 @@ jobs:
           cargo +1.75.0 test --locked --manifest-path native/drlink-mcp-runtime/Cargo.toml
           cargo +1.75.0 build --release --locked --manifest-path native/drlink-mcp-runtime/Cargo.toml
           scripts/build-native-runtime-assets.sh
-          python3 scripts/verify-native-runtime-assets.py
+          python3 scripts/verify-native-runtime-assets.py --target "${{ matrix.target }}"
           python3 tests/test-native-runtime-package-selection.py
           DRLINK_EGRESS_RUNTIME=rust \
             DRLINK_EGRESS_NATIVE_LIBRARY="$PWD/lib/native/${{ matrix.target }}/libdrlink_egress.so" \
@@ -82,7 +82,7 @@ jobs:
         run: scripts/build-native-runtime-assets.sh
       - name: Verify target-bound runtime package discovery
         run: |
-          python3 scripts/verify-native-runtime-assets.py
+          python3 scripts/verify-native-runtime-assets.py --target aarch64-apple-darwin
           python3 tests/test-native-runtime-package-selection.py
       - name: Build and exercise native MCP process lifecycle
         run: |

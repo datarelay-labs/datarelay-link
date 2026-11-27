@@ -57,9 +57,11 @@ hashes, and library hashes in `runtime-build.json`. The Agent runtime lineage
 manifest and Server project-file manifest cover these files in install,
 update, and rollback. Linux ARM64 assets were built and exercised on a native
 ARM64 runner.
-The Agent updater refuses a legacy basename-layout snapshot before mutating
-installed files because nested target paths can reuse basenames; operator
-recovery is required for that interrupted legacy transaction.
+The Agent updater can recover an older flat snapshot only after validating all
+recorded paths and confirming that every present basename maps to one managed
+destination. A legacy snapshot with duplicate or unsafe mappings is rejected
+before live files change. Native paths absent from a valid pre-native snapshot
+are removed during rollback, restoring the Python runtime fallback.
 R2 currently covers dispatch admission, one ready-listener accept, bounded
 streamed-result retention, bounded request-body reads and bounded outbound
 response writes, and the per-subscription condition wait used for bounded job

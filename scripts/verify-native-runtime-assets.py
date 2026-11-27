@@ -2,6 +2,7 @@
 """Verify target runtime asset hashes and that native sources have not drifted."""
 from __future__ import annotations
 
+import argparse
 import hashlib
 import json
 import subprocess
@@ -30,10 +31,22 @@ def git(*args: str) -> subprocess.CompletedProcess:
 
 
 def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--target",
+        choices=sorted(REQUIRED),
+        help="verify only this freshly built target package (CI matrix use)",
+    )
+    args = parser.parse_args()
     native_root = ROOT / "lib/native"
-    records = sorted(native_root.glob("*/runtime-build.json"))
+    records = ([native_root / args.target / "runtime-build.json"] if args.target
+               else sorted(native_root.glob("*/runtime-build.json")))
+    records = [path for path in records if path.is_file()]
+    if args.target and not records:
+        print(f"ERROR: packaged Rust runtime target missing: {args.target}", file=sys.stderr)
+        return 1
     targets = {record.parent.name for record in records}
-    missing = REQUIRED - targets
+    missing = REQUIRED - targets if not args.target else set()
     if missing:
         print("ERROR: packaged Rust runtime target(s) missing: " + ", ".join(sorted(missing)), file=sys.stderr)
         return 1
@@ -72,7 +85,8 @@ def main() -> int:
             asset = target_dir / name
             if not asset.is_file() or digest(asset) != expected:
                 raise SystemExit(f"ERROR: native library checksum mismatch: {asset}")
-    print("NATIVE_RUNTIME_ASSET_PROVENANCE=PASS targets=" + ",".join(sorted(targets)))
+    mode = "target" if args.target else "all"
+    print("NATIVE_RUNTIME_ASSET_PROVENANCE=PASS mode=" + mode + " targets=" + ",".join(sorted(targets)))
     return 0
 
 
