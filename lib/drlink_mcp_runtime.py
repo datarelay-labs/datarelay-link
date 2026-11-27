@@ -293,7 +293,8 @@ def drain_process(process, *, on_stdout, on_stderr, timeout_seconds: float = 0,
                   wait_for_eof: bool = False) -> int | None:
     """Drain captured pipes using the Rust Linux/macOS helper when present.
 
-    Returns 0 on exit+EOF, 1 on timeout, or None when Python fallback is active.
+    Returns 0 on exit+EOF, 9 on leader exit while pipes remain open, 1 on timeout,
+    or None when Python fallback is active.
     The child remains waitable; callers still enforce process-group policy and reap.
     """
     native = _native_process_drain()
@@ -327,21 +328,23 @@ def drain_process(process, *, on_stdout, on_stderr, timeout_seconds: float = 0,
             timeout_ms, bool(wait_for_eof), callback_ref, None,
         )
     except BaseException:
-        _free_process_watch(process)
+        free_process_watch(process)
         raise
     if callback_error:
-        _free_process_watch(process)
+        free_process_watch(process)
         raise RuntimeError("native process output callback failed") from callback_error[0]
-    if result == 2 or result >= 4:
-        _free_process_watch(process)
+    if result == 2 or (result >= 4 and result != 9):
+        free_process_watch(process)
         raise OSError("native child process wait or pipe I/O failed (status %s)" % result)
     if result == 3:
-        _free_process_watch(process)
+        free_process_watch(process)
         raise RuntimeError("native child process output callback stopped")
-    if result != 1 and wait_for_eof:
-        _free_process_watch(process)
+    # Status 0 means both pipes reached EOF. Status 9 means the leader exited
+    # but descendant-held pipes still need process-group cleanup and another drain.
+    if result == 0:
+        free_process_watch(process)
     return result
-def _free_process_watch(process) -> None:
+def free_process_watch(process) -> None:
     watch_fd = getattr(process, "_drlink_mcp_process_watch_fd", None)
     if watch_fd is not None:
         _PROCESS_WATCH_FREE(watch_fd)
@@ -415,7 +418,7 @@ def capture_process(process, *, input_data: bytes | None, timeout_seconds: float
                 stream.close()
         if writer is not None:
             writer.join(timeout=5)
-        _free_process_watch(process)
+        free_process_watch(process)
         raise
     timed_out = status == 1
     try:
@@ -435,16 +438,18 @@ def capture_process(process, *, input_data: bytes | None, timeout_seconds: float
             for stream in (process.stdout, process.stderr):
                 if stream is not None and not stream.closed:
                     stream.close()
-            _free_process_watch(process)
+            free_process_watch(process)
             raise OSError(
                 "process-group cleanup denied after native drain (status %s, returncode %s)"
                 % (status, process.returncode)
             ) from exc
-        drain_status = drain_process(
-            process, on_stdout=lambda data: append(0, data),
-            on_stderr=lambda data: append(1, data), timeout_seconds=5,
-            wait_for_eof=True,
-        )
+        drain_status = 0
+        if status != 0:
+            drain_status = drain_process(
+                process, on_stdout=lambda data: append(0, data),
+                on_stderr=lambda data: append(1, data), timeout_seconds=5,
+                wait_for_eof=True,
+            )
         if drain_status not in (0, None):
             for stream in (process.stdout, process.stderr):
                 if stream is not None:
@@ -460,6 +465,7 @@ def capture_process(process, *, input_data: bytes | None, timeout_seconds: float
     finally:
         if writer is not None:
             writer.join(timeout=5)
+            free_process_watch(process)
     if status in (2, 3):
         raise OSError("native child process lifecycle failed")
     return {

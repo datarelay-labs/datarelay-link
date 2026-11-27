@@ -416,7 +416,7 @@ pub unsafe extern "C" fn drlink_mcp_drain_child(
             return 7;
         }
         if result == 0 && exited && !wait_for_eof {
-            return 0;
+            return 9;
         }
         for index in 0..2 {
             if fds[index].revents & (libc::POLLERR | libc::POLLNVAL) != 0 {

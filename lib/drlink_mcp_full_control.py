@@ -37,6 +37,7 @@ from drlink_control_plane import path_allowed
 from drlink_mcp_runtime import (
     capture_process,
     drain_process,
+    free_process_watch,
     native_output_append,
     native_output_free,
     native_output_new,
@@ -295,7 +296,7 @@ class FullControlRuntime:
                     job.process, on_stdout=job.stdout.append,
                     on_stderr=job.stderr.append,
                 )
-                if result != 0:
+                if result not in (0, 9):
                     raise OSError("native child process I/O did not complete")
             else:
                 os.waitid(os.P_PID, job.process.pid, os.WEXITED | os.WNOWAIT)
@@ -304,7 +305,7 @@ class FullControlRuntime:
                     os.killpg(job.process.pid, signal.SIGKILL)
                 except ProcessLookupError:
                     pass
-                if self.native_process_io:
+                if self.native_process_io and result == 9:
                     result = drain_process(
                         job.process, on_stdout=job.stdout.append,
                         on_stderr=job.stderr.append, timeout_seconds=5,
@@ -320,6 +321,11 @@ class FullControlRuntime:
                         os.killpg(job.process.pid, signal.SIGKILL)
                     except ProcessLookupError:
                         pass
+                    except PermissionError:
+                        try:
+                            job.process.kill()
+                        except OSError:
+                            pass
                     job.process.wait()
             raise
         finally:
@@ -331,6 +337,7 @@ class FullControlRuntime:
             for reader in readers:
                 reader.join()
             if self.native_process_io:
+                free_process_watch(job.process)
                 for stream in (job.process.stdout, job.process.stderr):
                     if stream is not None and not stream.closed:
                         stream.close()

@@ -228,6 +228,38 @@ class RustDispatchBudgetTests(unittest.TestCase):
                 proc.stdout.close()
                 proc.stderr.close()
 
+    def test_rust_keeps_exit_watcher_when_descendant_holds_pipes_open(self):
+        with mock.patch.dict(os.environ, {
+            "DRLINK_MCP_RUNTIME": "rust",
+            "DRLINK_MCP_NATIVE_LIBRARY": str(LIBRARY),
+        }):
+            proc = subprocess.Popen(
+                [sys.executable, "-c", (
+                    "import subprocess,sys; "
+                    "child=subprocess.Popen([sys.executable,'-c','import time; time.sleep(0.7)']); "
+                    "print(child.pid, flush=True)"
+                )], stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True,
+            )
+            captured = bytearray()
+            try:
+                first = runtime.drain_process(
+                    proc, on_stdout=captured.extend, on_stderr=lambda _chunk: None,
+                    timeout_seconds=3,
+                )
+                self.assertEqual(first, 9)
+                self.assertTrue(captured.strip().isdigit())
+                final = runtime.drain_process(
+                    proc, on_stdout=captured.extend, on_stderr=lambda _chunk: None,
+                    timeout_seconds=3, wait_for_eof=True,
+                )
+                self.assertEqual(final, 0)
+                self.assertEqual(proc.wait(timeout=1), 0)
+            finally:
+                if proc.poll() is None:
+                    proc.wait(timeout=3)
+                proc.stdout.close()
+                proc.stderr.close()
+
     def test_rust_capture_process_bounds_output_and_reaps_child(self):
         with mock.patch.dict(os.environ, {
             "DRLINK_MCP_RUNTIME": "rust",

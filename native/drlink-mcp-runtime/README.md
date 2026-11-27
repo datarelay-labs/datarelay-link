@@ -19,6 +19,8 @@ process-group cleanup authority. On the 2026-11-27 Apple Silicon retest, the
 timeout/retry watcher case passed, while capture-process cleanup received
 `EPERM` when signaling the completed child's process group. That denial remains
 a hard error; macOS executor qualification is blocked on this runner behavior.
+Drain status `9` identifies an exited leader whose descendants still hold a
+captured pipe; Python terminates the process group and performs a final EOF drain.
 
 The library is selected with `DRLINK_MCP_RUNTIME=rust` and
 `DRLINK_MCP_NATIVE_LIBRARY=/path/to/libdrlink_mcp_runtime.so`. `auto` loads an
