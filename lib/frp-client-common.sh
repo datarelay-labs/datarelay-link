@@ -5973,6 +5973,9 @@ frp_client_upgrade_backup_tools() {
   mkdir -p "$dest"
   chmod 700 "$(frp_client_upgrade_backup_root)" 2>/dev/null || true
   chmod 700 "$dest"
+  # An all-absent inventory is still a current-format snapshot. Preserve the
+  # layout marker so restore does not mistake it for a legacy basename dump.
+  mkdir -p "${dest}/files"
   while IFS=: read -r rel mode src; do
     [[ -n "$rel" ]] || continue
     live="$(frp_client_path "/${rel}")"
