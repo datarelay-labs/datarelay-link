@@ -234,29 +234,37 @@ Fixed TCP through the same authority
 
 기술 능력명: **Controlled Egress**. 일반 CLI/resource 이름: **Internet Access**.
 
-현재 Rust 마이그레이션의 R1은 Python이 승인하고 연결한 뒤의 양방향 TCP relay로
-범위를 제한합니다. MCP R2는 기존 Python dispatch 예산을 원자적으로 제한하는 Rust
-helper를 추가합니다. CLI, OAuth/AI Identity, AI Access 정책, SQLite 및 durable job,
-nonce, audit 권한은 Python에 유지됩니다. Rust relay가 없거나 재검증 callback이
-실패하거나 정책이 철회되면 연결을 닫습니다. native library가 없는 자동 모드에서는
-handoff 전에 Python relay를 사용하고, 명시적인 Rust 선택은 library 부재 시 fail-closed입니다.
+현재 소유자 결정에 따라 Rust를 제한된 native runtime의 장기 구현 언어로 선택했습니다.
+완료된 Python/Rust 측정은 과거 참고 자료이며 성능 비교는 구현 조건이 아닙니다. R1은
+Python이 승인하고 연결한 뒤 양방향 TCP relay를 Rust로 처리하고, 주기적인 정책 재검증과
+Python rollback 권한은 Python에 둡니다. MCP R2는 Rust가 dispatch admission, 1 MiB 결과
+보존 창/64 KiB cursor page, 64 KiB 요청 본문 읽기와 응답 쓰기 및 짧은 쓰기 재시도를
+처리합니다. CLI, OAuth/AI Identity, AI Access 정책, SQLite, durable job, nonce, audit,
+HTTP/TLS와 실제 socket 소유권은 Python에 유지됩니다. 자동 모드는 설치된 native library가
+있을 때만 Rust를 선택하며, 현재 installer에는 해당 `.so`/`.dylib`가 없어 Python을
+사용합니다. 명시적인 Rust 선택은 library 부재 시 fail-closed입니다.
 handoff 이후 세션을 Python relay로 재실행하지 않으며, 새 연결은 `DRLINK_EGRESS_RUNTIME=python`으로 기존 Python rollback 경로를
 선택할 수 있습니다. 각 방향의 relay queue는 256 KiB로 제한하며, peer hangup 뒤에도
 수신 EOF까지 대기 데이터를 전달하고 backpressure 중 유휴 descriptor를 poll에서 제외합니다.
 Rust MCP helper는 dispatch admission, 1 MiB 결과 보존 창/64 KiB cursor page, 64 KiB 제한
 inbound request body 읽기와 response 쓰기를 제공합니다. HTTP/TLS stream, JSON parsing,
-권한 판단은 계속 Python이 담당합니다. socket accept/connection lifecycle과 결과 대기 통합은 아직 남아 있습니다. R3 stdout/stderr drain은
-Linux/macOS Agent 및 Server 경로에 연결됐습니다. Linux 회귀는 통과했고, Apple Silicon 재검증에서 retry watcher 상태 손실과 정상 EOF 뒤 불필요한 process group 신호의 `EPERM`이 확인됐습니다. kqueue exit event를 호출 간 유지하고 완료된 EOF 뒤에는 group signal을 생략하도록 수정했으며 exact-head 재검증을 기다립니다. 실제 정리가 필요한 경로의 권한 거부는 계속 오류로 처리합니다. 두 Rust library는 아직 설치 패키지에 포함되지 않았고 실제 사용자
-E2E qualification도 진행 중입니다. MCP rollback은 `DRLINK_MCP_RUNTIME=python`이며,
+권한 판단과 durable result waiting은 계속 Python이 담당합니다. Rust listener/accept lifecycle은 아직 남아 있습니다. R3 stdout/stderr drain은
+Linux/macOS Agent 및 Server 경로에 연결됐습니다. Linux 회귀와 Apple Silicon workflow
+45936908695의 stateful kqueue lifecycle 검증이 통과했습니다. retry drain 사이에 exit event를
+유지하며, 정상 EOF 뒤 불필요한 process group signal을 보내지 않습니다. 실제 정리가
+필요한 경로의 권한 거부는 계속 오류로 처리합니다. 두 Rust library는 아직 설치 패키지에
+포함되지 않았고 실제 사용자 E2E qualification도 진행 중입니다. MCP rollback은
+`DRLINK_MCP_RUNTIME=python`이며,
 `auto`는 library가 없으면 Python으로 돌아가고 명시적 `rust` 선택은 library 부재 시
 서비스 초기화를 fail-closed 합니다.
 R3에서는 Python이 시작한 Linux/macOS Agent 및 Server executor 자식 프로세스의
 stdout/stderr pipe를 Rust가 poll하고 읽습니다. macOS는 timeout/retry drain 호출 사이에 유지되는 kqueue process-exit watcher로
-종료를 관찰하고, Linux는 waitid를 사용합니다. Apple Silicon에서는 retry watcher 상태 손실과 정상 종료 뒤 불필요한 group signal의 `EPERM`이 확인돼 수정했으며 재검증이 필요합니다. process 시작,
+종료를 관찰하고, Linux는 waitid를 사용합니다. Apple Silicon 재검증에서 정상 EOF와 descendant-held-pipe retry가 통과했습니다. process 시작,
 timeout 선택, process-group 종료, wait/reap 권한은 Python에 유지됩니다.
 또한 MCP job 출력은 Rust가 기존 1 MiB 보존 창과 64 KiB cursor 페이지를 제공하고,
-Python이 job 소유권과 cursor 검증, 응답 생성을 계속 담당합니다. socket connection lifecycle과 결과 대기는
-R2에 남아 있으며, native shared library의 설치 패키징은 아직 완료되지 않았습니다.
+Python이 job 소유권과 cursor 검증, 응답 생성을 계속 담당합니다. socket accept lifecycle과
+durable result waiting은 Python에 남아 있으며, native shared library의 설치 패키징은
+아직 완료되지 않았습니다.
 
 ### AI Access / MCP
 
