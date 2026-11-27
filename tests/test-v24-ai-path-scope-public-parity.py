@@ -158,6 +158,54 @@ class AiPathScopePublicParity(unittest.TestCase):
         self.assertIn("nonprivileged reader","".join(script.out))
         self.assertIsNone(self.plane.conn.execute("SELECT id FROM ai_policy_rules WHERE name='native-reader'").fetchone())
 
+    def test_management_to_reader_review_replaces_old_binding(self):
+        import pwd
+        from unittest.mock import patch
+        reader=pwd.getpwuid(os.geteuid()).pw_name
+        if os.geteuid()==0:
+            reader="nobody"
+        v24.set_permission_object(self.plane,"ops",permissions=["command-exec","file-read"],oneshot=True)
+        v24.set_ai_access_rule(self.plane,"native-to-reader",source="bot",destination="server:self",
+            permission="ops",paths=[self.vendor_glob],execution={"default":"root","accounts":["root"]},
+            enabled=True,confirm=True)
+        revision=self.plane.current_revision()
+        with self.assertRaisesRegex(v24.ControlPlaneError,"single nonprivileged reader"):
+            v24.set_ai_access_rule(self.plane,"native-to-reader",permission="read-only",confirm=True)
+        self.assertEqual(self.plane.current_revision(),revision)
+        script=ScriptedIO(["bot","server:self","read-only","","y","1"])
+        set_wizard_io(script)
+        with patch.object(self.plane,"native_mcp_reader_ready",return_value=True), \
+             patch.object(self.plane,"native_mcp_reader_account",return_value=reader,create=True):
+            rc,out,err=self._run("set","ai-access","native-to-reader")
+        self.assertEqual(rc,0,err)
+        row=self.plane.conn.execute("SELECT * FROM ai_policy_rules WHERE name='native-to-reader'").fetchone()
+        self.assertEqual(v24.ai_rule_execution(row),{"default":reader,"accounts":[reader]})
+        self.assertIn("Read-only executor: "+reader,"".join(script.out))
+        kwargs=dict(identity="bot",destination="server:self",local_accounts=["root",reader],
+                    reader_account=reader,operand=str(self.vendor/"app.log"))
+        self.assertEqual(v24.resolve_ai_execution_grant(self.plane,capability="read_file",**kwargs)["action"],"ALLOW")
+        self.assertEqual(v24.resolve_ai_execution_grant(self.plane,capability="read_file",run_as="root",**kwargs)["action"],"DENY")
+        self.assertEqual(v24.resolve_ai_execution_grant(self.plane,capability="exec",**kwargs)["action"],"DENY")
+
+    def test_native_invalid_account_roots_are_not_offered_as_ready(self):
+        import json,pwd
+        from unittest.mock import patch
+        import drlink_mcp_full_control as full
+        user=pwd.getpwuid(os.geteuid()).pw_name
+        settings={"DRLINK_MCP_SERVER_"+key:"1" for key in ("SELF_ENABLED","LOCAL_EXEC_ENABLED","FULL_CONTROL_ENABLED","ADMIN_ENABLED")}
+        settings["DRLINK_MCP_SERVER_ALLOWED_ROOTS"]=str(self.vendor)
+        settings["DRLINK_MCP_SERVER_READ_USER"]=user if os.geteuid()!=0 else ""
+        for cwd,roots in ((str(self.vendor),[str(self.vendor/"missing")]),
+                          (str(self.vendor/"missing"),[str(self.vendor)]),
+                          ("/",[str(self.vendor)])):
+            settings["DRLINK_MCP_SERVER_EXEC_ACCOUNTS"]=json.dumps({user:{"uid":os.geteuid(),"cwd":cwd,"roots":roots}})
+            with patch.object(self.plane,"_native_mcp_runtime_settings",return_value=settings):
+                self.assertEqual(self.plane.native_mcp_runtime_status()["readiness"],"Not ready")
+                self.assertEqual(self.plane.native_mcp_local_accounts(),[])
+                self.assertFalse(self.plane.native_mcp_reader_ready())
+                self.assertEqual(self.plane.native_mcp_account_details(),[])
+                self.assertEqual(self.plane.native_mcp_configured_profile()["accounts"],[user])
+
     def test_native_command_only_wizard_includes_cwd_scope(self):
         from unittest.mock import patch
         v24.set_permission_object(self.plane,"command-only",permissions=["host-info","command-exec"],oneshot=True)
@@ -275,6 +323,13 @@ class AiPathScopePublicParity(unittest.TestCase):
         doc = {"configurationBundle":{"context":"server","aiAccess":{"rules":[{"name":"multi-user",
              "execution":{"accounts":["root"],"default":"root"}}]}}}
         plan = prepare_v24_plan(self.plane, yaml.safe_dump(doc), role="server")
+        self.assertTrue(any("execution account" in warning.lower() for warning in plan.security_impact))
+        from unittest.mock import patch
+        from drlink_control_plane import ConfirmationRequired
+        with patch.dict(os.environ,{"DRLINK_CONFIRM":"no"}):
+            with self.assertRaises(ConfirmationRequired):
+                apply_v24_plan(self.plane, plan, confirm=False)
+        self.assertEqual(stored(),binding)
         apply_v24_plan(self.plane, plan, confirm=True)
         self.assertEqual(stored(), {"accounts":["root"],"default":"root"})
         doc["configurationBundle"]["aiAccess"]["rules"][0] = {"name":"multi-user","paths":[self.vendor_glob]}

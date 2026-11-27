@@ -817,6 +817,14 @@ def _security_impact_for_plan(plane: ControlPlane, context: str, body: dict, cha
             if not rule_name:
                 continue
             if family == "ai":
+                if "execution" in item:
+                    row = plane.conn.execute("SELECT * FROM ai_policy_rules WHERE name=? COLLATE NOCASE",(rule_name,)).fetchone()
+                    old = v24.ai_rule_execution(row) if row is not None else None
+                    new = item["execution"]
+                    if old != new and item.get("enabled", bool(row["enabled"]) if row is not None else True):
+                        add("WARNING: Review AI Access execution accounts and actual OS authority for Rule '%s'.\nBefore: %s\nAfter: %s" %
+                            (rule_name, json.dumps(old,sort_keys=True),json.dumps(new,sort_keys=True)),
+                            broaden=True)
                 hit = v24.ai_access_rule_update_security_impact(
                     plane,
                     rule_name,

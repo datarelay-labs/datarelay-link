@@ -4907,6 +4907,19 @@ def set_ai_access_rule(
             ) from None
     if permission is not None:
         expand_permissions(plane_db, permission)
+    # A previously reviewed management account set cannot be reused as a
+    # read-only executor binding. Validate the canonical Rule on every
+    # account/permission edit, including ConfigurationBundle apply.
+    if server_target and enabled is not False and (permission is not None or execution is not None or enabled is True):
+        wanted = (expand_permissions(plane_db, permission) if permission is not None else
+                  _ai_rule_permissions(plane_db, existing) if existing is not None else set())
+        read_only = wanted <= {"host-info","process-read","file-read"} and bool(wanted & {"process-read","file-read"})
+        prior = ai_rule_execution(existing) if existing is not None else None
+        binding = execution if execution is not None else prior
+        if read_only and binding is not None and (len(binding["accounts"]) != 1 or binding["default"] == "root"):
+            raise ControlPlaneError(
+                "Read-only This Server access requires a single nonprivileged reader binding. "
+                "Review the Rule in set ai-access or explicitly supply the configured reader; no changes were applied.")
 
     def write():
         ensure_policy_mode(plane_db, "ai", mode or "whitelist", oneshot=oneshot and existing is None)
@@ -5592,6 +5605,8 @@ def _resolve_ai_execution_grant(
                         (legacy_rule_ids is None or (migrated_rule and
                          legacy_rule_ids[row["id"]] == legacy_execution_rule_fingerprint(plane_db, row))))
         if legacy_grant:
+            if readonly and (reader_account is None or reader_account != legacy_account):
+                continue
             binding = {"default": legacy_account, "accounts": [legacy_account]}
         elif migrated_rule and binding is None:
             # A changed legacy rule must be explicitly rebound, never switch

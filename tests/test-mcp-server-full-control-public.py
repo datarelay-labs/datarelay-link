@@ -412,6 +412,19 @@ class NativeFullControlPublicTests(unittest.TestCase):
             self.assertTrue(original.done.wait(3))
             self.assertLess(original.process.returncode, 0)
 
+    def test_legacy_read_only_cannot_inherit_administrative_singleton(self):
+        self.cli("set","permission-object","reader-only","permissions","host-info,file-read")
+        self.cli("set","ai-access",self.rule("other"),"permission","reader-only")
+        kwargs=dict(identity=self.identities["other"],destination="server:self",
+                    capability="read_file",operand=str(self.root/"example.txt"))
+        grant=v24.resolve_ai_execution_grant(self.plane,local_accounts=["root","aella"],
+            legacy_account="root",reader_account=None,**kwargs)
+        self.assertEqual(grant["action"],"DENY")
+        grant=v24.resolve_ai_execution_grant(self.plane,local_accounts=["root","aella"],
+            legacy_account="aella",reader_account="aella",**kwargs)
+        self.assertEqual(grant["action"],"ALLOW")
+        self.assertEqual(grant["account"],"aella")
+
     def test_discover_context_and_omit_cwd_without_widening_scope(self):
         ctx = self.allowed("get_server", {})["execution_context"]
         self.assertEqual(ctx["state"], "configured")

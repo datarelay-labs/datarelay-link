@@ -6687,47 +6687,48 @@ class ControlPlane:
         from drlink_mcp_full_control import execution_profile_status
         return execution_profile_status(self._native_mcp_runtime_settings())
 
-    def native_mcp_local_accounts(self) -> list[str]:
-        """Local administrator wizard only: validated current approved OS accounts."""
-        from drlink_mcp_full_control import _profile_accounts, execution_profile_status, FullControlDenied
-        settings = self._native_mcp_runtime_settings()
-        if execution_profile_status(settings)["readiness"] != "Configured":
-            return []
+    def _native_mcp_verified_accounts(self, settings):
+        """Use the executor's own account and cwd validation for operator choices."""
+        import drlink_mcp_full_control as full
+        if full.execution_profile_status(settings)["readiness"] != "Configured":
+            return {}
         try:
-            return sorted(_profile_accounts(settings))
-        except FullControlDenied:
-            return []
+            return full.eligible_accounts(settings)
+        except (full.FullControlDenied, OSError, ValueError, RuntimeError):
+            return {}
+
+    def native_mcp_configured_profile(self) -> dict:
+        """Operator repair hint only, never an authorization or readiness claim."""
+        import drlink_mcp_full_control as full
+        settings = self._native_mcp_runtime_settings()
+        if not settings:
+            return {}
+        try:
+            entries = full._profile_accounts(settings)
+        except full.FullControlDenied:
+            return {}
+        return {"accounts":sorted(entries),
+                "roots":settings.get("DRLINK_MCP_SERVER_ALLOWED_ROOTS","").split(os.pathsep),
+                "reader":settings.get("DRLINK_MCP_SERVER_READ_USER") or None}
+
+    def native_mcp_local_accounts(self) -> list[str]:
+        return sorted(self._native_mcp_verified_accounts(self._native_mcp_runtime_settings()))
+
+    def native_mcp_reader_account(self) -> str | None:
+        import drlink_mcp_full_control as full
+        settings = self._native_mcp_runtime_settings()
+        accounts = self._native_mcp_verified_accounts(settings)
+        return full.reader_execution_account(accounts, settings) if accounts else None
 
     def native_mcp_reader_ready(self) -> bool:
-        from drlink_mcp_full_control import _profile_accounts, execution_profile_status, FullControlDenied
-        import pwd
-        settings = self._native_mcp_runtime_settings()
-        if execution_profile_status(settings)["readiness"] != "Configured":
-            return False
-        try:
-            accounts = _profile_accounts(settings)
-            reader = settings.get("DRLINK_MCP_SERVER_READ_USER") or (
-                settings.get("DRLINK_MCP_SERVER_EXEC_USER") if "DRLINK_MCP_SERVER_EXEC_ACCOUNTS" not in settings else None)
-            return bool(reader in accounts and pwd.getpwnam(reader).pw_uid != 0)
-        except (FullControlDenied, KeyError):
-            return False
+        return self.native_mcp_reader_account() is not None
 
     def native_mcp_account_details(self) -> list[dict]:
-        from drlink_mcp_full_control import _profile_accounts, execution_profile_status, FullControlDenied
-        import pwd
-        settings = self._native_mcp_runtime_settings()
-        if execution_profile_status(settings)["readiness"] != "Configured":
-            return []
-        try:
-            result = []
-            for name, entry in sorted(_profile_accounts(settings).items()):
-                user = pwd.getpwnam(name)
-                result.append({"account":name,"uid":user.pw_uid,
-                    "cwd":entry.get("cwd") or user.pw_dir,
-                    "roots":entry.get("roots") or settings["DRLINK_MCP_SERVER_ALLOWED_ROOTS"].split(os.pathsep)})
-            return result
-        except (FullControlDenied, KeyError, OSError):
-            return []
+        import drlink_mcp_full_control as full
+        accounts = self._native_mcp_verified_accounts(self._native_mcp_runtime_settings())
+        return [{"account":name,"uid":account.uid,
+                 "cwd":full.default_cwd(account),"roots":list(account.roots)}
+                for name,account in sorted(accounts.items())]
 
     def native_mcp_grant_test(self, identity, permission, path=None) -> list[dict]:
         """Resolve configured complete grants, not a live authenticated OS test."""

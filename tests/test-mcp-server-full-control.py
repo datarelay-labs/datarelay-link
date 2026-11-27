@@ -35,6 +35,7 @@ class FullControlRuntimeTests(unittest.TestCase):
             "DRLINK_MCP_SERVER_FULL_CONTROL_ENABLED": "1",
             "DRLINK_MCP_SERVER_EXEC_USER": self.account.pw_name,
             "DRLINK_MCP_SERVER_ALLOWED_ROOTS": str(self.root),
+            "DRLINK_MCP_SERVER_DEFAULT_CWD": str(self.root),
             "DRLINK_MCP_SERVER_ADMIN_ENABLED": "1" if os.geteuid() == 0 else "0",
             "DRLINK_TEST_DO_NOT_INHERIT": "fixture-not-a-real-secret",
         })

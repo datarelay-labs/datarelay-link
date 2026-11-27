@@ -1241,6 +1241,13 @@ def run_ai_access_wizard(plane: ControlPlane, name: str, *, source_identity=None
                         raise WizardCancelled()
                     if _configure_mcp_local_execution(plane, io) != 0 or not plane.native_mcp_reader_ready():
                         raise ControlPlaneError("Nonprivileged reader is not verified; no Rule was applied.")
+                reader = plane.native_mcp_reader_account()
+                if not reader:
+                    raise ControlPlaneError("Nonprivileged reader changed during review; no Rule was applied.")
+                # Automatically propose the single verified reader, never retain
+                # the old management binding or add a selectable shell account.
+                execution = v24.normalize_ai_execution_binding({"default":reader,"accounts":[reader]})
+                _emit(io, "Read-only executor: " + reader + " (no command execution)")
             if "command-exec" in capabilities:
                 _emit(io, "Command execution uses the target OS account and is not a filesystem sandbox. Review the target execution controls.")
             enabled = _ask_yes_no(io, "Enabled", default=True)
@@ -1409,15 +1416,23 @@ def _configure_mcp_local_execution(plane, io):
             return "Execution account does not exist."
         return None
     previous = plane.native_mcp_local_accounts()
+    configured = plane.native_mcp_configured_profile()
     replace = False
-    if previous:
+    if configured and not previous:
+        _emit(io, "Existing local execution profile is not ready. Review replacement; existing authority will not be inherited automatically.")
+        if not _ask_yes_no(io, "Review replacement of the invalid profile?", default=False):
+            raise WizardCancelled()
+        replace = True
+        previous = configured["accounts"]
+    elif previous:
         replace = _ask_choice(io, "Existing Server execution profile",
             ["Add accounts (preserve existing scopes)", "Replace accounts and paths (review effective Rule impact)"]) == "Replace accounts and paths (review effective Rule impact)"
     users = _ask_text(io, "Eligible OS accounts (comma separated)",
                       default=",".join(previous) or None, validate=valid_users).split(",")
     old_roots = sorted({root for item in plane.native_mcp_account_details() for root in item["roots"]})
+    # No implicit filesystem-wide fallback when repairing a bad profile.
     roots = _ask_text(io, "Direct file roots / initial directories (colon separated)",
-                      default=":".join(old_roots) or "/")
+                      default=":".join(old_roots) or (None if configured else "/"))
     argv = [sys.executable, "/usr/local/lib/drlink/operator-native-mcp-full-control.py", "--configure-installed"]
     if replace:
         argv.append("--replace-profile")

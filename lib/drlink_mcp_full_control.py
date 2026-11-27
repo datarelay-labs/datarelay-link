@@ -115,6 +115,16 @@ def execution_profile_status(settings: dict | None) -> dict:
             return result("Not ready", "Configured root is missing or invalid")
     except OSError:
         return result("Not ready", "Configured root cannot be verified")
+    if status["full"]:
+        try:
+            accounts = eligible_accounts(settings)
+            if set(accounts) != set(entries):
+                return result("Not ready", "An approved execution account or its local roots is unavailable")
+            for account in accounts.values():
+                allowed_cwd(default_cwd(account), ["/**"], account)
+            legacy_execution_rule_ids(settings)
+        except (FullControlDenied, OSError, ValueError, RuntimeError):
+            return result("Not ready", "Configured default directory or legacy grant snapshot is invalid")
     return result("Configured", "Execution profile configured; effective AI Access and live operation must be verified")
 
 
@@ -231,6 +241,8 @@ def eligible_accounts(settings=None) -> dict[str, Account]:
 def reader_execution_account(accounts: dict[str, Account], settings=None) -> str | None:
     settings = os.environ if settings is None else settings
     reader = settings.get("DRLINK_MCP_SERVER_READ_USER")
+    if not reader and "DRLINK_MCP_SERVER_EXEC_ACCOUNTS" not in settings:
+        reader = settings.get("DRLINK_MCP_SERVER_EXEC_USER")
     if reader in accounts and accounts[reader].uid != 0:
         return reader
     return None
