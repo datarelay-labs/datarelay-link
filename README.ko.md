@@ -295,6 +295,13 @@ stdin writer가 없거나 최종 drain이 시간 초과해도 Python이 소유�
 Python이 자식을 시작한 뒤 명시적 Rust 런타임 library 로드가 실패하는 경우에도
 소유 프로세스 그룹을 종료하고 자식을 reap하며 stdout/stderr와 watcher를 정리한 후
 오류를 반환합니다. 이 경우에도 계정 및 프로세스 수명 주기 권한은 Python에 남습니다.
+Apple Silicon exact-head 재검증에서 leader 종료 직후 첫 8 KiB만 읽고 status 9를
+반환해 정상 자식의 나머지 buffered 출력이 EOF까지 처리되지 않는 결함을 찾았습니다.
+Rust helper는 즉시 읽을 수 있는 양쪽 pipe 데이터를 EOF까지 계속 drain하고, 데이터가
+없는데 pipe가 열린 경우에만 descendant-held 상태 9를 반환하도록 수정했습니다. 기존
+210 KiB 양방향 출력 회귀와 Apple Silicon process lifecycle, client-port 및 pinned FRP
+검증이 exact source `be9b8f3` workflow `46062751724`에서 통과했습니다. 새 native package와
+full local gate 검증은 계속 진행 중입니다.
 이전 Agent helper의 flat snapshot은 manifest 경로가 파일 basename 하나에 유일하게 대응할 때만
 복구합니다. 새 native 파일은 Python fallback을 복구하도록 제거합니다. 중복 basename이나
 모호한 경로는 설치 파일을 변경하기 전에 거부합니다.

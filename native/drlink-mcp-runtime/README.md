@@ -37,6 +37,14 @@ errors. On macOS, `auto` skips an older
 library without the stateful ABI and uses Python; explicit Rust selection fails
 closed.
 
+The exact Apple Silicon rerun on `88e6f61` found that the drainer could return
+status `9` after one 8 KiB read even though more normal child output remained
+buffered. It now continues zero-timeout polling and draining until both streams
+reach EOF, returning `9` only when buffered bytes are exhausted and a pipe is
+still open. The existing 210 KiB dual-pipe regression now passes on the native
+Apple Silicon runner. Workflow `46062751724` at `be9b8f3` passed process
+lifecycle, client-port, and pinned FRP verification.
+
 The Python owner always releases the native process watcher when a capture
 ends, including a final EOF timeout when no stdin writer was created. A final
 drain failure is not reported as complete output: Agent capture raises after
