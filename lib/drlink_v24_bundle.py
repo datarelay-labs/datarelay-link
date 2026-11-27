@@ -66,7 +66,7 @@ REMOTE_SERVICE_KEYS = frozenset({"name", "destination", "service", "enabled", "s
 ACCESS_SECTION_KEYS = frozenset({"mode", "enforcement", "rules", "state"})
 ACCESS_RULE_KEYS = frozenset({"name", "source", "destination", "service", "enabled", "state", "mode"})
 AI_RULE_KEYS = frozenset(
-    {"name", "source", "destination", "permission", "paths", "enabled", "state", "mode"}
+    {"name", "source", "destination", "permission", "paths", "execution", "enabled", "state", "mode"}
 )
 
 
@@ -407,6 +407,11 @@ def _validate_access_rule(item: dict, *, family: str) -> dict:
         if not isinstance(perm, str) or not perm.strip():
             _bundle_error("Rule '%s' is missing required field 'permission'." % name)
         out["permission"] = perm.strip()
+        if "execution" in item:
+            try:
+                out["execution"] = v24.normalize_ai_execution_binding(item["execution"])
+            except ControlPlaneError as exc:
+                _bundle_error("Rule '%s': %s" % (name, exc))
         if "paths" in item:
             raw_paths = item.get("paths")
             if raw_paths is None:
@@ -570,6 +575,7 @@ def _ai_rule_view(plane: ControlPlane, row) -> dict:
         "destination_kind": kind,
         "permission_kind": pkind,
         "paths": v24.list_ai_policy_path_scopes(plane, row["name"]),
+        "execution": v24.ai_rule_execution(row),
     }
 
 
@@ -592,8 +598,8 @@ def _materialize_existing_access_rule_patch(
         if existing is None:
             return item
         view = _ai_rule_view(plane, existing)
-        for field in ("source", "destination", "permission", "enabled", "paths"):
-            if field not in out:
+        for field in ("source", "destination", "permission", "enabled", "paths", "execution"):
+            if field not in out and view[field] is not None:
                 out[field] = copy.deepcopy(view[field])
         return out
 
@@ -643,6 +649,8 @@ def _rule_matches_desired(plane: ControlPlane, family: str, existing, desired: d
         if "paths" in desired:
             if not _group_members_equal(list(view.get("paths") or []), list(desired.get("paths") or [])):
                 return False
+        if "execution" in desired and desired["execution"] != view["execution"]:
+            return False
         return True
     view = plane._rule_view(existing)
     if "enabled" in desired and bool(view["enabled"]) != bool(desired["enabled"]):
@@ -2129,6 +2137,7 @@ def _apply_one(plane: ControlPlane, change: dict, *, server_reachable_override: 
                     destination=item.get("destination"),
                     permission=item.get("permission"),
                     paths=item.get("paths") if "paths" in item else None,
+                    execution=item.get("execution"),
                     enabled=bool(enabled),
                     oneshot=True,
                     confirm=True,
@@ -2484,6 +2493,8 @@ def export_configuration_v24(plane: ControlPlane) -> str:
                 }
                 # Always export path scopes so same-state reapply is NO CHANGE.
                 rule_doc["paths"] = list(view.get("paths") or [])
+                if view["execution"] is not None:
+                    rule_doc["execution"] = view["execution"]
                 rules.append(rule_doc)
             body["aiAccess"] = {
                 "mode": pol["mode"],

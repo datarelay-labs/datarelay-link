@@ -65,7 +65,7 @@ class CompletionInventoryTests(unittest.TestCase):
             "permission-group": ["members"],
             "permission-object": ["permissions"],
             "internet-access": ["mode", "source", "destination", "service", "enabled", "disabled"],
-            "ai-access": ["source", "destination", "permission", "paths", "enabled", "disabled"],
+            "ai-access": ["source", "destination", "permission", "paths", "accounts", "default-account", "enabled", "disabled"],
             "remote-service": ["destination", "service", "enabled", "disabled"],
         }.items():
             role = "client" if resource == "remote-service" else "server"

@@ -111,6 +111,44 @@ class AiPathScopePublicParity(unittest.TestCase):
         self.plane.record_ai_executor_platform("a" * 32, "posix")
         self.assertEqual(self._auth("read_file", operand="C:/Data/report.txt")["action"], "DENY")
 
+    def test_execution_binding_cli_bundle_roundtrip_and_omitted_edit(self):
+        import yaml
+        v24.set_permission_object(self.plane, "ops", permissions=["host-info", "command-exec"], oneshot=True)
+        rc, out, err = self._run("set", "ai-access", "multi-user", "source", "bot",
+            "destination", "server:self", "permission", "ops", "paths", self.vendor_glob,
+            "accounts", "aella,root", "default-account", "aella", "enabled")
+        self.assertEqual(rc, 0, err)
+        binding = {"accounts":["aella","root"],"default":"aella"}
+        def stored():
+            row = self.plane.conn.execute("SELECT * FROM ai_policy_rules WHERE name='multi-user'").fetchone()
+            return v24.ai_rule_execution(row)
+        self.assertEqual(stored(), binding)
+        rc, out, err = self._run("show", "ai-access", "multi-user")
+        self.assertEqual(rc, 0, err)
+        self.assertIn("Default account: aella", out)
+        self.assertIn("aella, root", out)
+        revision = self.plane.current_revision()
+        rc, out, err = self._run("set", "ai-access", "multi-user", "accounts", "root")
+        self.assertNotEqual(rc, 0)
+        self.assertEqual(self.plane.current_revision(), revision)
+        self.assertEqual(stored(), binding)
+        data = yaml.safe_load(export_configuration_v24(self.plane))
+        rule = next(item for item in data["configurationBundle"]["aiAccess"]["rules"] if item["name"]=="multi-user")
+        self.assertEqual(rule["execution"], binding)
+        doc = {"configurationBundle":{"context":"server","aiAccess":{"rules":[{"name":"multi-user",
+             "execution":{"accounts":["root"],"default":"root"}}]}}}
+        plan = prepare_v24_plan(self.plane, yaml.safe_dump(doc), role="server")
+        apply_v24_plan(self.plane, plan, confirm=True)
+        self.assertEqual(stored(), {"accounts":["root"],"default":"root"})
+        doc["configurationBundle"]["aiAccess"]["rules"][0] = {"name":"multi-user","paths":[self.vendor_glob]}
+        plan = prepare_v24_plan(self.plane, yaml.safe_dump(doc), role="server")
+        apply_v24_plan(self.plane, plan, confirm=True)
+        self.assertEqual(stored(), {"accounts":["root"],"default":"root"})
+        doc["configurationBundle"]["aiAccess"]["rules"][0]["execution"] = {"accounts":["aella"],"default":"root"}
+        with self.assertRaises(Exception):
+            prepare_v24_plan(self.plane, yaml.safe_dump(doc), role="server")
+        self.assertEqual(stored(), {"accounts":["root"],"default":"root"})
+
     def test_cli_can_configure_path_scopes_for_file_rule(self):
         rc, _out, err = self._run(
             "set",

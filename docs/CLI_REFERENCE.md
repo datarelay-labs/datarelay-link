@@ -213,6 +213,7 @@ set ai-access claude-prod source claude destination production-servers permissio
 set ai-access trusted-hosts source claude destination managed-hosts:trusted permission read-only paths /var/log/** enabled
 set ai-access developers-read source claude destination managed-host-group:developers permission read-only paths /var/log/** enabled
 set ai-access allow-read source automation-ai destination ubuntu-prod permission read-only paths '/var/lib/vendor/**',/opt/app/** enabled
+set ai-access allow-dev source chatgpt destination server:self permission operations paths /** accounts aella,root default-account aella enabled
 ```
 
 File permissions (`file-read` / `file-write` / `file-upload` / `file-download`) use rule-bound `paths` scopes. Omit `paths` on edit to preserve existing scopes; use `paths -` or `paths none` to clear. Missing scopes remain fail-closed at runtime (no unrestricted filesystem default).

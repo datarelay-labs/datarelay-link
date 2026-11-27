@@ -1224,6 +1224,11 @@ def _show_ai_policy(plane: ControlPlane, rest: list[str]) -> int:
         ),
         "Enabled     : %s" % ("YES" if row["enabled"] else "NO"),
     ]
+    binding = v24.ai_rule_execution(row)
+    if binding:
+        lines.append("Accounts    : %s" % ", ".join(binding["accounts"]))
+        lines.append("Default account: %s" % binding["default"])
+        lines.append("Execution eligibility: target-local approval required")
     if pol.get("mode"):
         lines.append("Mode        : %s" % str(pol["mode"]).upper())
         lines.append("Enforcement : %s" % str(pol.get("enforcement") or "-").upper())
@@ -1630,9 +1635,9 @@ def handle_set(plane: ControlPlane, rest: list[str]) -> Optional[int]:
             return run_wizard(plane, "ai-access", name)
         kv = v24.parse_kv_tokens(
             extra,
-            allowed={"source", "destination", "permission", "paths", "enabled"},
+            allowed={"source", "destination", "permission", "paths", "accounts", "default-account", "enabled"},
             resource="AI Access",
-            allowed_hint="source, destination, permission, paths, enabled|disabled",
+            allowed_hint="source, destination, permission, paths, accounts, default-account, enabled|disabled",
         )
         enabled = None
         if "enabled" in kv:
@@ -1642,6 +1647,14 @@ def handle_set(plane: ControlPlane, rest: list[str]) -> Optional[int]:
         paths = None
         if "paths" in kv:
             paths = v24.parse_ai_paths_field(kv.get("paths"))
+        execution = None
+        if "accounts" in kv or "default-account" in kv:
+            if "accounts" not in kv or "default-account" not in kv:
+                raise ControlPlaneError("Supply accounts and default-account together. No changes were applied.")
+            execution = v24.normalize_ai_execution_binding({
+                "default": kv["default-account"],
+                "accounts": kv["accounts"].split(","),
+            })
         result = _run(
             v24.set_ai_access_rule,
             plane,
@@ -1650,6 +1663,7 @@ def handle_set(plane: ControlPlane, rest: list[str]) -> Optional[int]:
             destination=kv.get("destination"),
             permission=kv.get("permission"),
             paths=paths,
+            execution=execution,
             enabled=enabled,
             oneshot=True,
         )
