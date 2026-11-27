@@ -724,6 +724,20 @@ frpctl_nav_prompt_id 'Name: '
             self.assertNotIn("BrokenPipeError", proc.stderr)
             self.assertNotIn("Traceback", proc.stderr)
 
+    def test_server_status_handles_early_pipe_close(self):
+        env = dict(os.environ, FRP_CTL_TEST_ROOT=self.tmp)
+        for n in (1, 16):
+            for _ in range(3):
+                proc = subprocess.run(
+                    ["bash", "-o", "pipefail", "-c",
+                     'bash "$1" system status | head -n "$2"', "status-pipeline",
+                     str(ROOT / "tools/drlink"), str(n)],
+                    env=env, capture_output=True, text=True, timeout=30,
+                )
+                self.assertEqual(proc.returncode, 0, proc.stderr)
+                self.assertNotIn("BrokenPipeError", proc.stderr)
+                self.assertNotIn("Traceback", proc.stderr)
+
     def test_generated_enrollment_guidance_uses_agent_nouns(self):
         loader = importlib.machinery.SourceFileLoader(
             "enrollment_guidance_regression", str(ROOT / "tools/frp-create-client")
@@ -738,24 +752,12 @@ frpctl_nav_prompt_id 'Name: '
                 600, "203.0.113.10", 443, "https://203.0.113.10/enroll", "0" * 64,
                 "https://203.0.113.10/artifacts/agent/bootstrap-client.sh",
             )
-            enrollment.print_one_line(
-                "bt1." + "a" * 16 + "." + "b" * 64, 600, "", "203.0.113.10", 443,
-                "https://203.0.113.10/enroll", "0" * 64,
-                "https://203.0.113.10/artifacts/agent/bootstrap-client.sh",
-                "", 22, cfg={"bootstrap_hostname":"bootstrap.example.test"},
-                short_handle="A"*22,
-            )
-            enrollment.print_one_line_windows(
-                "bt1." + "a" * 16 + "." + "b" * 64, 600, "", "203.0.113.10", 443,
-                "https://203.0.113.10/enroll", "0" * 64,
-                "https://203.0.113.10/artifacts/agent/bootstrap-client.ps1",
-                cfg={"bootstrap_hostname":"bootstrap.example.test"},
-                short_handle="A"*22,stage1_sha256="c"*64,
-            )
+            for platform in ("linux","windows"):
+                enrollment.print_entry_command("bootstrap.example.test","A3xK9mP2",platform,600,"a"*16)
         rendered = output.getvalue()
         self.assertIn("Agent install:", rendered)
         self.assertIn("Zero-touch Agent command", rendered)
-        self.assertIn("Zero-touch Windows Agent command", rendered)
+        self.assertIn("iex(curl.exe -kfsS https://bootstrap.example.test/A3xK9mP2|Out-String)", rendered)
         self.assertNotRegex(rendered, r"(?i)\bclient (install|command|after enrollment)")
         errors = io.StringIO()
         with redirect_stderr(errors), self.assertRaises(SystemExit):
@@ -1249,8 +1251,8 @@ frpctl_nav_workflow manage_host
                        ["set", "enrollment", "manual"],
                        ["system", "certificate", "issue"],
                        ["system", "certificate", "renew"],
-                       ["system", "credential", "deny-oauth"],
-                       ["system", "credential", "approve-oauth"]):
+                       ["set", "ai-identity", "example-ai", "deny"],
+                       ["set", "ai-identity", "example-ai", "approve"]):
             with self.subTest(tokens=tokens):
                 text = grammar.help_text(tokens, "server")
                 self.assertFalse(text.startswith("Unknown help topic:"), text)
@@ -1507,18 +1509,18 @@ frpctl_nav_workflow manage_host
                     self.assertIn("Confirmation: %s" % confirmation, text)
 
     def test_ai_credential_and_oauth_leaf_risk_metadata_is_truthful(self):
-        rows = json.loads((LIB / "frp_cli_final_commands.json").read_text(encoding="utf-8"))
-        by_path = {tuple(row["path"]): row for row in rows}
         expected = {
-            ("system", "credential", "rotate", "ai-identity"): (True, "security_change"),
-            ("system", "credential", "revoke", "ai-identity"): (True, "outage"),
-            ("system", "credential", "configure", "ai-identity"): (True, "security_change"),
-            ("system", "credential", "approve-oauth"): (False, "security_widening"),
-            ("system", "credential", "deny-oauth"): (False, "security_change"),
+            "rotate": (True, "security_change"),
+            "revoke": (True, "outage"),
+            "authentication": (True, "security_change"),
+            "oauth-redirect": (True, "security_change"),
+            "approve": (False, "security_widening"),
+            "deny": (False, "security_change"),
         }
-        for path, (destructive, risk) in expected.items():
-            with self.subTest(path=path):
-                row = by_path[path]
+        for action, (destructive, risk) in expected.items():
+            with self.subTest(action=action):
+                path = ["set", "ai-identity", "example-ai", action]
+                row = catalog.find(path, role="server")
                 self.assertEqual(bool(row["destructive"]), destructive)
                 self.assertEqual(row["risk"], risk)
                 self.assertEqual(row["confirmation"], "none")
@@ -1533,11 +1535,11 @@ frpctl_nav_workflow manage_host
         ai = (ROOT / "docs/AI_ACCESS_MCP.md").read_text(encoding="utf-8")
         required_server = (
             "system backup validate <FILE>",
-            "system credential rotate ai-identity <IDENTITY>",
-            "system credential revoke ai-identity <IDENTITY>",
-            "system credential configure ai-identity <IDENTITY> authentication <static-bearer|oauth>",
-            "system credential approve-oauth <PENDING-ID> [AI-IDENTITY]",
-            "system credential deny-oauth <PENDING-ID>",
+            "set ai-identity <IDENTITY> rotate",
+            "set ai-identity <IDENTITY> revoke",
+            "set ai-identity <IDENTITY> authentication <static-bearer|oauth>",
+            "set ai-identity <IDENTITY> approve <PENDING-ID>",
+            "set ai-identity <IDENTITY> deny <PENDING-ID>",
             "system update check-engine",
         )
         for command in required_server:
@@ -1554,7 +1556,7 @@ frpctl_nav_workflow manage_host
         self.assertNotIn("BLACKLIST / WHITELIST", internet)
         self.assertIn("WHITELIST-only", ai)
         self.assertIn("deny-by-default", ai)
-        self.assertIn("mode whitelist", ai)
+        self.assertNotIn("mode whitelist", ai)
         self.assertNotIn("blacklist|whitelist", ai)
 
     def test_wrong_role_context_help_fails_with_ownership_guidance(self):
@@ -1646,7 +1648,7 @@ frpctl_nav_workflow manage_host
             (["unset", "remote-access", "?"], "unset remote-access <RULE>", "policy"),
             (["unset", "internet-access", "?"], "unset internet-access <RULE>", "policy"),
             (["unset", "ai-access", "?"], "unset ai-access <RULE>", "policy"),
-            (["unset", "mcp-tls", "?"], "unset mcp-tls", "purge"),
+            (["unset", "server", "mcp", "?"], "unset server mcp", "purge"),
             (["system", "diff", "?"], "system diff <REVISION_A> <REVISION_B>", "configuration"),
             (["system", "backup", "?"], "system backup [<path>]", "validate"),
         )
@@ -1657,7 +1659,7 @@ frpctl_nav_workflow manage_host
             self.assertIn(usage, text, (tokens, text))
             self.assertIn(child, text, (tokens, text))
 
-        tls = grammar.match(["unset", "mcp-tls", "?"], role="server")
+        tls = grammar.match(["unset", "server", "mcp", "?"], role="server")
         tls_text = tls.get("message") or ""
         self.assertIn("Risk: outage", tls_text)
         self.assertIn("retaining DRLink-owned certificate", tls_text)
@@ -1716,7 +1718,7 @@ frpctl_nav_workflow manage_host
     def test_mcp_tls_purge_metadata_explains_interactive_only_contract(self):
         rows = json.loads((LIB / "frp_cli_final_commands.json").read_text(encoding="utf-8"))
         by_path = {tuple(row["path"]): row for row in rows}
-        purge = by_path[("unset", "mcp-tls", "purge")]
+        purge = by_path[("unset", "server", "mcp", "purge")]
         detail = str(purge.get("detail") or "").lower()
         self.assertTrue(purge["destructive"])
         self.assertEqual(purge["risk"], "irreversible")

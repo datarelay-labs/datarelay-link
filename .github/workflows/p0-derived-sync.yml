@@ -35,11 +35,12 @@ jobs:
           set -euo pipefail
           ./scripts/build-release-artifacts.sh
           diff="$(git diff --name-only)"
-          if printf '%s\n' "$diff" | grep -Ev '^(dist/bootstrap-(server|client)\.(sh|ps1)|SHA256SUMS|release-manifest\.json|dist/sbom\.spdx\.json)$' | grep -q .; then
+          if printf '%s\n' "$diff" | grep -Ev '^(dist/bootstrap-(server|client)\.(sh|ps1)|dist/bootstrap-server-online\.sh|dist/bootstrap-server-core\.tar|SHA256SUMS|release-manifest\.json|dist/sbom\.spdx\.json)$' | grep -q .; then
             echo 'Unexpected source change while regenerating artifacts'
             exit 1
           fi
           git add -- dist/bootstrap-server.sh dist/bootstrap-client.sh \
+            dist/bootstrap-server-online.sh dist/bootstrap-server-core.tar \
             dist/bootstrap-client.ps1 SHA256SUMS release-manifest.json
           if git ls-files --error-unmatch dist/sbom.spdx.json >/dev/null 2>&1; then
             git add -- dist/sbom.spdx.json

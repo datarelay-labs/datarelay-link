@@ -109,13 +109,17 @@ if grep -nE 'curl[[:space:]]+[^|]*--cacert[[:space:]]+[^ ]+[[:space:]]+https://[
 fi
 pass "MANUAL_CA_BOOTSTRAP_DOCS"
 
-# Production verification must not recommend curl -k. A commented transport-only
-# diagnostic in DEPLOYMENT_MODES.md is the only allowed occurrence.
+# Production verification must not recommend curl -k. The fixed Zero-Touch
+# entry is a separately documented, owner-approved first-fetch exception,
+# never a TLS verification flow. Require both exact examples and the warning.
 if grep -nE '^[[:space:]]*curl[[:space:]].*((^|[[:space:]])-k([[:space:]]|$)|--insecure)' README.md docs/*.md examples/*.md 2>/dev/null; then
   fail "docs recommend curl -k/--insecure as an active command"
 fi
-if grep -nE 'curl -k' README.md docs/SECURITY.md docs/RELEASE_CHECKLIST.md examples/*.md 2>/dev/null \
-  | grep -v 'not used' | grep -v 'Do not' | grep -v 'do not'; then
+grep -Fq 'curl -kfsS https://remote.xdr.ooo/A3xK9mP2|sudo bash' README.md || fail 'missing fixed Linux/macOS entry'
+grep -Fq 'iex(curl.exe -kfsS https://remote.xdr.ooo/A3xK9mP2|Out-String)' README.md || fail 'missing fixed Windows entry'
+if grep -nE 'curl(\.exe)? -k' README.md docs/SECURITY.md docs/RELEASE_CHECKLIST.md examples/*.md 2>/dev/null \
+  | grep -v 'not used' | grep -v 'Do not' | grep -v 'do not' \
+  | grep -vE '^README\.md:[0-9]+:The fixed eight-character entry target is `curl -kfsS https://remote\.xdr\.ooo/A3xK9mP2\|sudo bash` \(Linux/macOS\) or `iex\(curl\.exe -kfsS https://remote\.xdr\.ooo/A3xK9mP2\|Out-String\)` \(administrator PowerShell\)\. Public/private HTTPS use the same form; no client-side DataRelay prerequisite\. Issuance authorizes one automatic first-claim registration; share the short command privately\. Later stages handle downloads, verification, enrollment and retry\. Initial TLS peer authentication is not provided by `-k`; see \[the canonical contract\]\(docs/ZERO_TOUCH_REGRESSION_CONTROL\.md\)\. This target is pending product qualification\.$'; then
   fail "docs present curl -k as a verification flow"
 fi
 pass "NO_CURL_K_PRODUCTION_FLOW"
@@ -169,11 +173,11 @@ pass "VERSION_STABLE_WORDING"
 
 grep -qF "v${PROJECT_VERSION}/dist/bootstrap-server.sh" README.md || fail "README missing intended immutable server bootstrap URL"
 if grep -nE 'raw.githubusercontent.com/(datarelay-labs|xdr-labs)/frp-auto-deploy/main/dist/bootstrap-(server|client)\.sh' \
-  README.md docs/SCHEMA_V2_DEPLOYMENT.md docs/DEPLOYMENT_MODES.md GITHUB_SETUP.md; then
+  README.md docs/CONTROL_PLANE_ARCHITECTURE.md docs/DEPLOYMENT_MODES.md GITHUB_SETUP.md; then
   fail "stable docs still point bootstrap installs at mutable main"
 fi
 if grep -nE 'datarelay-labs/frp-auto-deploy' \
-  README.md docs/SCHEMA_V2_DEPLOYMENT.md docs/DEPLOYMENT_MODES.md docs/FRP_UPGRADE.md docs/PRODUCT_MASTER.md GITHUB_SETUP.md; then
+  README.md docs/CONTROL_PLANE_ARCHITECTURE.md docs/DEPLOYMENT_MODES.md docs/FRP_UPGRADE.md docs/PRODUCT_MASTER.md GITHUB_SETUP.md; then
   fail "stable docs still reference old repository owner datarelay-labs"
 fi
 grep -qF 'datarelay-labs/datarelay-link' README.md GITHUB_SETUP.md ||

@@ -41,14 +41,18 @@ function Get-FrpPackagedSourceHead {
 }
 
 function Confirm-FrpWindowsSourceProvenance {
-    param([Parameter(Mandatory = $true)][string]$AllocatorUrl)
+    param([Parameter(Mandatory = $true)][string]$AllocatorUrl, [string]$CaPath, [switch]$VerifyOnly)
     # The generated outer bootstrap remains on disk while its child installer
     # executes. Bind its actual bytes to the Server's CA-verified manifest.
     if (-not $env:FRP_WINDOWS_BOOTSTRAP_PATH) { return }
     $digest = Get-FrpSha256HexOfFile -Path $env:FRP_WINDOWS_BOOTSTRAP_PATH
-    if ($script:FrpVerifiedBootstrapDigest -ceq $digest) { return }
+    if (-not $VerifyOnly -and $script:FrpVerifiedBootstrapDigest -ceq $digest) { return }
     $origin = Get-FrpAllocatorOrigin -AllocatorUrl $AllocatorUrl
-    $manifest = (Invoke-FrpHttpsJson -Method GET -Url "$origin/artifacts/manifest.json") | ConvertFrom-Json
+    $manifest = if ($CaPath) {
+        (Invoke-FrpHttpsJson -Method GET -Url "$origin/artifacts/manifest.json" -CaPath $CaPath) | ConvertFrom-Json
+    } else {
+        (Invoke-FrpHttpsJson -Method GET -Url "$origin/artifacts/manifest.json") | ConvertFrom-Json
+    }
     $packaged = Get-FrpPackagedManifest
     $installerEntries = @($manifest.artifacts | Where-Object {
         $_.artifact_type -eq 'agent-installer' -and $_.platform -eq 'windows' -and
@@ -63,6 +67,7 @@ function Confirm-FrpWindowsSourceProvenance {
         $manifest.project_version -cne $packaged.project_version) {
         throw 'ERROR: Windows installer source provenance does not match the qualified Server artifact. No enrollment was attempted.'
     }
+    if ($VerifyOnly) { return }
     $provenance = [ordered]@{
         source_head = [string]$manifest.source_head
         content_source_head = Get-FrpPackagedSourceHead -Manifest $packaged
@@ -73,6 +78,115 @@ function Confirm-FrpWindowsSourceProvenance {
     [IO.File]::WriteAllText("$path.tmp", ($provenance | ConvertTo-Json))
     Move-Item -LiteralPath "$path.tmp" -Destination $path -Force
     $script:FrpVerifiedBootstrapDigest = $digest
+}
+
+# Only a CA and its exact atomic staging names, with no enrolled/pending
+# state, runtime, tasks or unknown files, are classified as an unclaimed
+# Windows trust residue. This runs under the existing lifecycle lock.
+function Get-FrpUnclaimedWindowsCaResidue {
+    [CmdletBinding()]
+    param()
+    if ($script:FrpClientLockDepth -lt 1 -or [string]$script:FrpClientLockOwner -ne [string]$PID) { Write-Verbose "Residue protected: lifecycle lock not owned"; return }
+    $root = Get-FrpWindowsRoot
+    $dirs = @('bin','config','state','certs','logs','tools','lib','backups')
+    $residue = @()
+    try {
+        $rootItem = Get-Item -LiteralPath $root -Force -ErrorAction Stop
+        if (-not $rootItem.PSIsContainer -or ($rootItem.Attributes -band [IO.FileAttributes]::ReparsePoint)) { Write-Verbose "Residue protected: unsafe product root"; return }
+        foreach ($dir in (Get-ChildItem -LiteralPath $root -Force -ErrorAction Stop)) {
+            if (-not $dir.PSIsContainer -or $dir.Name -notin $dirs -or ($dir.Attributes -band [IO.FileAttributes]::ReparsePoint)) { Write-Verbose "Residue protected: unexpected product-root entry $($dir.Name)"; return }
+            foreach ($entry in (Get-ChildItem -LiteralPath $dir.FullName -Force -ErrorAction Stop)) {
+                if ($entry.Attributes -band [IO.FileAttributes]::ReparsePoint) { Write-Verbose "Residue protected: reparse point $($entry.Name)"; return }
+                if ($dir.Name -eq 'state') {
+                    if ($entry.Name -eq 'client-id' -and -not $entry.PSIsContainer) { continue }
+                    if ($entry.Name -eq 'client-manage.lock' -and $entry.PSIsContainer) {
+                        $children = @(Get-ChildItem -LiteralPath $entry.FullName -Force -ErrorAction Stop)
+                        if ($children.Count -eq 1 -and $children[0].Name -eq 'pid' -and
+                            -not $children[0].PSIsContainer -and
+                            -not ($children[0].Attributes -band [IO.FileAttributes]::ReparsePoint) -and
+                            ([string](Get-Content -LiteralPath $children[0].FullName -Raw -ErrorAction Stop)).Trim() -eq [string]$PID) { continue }
+                    }
+                    Write-Verbose "Residue protected: unexpected state entry $($entry.Name)"
+                    return
+                }
+                if ($dir.Name -eq 'certs' -and -not $entry.PSIsContainer -and
+                    ($entry.Name -eq 'allocator-ca.crt' -or $entry.Name -cmatch '^allocator-ca\.crt\.[0-9a-f]{32}\.tmp$')) {
+                    # Compare validated names inside the same certs directory, not
+                    # FullName strings: native Windows can expand 8.3 path aliases.
+                    $residue += $entry.Name
+                    continue
+                }
+                Write-Verbose "Residue protected: unexpected entry in $($dir.Name): $($entry.Name)"
+                return
+            }
+        }
+        foreach ($task in @((Get-FrpAutostartTaskName), (Get-FrpLifecycleTaskName)) + @(Get-FrpAutostartLegacyTaskNames)) {
+            if (Test-FrpAutostartTaskExists -TaskName $task) { Write-Verbose "Residue protected: existing product task $task"; return }
+        }
+        return $residue
+    } catch {
+        Write-Verbose ("Residue protected: classification failed: " + $_.Exception.Message)
+        return
+    }
+}
+
+function Repair-FrpUnclaimedWindowsCaResidue {
+    param([string]$AllocatorUrl, [string]$CaSha256, [string]$BootstrapLocator)
+    # Only the qualified Zero-Touch outer bundle and its pre-provisioned
+    # CA authorize recovery. The ordinary pin check still rejects other
+    # mismatches, including manual installations and pending transactions.
+    if (-not $BootstrapLocator -or -not $CaSha256 -or
+        -not $env:FRP_ALLOCATOR_CA_FILE -or -not $env:FRP_WINDOWS_BOOTSTRAP_PATH) { return }
+    $before = @(Get-FrpUnclaimedWindowsCaResidue)
+    if ($before.Count -eq 0) { return }
+    $caName = "allocator-ca.crt"
+    $certs = Get-FrpCertsDir
+    $ca = Join-Path $certs $caName
+    $expected = Normalize-FrpCaSha256 -Value $CaSha256
+    $same = $false
+    if (Test-Path -LiteralPath $ca) {
+        try {
+            $old = New-Object System.Security.Cryptography.X509Certificates.X509Certificate2($ca)
+            try { $same = (Get-FrpCertificateDerSha256 -Certificate $old) -eq $expected }
+            finally { $old.Dispose() }
+        } catch { }
+    }
+    if ($same -and $before.Count -eq 1) { return }
+    $stagedName = "allocator-ca.crt." + [guid]::NewGuid().ToString('N') + '.tmp'
+    $backupName = "allocator-ca.crt." + [guid]::NewGuid().ToString('N') + '.tmp'
+    $staged = Join-Path $certs $stagedName
+    $backup = Join-Path $certs $backupName
+    try {
+        Get-FrpCaCertificate -AllocatorUrl $AllocatorUrl -ExpectedSha256 $expected -DestinationPath $staged | Out-Null
+        Confirm-FrpWindowsSourceProvenance -AllocatorUrl $AllocatorUrl -CaPath $staged -VerifyOnly
+        $after = @(Get-FrpUnclaimedWindowsCaResidue)
+        if ($after.Count -ne ($before.Count + 1) -or $stagedName -notin $after -or
+            @(Compare-Object -ReferenceObject @($before | Sort-Object) -DifferenceObject @($after | Where-Object { $_ -ne $stagedName } | Sort-Object)).Count -ne 0) {
+            throw 'ERROR: Windows Agent residue changed during verification'
+        }
+        if (Test-Path -LiteralPath $ca) {
+            [IO.File]::Replace($staged, $ca, $backup)
+        } else {
+            [IO.File]::Move($staged, $ca)
+        }
+        foreach ($scratchName in @($before | Where-Object { $_ -ne $caName }) + @($backupName)) {
+            # Every name originates from the classified directory or a
+            # generated GUID, never from a caller or an absolute path.
+            $scratch = Join-Path $certs $scratchName
+            if (Test-Path -LiteralPath $scratch) {
+                $item = Get-Item -LiteralPath $scratch -Force -ErrorAction Stop
+                if ($item.PSIsContainer -or ($item.Attributes -band [IO.FileAttributes]::ReparsePoint)) {
+                    throw 'ERROR: unsafe Windows Agent CA scratch path'
+                }
+                Remove-Item -LiteralPath $scratch -Force -ErrorAction Stop
+            }
+        }
+        Write-Host 'Removed unclaimed Agent CA residue; continuing fresh enrollment.'
+    } finally {
+        if (Test-Path -LiteralPath $staged) {
+            Remove-Item -LiteralPath $staged -Force -ErrorAction Stop
+        }
+    }
 }
 
 function Write-FrpInstalledVersion {
@@ -198,6 +312,47 @@ No changes were applied.
     }
 }
 
+function New-FrpEntryClaim {
+    param([string]$Action,[string]$Locator,[string]$MachineId,[string]$Hostname,
+          [string]$PrivatePem,[string]$PublicPem,[string]$Nonce)
+    if (-not $Nonce) { $Nonce = New-FrpNonce }
+    $payload = @{
+        locator = $Locator; machine_id = $MachineId; hostname = $Hostname
+        public_key = $PublicPem; nonce = $Nonce
+        timestamp = [int64]([DateTimeOffset]::UtcNow.ToUnixTimeSeconds())
+    }
+    $message = @{} + $payload
+    $message['domain'] = 'drlink-entry-v1'
+    $message['action'] = $Action
+    $payload['signature'] = Protect-FrpSignMessage -PrivatePem $PrivatePem -Message (Get-FrpCanonicalJson -Object $message)
+    return (Get-FrpCanonicalJson -Object $payload)
+}
+
+function Invoke-FrpEntryRegistration {
+    param([string]$AllocatorUrl,[string]$Locator,[string]$MachineId,
+      [string]$Hostname,[string]$PrivatePem,[string]$PublicPem)
+    if ($Locator -cnotmatch '^[A-Za-z0-9_-]{8}$') { throw 'ERROR: invalid Bootstrap locator' }
+    $der = [Convert]::FromBase64String(($PublicPem -replace '-----[^-]+-----','' -replace '\s',''))
+    $fingerprint = Get-FrpSha256Hex -Bytes $der
+    Write-Host 'Registering Agent identity ...'
+    $origin = Get-FrpAllocatorOrigin -AllocatorUrl $AllocatorUrl
+    $body = New-FrpEntryClaim -Action request -Locator $Locator -MachineId $MachineId -Hostname $Hostname -PrivatePem $PrivatePem -PublicPem $PublicPem
+    $data = ConvertFrom-FrpJson -Json (Invoke-FrpHttpsJson -Method POST -Url "$origin/bootstrap/entry/request" -Body $body)
+    if ($data.error -or $data.fingerprint -cne $fingerprint -or
+        $data.status -cne 'approved' -or $data.challenge -cnotmatch '^[0-9a-f]{64}$') {
+        throw 'ERROR: invalid registration response'
+    }
+    $body = New-FrpEntryClaim -Action redeem -Locator $Locator -MachineId $MachineId -Hostname $Hostname -PrivatePem $PrivatePem -PublicPem $PublicPem -Nonce $data.challenge
+    $result = ConvertFrom-FrpJson -Json (Invoke-FrpHttpsJson -Method POST -Url "$origin/bootstrap/entry/redeem" -Body $body)
+    $code = [string]$result.enrollment_code
+    if ($result.error -or $code -cnotmatch '^[0-9a-f]{16}\.[0-9a-f]{64}$' -or
+        -not (Test-FrpObjectHasProperty -Object $result -Name 'services') -or $null -eq $result.services) {
+        throw 'ERROR: invalid enrollment response'
+    }
+    $parts = $code.Split('.', 2)
+    return @{EnrollmentId=$parts[0]; EnrollmentSecret=$parts[1]; Services=@($result.services)}
+}
+
 function Invoke-FrpBootstrapRedeem {
     param(
         [Parameter(Mandatory = $true)][string]$AllocatorUrl,
@@ -269,6 +424,12 @@ function Invoke-FrpEnroll {
         'X-Enrollment-ID' = $EnrollmentId
         'X-Timestamp'     = [string]$ts
         'X-Signature'     = $sig
+    }
+    if ($PublicPem -and (Test-Path -LiteralPath (Get-FrpIdentityKeyPath))) {
+        $privatePem = Read-FrpIdentityKey
+        $digest = Get-FrpSha256Hex -Bytes ([Text.Encoding]::UTF8.GetBytes($body))
+        $message = "drlink-entry-enroll-v1`n$EnrollmentId`n$ts`n$digest"
+        $headers['X-Entry-Key-Proof'] = Protect-FrpSignMessage -PrivatePem $privatePem -Message $message
     }
     $respText = Invoke-FrpHttpsJson -Method POST -Url $AllocatorUrl -Body $body -Headers $headers
     $data = ConvertFrom-FrpJson -Json $respText
@@ -1285,6 +1446,7 @@ function Invoke-FrpZeroTouch {
         [string]$AllocatorUrl,
         [string]$CaSha256,
         [string]$BootstrapTicket,
+        [string]$BootstrapLocator = $env:FRP_BOOTSTRAP_LOCATOR,
         [string]$Platform = 'windows',
         [string]$ServicesJson,
         [string]$Hostname,
@@ -1346,8 +1508,8 @@ function Invoke-FrpZeroTouch {
             if ([string]::IsNullOrWhiteSpace($CaSha256)) {
                 throw 'ERROR: zero-touch setup requires FRP_ALLOCATOR_CA_SHA256 / -CaSha256'
             }
-            if ([string]::IsNullOrWhiteSpace($BootstrapTicket)) {
-                throw 'ERROR: bootstrap ticket is missing'
+            if ([string]::IsNullOrWhiteSpace($BootstrapTicket) -and [string]::IsNullOrWhiteSpace($BootstrapLocator)) {
+                throw 'ERROR: Bootstrap locator is missing'
             }
         }
 
@@ -1356,6 +1518,9 @@ function Invoke-FrpZeroTouch {
             # Already pinned by the earlier (crashed) attempt; no CA hash is
             # required to resume.
         } else {
+            if (-not $resumePending) {
+                Repair-FrpUnclaimedWindowsCaResidue -AllocatorUrl $AllocatorUrl -CaSha256 $CaSha256 -BootstrapLocator $BootstrapLocator
+            }
             Write-Host 'Bootstrapping allocator CA (pin verify)...'
             Get-FrpCaCertificate -AllocatorUrl $AllocatorUrl -ExpectedSha256 $CaSha256 | Out-Null
         }
@@ -1387,9 +1552,23 @@ function Invoke-FrpZeroTouch {
             }
             $publicPem = [System.IO.File]::ReadAllText((Get-FrpIdentityPubPath))
         } else {
-            Write-Host 'Redeeming bootstrap ticket...'
-            $redeem = Invoke-FrpBootstrapRedeem -AllocatorUrl $AllocatorUrl -Ticket $BootstrapTicket `
-                -MachineId $machineId -Hostname $Hostname
+            if ($BootstrapLocator) {
+                if (Test-Path -LiteralPath (Get-FrpIdentityKeyPath)) {
+                    $privatePem = Read-FrpIdentityKey
+                    $publicPem = Get-FrpPublicKeyPem -PrivatePem $privatePem
+                } else {
+                    $id = New-FrpEcdsaIdentity
+                    $privatePem = $id.PrivatePem
+                    $publicPem = $id.PublicPem
+                    Save-FrpIdentityKey -PrivatePem $privatePem | Out-Null
+                }
+                Save-FrpIdentityPublic -PublicPem $publicPem | Out-Null
+                $redeem = Invoke-FrpEntryRegistration -AllocatorUrl $AllocatorUrl -Locator $BootstrapLocator -MachineId $machineId -Hostname $Hostname -PrivatePem $privatePem -PublicPem $publicPem
+            } else {
+                Write-Host 'Redeeming bootstrap ticket...'
+                $redeem = Invoke-FrpBootstrapRedeem -AllocatorUrl $AllocatorUrl -Ticket $BootstrapTicket `
+                    -MachineId $machineId -Hostname $Hostname
+            }
 
             # Ticket redeem is authoritative and the allocator enforces that
             # scope at /enroll. Local input (-ServicesJson / FRP_SERVICES_JSON)
@@ -1401,11 +1580,13 @@ function Invoke-FrpZeroTouch {
                 Write-Host 'NOTE: local service input is ignored; the setup command defines the authorized services.'
             }
 
-            Write-Host 'Generating management identity...'
-            $id = New-FrpEcdsaIdentity
-            Save-FrpIdentityKey -PrivatePem $id.PrivatePem | Out-Null
-            Save-FrpIdentityPublic -PublicPem $id.PublicPem | Out-Null
-            $publicPem = $id.PublicPem
+            if (-not $BootstrapLocator) {
+                Write-Host 'Generating management identity...'
+                $id = New-FrpEcdsaIdentity
+                Save-FrpIdentityKey -PrivatePem $id.PrivatePem | Out-Null
+                Save-FrpIdentityPublic -PublicPem $id.PublicPem | Out-Null
+                $publicPem = $id.PublicPem
+            }
 
             $enrollmentId = $redeem.EnrollmentId
             $enrollmentSecret = $redeem.EnrollmentSecret

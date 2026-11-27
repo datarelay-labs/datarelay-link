@@ -684,6 +684,10 @@ frp_client_main() {
     frp_client_existing_install_message
     return 1
   fi
+  if [[ "$FRP_RESUME_PENDING" != "1" && "$FRP_REPLACE_PENDING" != "1" ]] \
+      && frp_valid_allocator_url "${FRP_ALLOCATOR_URL:-}"; then
+    frp_client_recover_orphan_allocator_ca "$FRP_ALLOCATOR_URL" || return 1
+  fi
   if frp_client_has_partial_install \
       && [[ "$FRP_RESUME_PENDING" != "1" ]] \
       && [[ "$FRP_REPLACE_PENDING" != "1" ]]; then
@@ -759,7 +763,7 @@ frp_client_main() {
   chmod 600 "$SERVICES_FILE" "$ALLOCATED_FILE" "$ENROLL_META_FILE"
   _frp_client_enroll_tmp_cleanup() {
     rm -rf "$_FRP_CLIENT_ENROLL_TMPDIR" "$SERVICES_FILE" "$ALLOCATED_FILE" "$ENROLL_META_FILE"
-    unset FRP_TOKEN ENROLL_SECRET FRP_ENROLLMENT_CODE TOKEN_CIPHERTEXT FRP_BOOTSTRAP_TICKET FRP_CLIENT_OPERATION_ID
+    unset FRP_TOKEN ENROLL_SECRET FRP_ENROLLMENT_CODE TOKEN_CIPHERTEXT FRP_BOOTSTRAP_TICKET FRP_BOOTSTRAP_LOCATOR FRP_CLIENT_OPERATION_ID
   }
   # Sourced callers (tests, frpctl wrappers) already own EXIT. Replacing or
   # chaining that trap leaks test allocators or SIGSEGVs bash on restore.
@@ -1128,6 +1132,31 @@ if [[ "${_FRP_INSTALL_CLIENT_EXECUTED}" == "1" ]]; then
   if [[ "${FRP_CLIENT_UPGRADE:-}" == "1" ]]; then
     frp_client_upgrade_from_this_tree
     exit $?
+  fi
+  if ! frp_is_darwin && [[ -z "${FRP_CLIENT_TEST_ROOT:-}" && "$EUID" -eq 0 && "${_DRLINK_INSTALL_LOCK_HELD:-}" != 1 ]]; then
+    if ! command -v flock >/dev/null 2>&1; then
+      echo "ERROR: flock is required to serialize Agent installation." >&2
+      exit 1
+    fi
+    # /run is root-owned. The flock parent retains the lock while its child
+    # runs, but -o prevents the installer/daemon from inheriting the lock fd.
+    install_lock=/run/drlink-agent-install.lock
+    if [[ -L "$install_lock" || ( -e "$install_lock" && ! -f "$install_lock" ) ]]; then
+      echo "ERROR: unsafe Agent installation lock path." >&2
+      exit 1
+    fi
+    export _DRLINK_INSTALL_LOCK_HELD=1
+    if flock -n -o -E 75 "$install_lock" "$BASH" "${_FRP_INSTALL_CLIENT_DIR}/install-client.sh"; then
+      exit 0
+    else
+      rc=$?
+      if [[ "$rc" == 75 ]]; then
+        echo "ERROR: another Agent installation is in progress." >&2
+        frp_emit_failure_class CLIENT_LOCK_BUSY
+        exit 1
+      fi
+      exit "$rc"
+    fi
   fi
   frp_client_main
   exit $?

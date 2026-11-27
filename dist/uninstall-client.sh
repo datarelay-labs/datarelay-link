@@ -76,6 +76,15 @@ for _frp_u_macos in "${_frp_u_macos_cands[@]}"; do
 done
 unset _frp_u_macos _frp_u_macos_cands
 
+# The product-owned runtime remains available until the final state-root
+# cleanup. Direct uninstaller execution also works without system Python.
+if declare -F frp_macos_managed_python >/dev/null 2>&1 && frp_is_darwin; then
+  if _frp_u_python="$(frp_macos_managed_python)"; then
+    export PATH="${_frp_u_python%/*}:$PATH"
+  fi
+  unset _frp_u_python
+fi
+
 frp_u_is_darwin() {
   declare -F frp_is_darwin >/dev/null 2>&1 && frp_is_darwin
 }

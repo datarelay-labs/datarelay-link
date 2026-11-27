@@ -4040,7 +4040,7 @@ class ControlPlane:
                 "after": "credential rotated fingerprint=%s" % fp,
             }
 
-        result = self._mutate("system credential rotate ai-identity %s" % name, "rotate credential", write)
+        result = self._mutate("set ai-identity %s rotate" % name, "rotate credential", write)
         if isinstance(result, dict):
             result["token"] = token
         return result
@@ -4064,7 +4064,7 @@ class ControlPlane:
             self._revoke_oauth_tokens(principal["id"], now)
             return {"entity": {"type": "ai-principal", "id": principal["id"], "name": name}, "operation": "revoke"}
 
-        return self._mutate("system credential revoke ai-identity %s" % name, "revoke credential", write)
+        return self._mutate("set ai-identity %s revoke" % name, "revoke credential", write)
 
     def _revoke_oauth_tokens(self, principal_id: str, now: Optional[str] = None) -> None:
         stamp = now or utc_now_iso()
@@ -4543,7 +4543,7 @@ class ControlPlane:
                 "after": "authentication=%s" % normalized,
             }
 
-        return self._mutate("system credential configure ai-identity %s" % name, "configure credential", write)
+        return self._mutate("set ai-identity %s authentication" % name, "configure credential", write)
 
     def add_oauth_redirect(self, name: str, uri: str) -> dict:
         principal = self.get_principal(name)
@@ -4578,7 +4578,7 @@ class ControlPlane:
                 "operation": "configure-oauth-redirect",
             }
 
-        return self._mutate("system credential configure ai-identity %s oauth-redirect" % name, "configure credential", write)
+        return self._mutate("set ai-identity %s oauth-redirect" % name, "configure credential", write)
 
     def create_oauth_pending(
         self,
@@ -4730,6 +4730,11 @@ class ControlPlane:
         row = self.conn.execute("SELECT * FROM ai_oauth_pending WHERE id = ?", (pending_id,)).fetchone()
         if row is None:
             raise ControlPlaneError("OAuth request not found")
+        if principal_name:
+            bound = self.conn.execute("SELECT name FROM ai_principals WHERE id=?", (row["principal_id"],)).fetchone()
+            if bound is None or (bound["name"] != OAUTH_UNBOUND_PRINCIPAL
+                                 and bound["name"].lower() != principal_name.lower()):
+                raise ControlPlaneError("pending OAuth request is bound to a different AI Identity")
         status = str(row["status"] or "pending")
         if str(row["consumed_at"] or "").strip():
             raise ControlPlaneError("OAuth request already completed")
@@ -4762,7 +4767,7 @@ class ControlPlane:
             if not principal_name:
                 raise ControlPlaneError(
                     "DCR/CIMD OAuth approval requires an AI Identity: "
-                    "system credential approve-oauth %s <PRINCIPAL>" % pending_id
+                    "set ai-identity <AI-IDENTITY> approve %s" % pending_id
                 )
             target = self.get_principal(principal_name)
             if target is None:
@@ -4887,10 +4892,15 @@ class ControlPlane:
             "status": "approved",
         }
 
-    def deny_oauth_pending(self, pending_id: str) -> dict:
+    def deny_oauth_pending(self, pending_id: str, *, principal_name: Optional[str] = None) -> dict:
         row = self.conn.execute("SELECT * FROM ai_oauth_pending WHERE id = ?", (pending_id,)).fetchone()
         if row is None:
             raise ControlPlaneError("OAuth request not found")
+        if principal_name:
+            bound = self.conn.execute("SELECT name FROM ai_principals WHERE id=?", (row["principal_id"],)).fetchone()
+            if bound is None or (bound["name"] != OAUTH_UNBOUND_PRINCIPAL
+                                 and bound["name"].lower() != principal_name.lower()):
+                raise ControlPlaneError("pending OAuth request is bound to a different AI Identity")
         if str(row["consumed_at"] or "").strip():
             raise ControlPlaneError("OAuth request already completed")
         status = str(row["status"] or "pending")
@@ -5116,14 +5126,7 @@ class ControlPlane:
                 (utc_now_iso(), row["principal_id"]),
             )
             self.conn.execute("DELETE FROM system_meta WHERE key = ?", (bootstrap_key,))
-            # Only the operator-approved first-identity PKCE proof may claim
-            # the owner default profile. Other/OAuth-refresh logins cannot
-            # silently turn authentication into host authorization.
-            from drlink_v24 import ensure_operator_approved_mcp_owner_access
-
-            ensure_operator_approved_mcp_owner_access(
-                self, str(row["principal_id"])
-            )
+            # Authentication establishes identity only. Authorization is configured separately.
         return self.issue_oauth_access_token(
             principal_id=row["principal_id"],
             client_id=client_id,

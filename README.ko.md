@@ -143,6 +143,13 @@ Remote Service mutation은 소유 Agent Host에서만 수행됩니다. Server의
 
 immutable `v2.4.0` 태그가 생기기 전에는 exact SHA 또는 owner가 지정한 candidate artifact로만 설치하십시오. `v2.4.0/dist/bootstrap-server.sh` 형태의 태그 URL은 태그가 생성되기 전까지 404입니다.
 
+온라인 Server 설치는 아래 방식을 권장합니다. 승인된 exact SHA를 지정하면 작은 Bootstrap이 공통 파일과 플랫폼별 필수 아카이브를 진행률·타임아웃·SHA256 검증과 함께 다운로드합니다. 기존 `dist/bootstrap-server.sh`는 오프라인 설치용으로 유지합니다.
+
+```bash
+REF='<EXACT_SHA>'
+curl -fL --connect-timeout 10 --max-time 30 "https://raw.githubusercontent.com/datarelay-labs/datarelay-link/$REF/dist/bootstrap-server-online.sh" | sudo bash -s -- "$REF"
+```
+
 설치 후 상태를 바꾸지 않는 discovery 명령을 우선 사용하십시오:
 
 ```bash
@@ -163,7 +170,7 @@ set enrollment zero-touch
 
 (또는 Guided menu → Managed Hosts → Connect a Managed Host)
 
-운영자용 설치 명령은 private-CA fingerprint 검증과 one-time ticket 의미를 유지하는 짧은 HTTPS launcher입니다.
+고정 8자리 진입 목표는 Linux/macOS `curl -kfsS https://remote.xdr.ooo/A3xK9mP2|sudo bash` 및 Windows 관리자 PowerShell `iex(curl.exe -kfsS https://remote.xdr.ooo/A3xK9mP2|Out-String)`입니다. 공인·사설 HTTPS 동일 구문, 고객 장비 사전 설치 불필요. 명령 발급 시 최초 유효 Agent의 자동 등록이 승인됩니다. 명령은 비공개로 전달하며 후속 Bootstrap이 다운로드·검증·등록·재실행 처리를 수행합니다. 최초 `-k`는 서버 인증을 제공하지 않습니다. [표준 설계](docs/ZERO_TOUCH_REGRESSION_CONTROL.md)를 참조하십시오. 실제 제품 검증은 미완료입니다.
 
 Managed Host가 enroll되고 Remote Service가 enabled되면 예약된 public endpoint로 연결합니다:
 
@@ -245,7 +252,7 @@ existing authenticated DRLink control path
 Managed Host / private target
 ```
 
-AI Access의 source는 검증된 **AI Identity**입니다. Permission Object / Permission Group으로 capability와 path 권한을 부여합니다. MCP는 별도 public identity model이 아니라 integration layer입니다.
+AI Access의 Source는 검증된 **AI Identity**입니다. [AI MCP Setup 사용 가이드](docs/AI_ACCESS_MCP.md)는 Managed Host 등록, AI MCP Setup(인증), 방화벽 방식의 Access Rules(Source, Destination, Permission)를 분리합니다. AI MCP Setup에서 MCP 준비 상태를 확인하며, 기본 권한은 Object를 직접 만들지 않아도 선택할 수 있습니다. 사용자 정의 Object/Group은 고급 기능으로 유지하고 인증 자체는 접근 권한을 부여하지 않습니다. 후보 버전의 동작이며 설치된 릴리즈의 검증 상태는 별도로 확인합니다.
 
 ## ConfigurationBundle / AI-assisted configuration
 

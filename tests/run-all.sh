@@ -75,6 +75,16 @@ python3 tests/test-remote-service-upsert-no-churn.py
 python3 tests/test-zero-touch-doc-contract.py
 python3 tests/test-zero-touch-guided-preflight.py
 python3 tests/test-operator-input-validation.py
+python3 tests/test-server-online-bootstrap.py
+python3 tests/test-zero-touch-entry-fields.py
+python3 tests/test-zero-touch-locator-index.py
+# The real Stage-1 root check and Server-local approval must also be
+# exercised on unprivileged CI runners, without mocking product privilege.
+if [[ "$(id -u)" == 0 ]]; then
+  python3 tests/test-zero-touch-entry-approval.py
+else
+  sudo -n "$(command -v python3)" tests/test-zero-touch-entry-approval.py
+fi
 python3 tests/test-zero-touch-operator-command-bound.py
 python3 tests/test-zero-touch-public-fqdn-trust.py
 python3 tests/test-zero-touch-private-ca-fqdn-ip-fallback.py

@@ -95,7 +95,7 @@ def read_only_completion_inventory(role, root=""):
                     (CATALOG.C_OBJECT, "objects"),
                     (CATALOG.C_OBJECT_GROUP, "object_groups"),
                     (CATALOG.C_AI_PRINCIPAL, "ai_principals"),
-                    (CATALOG.C_AI_RULE, "ai_access_rules"),
+                    (CATALOG.C_AI_RULE, "ai_policy_rules"),
                 )
             }
         if client:
@@ -133,7 +133,6 @@ CONTROL_PLANE_SHOW = frozenset(
         "remote-services",
         "remote-service",
         "agent",
-        "mcp-tls",
         # Legacy rejected with guidance inside control CLI
         "objects",
         "object",
@@ -167,7 +166,6 @@ CONTROL_PLANE_MUTATE = frozenset(
         "ai-identity",
         "ai-access",
         "remote-service",
-        "mcp-tls",
         # Legacy rejected with guidance
         "object",
         "object-group",
@@ -190,7 +188,6 @@ CONTROL_PLANE_SYSTEM = frozenset(
         "revision",
         "diff",
         "rollback",
-        "credential",
         "export",
         "apply",
         "certificate",
@@ -346,22 +343,9 @@ def reject_obsolete_surface(tokens):
     # Reject retired nested forms before help or legacy system fallthrough
     # can turn them into an executable operation or successful discovery.
     focus = raw[1:] if verb == "help" else raw
-    if (
-        focus[:2] == ["system", "credential"]
-        and len(focus) >= 4
-        and focus[2] in ("rotate", "revoke", "configure")
-        and focus[3] == "ai-principal"
-    ):
-        return {
-            "status": "error", "exit_code": 2,
-            "message": "Retired AI Principal credential noun is not public grammar.\n"
-                       "On the DRLink Server, use system credential %s ai-identity <NAME>%s.\n"
-                       "See: help system credential %s" % (
-                           focus[2],
-                           " authentication <static-bearer|oauth>" if focus[2] == "configure" else "",
-                           focus[2],
-                       ),
-        }
+    if focus[:2] == ["system", "credential"]:
+        return {"status": "error", "exit_code": 2,
+                "message": "Retired credential command. On the DRLink Server, use set ai-identity <IDENTITY> and help ai-identity."}
     if focus[:3] == ["system", "audit", "ai-principal"]:
         return {
             "status": "error", "exit_code": 2,
@@ -533,13 +517,13 @@ def reject_obsolete_surface(tokens):
                 "set managed-host-group <GROUP>, or unset managed-host-group <GROUP>."
             ),
         }
-    if verb == "show" and len(raw) >= 2 and raw[1] == "mcp-tls":
+    if verb in ("show", "set", "unset") and len(raw) >= 2 and raw[1] == "mcp-tls":
         return {
             "status": "error",
             "exit_code": 2,
             "message": (
-                "Duplicate MCP TLS status shorthand is not part of the current Data Relay Link grammar.\n"
-                "Use system certificate status instead."
+                "Retired MCP TLS resource is not part of the current Data Relay Link grammar.\n"
+                "Use system certificate status or set server mcp / unset server mcp instead."
             ),
         }
     if verb in ("show", "set", "unset", "test", "create", "add", "remove", "enable", "disable", "delete", "system") and len(raw) >= 2:
@@ -1055,7 +1039,7 @@ def _unset_help(role):
         "  unset server bootstrap-hostname\n\n"
         "unset removes metadata only. It does not release ports or revoke identity.\n"
         "unset server public-hostname falls back to Public IP access.\n"
-        "Unsetting bootstrap-hostname selects a qualified public-HTTPS hostname or verified Private-CA numeric-IP bootstrap. DNS is optional; unsafe prerequisites fail before ticket issuance. Unqualified bootstrap endpoints fail closed.\n"
+        "Unsetting bootstrap-hostname uses the configured allocator HTTPS authority. The entry command is unchanged for public and private HTTPS. Route or downstream TLS readiness failure prevents issuance.\n"
     )
 
 
@@ -1263,6 +1247,11 @@ def _catalog_context_help(tokens, role, names=None, clients=None):
         role_cmd["examples"] = ["system diagnostics", "system diagnostics runtime"]
         return CATALOG.command_help(role_cmd)
 
+    # Named Identity actions have their own risk/approval contract even
+    # when the next positional operand has enumerated choices.
+    if probe[:2] == ["set", "ai-identity"] and len(probe) >= 4 and probe[3] in CATALOG.AI_IDENTITY_ACTIONS:
+        return CATALOG.command_help(cmd)
+
     # Some valid parent commands are executable lifecycle operations and also
     # have longer child forms. Their own usage/risk/confirmation contract must
     # remain visible; child discovery is supplemental, never a replacement.
@@ -1270,7 +1259,7 @@ def _catalog_context_help(tokens, role, names=None, clients=None):
         ("unset", "remote-access"),
         ("unset", "internet-access"),
         ("unset", "ai-access"),
-        ("unset", "mcp-tls"),
+        ("unset", "server", "mcp"),
         ("system", "diff"),
         ("system", "backup"),
         ("set", "remote-access"),
@@ -1401,7 +1390,7 @@ def context_help(tokens, role, names=None, clients=None):
             "Use:\n"
             "  unset enrollment <ENROLLMENT>\n"
             "  unset managed-host <HOST>\n"
-            "  system credential revoke ai-identity <IDENTITY>\n\n"
+            "  set ai-identity <IDENTITY> revoke\n\n"
             "See: help commands\n"
         ),
         "release": (
@@ -1621,7 +1610,7 @@ def context_help(tokens, role, names=None, clients=None):
                 return _fmt_available(
                     [
                         ("public-hostname", "Optional public DNS hostname for published services"),
-                        ("bootstrap-hostname", "Optional Zero-Touch public TLS bootstrap hostname"),
+                        ("bootstrap-hostname", "Optional Zero-Touch HTTPS entry hostname"),
                         ("installer-url", "Linux Agent installer URL"),
                         ("windows-installer-url", "Windows Agent installer URL"),
                     ]
@@ -1631,9 +1620,9 @@ def context_help(tokens, role, names=None, clients=None):
                     "Usage:\n"
                     "  set server bootstrap-hostname <fqdn>\n\n"
                     "Purpose:\n"
-                    "  Set the publicly trusted Zero-Touch short URL hostname.\n"
+                    "  Set the Zero-Touch HTTPS entry hostname.\n"
                     "  Data Relay Link does not create DNS or issue certificates.\n"
-                    "  Operator terminates public TLS on a reverse proxy.\n\n"
+                    "  Operator configures the HTTPS entry route; initial entry TLS is not authenticated.\n\n"
                     "Example:\n"
                     "  set server bootstrap-hostname bootstrap.example.com\n\n"
                     "Remove:\n"
@@ -2819,6 +2808,16 @@ def _match_set(tokens, role, names=None):
     if len(tokens) == 1:
         return incomplete("Missing resource.", ["set <resource> ..."], avail, tip="drlink help set")
     resource = tokens[1]
+    if resource == "ai-mcp":
+        if not server:
+            return {"status": "role", "need": "server", "command": "set ai-mcp"}
+        if len(tokens) != 2:
+            return incomplete("Unexpected argument.", ["set ai-mcp"], [])
+        return _control_plane_ok(tokens)
+    if resource == "server" and tokens[2:3] == ["mcp"]:
+        if not server:
+            return {"status": "role", "need": "server", "command": "set server mcp"}
+        return _control_plane_ok(tokens)
     if resource in CONTROL_PLANE_MUTATE:
         return _control_plane_ok(tokens)
     if resource == "client":
@@ -3196,6 +3195,10 @@ def _match_unset(tokens, role, names=None):
             avail,
         )
     resource = tokens[1]
+    if resource == "server" and tokens[2:3] == ["mcp"]:
+        if not server:
+            return {"status": "role", "need": "server", "command": "unset server mcp"}
+        return _control_plane_ok(tokens)
     if resource in CONTROL_PLANE_MUTATE:
         return _control_plane_ok(tokens)
     if resource == "service":
@@ -4311,7 +4314,7 @@ def _tab_desc_map(line, role, names=None, clients=None):
         if len(filled) == 2:
             return {
                 "public-hostname": "Optional public DNS hostname for published services",
-                "bootstrap-hostname": "Optional Zero-Touch public TLS bootstrap hostname",
+                "bootstrap-hostname": "Optional Zero-Touch HTTPS entry hostname",
                 "installer-url": "Linux/macOS Agent installer URL",
                 "windows-installer-url": "Windows Agent installer URL",
             }, "named"

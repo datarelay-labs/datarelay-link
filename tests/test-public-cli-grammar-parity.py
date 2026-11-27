@@ -21,7 +21,7 @@ DOC_FILES = [
     ROOT / "docs" / "CONTROLLED_EGRESS.md",
     ROOT / "docs" / "SECURITY.md",
     ROOT / "docs" / "FRP_UPGRADE.md",
-    ROOT / "docs" / "OCI_ACCEPTANCE.md",
+    ROOT / "docs" / "INSTALLATION.md",
     ROOT / "docs" / "Data Relay Link CLI Information Architecture.md",
 ]
 

@@ -7,6 +7,8 @@ from __future__ import annotations
 import importlib.machinery
 import importlib.util
 import hashlib
+import base64
+import re
 import io
 import os
 import shutil
@@ -40,46 +42,39 @@ HASH = "c" * 64
 
 
 class CompactZeroTouchContract(unittest.TestCase):
-    def test_overlong_qualified_fqdn_rejected_before_ticket_issuance(self):
-        hostname = ".".join(("a" * 63, "b" * 63, "c" * 63, "test"))
-        cfg = {"bootstrap_hostname": hostname,
-               "allocator_public_url": "https://" + hostname + "/enroll"}
-        for platform in ("linux", "macos", "windows"):
-            with self.subTest(platform=platform), \
-                 mock.patch.object(cli, "short_url_host_for_cfg", return_value=hostname), \
-                 mock.patch.object(cli, "preflight_installer_url") as preflight, \
-                 mock.patch.object(cli, "load_allocator") as allocator, \
-                 mock.patch("sys.stderr", new_callable=io.StringIO) as stderr:
-                with self.assertRaises(SystemExit):
-                    cli.validate_zero_touch_prerequisites(
-                        cfg, platform, "https://example.test/installer", HASH)
-                self.assertIn("No enrollment ticket was issued", stderr.getvalue())
-                self.assertIn("characters", stderr.getvalue())
-                preflight.assert_not_called()
-                allocator.assert_not_called()
+    def assert_short_only(self, command, *, windows=False, authority=HOST,
+                          ca=None, stage=None):
+        """Target fields only: fixed OS invocation, HTTPS authority, locator.
 
-    def test_linux_and_macos_default_install_commands_have_bounded_length(self):
-        # Operator-selected hostname alone must not bypass public trust checks.
-        # Hermetic fixture injection is not a live public-trust waiver.
-        # A live TLS failure must deny even an explicitly chosen hostname.
-        with mock.patch.object(cli, "_test_root", return_value=False), \
-             mock.patch("urllib.request.build_opener") as opener:
-            opener.return_value.open.side_effect = OSError("untrusted TLS")
-            self.assertEqual(
-                cli.short_url_host_for_cfg({"bootstrap_hostname": HOST}), ""
-            )
-        for platform in ("linux", "macos"):
-            self.assertEqual(
-                cli.parse_args(["--one-line", "--platform", platform]).platform,
-                platform,
-            )
-            line = zt.short_url_command(HOST, HANDLE)
-            self.assertLessEqual(len(line), 200, (platform, len(line)))
-            self.assertIn("/i/", line)
-            self.assertIn("curl -fsSL https://", line)
-            self.assertNotIn("--insecure", line)
-            self.assertNotIn(" -k", line)
-            self.assertNotIn("zt1.", line)
+        ca/stage are inputs to the existing renderer fixtures, never allowed
+        customer command fields. A failure is a runtime migration finding.
+        """
+        url = re.escape("https://" + authority + "/") + r"[A-Za-z0-9_-]{8}"
+        if windows:
+            pattern = r"iex\(curl\.exe -kfsS " + url + r"\|Out-String\)"
+        else:
+            pattern = r"curl -kfsS " + url + r"\|sudo bash"
+        self.assertIsNotNone(re.fullmatch(pattern, command),
+                             "command does not match the required entry fields")
+
+    def test_short_only_template_rejects_extra_information(self):
+        for authority in (HOST, "192.0.2.20:6099"):
+            for windows in (False, True):
+                url = "https://" + authority + "/A3xK9mP2"
+                cmd = ("iex(curl.exe -kfsS " + url + "|Out-String)" if windows else
+                       "curl -kfsS " + url + "|sudo bash")
+                self.assert_short_only(cmd, windows=windows, authority=authority)
+                for extra in (" --enrollment-id 123", " --name agent",
+                              " --installer-url https://example.test/a", " --sha256 " + HASH,
+                              " --platform linux", "; echo ok", "?port=22", " " + HANDLE):
+                    with self.subTest(extra=extra), self.assertRaises(AssertionError):
+                        self.assert_short_only(cmd + extra, windows=windows, authority=authority)
+                for bad in ("A3xK9m", "A3xK9mP2m", "i/A3xK9mP2", "A3xK9?", HANDLE):
+                    with self.subTest(locator=bad), self.assertRaises(AssertionError):
+                        self.assert_short_only(cmd.replace("A3xK9mP2", bad), windows=windows,
+                                               authority=authority)
+
+
 
     @unittest.skipUnless(shutil.which('shasum') and shutil.which('awk'),
                          'native shasum/awk unavailable')
@@ -116,423 +111,70 @@ class CompactZeroTouchContract(unittest.TestCase):
             self.assertNotEqual(missing.returncode, 0)
             self.assertIn('SHA256 verifier unavailable', missing.stderr)
 
-    def test_windows_hash_first_within_single_copy_command(self):
-        line = zt.windows_strict_launcher(HOST, HANDLE, HASH)
-        self.assertLessEqual(len(line), 500, len(line))
-        self.assertIn("Get-FileHash", line)
-        self.assertIn(HASH, line)
-        self.assertIn("powershell.exe -NoProfile", line)
-        self.assertNotIn(" -k", line)
-        self.assertNotIn("--insecure", line)
 
-    def test_private_ca_not_silently_treated_as_trusted_public_tls(self):
-        # A configuration value or FQDN alone is never a trust proof.
-        with mock.patch.object(cli, "_test_root", return_value="/tmp/drlink-test"):
-            self.assertEqual(
-                cli.short_url_host_for_cfg({"public_url_host": HOST}), ""
-            )
-            self.assertEqual(cli.short_url_host_for_cfg({"bootstrap_hostname": HOST}), HOST)
-        # Live-mode qualification is covered separately with explicit HTTPS
-        # proof and rejection fixtures; never depend on external DNS/TLS here.
-        self.assertEqual(zt.short_url_for_ticket(HOST, HANDLE).count("/i/"), 1)
 
-    def test_public_https_probe_requires_real_allocator_fail_closed_signature(self):
-        import io
-        import urllib.error
 
-        class FakeOpener:
-            def __init__(self, content):
-                self.content = content
-            def open(self, url, timeout=0):
-                raise urllib.error.HTTPError(
-                    url, 404, "Not Found", {}, io.BytesIO(self.content)
-                )
 
-        with mock.patch.object(cli, "_test_root", return_value=""):
-            with mock.patch("urllib.request.build_opener", return_value=FakeOpener(
-                b"bootstrap unavailable\n"
-            )):
-                for field in ("public_hostname", "bootstrap_hostname"):
-                    with self.subTest(field=field):
-                        self.assertEqual(
-                            cli.short_url_host_for_cfg({field: HOST}), HOST
-                        )
-            with mock.patch("urllib.request.build_opener", return_value=FakeOpener(
-                b"<html>generic nginx 404</html>\n"
-            )):
-                for field in ("public_hostname", "bootstrap_hostname"):
-                    with self.subTest(field=field):
-                        self.assertEqual(
-                            cli.short_url_host_for_cfg({field: HOST}), ""
-                        )
 
-    def test_explicit_bootstrap_private_ca_tls_rejected_before_issuance(self):
-        import ssl
-        class UntrustedOpener:
-            def open(self, url, timeout=0):
-                raise ssl.SSLCertVerificationError("private CA not in public trust roots")
-        with mock.patch.object(cli, "_test_root", return_value=""), \
-             mock.patch("urllib.request.build_opener", return_value=UntrustedOpener()):
-            self.assertEqual(cli.short_url_host_for_cfg({"bootstrap_hostname": HOST}), "")
-            with self.assertRaises(SystemExit):
-                cli.validate_zero_touch_prerequisites(
-                    {"bootstrap_hostname": HOST, "allocator_public_url": "https://127.0.0.1:6099/enroll"},
-                    "linux", "https://example.test/install.sh", HASH
-                )
 
-    def test_explicit_bootstrap_fqdn_requires_stock_ca_https_proof(self):
-        # An administrator-configured hostname is NOT evidence that client
-        # machines trust its certificate or that /i/ is the real handler.
-        import urllib.error
-        cfg = {
-            "bootstrap_hostname": HOST,
-            "allocator_public_url": "https://192.0.2.20:6099/enroll",
-        }
-        class FakeOpener:
-            def __init__(self, valid):
-                self.valid = valid
-            def open(self, url, timeout=0):
-                if not self.valid:
-                    raise urllib.error.URLError(ssl.SSLCertVerificationError(
-                        "self-signed or mismatched bootstrap certificate"
-                    ))
-                raise urllib.error.HTTPError(
-                    url, 404, "Not Found", {}, io.BytesIO(b"bootstrap unavailable\n")
-                )
-        with mock.patch.object(cli, "_test_root", return_value=""), \
-             mock.patch.object(cli, "preflight_installer_url"):
-            with mock.patch("urllib.request.build_opener", return_value=FakeOpener(False)):
-                with self.assertRaises(SystemExit):
-                    cli.validate_zero_touch_prerequisites(
-                        cfg, "linux", "https://example.test/installer.sh", HASH
-                    )
-            with mock.patch("urllib.request.build_opener", return_value=FakeOpener(True)):
-                host, private = cli.validate_zero_touch_prerequisites(
-                    cfg, "linux", "https://example.test/installer.sh", HASH
-                )
-                self.assertEqual(host, HOST)
-                self.assertIsNone(private)
 
-    def test_private_ca_numeric_ip_has_compact_verified_command(self):
-        import frp_pki
-        with tempfile.TemporaryDirectory(prefix="drlink-ip-bootstrap-") as tmp:
-            data = frp_pki.ensure_pki(Path(tmp) / "pki", "192.0.2.20")
-            cfg = {
-                "allocator_public_url": "https://192.0.2.20:6099/enroll",
-                "tls_ca_cert": data["ca_crt"],
-                "tls_server_cert": data["server_crt"],
-            }
-            plan = cli.private_ca_ip_bootstrap_plan(cfg, data["fingerprint"])
-            self.assertEqual(plan["mode"], "private_ca_ip")
-            self.assertEqual(plan["authority"], "192.0.2.20:6099")
-            command = zt.private_ca_ip_linux_command(
-                cfg["allocator_public_url"], data["fingerprint"], HANDLE
-            )
-            self.assertLessEqual(len(command), 700, len(command))
-            # Generated installation commands must remain exactly one line.
-            self.assertNotIn("\n", command)
-            self.assertNotIn("\r", command)
-            self.assertIn("openssl s_client", command)
-            self.assertIn("/ca.crt", command)
-            self.assertIn("--cacert", command)
-            self.assertIn("/i/", command)
-            self.assertNotIn("--insecure", command)
-            self.assertNotIn("curl -k", command)
-            self.assertLess(command.index("openssl dgst -sha256"), command.index("/i/"))
-            self.assertLess(command.index("--cacert"), command.index("/i/"))
-            self.assertNotIn("zt1.", command)
-            self.assertIsNone(cli.private_ca_ip_bootstrap_plan(cfg, "0" * 64))
-            cfg["allocator_public_url"] = "https://192.0.2.21:6099/enroll"
-            self.assertIsNone(cli.private_ca_ip_bootstrap_plan(cfg, data["fingerprint"]))
 
-    def test_default_ip_only_linux_mints_short_issuer_command(self):
-        import frp_pki
-        with tempfile.TemporaryDirectory(prefix='drlink-ip-command-') as td:
-            root = Path(td)
-            issued = frp_pki.ensure_pki(root / 'pki', '192.0.2.20')
-            cfg = {
-                'enrollments_dir': str(root / 'enrollments'),
-                'allocator_public_url': 'https://192.0.2.20:6099/enroll',
-                'tls_ca_cert': issued['ca_crt'],
-                'tls_server_cert': issued['server_crt'],
-                'client_installer_url': 'https://example.test/installer.sh',
-            }
-            (root / 'config.json').write_text(json.dumps(cfg))
-            class FakeAllocator:
-                ServiceValidationError = ValueError
-                @staticmethod
-                def normalize_services(items):
-                    return items
-                @staticmethod
-                def issue_bootstrap_ticket(*args, **kwargs):
-                    return TICKET, {}, {'id': 'f' * 16, '_short_handle': HANDLE}
-            output = io.StringIO()
-            with mock.patch.object(cli, 'CONFIG', str(root / 'config.json')), \
-                 mock.patch.object(cli, 'require_onboarding_config'), \
-                 mock.patch.object(cli, 'resolve_configured_installer_url', return_value=cfg['client_installer_url']), \
-                 mock.patch.object(cli, 'preflight_installer_url'), \
-                 mock.patch.object(cli, 'load_allocator', return_value=FakeAllocator), \
-                 mock.patch.object(cli, 'run_enrollment_retention_cleanup'), \
-                 mock.patch.object(cli, 'short_url_host_for_cfg', return_value=''), \
-                 mock.patch.object(cli, 'is_interactive_stdin', return_value=False), \
-                 redirect_stdout(output):
-                result = cli.main(['--one-line', '--client-name', 'escare'])
-            self.assertEqual(result, 0)
-            lines = output.getvalue().splitlines()
-            commands = [x for x in lines if x.startswith('bash -c ')]
-            self.assertEqual(len(commands), 1)
-            self.assertLessEqual(len(commands[0]), 700)
-            self.assertIn('/i/', commands[0])
-            self.assertNotIn('zt1.', commands[0])
 
-    def test_private_ca_real_https_ip_command_pins_before_stage_execution(self):
-        # Real local TLS, real curl/openssl, simulated sudo only. A typical
-        # Python HTTPS listener omits close_notify on close. The unauthenticated
-        # public CA read must not fail merely on TLS shutdown; the strict
-        # verified handle request and SHA pin must remain mandatory.
-        import frp_pki
-        with tempfile.TemporaryDirectory(prefix='drlink-ip-real-tls-') as td:
-            root = Path(td)
-            pki = frp_pki.ensure_pki(root / 'pki', '127.0.0.1')
-            marker = root / 'executed'
-            paths = []
-            handle = HANDLE
 
-            class TestEndpoint(BaseHTTPRequestHandler):
-                def log_message(self, *_args):
-                    return
 
-                def do_GET(self):
-                    paths.append(self.path)
-                    if self.path == '/ca.crt':
-                        data = Path(pki['ca_crt']).read_bytes()
-                    elif self.path == '/i/' + handle:
-                        data = ('#!/bin/sh\nprintf PASS > ' + str(marker) + '\n').encode()
-                    else:
-                        self.send_error(404)
-                        return
-                    self.send_response(200)
-                    self.send_header('Content-Length', str(len(data)))
-                    self.end_headers()
-                    self.wfile.write(data)
 
-            endpoint = HTTPServer(('127.0.0.1', 0), TestEndpoint)
-            ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
-            ctx.load_cert_chain(pki['server_crt'], pki['server_key'])
-            endpoint.socket = ctx.wrap_socket(endpoint.socket, server_side=True)
-            thread = threading.Thread(target=endpoint.serve_forever, daemon=True)
-            thread.start()
-            stub = root / 'sudo'
-            stub.write_text('#!/bin/sh\nexec "$@"\n')
-            stub.chmod(0o755)
-            env = dict(os.environ, PATH=td + os.pathsep + os.environ['PATH'])
-            origin = 'https://127.0.0.1:%s/enroll' % endpoint.server_port
-            try:
-                for name, pin, should_execute in (
-                    ('good', pki['fingerprint'], True),
-                    ('wrong-pin', '0' * 64, False),
-                ):
-                    with self.subTest(name=name):
-                        marker.unlink(missing_ok=True)
-                        paths.clear()
-                        cmd = zt.private_ca_ip_linux_command(origin, pin, handle)
-                        result = subprocess.run(['bash', '-c', cmd], capture_output=True,
-                                                text=True, env=env, timeout=12)
-                        self.assertEqual(marker.exists(), should_execute, result.stderr)
-                        self.assertEqual(result.returncode, 0 if should_execute else 1)
-                        self.assertIn('/ca.crt', paths)
-                        self.assertEqual('/i/' + handle in paths, should_execute)
-            finally:
-                endpoint.shutdown()
-                endpoint.server_close()
-                thread.join(timeout=3)
 
-    def test_private_ca_windows_does_not_send_handle_before_ca_pin(self):
-        fp, digest = 'a' * 64, 'b' * 64
-        command = zt.private_ca_ip_windows_command(
-            'https://192.0.2.20:6099/enroll', fp, digest, HANDLE
-        )
-        self.assertLessEqual(len(command), 1300)
-        self.assertIn('--insecure -o $ca', command)  # public cert only
-        self.assertIn('--cacert $ca --ssl-revoke-best-effort -o $st', command)  # credential protected
-        self.assertEqual(command.count('--insecure'), 1)
-        self.assertLess(command.index("CA fingerprint mismatch"), command.index('/i/'))
-        self.assertLess(command.index('--cacert'), command.index('Get-FileHash'))
-        self.assertLess(command.index('Get-FileHash'), command.index('& powershell.exe'))
-        self.assertIn('stage-1 hash mismatch', command)
-        self.assertIn('WriteAllText', command)  # only one normalized public CA
-        self.assertIn('--max-redirs 0', command)  # no credential redirects
-        self.assertIn('finally{Remove-Item', command)
 
-    def test_private_ca_windows_stage1_tolerates_unreachable_revocation_endpoint(self):
-        # BUG-05: Schannel cannot reach CRL/OCSP for the private pinned CA, so
-        # curl.exe exits 60 (CERT_TRUST_REVOCATION_STATUS_UNKNOWN). Only the
-        # pinned --cacert stage-1 fetch may use best-effort revocation; global
-        # --ssl-no-revoke and any widening of the --insecure CA fetch are
-        # forbidden, and every other verification step must remain.
-        command = zt.private_ca_ip_windows_command(
-            'https://192.0.2.20:6099/enroll', 'a' * 64, 'b' * 64, HANDLE
-        )
-        self.assertEqual(command.count('--ssl-revoke-best-effort'), 1)
-        self.assertNotIn('--ssl-no-revoke', command)
-        self.assertEqual(command.count('--insecure'), 1)
-        self.assertLess(command.index('--insecure -o $ca'), command.index('--ssl-revoke-best-effort'))
-        self.assertLess(command.index('--cacert $ca'), command.index('--ssl-revoke-best-effort'))
-        self.assertLess(command.index('--ssl-revoke-best-effort'), command.index('-o $st'))
-        self.assertIn("--proto '=https'", command)
-        self.assertLess(command.index('CA fingerprint mismatch'), command.index('--ssl-revoke-best-effort'))
-        self.assertLess(command.index('--ssl-revoke-best-effort'), command.index('stage-1 hash mismatch'))
-        self.assertLessEqual(len(command), 1300)
 
-    @unittest.skipUnless(shutil.which('pwsh'), 'PowerShell parser unavailable')
-    def test_private_ca_windows_stage_never_executes_before_both_pins(self):
-        import frp_pki
-        with tempfile.TemporaryDirectory(prefix='drlink-pwsh-ip-') as td:
-            root = Path(td)
-            ca_data = frp_pki.ensure_pki(root / 'pki', '192.0.2.20')
-            ca = Path(ca_data['ca_crt'])
-            stage = root / 'stage.ps1'
-            stage.write_text('Write-Output verified-stage\n')
-            digest = hashlib.sha256(stage.read_bytes()).hexdigest()
-            (root / 'curl.exe').write_text(
-                '#!/bin/sh\n'
-                'dest=;kind=\n'
-                'for a in "$@"; do\n'
-                ' case "$a" in /ca.crt|*/ca.crt) kind=ca;; *"/i/"*) kind=stage;; esac\n'
-                'done\n'
-                'while [ "$#" -gt 0 ];do if [ "$1" = -o ];then shift;dest="$1";fi;shift;done\n'
-                '[ -n "$dest" ] || exit 11\n'
-                'if [ "$kind" = ca ];then cp "$CASE_ROOT/pki/ca.crt" "$dest";exit 0;fi\n'
-                'if [ "$kind" = stage ];then cp "$CASE_ROOT/stage.ps1" "$dest";exit 0;fi\n'
-                'exit 12\n'
-            )
-            (root / 'powershell.exe').write_text(
-                '#!/bin/sh\n: > "$CASE_ROOT/stage-executed"\nexit 0\n'
-            )
-            for tool in ('curl.exe', 'powershell.exe'):
-                (root / tool).chmod(0o755)
-            env = dict(os.environ, TEMP=td, CASE_ROOT=td,
-                       PATH=td + os.pathsep + os.environ['PATH'])
-            for label, ca_pin, stage_pin, should_run in (
-                ('ok', ca_data['fingerprint'], digest, True),
-                ('bad-ca', '0' * 64, digest, False),
-                ('bad-stage', ca_data['fingerprint'], '0' * 64, False),
-            ):
-                with self.subTest(label=label):
-                    marker = root / 'stage-executed'
-                    marker.unlink(missing_ok=True)
-                    command = zt.private_ca_ip_windows_command(
-                        'https://192.0.2.20:6099/enroll', ca_pin, stage_pin, HANDLE
-                    )
-                    result = subprocess.run(
-                        ['pwsh', '-NoProfile', '-NonInteractive', '-Command', command],
-                        env=env, capture_output=True, text=True, timeout=18,
-                    )
-                    self.assertEqual(marker.exists(), should_run, result.stderr[-250:])
-                    if should_run:
-                        self.assertEqual(result.returncode, 0, result.stderr[-250:])
-                    else:
-                        self.assertNotEqual(result.returncode, 0)
 
-    def test_ip_bootstrap_rejects_dns_and_invalid_url_authority(self):
-        for u in (
-            "https://example.test/enroll", "http://192.0.2.20/enroll",
-            "https://user:pass@192.0.2.20/enroll", "https://192.0.2.20:99999/enroll",
-            "https://192.0.2.20/enroll?token=leak",
-        ):
-            with self.subTest(url=u):
-                self.assertIsNone(zt.private_ca_ip_endpoint(u))
-        self.assertEqual(
-            zt.private_ca_ip_endpoint("https://[2001:db8::1]:6099/enroll"),
-            ("[2001:db8::1]:6099", "[2001:db8::1]", 6099),
-        )
+    def test_all_platforms_and_authorities_use_exact_public_issuer(self):
+        for authority in (HOST, "192.0.2.20:6099", "private.example:8443"):
+            for platform in ("linux", "macos", "windows"):
+                with self.subTest(authority=authority, platform=platform):
+                    output = io.StringIO()
+                    with redirect_stdout(output):
+                        cli.print_entry_command(authority, "A3xK9mP2", platform, 600, "a"*16)
+                    commands = [line for line in output.getvalue().splitlines()
+                                if line.startswith(("curl ", "iex("))]
+                    self.assertEqual(len(commands), 1)
+                    self.assert_short_only(commands[0], windows=platform=="windows", authority=authority)
+                    self.assertNotIn("bt1.", output.getvalue())
+                    self.assertNotIn("/i/", output.getvalue())
+                    self.assertNotIn("set enrollment approve", output.getvalue())
+                    self.assertIn("automatic registration", output.getvalue())
+                    self.assertEqual(cli.parse_args(["--one-line","--platform",platform]).platform, platform)
 
-    def test_missing_compact_bootstrap_fails_before_guided_confirmation(self):
-        # Previously the operator entered every service and confirmed Y,
-        # only then discovering the HTTPS prerequisite was absent.
-        with tempfile.TemporaryDirectory() as root:
-            tmp = Path(root)
-            config = {
-                "enrollments_dir": str(tmp / "enrollments"),
-                "allocator_public_url": "https://192.0.2.20:6099/enroll",
-                "tls_ca_cert": str(tmp / "ca.crt"),
-                "client_installer_url": "https://example.test/installer.sh",
-            }
-            (tmp / "config.json").write_text(json.dumps(config))
-            (tmp / "ca.crt").write_text("test-public-ca")
-            with mock.patch.object(cli, "CONFIG", str(tmp / "config.json")), \
-                 mock.patch.object(cli, "require_onboarding_config"), \
-                 mock.patch.object(cli, "fingerprint_from_cert", return_value="a" * 64), \
-                 mock.patch.object(cli, "short_url_host_for_cfg", return_value=""), \
-                 mock.patch.object(cli, "resolve_configured_installer_url", return_value="https://example.test/installer.sh"), \
-                 mock.patch.object(cli, "is_interactive_stdin", return_value=True), \
-                 mock.patch.object(cli, "read_prompt", side_effect=AssertionError("unexpected prompt")):
-                with self.assertRaises(SystemExit) as caught:
-                    cli.main(["--one-line", "--client-name", "escare"])
-                self.assertNotEqual(caught.exception.code, 0)
-                self.assertEqual(list((tmp / "enrollments").iterdir()), [])
+    def test_missing_renderer_or_invalid_locator_does_not_emit_fallback(self):
+        for platform in ("linux","macos","windows"):
+            for locator in ("a"*22, "bad/path", ""):
+                out = io.StringIO()
+                with self.subTest(platform=platform, locator=locator), redirect_stdout(out), self.assertRaises(SystemExit):
+                    cli.print_entry_command(HOST, locator, platform, 600, "a"*16)
+                self.assertNotIn("Zero-touch Agent command", out.getvalue())
+            with mock.patch.object(cli, "_zt", return_value=None), self.assertRaises(SystemExit):
+                cli.print_entry_command(HOST, "A3xK9mP2", platform, 600, "a"*16)
 
-    def test_linux_missing_compact_renderer_does_not_fall_back_to_long_command(self):
-        import io
-        import contextlib
-
-        output = io.StringIO()
-        with mock.patch.object(cli, "_zt", return_value=None):
-            with contextlib.redirect_stdout(output):
-                with self.assertRaises(SystemExit):
-                    cli.print_one_line(
-                        TICKET, 600, "", HOST, 7000, "https://server.example",
-                        "c" * 64, "https://example.test/artifacts/agent/bootstrap-client.sh",
-                        "", 22, cfg={"bootstrap_hostname": HOST},
-                        short_handle=HANDLE,
-                    )
-        self.assertNotIn("FRP_BOOTSTRAP_TICKET=", output.getvalue())
-        self.assertNotIn("zt1.", output.getvalue())
-        self.assertNotIn("Zero-touch Agent command", output.getvalue())
-
-    def test_windows_missing_hash_does_not_fall_back_to_long_command(self):
-        import io
-        import contextlib
-
-        output = io.StringIO()
-        with contextlib.redirect_stdout(output):
-            with self.assertRaises(SystemExit):
-                cli.print_one_line_windows(
-                    TICKET, 600, "", HOST, 7000, "https://server.example",
-                    "c" * 64, "https://example.test/artifacts/agent/bootstrap-client.ps1",
-                    cfg={"bootstrap_hostname": HOST}, short_handle=HANDLE,
-                    stage1_sha256="",
-                )
-        self.assertNotIn("FRP_BOOTSTRAP_TICKET=", output.getvalue())
-        self.assertNotIn("Zero-touch Agent command", output.getvalue())
-
-    def test_private_ca_renderers_keep_compact_guards_without_dns_only_limits(self):
-        # The merged PR226 guards must not reintroduce the FQDN-only failure
-        # by applying 200/500 to the deliberately longer CA-pinned IP route.
-        url = "https://192.0.2.20:6099/enroll"
-        plan = {"mode": "private_ca_ip", "allocator": url}
-        for windows in (False, True):
-            output = io.StringIO()
-            with self.subTest(windows=windows), redirect_stdout(output):
-                if windows:
-                    cli.print_one_line_windows(
-                        TICKET, 600, "", "192.0.2.20", 443, url,
-                        "a" * 64, "https://example.test/installer.ps1",
-                        cfg={}, short_handle=HANDLE, stage1_sha256="b" * 64,
-                        private_ip_plan=plan,
-                    )
-                else:
-                    cli.print_one_line(
-                        TICKET, 600, "", "192.0.2.20", 443, url,
-                        "a" * 64, "https://example.test/installer.sh", "", 22,
-                        cfg={}, short_handle=HANDLE, private_ip_plan=plan,
-                    )
-            lines = output.getvalue().splitlines()
-            prefix = "$ErrorActionPreference=" if windows else "bash -c "
-            command = next(line for line in lines if line.startswith(prefix))
-            self.assertLessEqual(len(command), 1300 if windows else 700)
-            self.assertIn("/i/", command)
-            self.assertNotIn("zt1.", command)
+    def test_new_stage_download_integrity_and_separate_credentials(self):
+        ca = "fixture certificate"
+        origin = "https://192.0.2.20:6099"
+        for platform in ("linux","macos","windows"):
+            if platform == "windows":
+                script = zt.render_short_url_windows_bootstrap_script(origin+"/enroll", HASH, None,
+                    origin+"/fixture/bootstrap-client.ps1", entry_locator="A3xK9mP2", ca_pem=ca)
+                self.assertLess(script.index("CA fingerprint mismatch"),script.index(".DownloadFile"))
+                self.assertLess(script.index("Get-FileHash"),script.index("-File $installer"))
+            else:
+                script = zt.render_short_url_bootstrap_script(origin+"/enroll", HASH, None,
+                    origin+"/fixture/bootstrap-client.sh", entry_locator="A3xK9mP2", ca_pem=ca)
+                # A helper definition is not a download. Check the actual
+                # artifact retrieval and runtime preparation invocation order.
+                self.assertLess(script.index("CA fingerprint mismatch"),script.index('curl -fsSL --proto "=https"'))
+                self.assertLess(script.index("installer SHA256 mismatch"),script.index('\nentry_ensure_python\n'))
+                self.assertLess(script.index('\nentry_ensure_python\n'),script.index('bash "$INSTALLER_FILE"'))
+            self.assertIn("FRP_BOOTSTRAP_LOCATOR",script)
+            self.assertNotIn("bt1.",script)
+            self.assertNotIn(HANDLE,script)
+            self.assertNotIn("--insecure",script)
 
     def test_legacy_zero_touch_code_cannot_be_reintroduced(self):
         """No alternate long creator, decoder or bootstrap argv compatibility."""
@@ -550,6 +192,9 @@ class CompactZeroTouchContract(unittest.TestCase):
                 "def encode_zero_touch_package(", "def decode_zero_touch_package(",
                 "def pinned_ca_linux_command(", "def pinned_ca_windows_command(",
                 "def pinned_ca_windows_inner(", "def short_url_windows_command(",
+                "def short_url_command(", "def short_url_for_ticket(",
+                "def private_ca_ip_linux_command(", "def private_ca_ip_windows_command(",
+                "def windows_strict_launcher(", "def private_ca_ip_endpoint(",
             ),
             "install-client.sh": ("zt1.*)", "frp_zero_touch_apply_package"),
             "lib/frp-client-common.sh": ("frp_zero_touch_apply_package() {",),
@@ -559,7 +204,7 @@ class CompactZeroTouchContract(unittest.TestCase):
             for marker in markers:
                 with self.subTest(file=path, obsolete=marker):
                     self.assertNotIn(marker, contents)
-        for path in ("docs/CLI_REFERENCE.md", "docs/ZERO_TOUCH_SHORT_URL.md",
+        for path in ("docs/CLI_REFERENCE.md",
                      "docs/ZERO_TOUCH_REGRESSION_CONTROL.md", "docs/PRODUCT_MASTER.md"):
             with self.subTest(doc=path):
                 self.assertNotIn("--long-bootstrap", (ROOT / path).read_text())

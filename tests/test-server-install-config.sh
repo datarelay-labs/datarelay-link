@@ -522,31 +522,21 @@ spec.loader.exec_module(mod)
 
 domain_cfg = json.loads(Path(sys.argv[2]).read_text())
 ip_cfg = json.loads(Path(sys.argv[3]).read_text())
-ticket = 'A' * 22
-
-# public_url_host/public_hostname alone do not prove publicly trusted 443.
-assert S.short_url_hostname(domain_cfg) == ''
-assert mod.short_url_host_for_cfg(domain_cfg) == ''
-assert S.short_url_hostname(ip_cfg) == ''
-assert mod.short_url_host_for_cfg(ip_cfg) == ''
+locator = 'A3xK9mP2'
+from urllib.parse import urlparse
+for cfg in (domain_cfg, ip_cfg):
+    expected = urlparse(cfg['allocator_public_url']).netloc
+    assert mod.entry_authority_for_cfg(cfg) == expected
+    assert zt.render_entry_command(expected, locator, 'linux') == (
+        'curl -kfsS https://' + expected + '/' + locator + '|sudo bash')
 assert ip_cfg.get('public_hostname') == 'remote.xdr.ooo'
-
-# Explicit publicly trusted bootstrap edge enables the short URL.
-override = dict(ip_cfg)
-override['bootstrap_hostname'] = 'bootstrap.example.com'
-assert S.short_url_hostname(override) == 'bootstrap.example.com'
-# Explicit hostname is a selection, not public trust proof. An isolated
-# fixture permits string rendering, but real issuance must reject failed TLS.
-from unittest.mock import patch
-with patch.object(mod, '_test_root', return_value=''), \
-     patch('urllib.request.build_opener') as opener:
-    opener.return_value.open.side_effect = OSError('TLS untrusted')
-    assert mod.short_url_host_for_cfg(override) == ''
-cmd = zt.short_url_command(S.short_url_hostname(override), ticket)
-assert "https://bootstrap.example.com/i/" in cmd, cmd
+override = dict(ip_cfg, bootstrap_hostname='bootstrap.example.com')
+assert mod.entry_authority_for_cfg(override) == 'bootstrap.example.com'
+assert zt.render_entry_command('bootstrap.example.com', locator, 'windows') == (
+    'iex(curl.exe -kfsS https://bootstrap.example.com/A3xK9mP2|Out-String)')
 print('ok')
 PY
-pass "ZT_SHORT_URL_REQUIRES_BOOTSTRAP_HOST"
+pass "ZT_ENTRY_AUTHORITY_PARITY"
 
 echo
 echo "SERVER_INSTALL_CONFIG_TEST=PASS"

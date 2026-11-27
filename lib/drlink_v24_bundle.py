@@ -529,6 +529,10 @@ def _ai_rule_view(plane: ControlPlane, row) -> dict:
             "SELECT name FROM object_groups WHERE id = ?", (row["destination_ref_id"],)
         ).fetchone()
         dest = g["name"] if g else dest
+    elif kind == v24.TRUSTED_MANAGED_HOSTS_KIND and row["destination_ref_id"] == v24.TRUSTED_MANAGED_HOSTS_REF_ID:
+        dest = v24.TRUSTED_MANAGED_HOSTS_TARGET
+    elif kind == v24.MANAGED_HOST_GROUP_KIND:
+        dest = v24.MANAGED_HOST_GROUP_PREFIX + str(row["destination_ref_id"])
     elif kind == "server" and row["destination_ref_id"] == v24.SERVER_SELF_REF_ID:
         dest = v24.SERVER_SELF_TARGET
     elif kind == "client":
@@ -542,6 +546,10 @@ def _ai_rule_view(plane: ControlPlane, row) -> dict:
             "Cannot serialize a legacy Network Object using the reserved Server "
             "target name 'server:self'. Rename that Object before exporting or "
             "patching its AI Access Rule.")
+    if dest == v24.TRUSTED_MANAGED_HOSTS_TARGET and kind != v24.TRUSTED_MANAGED_HOSTS_KIND:
+        _bundle_error("Cannot serialize a Network Object using the reserved dynamic Managed Host selector.")
+    if dest.startswith(v24.MANAGED_HOST_GROUP_PREFIX) and kind != v24.MANAGED_HOST_GROUP_KIND:
+        _bundle_error("Cannot serialize a Network Object using the reserved Managed Host Group selector.")
     perm = "-"
     pkind = row["permission_ref_kind"]
     if pkind == "permission_object":
@@ -1129,6 +1137,12 @@ def parse_v24_bundle(raw_text: str) -> dict:
             "No changes were applied."
         )
     if "configurationBundle" in data:
+        if set(data) != {"configurationBundle"}:
+            raise BundleError(
+                "ERROR:\nConfigurationBundle must contain only the top-level key configurationBundle.\n\n"
+                "Remove legacy apiVersion/kind or other unexpected top-level keys.\n\n"
+                "No changes were applied."
+            )
         body = data["configurationBundle"]
         if not isinstance(body, dict):
             raise BundleError("configurationBundle must be a mapping")
@@ -1139,8 +1153,7 @@ def parse_v24_bundle(raw_text: str) -> dict:
                 "No changes were applied."
             )
         return {"context": context, "body": body, "format": "v24"}
-    # Legacy apiVersion/kind form — still accepted for transition, mapped poorly;
-    # fail closed if neither schema is present.
+    # Recognize the retired envelope only to return an explicit rejection.
     if data.get("kind") == "ConfigurationBundle":
         raise BundleError(
             "ERROR:\nLegacy ConfigurationBundle apiVersion/kind form is not the canonical v2.4 schema.\n\n"
@@ -1537,7 +1550,9 @@ def prepare_v24_plan(plane: ControlPlane, raw_text: str, *, role: Optional[str] 
                                     "Create the AI Identity before applying the Rule." % rule["source"]
                                 )
                             dest = rule["destination"]
-                            if (dest != v24.SERVER_SELF_TARGET
+                            if dest.startswith(v24.MANAGED_HOST_GROUP_PREFIX):
+                                rule["destination"] = v24.MANAGED_HOST_GROUP_PREFIX + v24.resolve_managed_host_group_target(plane, dest)
+                            elif (dest not in (v24.SERVER_SELF_TARGET, v24.TRUSTED_MANAGED_HOSTS_TARGET)
                                     and dest.lower() not in no_names and dest.lower() not in ng_names):
                                 client = None
                                 try:
@@ -2341,15 +2356,36 @@ def export_configuration_v24(plane: ControlPlane) -> str:
             "sourceRevision": int(plane.current_revision()),
         }
         nos = []
-        for row in v24.list_network_objects(plane):
-            if row["type"] == "Managed Host":
+        # The public Bundle schema represents one real value per Network
+        # Object. Legacy incremental CRUD could leave an empty object, or
+        # multiple values; the display placeholder "-" is not a CIDR and
+        # exporting the first of multiple values silently loses policy state.
+        # Fail before writing a file or claiming rollback availability.
+        from drlink_control_plane import normalize_object_value
+
+        type_map = {"host": "ip", "network": "cidr", "fqdn": "fqdn"}
+        for obj in plane.list_objects():
+            if obj.get("origin") == "managed" or obj["type"] == "managed_endpoint":
                 continue
-            type_map = {"IP": "ip", "CIDR": "cidr", "FQDN": "fqdn"}
+            if obj["name"].casefold() == v24.SERVER_SELF_TARGET.casefold():
+                _bundle_error(
+                    "Cannot serialize a legacy Network Object using the reserved Server "
+                    "target name 'server:self'. Resolve that legacy object before export."
+                )
+            values = obj.get("values") or []
+            if obj["type"] not in type_map or len(values) != 1:
+                _bundle_error(
+                    "Network Object '%s' cannot be represented in a v2.4 ConfigurationBundle "
+                    "(expected exactly one value). Inspect: show network-object %s. "
+                    "Complete or explicitly remove the obsolete object through the public CLI, "
+                    "then retry export. No configuration file was written." % (obj["name"], obj["name"])
+                )
+            value = normalize_object_value(obj["type"], values[0])
             nos.append(
                 {
-                    "name": row["name"],
-                    "type": type_map.get(row["type"], "ip"),
-                    "value": row["value"],
+                    "name": obj["name"],
+                    "type": type_map[obj["type"]],
+                    "value": value,
                 }
             )
         if nos:

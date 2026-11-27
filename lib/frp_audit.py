@@ -19,7 +19,7 @@ DEFAULT_AUDIT_PATH = "/var/log/drlink/audit.jsonl"
 MAX_RECORD_BYTES = 16_384
 SECRET_KEY_RE = re.compile(
     r"(ticket|secret|token|password|passwd|private.?key|mac_key|enrollment.?code|"
-    r"bootstrap|hmac|auth_token|server_token)",
+    r"bootstrap|hmac|auth_token|server_token|^locator$)",
     re.IGNORECASE,
 )
 # Value patterns for current bt1.<id>.<secret> tickets and legacy btck.* form.
@@ -35,8 +35,9 @@ SECRET_VALUE_RE = re.compile(
 
 def _redact_short_url_paths(text):
     text = re.sub(r'(/i/)[^/?\s#]+', r'\1<redacted>', str(text), flags=re.IGNORECASE)
+    text = re.sub('((?:https://[^/\\s]+|GET |HEAD )/)([A-Za-z0-9_-]{6,8})(?=[?\\s\\"\\\'#$|)]|$)', lambda m: m.group(1)+'<redacted>' if m.group(2).lower() not in ('enroll','zt0000','zt000000','healthz') else m.group(0), text)
     return re.sub(
-        r'(FRP_BOOTSTRAP_TICKET\s*=\s*)\S+',
+        r'(FRP_BOOTSTRAP_(?:TICKET|LOCATOR)\s*=\s*)\S+',
         r'\1<redacted>',
         text,
         flags=re.IGNORECASE,

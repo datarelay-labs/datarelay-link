@@ -77,7 +77,7 @@ class GuidedPreflight(unittest.TestCase):
         for platform in (1, 2, 3):
             with self.subTest(platform=platform):
                 text = self.invoke(platform, usable=True)
-                self.assertIn("Zero-Touch prerequisites verified via pinned Private CA at numeric IP; no ticket was issued", text)
+                self.assertIn("Zero-Touch prerequisites verified; no ticket was issued", text)
                 self.assertIn("Managed Host details", text)
                 self.assertLess(
                     text.index("Zero-Touch prerequisites verified"),

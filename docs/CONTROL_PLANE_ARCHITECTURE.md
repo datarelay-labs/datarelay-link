@@ -1,14 +1,14 @@
-# Data Relay Link v2.4.0 — Internal Control Plane Architecture and Schema History
+# Data Relay Link v2.4.0 — Internal Control Plane Architecture
 
-> **Document role:** Internal implementation/schema reference retained from the intermediate v2.4 redesign
-> **Status:** Public model and policy semantics in this document are superseded by the Product Master and CLI/AI Master
+> **Document role:** Current internal implementation/schema reference
+> **Status:** Current architecture; public contract is defined by the Product Master and CLI/AI Master
 > **Product:** Data Relay Link
 > **Public SSOT:** `PRODUCT_MASTER.md` + `DATA_RELAY_LINK_CLI_AI_MASTER_v2.4_FINAL.md`
 > **Important:** Internal table/helper names such as `managed_endpoints`, `published_services`, `service_presets`, and `ai_principals` are storage/compatibility names only. They are not public v2.4 product nouns.
 
 ## 1. Purpose and authority
 
-This document is retained to describe internal control-plane structure, migration history, and implementation constraints created during the v2.4 redesign. It must not redefine the frozen public model.
+This document describes current internal control-plane structure and implementation constraints. It must not redefine the public model.
 
 Current public terminology and policy behavior are defined by:
 
@@ -16,9 +16,9 @@ Current public terminology and policy behavior are defined by:
 2. `DATA_RELAY_LINK_CLI_AI_MASTER_v2.4_FINAL.md`.
 3. `Data Relay Link CLI Information Architecture.md`.
 
-Actual qualified runtime behavior on an exact Git HEAD remains implementation evidence. Where the historical/intermediate terminology below conflicts with the current public SSOT, the current public SSOT wins.
+Actual runtime behavior on an exact Git HEAD remains implementation evidence. Differences from the intended public contract are defects or explicitly pending designs, not alternate supported models.
 
-Internal-name mapping used while legacy schema names remain in code:
+Current internal storage mapping (do not rename persisted tables without a qualified migration):
 
 ```text
 managed_endpoints  -> Managed Host Network Object projection
@@ -39,55 +39,35 @@ Remote Service
 plane-specific Access Policy (Remote BLACKLIST/WHITELIST; Internet/AI WHITELIST-only)
 ```
 
-Internal storage names in the mapping above are not public nouns. Superseded intermediate public nouns are listed only in section 2.
+Internal storage names above are not public nouns. Historical public designs are available in Git history, not in the current architecture.
 
-When a later section is marked historical, it is migration context. Current operator-visible behavior follows the Product Master and CLI/AI Master.
+Current operator-visible behavior follows the Product Master and CLI/AI Master.
 
-## 2. Intermediate architecture snapshot (historical)
-
-The following values and nouns document the intermediate schema/policy design that produced much of the current internal implementation. They are retained for migration and code-reading context only. They are not current public nouns. Where these values conflict with the Product Master or CLI/AI Master, the current public SSOT wins.
-
-| Current public noun | Superseded intermediate public noun | Internal storage / compatibility name |
-| --- | --- | --- |
-| Managed Host | Managed Endpoint | `managed_endpoints` |
-| Remote Service | Published Service | `published_services` |
-| Service Object (wizard presets) | Service Preset | `service_presets` |
-| AI Identity | AI Principal | `ai_principals` |
-| Plane-specific Access Policy (Remote BLACKLIST/WHITELIST; Internet/AI WHITELIST-only) | ordered first-match ALLOW/DENY rulebases | policy rule tables |
+## 2. Current architecture invariants
 
 ```text
 CONTROL_PLANE_SSOT=SQLite
 SQLITE_PATH=/var/lib/drlink/drlink.db
 EXTERNAL_DATABASE_REQUIRED=NO
-
-OBJECT_MODEL=NEUTRAL
-SOURCE_OBJECT_TYPE=NO
-DESTINATION_OBJECT_TYPE=NO
-
-REMOTE_ACCESS_RULEBASE=ORDERED_FIRST_MATCH
-INTERNET_ACCESS_RULEBASE=ORDERED_FIRST_MATCH
-AI_ACCESS_RULEBASE=SEPARATE_SEMANTICS
-
-EXPLICIT_ALLOW=YES
-EXPLICIT_DENY=YES
-IMPLICIT_DEFAULT_DENY=YES
-
+REMOTE_ACCESS_MODE=BLACKLIST_OR_WHITELIST
+INTERNET_ACCESS_MODE=WHITELIST_ONLY
+AI_ACCESS_MODE=WHITELIST_ONLY
+PUBLIC_RULE_ORDER=NO
+PER_RULE_ACTION=NO
+REMOTE_ACCESS_NO_POLICY=ALLOW
+INTERNET_ACCESS_NO_POLICY=DENY
+AI_ACCESS_NO_POLICY=DENY
 POLICY_CHANGES_APPLY_TO_NEW_CONNECTIONS=YES
 ESTABLISHED_CONNECTIONS_IMPLICITLY_TERMINATED=NO
-
 MCP_INCLUDED_IN_V2_4_0_TARGET=YES
 MCP_PER_ENDPOINT_SERVER_REQUIRED=NO
-
-CONFIGURATION_BUNDLE_INCLUDED_IN_V2_4_0_TARGET=YES
 CONFIGURATION_BUNDLE_SEPARATE_ENGINE=NO
-CONFIGURATION_BUNDLE_SSOT=NO
 CHANGE_PLAN_SHARED_BY_CLI_AND_BUNDLE=YES
 ZERO_TOUCH_MAX_PER_ISSUE=10
 ZERO_TOUCH_MAX_ACTIVE_UNUSED=10
 ZERO_TOUCH_SINGLE_USE=YES
 ZERO_TOUCH_DEFAULT_TTL=1h
 ZERO_TOUCH_MAX_TTL=24h
-
 FRP_UPSTREAM=fatedier/frp
 FRP_FORK=NO
 ```
@@ -300,100 +280,21 @@ Internet Access source may be IP, CIDR, FQDN, Managed Host, or a Network Group o
 
 Access Policy has no public rule ordering and no per-rule ALLOW/DENY action. Remote Access derives decisions from BLACKLIST/WHITELIST mode plus enforcement; Internet Access and AI Access are WHITELIST-only and otherwise fail closed.
 
-## 8. Intermediate neutral Object model (historical)
+## 8. Network Objects
 
-> Sections 8–11 record the intermediate neutral Object redesign. Current public resources are in section 7.1 and the Product Master.
+Network Objects represent policy selectors; the same eligible Object may be used in different policy fields. Do not create independent Source and Destination object models.
 
-The intermediate model did not have separate Source Object and Destination Object resource types.
+## 9. Network Object types
 
-Intermediate user resources:
+Static IP, CIDR and FQDN Objects use the current public schema; Managed Host Network Objects are derived from authenticated inventory and have their own lifecycle. Static objects use `origin=static`; Managed Host projections use `origin=managed`.
 
-```text
-Object
-Object Group
-```
+## 10. Groups
 
-The role of an Object is determined by the policy field in which it is referenced.
+Network, Service and Permission Groups are flat typed collections. References are immutable, invalid members are not silently pruned, and referenced resources are protected from deletion. Managed Host Groups are separate inventory membership, not policy groups.
 
-Example:
+## 11. Context validation
 
-```text
-external1
-  Type: Network
-  Values:
-    203.0.113.0/24
-    203.0.113.128/25
-
-internal1
-  Type: Network
-  Values:
-    10.10.10.0/24
-
-external2
-  Type: FQDN
-  Values:
-    google.com
-    naver.com
-    github.com
-```
-
-The same Object may be a Remote Access Source in one rule and an Internet Access Destination in another.
-
-## 9. Intermediate Object types (historical)
-
-Intermediate kinds:
-
-```text
-Host
-Network
-FQDN
-Managed Host
-Group
-```
-
-In the current schema, static Network Objects use `origin=static`. Managed Host Network Objects use `origin=managed` and are lifecycle-managed by Data Relay Link (internal table: `managed_endpoints`).
-
-Objects may contain multiple values when those values form one logical administrative object. Operators are not forced to create one Object per IP/CIDR merely to group them immediately afterward.
-
-## 10. Intermediate Object Group semantics (historical)
-
-Intermediate Object Groups were reusable collections of Objects and, if implemented, nested Object Groups. Current Network Groups are flat and do not use this nested-cycle model.
-
-Intermediate requirements:
-
-- Immutable member references.
-- Nested group cycle detection.
-- No silent pruning of invalid members for a policy context.
-- Assignment is fail-closed if any member makes the group invalid for the selected field.
-- Referenced groups cannot be cascade-deleted.
-
-Cycle example that must be rejected:
-
-```text
-A → B → C → A
-```
-
-## 11. Intermediate context validation (historical)
-
-The intermediate model still restricted which Object types were legal in each field.
-
-Intermediate context policy:
-
-```text
-Remote Access Source
-  Host | Network | compatible Object Group
-
-Remote Access Destination
-  Host | Network | Managed Host | compatible Object Group
-
-Internet Access Source
-  Host | Network | compatible Object Group
-
-Internet Access Destination
-  FQDN | Host | public Network | compatible Object Group
-```
-
-That matrix is intermediate history. Current selector rules are in section 7.1 and the CLI/AI Master. Tab completion and guided selectors show only context-valid candidates for the current public model.
+Use the selectors and mode-specific restrictions defined in section 7.1 and the CLI/AI Master. Help, completion, and guided selection expose only context-valid choices.
 
 ## 12. Managed Host
 
@@ -544,57 +445,15 @@ A broad destination Network Object therefore does not automatically publish ever
 
 Public v2.4 does not expose a standalone preset resource. The operator-facing Service Object wizard presets are SSH, HTTP, HTTPS, RDP, Custom TCP, and Fixed TCP. UDP is not offered in that wizard.
 
-A preset is only a creation convenience. It pre-fills values when a Remote Service is created. It does not own the created service, does not participate in policy evaluation, and changing the preset later does not mutate existing services. The historical public names for this idea are recorded only in section 2.
+A preset is only a creation convenience. It pre-fills values when a Remote Service is created. It does not own the created service, does not participate in policy evaluation, and changing the preset later does not mutate existing services. The preset is not a separately managed public resource.
 
-## 20. Intermediate Remote Access rulebase (historical)
+## 20. Remote Access evaluation
 
-> Current public Remote Access uses BLACKLIST / WHITELIST semantics per the Product Master. The ordered first-match ALLOW/DENY narrative below is retained only as intermediate redesign history.
+Match enabled rules using Source, Destination and Service selectors. In BLACKLIST mode, matching traffic is denied and unmatched traffic allowed. In WHITELIST mode, matching traffic is allowed and unmatched traffic denied. No Policy and disabled enforcement allow Remote Access; runtime service reachability remains independent. There is no public rule ordering.
 
-Intermediate Remote Access was an ordered rulebase.
+## 21. Internet Access evaluation
 
-Example:
-
-```text
-#   NAME               SOURCE       DESTINATION   SERVICE     ACTION
-10  block-dp1-ssh      external1    dp1           TCP/22      DENY
-20  partner-ssh        external1    internal1     TCP/22      ALLOW
-30  partner-web        external1    internal1     TCP/443     ALLOW
-
-Implicit Default                                           DENY
-```
-
-Evaluation:
-
-1. Skip disabled rules.
-2. Evaluate top to bottom.
-3. Match Source.
-4. Match Destination.
-5. Match protocol/port criteria.
-6. First complete match wins.
-7. No later rule is evaluated for the decision.
-8. No match means implicit DENY.
-
-Selector composition is deterministic: multiple selectors in one dimension are OR; Source AND Destination AND Service dimensions must all match.
-
-There is no automatic "most specific rule wins" algorithm.
-
-## 21. Intermediate Internet Access rulebase (historical)
-
-> Current public Internet Access is WHITELIST-only and deny-by-default per the Product Master. The ordered first-match ALLOW/DENY narrative below is retained only as intermediate redesign history.
-
-Intermediate Internet Access was a separate ordered rulebase.
-
-Example:
-
-```text
-#   NAME              SOURCE           DESTINATION   SERVICE      ACTION
-10  block-github-db   database         github        HTTPS/443    DENY
-20  approved-web      internal1        external2     HTTPS/443    ALLOW
-
-Implicit Default                                            DENY
-```
-
-Remote Access and Internet Access orderings are independent. Internet Access uses the same OR-within-dimension and AND-across-dimensions composition rule.
+WHITELIST only: a matching enabled Rule permits eligible traffic; unmatched, disabled, missing or invalid policy denies traffic. Enforce DNS, destination and source security boundaries independently of a matching Rule.
 
 ## 22. Internet Access destinations
 
@@ -635,7 +494,6 @@ AI Access
 
 Unknown/unsupported modes fail closed. Authentication remains mandatory for AI Access and is never sufficient authorization by itself. There is no public rule order and no per-rule ALLOW/DENY action. Deleting the last WHITELIST Rule preserves Mode and yields DENY ALL. Policy Reset restores Remote Access to ALLOW and Internet/AI Access to DENY ALL.
 
-The ordered explicit-DENY / implicit-DENY rulebase in sections 20–21 is historical only.
 
 ## 24. Rule creation
 
@@ -656,7 +514,6 @@ Affected rules
 Effective decision changes under the current mode
 ```
 
-Ordered first-match explanations belong only in sections 20–21.
 
 ## 26. Policy impact analysis
 
@@ -853,14 +710,14 @@ one ticket                  = one intended enrollment context
 use count                   = 1
 TTL default                 = 1 hour
 TTL maximum                 = 24 hours
-raw ticket/install URL      = display once
+raw enrollment credential  = confidential; never in entry file
 stored server credential    = verifier/hash only
 successful consume          = atomic
 ```
 
 If 3 active unused tickets remain, the next issuance can create at most 7. Expired/revoked tickets leave the active-unused count; consuming/expiring an enrollment ticket never disconnects an already enrolled Managed Host.
 
-Neither configuration fields nor hidden/public CLI flags may raise these server-side ceilings.
+Neither configuration fields nor hidden/public CLI flags may raise these server-side ceilings. The customer entry is a separate eight-character root-path Bootstrap filename, a sensitive first-claim capability distinct from the internal enrollment code. Its only variable fields are Server authority and filename; use the OS-specific fixed invocation in `ZERO_TOUCH_REGRESSION_CONTROL.md`. Bootstrap handles later downloads, authorization, installation and idempotent retry.
 
 ## 32. Migration framework
 
@@ -1201,8 +1058,7 @@ Static Bearer token. Cursor typically uses Static Bearer headers.
 Claude/ChatGPT custom connectors are expected to use authorization_code+PKCE,
 with DCR or CIMD for client registration and refresh tokens for persistent
 sessions. DCR/CIMD clients remain unbound until an operator approves OAuth
-consent against a concrete AI Identity (`system credential approve-oauth
-<PENDING-ID> [AI-IDENTITY]`).
+consent against a concrete AI Identity. For the target beginner UX, use the single approval lifecycle in `AI_ACCESS_MCP.md`.
 
 Issuer, resource, authorization endpoint, token endpoint, registration
 endpoint, and Protected Resource Metadata are taken from the configured
@@ -1384,7 +1240,7 @@ Any product/dependency code change between the two final Full Real E2E passes re
 
 ## 50. Explicit non-goals for this architecture phase
 
-The foundation does not require these before v2.4.0 stable:
+The CLI foundation does not require these as dependencies before v2.4.0 stable; an independently maintained Web UI must follow the same current contract:
 
 ```text
 Web UI
@@ -1415,83 +1271,6 @@ IMPLEMENTATION DETAIL
 
 A foundation change requires an explicit architecture decision before implementation. Implementation details do not.
 
-## 52. Documentation migration map
+## 52. Documentation authority
 
-The v2.4.0 architecture closure classifies repository documents as follows.
-
-### Canonical and rewritten for the new architecture
-
-```text
-docs/CONTROL_PLANE_ARCHITECTURE.md
-  INTERNAL — schema and migration history; public semantics follow the Product Master
-
-docs/PRODUCT_MASTER.md
-  REPLACED/REWRITTEN — product-level SSOT aligned to three access planes
-
-docs/Data Relay Link CLI Information Architecture.md
-  REPLACED/REWRITTEN — Managed Host, Network/Service/Permission Objects, and access-policy navigation
-
-docs/CLI_REFERENCE.md
-  REPLACED/REWRITTEN — target v2.4 direct grammar
-
-docs/CONFIGURATION_BUNDLE.md
-  NEW — declarative change-set, shared Change Plan, AI copy/paste, and bounded Zero-Touch contract
-
-docs/CONTROLLED_EGRESS.md
-  REWORKED — low-level Internet Access behavior retained, policy authority replaced
-
-docs/SECURITY.md
-  REPLACED/REWORKED — SQLite, runtime generation, and MCP trust boundaries
-
-docs/DATA_RELAY_ROADMAP.md
-  REPLACED/REWORKED — implementation sequence for the new foundation
-
-docs/VERSION_POLICY.md
-  MODIFIED — old v2.4 MCP exclusion superseded
-
-docs/RELEASE_CHECKLIST.md
-  REPLACED/REWORKED — new release gates
-
-docs/RELEASE_VALIDATION.md
-  REPLACED/REWORKED — new validation matrix
-
-README.md
-  REWRITTEN — concise development-state entry point
-
-CHANGELOG.md
-  MODIFIED — Unreleased target scope aligned to the architecture
-```
-
-### Retained with targeted update
-
-```text
-docs/DEPLOYMENT_MODES.md
-  RETAIN — topology behavior remains useful; persistent-state wording updated to SQLite
-```
-
-### Historical / superseded
-
-```text
-docs/SCHEMA_V2_DEPLOYMENT.md
-  HISTORICAL — old JSON registry schema-v2 runbook; no longer v2.4 authority
-```
-
-### Retained but non-canonical implementation/platform documents
-
-The following remain useful for their narrower platform, lab, or historical purpose and do not redefine control-plane architecture:
-
-```text
-docs/FRP_UPGRADE.md
-docs/MACOS_CLIENT.md
-docs/WINDOWS_CLIENT.md
-docs/WINDOWS_CLIENT_DESIGN.md
-docs/ZERO_TOUCH_SHORT_URL.md
-docs/OCI_ACCEPTANCE.md
-docs/PRIVILEGE_SEPARATION_DEFERRED.md
-```
-
-If implementation changes make commands or state references in those files stale, update or archive them during the implementation/qualification phase. They must not override the canonical documents above.
-
-### Release metadata after MCP implementation
-
-The old `MCP_V2_4_EXCLUSION` / `features.mcp_included=false` guard is retired. v2.4.0 candidate metadata uses `MCP_V2_4_INCLUDED` and `features.mcp_included=true` whenever the MCP Bridge and AI Access plane are present in the candidate bytes. ChatGPT owner/UI user-authentication qualification on a currently supported full-MCP plan/surface is a separate stable-release gate and must not be encoded by changing the feature-presence flag.
+Use `DOCUMENTATION_INDEX.md` for the current document map. For the target AI onboarding flow use `AI_ACCESS_MCP.md`. Historical migration decisions and replaced specifications live in Git history; current database migration and release qualification remain governed by `UPGRADE.md`, `VERSION_POLICY.md`, `RELEASE_CHECKLIST.md`, and `RELEASE_VALIDATION.md`.

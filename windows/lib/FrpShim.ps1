@@ -266,6 +266,14 @@ function Install-FrpCommandShim {
         $everAdded = $true
     }
     Save-FrpShimMarker -ToolsDir $tools -PathEntryAdded $everAdded | Out-Null
+    # Also update this process (direct installer use). Outer Zero-Touch
+    # bootstraps refresh their own process after the child exits.
+    if (Test-FrpIsWindowsHost) {
+        $present = @((Split-FrpPathList -Value $env:Path) | Where-Object {
+            Test-FrpPathEntryEquals -Left $_ -Right $tools
+        }).Count -gt 0
+        if (-not $present) { $env:Path = (@($env:Path, $tools) | Where-Object { $_ }) -join ';' }
+    }
 
     if (-not $Quiet) {
         if ($added) {

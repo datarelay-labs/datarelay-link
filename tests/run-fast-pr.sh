@@ -34,6 +34,16 @@ python3 tests/test-cli-inventory-selection-journey.py
 python3 tests/test-enrolled-routed-target-parity.py
 python3 tests/test-mcp-owner-default-access.py
 python3 tests/test-client-installer-url-hostname.py
+python3 tests/test-server-online-bootstrap.py
+python3 tests/test-zero-touch-entry-fields.py
+python3 tests/test-zero-touch-locator-index.py
+# The real Stage-1 root check and Server-local approval must also be
+# exercised on unprivileged CI runners, without mocking product privilege.
+if [[ "$(id -u)" == 0 ]]; then
+  python3 tests/test-zero-touch-entry-approval.py
+else
+  sudo -n "$(command -v python3)" tests/test-zero-touch-entry-approval.py
+fi
 python3 tests/test-zero-touch-operator-command-bound.py
 python3 tests/test-zero-touch-public-fqdn-trust.py
 python3 tests/test-zero-touch-private-ca-fqdn-ip-fallback.py
@@ -112,6 +122,7 @@ python3 tests/test-v24-final-closure.py
 python3 tests/test-v24-bundle-duplicate-mapping-keys.py
 python3 tests/test-v24-doc-consistency.py
 python3 tests/test-v24-cli-ai-master-closure.py
+python3 tests/test-v24-user-lifecycle-ux.py
 python3 tests/test-v24-cli-workflow-semantic-parity.py
 python3 tests/test-v24-rule-activation-ack.py
 python3 tests/test-v24-readonly-selector-operands.py

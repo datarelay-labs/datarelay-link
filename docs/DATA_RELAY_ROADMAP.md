@@ -28,6 +28,7 @@ canonical CLI nouns
 ConfigurationBundle + shared Change Plan
 AI-generated canonical CLI / copy-paste bundle workflow
 bounded Zero-Touch issuance (max 10/request and active unused)
+short-only Zero-Touch launcher (ZT-P0-CONTRACT-20261026, owner revision 2026-11-24)
 ```
 
 Can remain later work:
@@ -41,6 +42,13 @@ SIEM/reporting
 broad vendor destination catalogs
 ```
 
+### P0 — fixed short Zero-Touch entry (OPEN)
+
+1. Replace customer-facing commands with the fixed eight-character root-path entry templates in `ZERO_TOUCH_REGRESSION_CONTROL.md`; same form for public/private HTTPS, no prerequisite or extra fields.
+2. Implement locator lifecycle, platform selection, multi-stage downloads and idempotent retry. Keep configuration and all later-stage verification outside the customer command.
+3. Establish automatic first-claim enrollment and preserve downstream authentication, artifact integrity and signed service destinations. The initial unauthenticated execution risk is recorded, not a passed security gate.
+4. Regenerate artifacts, update structural tests, validate native Linux/macOS/Windows, exact-HEAD CI and real external enrollment/service E2E before qualification.
+
 ## 2. Phase DL-0 — proven relay foundation
 
 **Status:** Existing foundation; preserve while redesigning control plane.
@@ -50,11 +58,11 @@ Includes:
 ```text
 official fatedier/frp
 Zero-Touch / Manual Enrollment
-immutable Client identity
+immutable Managed Host / Agent identity
 multi-service relay
 public-port reservation
-Linux/macOS/Windows clients
-lifecycle/update/doctor/support bundle
+Linux/macOS/Windows Agents
+lifecycle/update/diagnostics/support bundle
 ```
 
 Do not fork FRP.
@@ -125,10 +133,10 @@ client_tags
 Acceptance:
 
 ```text
-neutral Objects
+typed Network/Service/Permission Objects and flat Groups
 no Source/Destination object duplication
-multi-value static Objects
-Object Group cycle protection
+context-valid static Network Objects
+reject unsupported nested Groups
 context validation
 Managed Host lifecycle ownership
 no silent identity rebinding
@@ -173,7 +181,7 @@ flow test/explain
 Remote Service + reachability intersection
 ```
 
-Legacy ACL becomes non-canonical and is removed/hidden before stable.
+Only canonical Remote Access policy is public; no alternate legacy policy path.
 
 ## 8. Phase DL-6 — Internet Access policy
 
@@ -245,7 +253,7 @@ Legacy JSON is migration input only, not dual authority.
 
 ## 11. Phase DL-9 — MCP Bridge / AI Access
 
-**Status:** Included in v2.4.0 target; supersedes old exclusion decision.
+**Status:** Included in v2.4.0 target.
 
 **Current release blocker:** Real ChatGPT owner/UI OAuth Authorization Code/consent, tool discovery, one policy-allowed operation, and one expected policy denial must be retained as release evidence from a plan/surface that officially supports full MCP at evidence-capture time. Machine-side MCP/OAuth conformance is required but does not clear this user-authentication gate by itself.
 
@@ -303,6 +311,12 @@ no per-host MCP server requirement
 
 Real interoperability is required for each client explicitly claimed supported. AI Access is release-blocking deny-by-default: authentication alone never authorizes a tool, No Policy = DENY, disabled enforcement = DENY ALL, BLACKLIST is rejected/fails closed, and only an enabled matching WHITELIST Rule may authorize a capability.
 
+### AI Access beginner UX convergence — owner direction 2026-11-25
+
+**Status:** Main integration completed in PR #318 (including #315); source CLI/menu/help/completion, shared MCP setup and separate AI Access Rule workflow implemented. Automated regression and exact installed-product qualification are distinct: remaining Web parity, installed upgrade/rollback and real user E2E must be verified against the exact candidate before release. No stable release qualification is claimed.
+
+Maintain and qualify the canonical [AI Access workflow](AI_ACCESS_MCP.md) and [CLI information architecture](Data%20Relay%20Link%20CLI%20Information%20Architecture.md). Remove competing public command/menu paths, not security controls or persisted state. WBS: (1) reconcile catalog/parser/help/completion, (2) shared MCP setup/readiness wizard, (3) AI Identity onboarding and credential lifecycle, (4) separate AI Access Rule wizard and permission profiles, (5) CLI/Web parity, (6) persisted-state upgrade and failure/rollback, (7) focused regressions, surface reconciliation and real user E2E on exact candidate. Each item requires actual evidence, not document-only PASS.
+
 ## 12. Phase DL-10 — canonical CLI implementation
 
 Implement guided root:
@@ -332,7 +346,7 @@ help
 exit
 ```
 
-Remove/hide pre-stable legacy public resources:
+Reject retired public resource names; do not retain compatibility aliases:
 
 ```text
 service-profile
@@ -343,9 +357,9 @@ ambiguous generic group
 
 Protect impact confirmation, stale edit detection, contextual Tab completion, REPL/shell hints, and backend isolation.
 
-## 13. Phase DL-11 — release-governance transition
+## 13. Phase DL-11 — release governance
 
-Remove old hard-coded v2.4 MCP exclusion from:
+Verify consistent feature presence and independent release qualification across:
 
 ```text
 release manifest schema
@@ -363,7 +377,7 @@ Final candidate truth:
 features.mcp_included=true
 ```
 
-only after actual MCP implementation exists and passes qualification.
+only when the candidate bytes actually contain MCP Bridge and AI Access. Qualification is a separate release gate, not a feature-presence flag.
 
 Keep exact-SHA pretag provenance, immutable tags, source/dist parity, checksums, and historical tag immutability.
 
@@ -486,9 +500,9 @@ verify clean stable install/bootstrap/update
 
 ## Cross-release performance track LPERF — MCP multi-host and Internet Access CPU spikes
 
-**Status:** IMPLEMENTATION IN PROGRESS (owner-directed R0–R6 continuation, 2026-11-27). **Priority:** P0 performance investigation. **Implementation tracker:** [#302](https://github.com/datarelay-labs/datarelay-link/issues/302). This bounded track covers the existing AI Access/MCP and Internet Access planes without overriding active source-bound E2E work. It does not authorize production changes, release, or claim user acceptance.
+**Status:** Implementation/benchmark PR [#304](https://github.com/datarelay-labs/datarelay-link/pull/304) open; integration and exact-candidate qualification outstanding. **Priority:** P0 performance investigation. **Implementation tracker:** [#302](https://github.com/datarelay-labs/datarelay-link/issues/302). Recording this roadmap item is not implementation, deployment, or release approval. This bounded track covers the existing AI Access/MCP and Internet Access planes without overriding active source-bound E2E work.
 
-**Operator symptom:** CPU spikes and degraded responsiveness when several Managed Hosts are connected through MCP while the Link Server also handles outbound Internet Access. Actual deployed source HEAD, Bridge worker count, bottleneck, and production capacity have **not** been confirmed. Earlier [AUD-21 MCP dispatch findings](MCP_BRIDGE_DISPATCH_DESIGN.md) are historical evidence, not proof of current deployment.
+**Operator symptom:** CPU spikes and degraded responsiveness when several Managed Hosts are connected through MCP while the Link Server also handles outbound Internet Access. Actual deployed source HEAD, Bridge worker count, bottleneck, and production capacity have **not** been confirmed. Earlier [AUD-21 MCP dispatch findings](MCP_BRIDGE_DISPATCH_DESIGN.md) are historical evidence only; PR #304 and exact-candidate benchmarks govern current implementation status, not proof of current deployment.
 
 | WBS | Scope | Required result |
 | --- | --- | --- |
@@ -497,7 +511,7 @@ verify clean stable install/bootstrap/update
 | LPERF-2 | Internet Access HTTP forward/HTTPS CONNECT and applicable Fixed TCP: 10/50/100 connections, churn and throughput | Connection p95, traffic throughput, CPU/socket/DNS/policy bottlenecks, failed/denied traffic receipts |
 | LPERF-3 | Simultaneous multi-host MCP + Internet Access workloads on one Server | Isolate cross-plane contention and distinguish CPU hotspots from scheduling, SQLite and network I/O |
 | LPERF-4 | Confirm activation of already merged D1–D7 changes before making small measured fixes to bounded concurrency, scheduling, connection reuse and redundant work | Reproducible same-hardware A/B gain; no unbounded resource load, policy/audit change or duplicate command execution |
-| LPERF-5 | **Conditional** selective Rust trial with baseline-matched full-path benefit and behavioral/security equivalence | R0 Python evidence retained. R1 bounded Tokio relay PoC now compiled and passed matched 10/50/100-socket loopback tests with revocation, backpressure, half-close, timeout, audit and mixed load; high-concurrency CPU/RSS benefit measured. Product adoption remains **DEFERRED** pending canonical SQLite policy, DNS/SSRF/SNI and installed-boundary equivalence. R2 MCP and R3 executor remain **DEFERRED** from measured attribution; neither is declared disproven. No product Rust runtime or dependency adopted. The local synthetic 3,600-second shared-plane soak remains a `PASS_LAB` only; full real-user E2E and installed-Service soak remain separate gates. See `docs/performance/LPERF_20261123.md` and `experiments/r1-rust-egress-poc/`. |
+| LPERF-5 | **Conditional** fast-anything/Rust trial only for proven CPU-intensive deterministic functions | Python reference/fallback, identical output/errors and portable builds; discard absent measurable end-to-end benefit |
 | LPERF-6 | Regression, mixed-load soak, security and genuine user E2E | No wrong-target operation, policy bypass, lost audit, result/queue failure, SSRF/DNS rebinding/CONNECT-SNI regression; exact-HEAD CI/E2E and before/after evidence |
 
 Reuse `tests/test-mcp-bridge-scale-target.py`, `tests/run-egress-benchmark.py` and current Engineering System acceptance contracts. Do not change production settings, OAuth/AI Access, sensitive secrets, or installed services without applicable separate authorization. Link-chat implementation should proceed from [#302](https://github.com/datarelay-labs/datarelay-link/issues/302) LPERF-0 through LPERF-6 after verifying source and active actor state.
@@ -551,3 +565,27 @@ canonical CLI nouns
 ```
 
 Feature growth after that point should be additive.
+
+## Deferred privilege separation hardening
+
+Current v2.4 correctness and qualification take precedence over dedicated service accounts; v2.3.1 was not manufactured. Decision:
+
+```text
+ROOT_PRIVILEGE_HARDENING=DEFERRED_WITH_REASON
+```
+
+Reason:
+
+Narrowing systemd User=/CapabilityBoundingSet= for drlink-access,
+drlink-client (frpc), drlink-server (frps), and the allocator requires
+platform-specific installer compatibility validation (Amazon Linux 2 and
+older systemd) plus dual-role file ownership audits. Shipping that during
+v2.4.0 qualification risks installer/runtime instability for the 1–50 client
+target without changing the product contract.
+
+Post-v2.4 follow-up:
+
+- dedicated drlink-access user with narrow write paths
+- unprivileged frpc account when supported targets allow
+- frps with CAP_NET_BIND_SERVICE only if privileged bind is required
+- allocator read-only config/PKI with narrow registry/enrollment write

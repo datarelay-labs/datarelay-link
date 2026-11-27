@@ -8,6 +8,7 @@ are deduplicated to a single logical enrollment (the bootstrap ticket ID).
 import argparse
 import json
 import os
+import re
 import time
 import unicodedata
 from pathlib import Path
@@ -169,6 +170,25 @@ def main(argv=None):
         print('Created : %s' % row['created'])
         print('Expires : %s' % row['expires'])
         print('State   : %s' % row['state'])
+        if row['type'] == 'zero-touch' and re.fullmatch(r'[0-9a-f]{16}', target):
+            try:
+                record = json.loads((bootstrap / (target + '.json')).read_text(encoding='utf-8'))
+                approval = record.get('entry_approval')
+                if isinstance(approval, dict):
+                    print('Platform: %s' % terminal_safe(approval.get('platform')))
+                    automatic = approval.get('authorization') == 'first-claim'
+                    if automatic:
+                        print('Registration: %s' % ('bound' if approval.get('approved') else 'awaiting Agent'))
+                    else:
+                        print('Registration: legacy ticket; revoke and reissue if unused')
+                    for fingerprint, candidate in sorted(approval.get('candidates', {}).items()):
+                        if not isinstance(candidate, dict) or not re.fullmatch(r'[0-9a-f]{64}', fingerprint):
+                            continue
+                        print('  Machine ID: %s' % terminal_safe(candidate.get('machine_id')))
+                        print('  Hostname: %s' % terminal_safe(candidate.get('hostname')))
+                        print('  Agent SHA256: %s' % fingerprint)
+            except (OSError, ValueError, TypeError, AttributeError):
+                print('Registration details unavailable.')
         return 0
     print(f'{"ID":<16} {"TYPE":<11} {"LABEL":<12} {"CREATED":<21} {"EXPIRES":<21} STATE')
     print('-' * 96)
@@ -195,7 +215,6 @@ def main(argv=None):
     retention_days = 30
     lifecycle = None
     try:
-        import importlib.util
         here = Path(__file__).resolve()
         for path in (
             here.parent.parent / 'lib' / 'frp_enrollment_lifecycle.py',

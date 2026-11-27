@@ -1,5 +1,7 @@
 # Data Relay Link — User E2E Test Scenarios
 
+> **AI Access UX target update (2026-11-25):** AI/MCP scenarios follow the canonical workflow in [AI_ACCESS_MCP.md](AI_ACCESS_MCP.md). The revised command names are target acceptance criteria, not installed-product evidence. Existing scenario IDs and negative/real-user gates remain mandatory. Add coverage for one-entry first connection, ready TLS reuse, Direct fail-closed, second AI, explicit Owner scope versus skipped policy, host enrollment independent of AI, custom permissions only when needed, retired command rejection, credential lifecycle, and preserved upgrade state.
+
 > **Document role:** Single canonical final User E2E execution contract — role-based real operation + exhaustive Direct CLI + exhaustive AI-assisted parity + performance/concurrency
 > **Canonical repository:** `datarelay-labs/datarelay-link`
 > **Canonical path:** `docs/FULL_USER_E2E_SCENARIOS.md` (single canonical entry point)
@@ -264,7 +266,9 @@ Execution rules:
 The legacy S-* identifiers below are retained only for functional failure/recovery traceability.
 ### 1.2.3 Mandatory parallel-start gate
 
-After host discovery, start every independent lane the available topology permits. Do not finish one platform end-to-end before beginning the others unless shared state makes serialization technically necessary.
+**Owner directive (2026-11-25): No separate connection preflight.** Use the owner-configured SSH aliases and existing SSH settings as-is. Do not run standalone SSH login/reachability probes, ping, TCP/port scans, SSH host-key checks, readiness scripts, or preliminary TLS/DNS checks merely to decide whether to start E2E. Read local inventory/config without network probes and execute the first actual scenario action directly. Record connection errors from that action only, classify the affected criterion, and continue independent scenarios; do not stop for repeated preflight or operator reconfirmation. Preserve normal SSH/security enforcement and genuine product DNS/TLS/OAuth, lifecycle and access-control assertions within their actual scenarios.
+
+From the configured host inventory, start every independent lane the available topology permits. Do not finish one platform end-to-end before beginning the others unless shared state makes serialization technically necessary.
 
 At minimum, attempt these lanes in parallel when applicable:
 
@@ -281,11 +285,11 @@ At minimum, attempt these lanes in parallel when applicable:
 
 "Parallel" means concurrent real execution on separate hosts/resources, not merely planning multiple scenarios or running them sequentially under one wrapper.
 
-Execution starts by reading the development server's `~/.ssh/config` and probing the configured hosts. Do not require the operator to restate hostnames already present there.
+Execution starts by reading the development server's `~/.ssh/config` and owner-private inventory, then directly performing actual scenario actions. Do not require the operator to restate hostnames already present there.
 
 Host assignment is dynamic. The currently configured/reachable test estate is the hard resource budget: FULL_USER_E2E must not require provisioning a new VM, cloud instance, physical host, or external load generator to become executable or PASS-eligible. Additional isolated processes/services on existing hosts may increase pressure only when they remain faithful to the product behavior being measured; logical clients must never be reported as distinct physical hosts.
 
-1. classify reachable SSH-config hosts by OS, installed DRLink role, network reachability, available target services, and whether destructive testing is safe;
+1. assign configured SSH hosts provisionally by owner role and local inventory; establish OS, installed role and available services from actual scenario actions, not separate reachability probes;
 2. assign **two suitable hosts to server-side roles** when two usable server hosts exist: one primary control/server candidate and one secondary server-side target/recovery/upgrade/failover test host according to the scenario;
 3. assign all remaining suitable hosts to Agent, Relay Agent, protected client, external user, load generator, target-service, and cross-platform roles;
 4. use Linux, macOS, Windows, Rocky/Amazon Linux or other configured hosts wherever their platform makes a scenario applicable;
@@ -796,8 +800,8 @@ Use disposable or explicitly designated test systems for destructive scenarios.
 
 Where the owner assigns **two distinct DRLink Server environments**, record their actual addresses in the **private per-RUN_ID lab host inventory** and follow this simple test routing rule:
 
-- **MCP_DNS_SERVER — MCP and DNS/hostname tests only:** Public DNS resolution, public/ bootstrap hostname behavior and fallback, public TLS/HTTPS for the MCP endpoint, `/mcp`, OAuth and real ChatGPT consent, MCP-related AI Identity/Access, MCP authorization/denial, MCP concurrency/performance and applicable Plugin cases. This includes the DNS/hostname criteria in U-009, A-018 and S-017, and MCP cases such as U-007, U-011, A-006, C-006, P-011 and applicable X scenarios. Evaluate the actual external DNS and trusted HTTPS behavior on this Server only.
-- **FUNCTION_PERFORMANCE_SERVER — every other test:** All non-MCP, non-DNS/hostname product features, normal CLI, initial Server/Agent installation, native platforms, enrollment, Remote Access, Internet Access, Remote Services, security policies, failures/recovery, concurrent user traffic, performance, 60-second warmup, 300-second steady measurements and the 3,600-second Soak, including F001/F007 continuity. Do **not** run those tests on the MCP/DNS Server.
+- **FUNCTION_PERFORMANCE_SERVER — functional and public hostname/DNS tests:** The owner-assigned SSH alias is `frp-e2e-server`. Use this Server for all non-MCP features, installation, native Agents, enrollment, CLI, Remote/Internet Access, security policy, recovery, concurrency, performance, warmup/steady state/Soak and F001/F007. Use the owner's real public FQDN for DNS resolution, public/bootstrap hostname propagation, IP/FQDN variants, hostname fallback and the non-MCP hostname criteria in U-009, A-018 and S-017. Resolve the public FQDN from the private owner host map, not the SSH HostName IP. Test actual DNS and appropriate public/private TLS behavior; SSH connectivity is not DNS or TLS evidence.
+- **MCP_SERVER — MCP tests only:** The owner-designated candidate SSH alias is `mcp-link`; use its separate public FQDN and actual trusted HTTPS `/mcp`, OAuth and real ChatGPT consent, MCP-specific AI Identity/Access, authorization/denial, MCP concurrency/performance and applicable Plugin cases. This includes U-007, U-011, A-006, C-006, P-011 and applicable X criteria. Exercise exact installed candidate, public DNS, single443 HTTPS ingress, publicly trusted certificate with matching SAN/full chain, MCP diagnostics and actual OAuth/AI Access within their actual MCP scenarios, not as a separate connection preflight. The assignment is prospective, not a readiness PASS. Do not route functional or general hostname tests here; do not reset or reconfigure an existing service without confirmed test-only ownership and applicable authority.
 - **Mixed-scope scenarios:** Where one canonical scenario contains both kinds of checks (for example U-009, U-013, A-016, A-018, S-001 or S-017), route **each specific check** to its matching Server. Do not treat a mixed scenario as a requirement to repeat all its checks on both Servers, or as an automatic cross-Server integration prerequisite. Retain the original scenario ID and combine its actual evidence without changing coverage.
 - This assignment **does not create a new VM-detection, VM-provisioning, snapshot or snapshot-restore gate**. Use the already assigned existing test hosts. Continue to respect any pre-existing authorization/security restriction that is genuinely required for an individual destructive operation; do not apply a missing MCP certificate to unrelated functionality/Soak checks.
 - Record the independently observed Source HEAD for each Server and the actual evidence for its assigned checks. Keep lab-specific addresses and management routes in the owner-private test map, not this portable canonical contract. Preserve all 116 scenarios, the real Direct+AI actor method and the two same-HEAD release qualification passes; no preparation-only check is an E2E PASS.
@@ -885,7 +889,7 @@ Resolve hosts and SSH routes in this order:
 
 1. development host `~/.ssh/config` Host entries (HostName, User, Port, ProxyJump/ProxyCommand, IdentityFile);
 2. optional untracked local inventory/evidence input for the current run (for example under the run evidence directory or an operator-local config path outside the repository);
-3. live probe results recorded into the current RUN_ID evidence.
+3. observed results of actual scenario actions recorded into the current RUN_ID evidence.
 
 Operational rules:
 
@@ -979,13 +983,11 @@ not part of that authorization.
 No new VM certification, extra snapshot, snapshot-restore or extra host
 requirement is created by this authorization. Existing operation-specific
 rollback/backup requirements for scenarios that actually test restore remain.
-The owner's two-Server split is unchanged: only MCP/DNS/hostname criteria
-on MCP_DNS_SERVER; **all other** tests, including normal installation and
-long Soak, on FUNCTION_PERFORMANCE_SERVER.
+The owner’s current two-Server split routes only MCP-specific criteria to MCP_SERVER; **all other** tests, including general DNS/public-hostname checks, normal installation and long Soak, use FUNCTION_PERFORMANCE_SERVER. Apply cleanup only after confirming the assigned host is authorized and disposable; MCP candidate assignment alone does not authorize destroying an existing service.
 
 Before a host begins its dependent FULL_USER_E2E product workflow, prepare that participating host so results cannot be contaminated by a previous run. **Historical product state, stale test services, cached endpoints, prior enrollment state, leftover load generators, or old temporary artifacts must never be accepted as the starting state of a new Full User E2E.**
 
-The cleanup step happens after host reachability discovery but before fresh Server/Agent installation, enrollment, command-discovery personas, baseline traffic, or performance measurement.
+The cleanup step is the first actual lifecycle action where required, without separate host reachability discovery, before fresh Server/Agent installation, enrollment, command-discovery personas, baseline traffic, or performance measurement.
 
 For each reachable assigned host:
 
@@ -1084,9 +1086,9 @@ Rules:
 
 A final FULL_USER_E2E PASS requires `PROCESS_CLEANUP=PASS` for executor-owned product-path helpers on assigned hosts.
 
-## 6. Common preflight
+## 6. Common product CLI observations (actual scenario steps, not connection preflight)
 
-### 6.1 Server preflight
+### 6.1 Server product observations
 
 Run through the public Server CLI:
 
@@ -1111,7 +1113,7 @@ Expected:
 - diagnostics are read-only;
 
 
-### 6.2 Agent Host preflight
+### 6.2 Agent Host product observations
 
 Run locally on each Agent Host:
 
@@ -1308,7 +1310,7 @@ Lane C  direct SSH/HTTP/HTTPS/Custom TCP publication + real traffic
 Lane D  Relay Host and Fixed TCP lifecycle
 Lane E  Remote Access policy lifecycle + real allow/deny traffic
 Lane F  Internet Access application use cases
-Lane G  AI Identity / Permission / AI Access / MCP
+Lane G  AI MCP Setup / Permission / AI Access / MCP
 Lane H  ConfigurationBundle / Export -> AI -> Reapply
 Lane I  backup/revision/audit/recovery on isolated state
 Lane J  Agent lifecycle/update/reconnect on spare hosts
@@ -1722,14 +1724,15 @@ Verify:
 
 ## U-007 — AI/MCP authorized and denied use — MANDATORY for v2.4.0
 
-Server creates/binds the AI Identity using the supported authentication workflow, then configures permissions and AI Access.
+Server discovers `ai-mcp` / `AI MCP Setup` with the description `Set up and manage AI MCP connections`, configures MCP and creates/binds the AI Identity using the supported authentication workflow, then configures permissions and AI Access.
 
 Representative CLI:
 
 ~~~text
+set ai-mcp
 set ai-identity <IDENTITY>
 set permission-object read-only permissions host-info,process-read,file-read
-set ai-access ai-read mode whitelist source <IDENTITY> destination <DESTINATION> permission read-only enabled
+set ai-access ai-read source <IDENTITY> destination <DESTINATION> permission read-only enabled
 test ai-access source <IDENTITY> destination <DESTINATION> permission read-only
 show ai-access-log identity <IDENTITY>
 ~~~
@@ -1771,12 +1774,12 @@ When a public DNS hostname is configured, verify entirely through the public CLI
 
 - Enrollment HTTPS output uses the configured public hostname;
 - Zero-Touch bootstrap output uses the configured public hostname;
-- the short launcher remains short and usable through the documented Zero-Touch workflow;
+- the generated command contains only the canonical OS-native downloader, download options, HTTPS protocol, Server authority, eight-character root-path Bootstrap filename and OS execution wrapper; public/private HTTPS use the same fields, with no client-side prerequisite or extra argument;
 - public IP is shown only as the supported fallback/alternative, not as an unexplained replacement for the configured hostname;
 - Remote Service endpoint presentation uses the configured public hostname where the current product contract says it should;
 - clearing an optional hostname returns to the documented default/fallback behavior.
 
-Execute the generated bootstrap path from a real external test host and verify DNS, TLS, enrollment, and final Remote Service usability end to end.
+Execute the generated command on clean native Linux, macOS and Windows targets for FQDN/IP and public/private HTTPS. Interrupt and retry the same command; require stable identity, no duplicate enrollment, authenticated downstream connections and actual Remote Service usability. Record initial transport security disposition independently; no network attack detection is required.
 
 ## U-010 — Guided CLI user journey parity — MANDATORY
 
@@ -1849,7 +1852,7 @@ In addition to U-006, explicitly exercise every currently supported Internet Acc
 
 For each allowed path include a paired denied path using wrong source, destination, or service. Discover and use the public policy/explain helper (`test internet-access source <SOURCE> destination <DESTINATION> service <SERVICE>`) and then prove the same outcome with the real application client; a passing explain result alone is not traffic evidence.
 
-U-012 inherits the U-006 protected-host proxy hard gate. HTTP/HTTPS coverage must use the protected host's configured proxy path, not only per-command `-x/--proxy` overrides. `curl` coverage does not substitute for applicable `wget`, `git`, or `apt` coverage. Fixed TCP is a separate path for proxy-unaware applications and does not satisfy the HTTP/HTTPS proxy-aware application matrix.
+U-012 inherits the U-006 protected-host proxy hard gate. HTTP/HTTPS coverage must use the protected host's configured proxy path, not only per-command `-x/--proxy` overrides. `curl` coverage does not substitute for applicable `wget`, `git`, or `apt` coverage. A distinct outbound Fixed TCP listener is conditional on an actually supported public journey, as specified by the controlling Product Master and CONTROLLED_EGRESS.md section 17. Capture current public help/catalog evidence and record the applicability disposition. If claimed or supported, real paired traffic is mandatory and a missing public provisioning path is a finding. An unqualified architecture target without a current public claim does not require a hidden command. Neither outbound Fixed TCP nor an inbound Fixed TCP Remote Service substitutes for the HTTP/HTTPS proxy-aware application matrix.
 
 For the package/update workflow, retain evidence of the exact repository FQDNs used, the effective proxy configuration, successful update through Data Relay Link, policy-caused failure after removing a required destination, and successful recovery after restoring it. The final result must include `PROXY_CONFIGURATION_VERIFIED=PASS` and `PROXY_APPLICATION_PATH=PASS`; do not require disabling the host's direct Internet path.
 
@@ -2329,7 +2332,7 @@ test internet-access source <SOURCE> destination <DESTINATION> service <SERVICE>
 
 Exercise real traffic plus the applicable failure/recovery cases in section 10. Internet Access is WHITELIST-only: prove direct Managed Host source-address match can ALLOW an approved flow, NAT/source mismatch fails closed to DENY, No Policy is DENY, BLACKLIST configuration is rejected, and Enforcement DISABLED preserves Mode/Rules while producing DENY ALL.
 
-## A-006 — AI Identity, permissions, AI Access, MCP TLS, OAuth approval, and logs — MANDATORY for v2.4.0
+## A-006 — AI MCP Setup, permissions, AI Access, MCP TLS, OAuth approval, and logs — MANDATORY for v2.4.0
 
 ~~~text
 system certificate status
@@ -2347,20 +2350,22 @@ show ai-access-log identity <IDENTITY>
 show ai-access-log destination <DESTINATION>
 show ai-access-log permission <PERMISSION>
 
-set mcp-tls hostname <FQDN>
-set mcp-tls mode <auto-acme|user-certificate>
-set mcp-tls contact-email <EMAIL>
-set mcp-tls acme-environment <production|staging>
-set mcp-tls acme-directory <URL>
+set server mcp
+set server mcp hostname <FQDN>
+set server mcp mode <auto-acme|user-certificate>
+set server mcp contact-email <EMAIL>
+set server mcp acme-environment <production|staging>
+set server mcp acme-directory <URL>
 set ai-identity <IDENTITY>
 set permission-object <PERMISSION>
 set permission-group <GROUP>
+set ai-access
 set ai-access <RULE>
 set ai-access enabled
 set ai-access disabled
 
-unset mcp-tls
-unset mcp-tls purge
+unset server mcp
+unset server mcp purge
 unset ai-identity <IDENTITY>
 unset permission-object <PERMISSION>
 unset permission-group <GROUP>
@@ -2368,15 +2373,15 @@ unset ai-access <RULE>
 unset ai-access policy
 
 test ai-access source <AI_IDENTITY> destination <DESTINATION> permission <PERMISSION>
-system credential configure ai-identity <IDENTITY> authentication static-bearer
-system credential configure ai-identity <IDENTITY> authentication oauth
-system credential rotate ai-identity <IDENTITY>
-system credential revoke ai-identity <IDENTITY>
-system credential approve-oauth <PENDING-ID> [AI-IDENTITY]
-system credential deny-oauth <PENDING-ID>
+set ai-identity <IDENTITY> authentication static-bearer
+set ai-identity <IDENTITY> authentication oauth
+set ai-identity <IDENTITY> rotate
+set ai-identity <IDENTITY> revoke
+set ai-identity <IDENTITY> approve <PENDING-ID>
+set ai-identity <IDENTITY> deny <PENDING-ID>
 ~~~
 
-Verify authentication and authorization states are represented separately, reference-aware deletion works, and AI Access enforcement toggles have the documented functional effect.
+Verify authentication and authorization states are represented separately, reference-aware deletion works, and AI Access enforcement toggles have the documented functional effect. Run a clean beginner AI MCP Setup flow with no TLS/no Identity, then a second AI with ready TLS, no-policy denial, a reviewed rule with built-in permission, selected-only versus explicit dynamic trusted-host scope, independent enrollment of a new host, explicit native server:self scope if enabled, and OAuth/credential failure recovery. Confirm retired grammar is rejected and absent from help/completion/menu; retain the existing security-negative and exact-candidate gates.
 
 ## A-007 — Reference protection — MANDATORY
 
@@ -2626,7 +2631,7 @@ After each relevant change, regenerate or inspect:
 - Remote Service endpoint presentation where applicable;
 - diagnostics/version/support evidence.
 
-Verify no change to an optional friendly hostname silently changes control/allocator identity unless the current product contract explicitly says so. Verify Linux and Windows onboarding receive the intended platform-specific installer URL and that clearing optional overrides returns to the supported default. After cleanup, verify the restored Zero-Touch command mode matches the pre-scenario mode (short URL versus pinned-CA fallback) rather than merely checking that the fields are syntactically present.
+Verify no change to an optional friendly hostname silently changes control/allocator identity unless the current product contract explicitly says so. Verify Linux and Windows onboarding receive the intended platform-specific installer URL and that clearing optional overrides returns to the supported default. After cleanup, verify the actual restored Zero-Touch launcher matches the fixed eight-character root-path entry target (ZT-P0-CONTRACT-20261026, owner revision 2026-11-25): one OS-native invocation, one HTTPS authority and one eight-character locator, identical for public/private certificates. No extra configuration or inline verifier. Verify retry, downstream authenticated installation and automatic first-claim enrollment; the unauthenticated initial fetch is not a security PASS.
 
 ## A-019 — Prior-stable upgrade to candidate — MANDATORY when an upgrade path is claimed
 
@@ -3610,11 +3615,11 @@ set server public-hostname <value>
 set server bootstrap-hostname <value>
 set server installer-url <value>
 set server windows-installer-url <value>
-set mcp-tls hostname <FQDN>
-set mcp-tls mode <MODE>
-set mcp-tls contact-email <EMAIL>
-set mcp-tls acme-environment <ENVIRONMENT>
-set mcp-tls acme-directory <URL>
+set server mcp hostname <FQDN>
+set server mcp mode <MODE>
+set server mcp contact-email <EMAIL>
+set server mcp acme-environment <ENVIRONMENT>
+set server mcp acme-directory <URL>
 
 set managed-host-group <GROUP>
 set managed-host <HOST> group <GROUP>
@@ -3654,8 +3659,8 @@ unset server public-hostname
 unset server bootstrap-hostname
 unset server installer-url
 unset server windows-installer-url
-unset mcp-tls
-unset mcp-tls purge
+unset server mcp
+unset server mcp purge
 
 unset network-object <OBJECT>
 unset network-group <GROUP>
@@ -3720,12 +3725,12 @@ system update product
 system update engine
 system update check-engine
 
-system credential rotate ai-identity <NAME>
-system credential revoke ai-identity <NAME>
-system credential configure ai-identity <NAME> authentication static-bearer
-system credential configure ai-identity <NAME> authentication oauth
-system credential approve-oauth <PENDING-ID> [AI-IDENTITY]
-system credential deny-oauth <PENDING-ID>
+set ai-identity <NAME> rotate
+set ai-identity <NAME> revoke
+set ai-identity <NAME> authentication static-bearer
+set ai-identity <NAME> authentication oauth
+set ai-identity <IDENTITY> approve <PENDING-ID>
+set ai-identity <IDENTITY> deny <PENDING-ID>
 
 system support-bundle
 system history
@@ -4282,9 +4287,9 @@ USER_E2E_REQUEST
 -> Current owner-selected runtime executes independent Direct + AI-assisted roles and final audit; the current owner-selected implementer fixes verified defects after evidence is frozen; Cursor remains disabled.
 -> locate this canonical document at docs/FULL_USER_E2E_SCENARIOS.md
 -> capture candidate/build identity only; do not perform a pre-run code review
--> probe all configured test hosts, remove previous-run DRLink state/test services/load processes/temp artifacts, preserve only explicit management access infrastructure, and require the section 5.3 clean-room gate before fresh product activity
+-> use the configured host map without separate connection probes; perform the actual section 5.3 cleanup/lifecycle actions on authorized hosts, preserve management access and record their results
 -> execute as a human black-box operator; do not reinterpret the request as release qualification
--> discover ~/.ssh/config hosts and untracked local inventory, resolve SSH routes per section 5.1, probe availability/roles, assign topology, and start independent lanes immediately
+-> read ~/.ssh/config and untracked local inventory, assign roles, and start actual independent scenario actions immediately; infer availability from their results only
 -> use automated harnesses only as supplemental evidence, never as the User E2E executor
 -> execute this document's FULL_USER_E2E profile unless explicitly scoped
 -> use real public CLI and real traffic

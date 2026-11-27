@@ -141,24 +141,24 @@ def main(argv):
 
     if unset:
         print('Bootstrap hostname unset.')
-        print('Zero-Touch short URL commands fall back to the zt1 opaque package form.')
+        print('Zero-Touch uses the configured allocator HTTPS authority with the same eight-character entry format.')
         print('No DNS, certificate, or reverse-proxy changes were made.')
         return 0
 
     alias = SCFG.bootstrap_hostname(cfg)
     print('Bootstrap hostname set: %s' % alias)
     print()
-    print('This name is used only for publicly trusted Zero-Touch short URL bootstrap.')
+    print('This name is an optional Zero-Touch HTTPS entry authority.')
     print('It is not the published-service access alias (public hostname).')
     print('It is not the FRP control endpoint or Private CA identity.')
     print()
     print('Operator responsibilities (not performed by Data Relay Link):')
     print('  - create DNS for %s' % alias)
-    print('  - terminate publicly trusted HTTPS on an operator reverse proxy')
-    print('  - renew the public certificate')
-    print('  - proxy the required bootstrap paths to the allocator')
+    print('  - configure the HTTPS entry route on the operator reverse proxy')
+    print('  - maintain the HTTPS certificate and authenticated downstream TLS')
+    print('  - proxy the eight-character root locator and enrollment paths to the allocator')
     print()
-    print('See docs/ZERO_TOUCH_SHORT_URL.md')
+    print('See docs/ZERO_TOUCH_REGRESSION_CONTROL.md')
     print('No services were restarted.')
     return 0
 

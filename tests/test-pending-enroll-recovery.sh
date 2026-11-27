@@ -177,12 +177,13 @@ run_client() {
     export FRP_CLIENT_HOOK_LOG="${out}.hook"
     : >"$FRP_CLIENT_HOOK_LOG"
     if [[ -n "$ticket" ]]; then
-      export FRP_BOOTSTRAP_TICKET="$ticket"
+      export FRP_BOOTSTRAP_LOCATOR="$ticket"
+      unset FRP_BOOTSTRAP_TICKET
       export FRP_ZERO_TOUCH=1
       # Enrollment recovery does not depend on a local SSH login account.
       export FRP_SSH_PORT="$SSH_PROBE_PORT"
     else
-      unset FRP_BOOTSTRAP_TICKET FRP_ZERO_TOUCH FRP_SSH_PORT 2>/dev/null || true
+      unset FRP_BOOTSTRAP_TICKET FRP_BOOTSTRAP_LOCATOR FRP_ZERO_TOUCH FRP_SSH_PORT 2>/dev/null || true
     fi
     for kv in "$@"; do
       export "$kv"
@@ -208,9 +209,6 @@ pending_path() { printf '%s' "$1/etc/frp/enroll-pending.json"; }
 # ---------------------------------------------------------------------------
 issue_ticket customer-redeemed >"$WORKDIR/t1-create.out"
 T1_TICKET="$(extract_bootstrap_ticket "$WORKDIR/t1-create.out")"
-T1_ID="$(python3 -c 'import hashlib,sys
-t=sys.argv[1].strip()
-print(t.split(".")[1].lower() if t.lower().startswith("bt1.") and t.count(".")==2 else hashlib.sha256(t.encode("ascii")).hexdigest()[:16])' "$T1_TICKET")"
 T1_TREE="$WORKDIR/client-redeemed"
 T1_MACHINE='11112222333344445555666677778888'
 
@@ -258,7 +256,7 @@ T1_AGAIN="$WORKDIR/client-redeemed-again"
 if run_client "$T1_AGAIN" "$T1_TICKET" 'ffff1111222233334444555566667777' "$WORKDIR/t1-c.out"; then
   fail "reusing a fully-consumed ticket on another machine should fail"
 fi
-grep -qE 'BOOTSTRAP_TICKET_(USED|BOUND)' "$WORKDIR/t1-c.out" "$WORKDIR/t1-c.err" \
+grep -qE 'BOOTSTRAP_TICKET_INVALID' "$WORKDIR/t1-c.out" "$WORKDIR/t1-c.err" \
   || fail "expected ticket-used/bound rejection after full completion"
 pass "TICKET_SINGLE_USE_PRESERVED_AFTER_RECOVERY"
 

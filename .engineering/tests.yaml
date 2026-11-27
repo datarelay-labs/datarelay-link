@@ -143,13 +143,13 @@ scenarios:
     agent_default: true
     platforms:
       - "linux"
-    command: "python3 tests/test-zero-touch-doc-contract.py && python3 tests/test-zero-touch-operator-command-bound.py && python3 tests/test-zero-touch-guided-preflight.py && python3 tests/test-enrolled-routed-target-parity.py && bash tests/test-zero-touch-short-url.sh"
+    command: "python3 tests/test-zero-touch-doc-contract.py && python3 tests/test-zero-touch-entry-fields.py && python3 tests/test-zero-touch-locator-index.py && (if [ $(id -u) = 0 ]; then python3 tests/test-zero-touch-entry-approval.py; else sudo -n $(command -v python3) tests/test-zero-touch-entry-approval.py; fi) && python3 tests/test-zero-touch-operator-command-bound.py && python3 tests/test-zero-touch-guided-preflight.py && python3 tests/test-enrolled-routed-target-parity.py && bash tests/test-zero-touch-short-url.sh"
     invariants:
       - "ZT-P0-CONTRACT-20261026 is aligned across Zero-Touch design, canonical Product/CLI Master, public CLI reference and operator audit"
-      - "default trusted-HTTPS short installer is bounded, and unqualified default fails before issuing a ticket instead of silently returning a multi-kilobyte zt1"
+      - "fixed eight-character entry target admits one OS-native invocation, HTTPS authority and eight-character locator only; inline verification program and additional configuration are forbidden; issuance authorizes automatic first-claim registration with atomic key binding; no manual approval for new commands"
       - "public drlink Guided Zero-Touch preflights all three OS paths before name/service prompts and cannot issue tickets on a failed prerequisite"
-      - "generic 404 HTML, failed TLS, redirect, and plain-IP identity never qualify as a trusted bootstrap endpoint"
-      - "the deliberately chosen advanced private-CA bootstrap retains fingerprint and installer integrity checks"
+      - "invalid locator, generic error response and missing endpoint never qualify as successful installation; downstream TLS and initial security qualification remain independent"
+      - "public/private HTTPS and FQDN/IP use the same fixed entry target; downstream authenticated connections and installer integrity remain required; initial unverified execution is not a security PASS"
       - "Server/Agent Zero-Touch LAN targets retain signed destination, stable public port and correct fail-closed runtime authority across upgrade"
       - "machine and document tests are supporting evidence: U-009, O-002, A-018 and real Server/Agent/external traffic must PASS at the same exact installed Source HEAD before release"
       - "negative, cleanup and SHA256/artifact qualification are mandatory; prior-release or different-HEAD PASS cannot substitute"

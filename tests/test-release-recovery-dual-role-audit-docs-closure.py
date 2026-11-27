@@ -37,7 +37,7 @@ PUBLIC_DOC_FILES = [
     ROOT / "docs" / "MACOS_CLIENT.md",
     ROOT / "docs" / "FRP_UPGRADE.md",
     ROOT / "docs" / "DEPLOYMENT_MODES.md",
-    ROOT / "docs" / "SCHEMA_V2_DEPLOYMENT.md",
+    ROOT / "docs" / "UPGRADE.md",
     ROOT / "docs" / "RELEASE_VALIDATION.md",
 ]
 

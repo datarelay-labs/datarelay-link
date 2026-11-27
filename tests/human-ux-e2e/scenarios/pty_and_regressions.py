@@ -129,14 +129,7 @@ def hux_reg_003(env: ScenarioEnv) -> None:
 def hux_zt_001(env: ScenarioEnv) -> None:
     import frp_zero_touch as zt
 
-    ticket = "A" * 22
-    cmd = zt.short_url_command("remote.xdr.ooo", ticket)
-    expect_true(len(cmd) < 200, "Zero-Touch public command not reasonably short", evidence=cmd)
-    expect_contains(cmd, "remote.xdr.ooo")
-    expect_contains(cmd, ticket)
-    expect_true("|" in cmd and "sudo bash" in cmd, "expected fail-closed pipe-to-sudo-bash form")
-    pinned = zt.private_ca_ip_linux_command(
-        "https://203.0.113.10:6099/enroll", "a" * 64, ticket
-    )
-    expect_contains(pinned, "--cacert")
-    expect_contains(pinned, "a" * 64)
+    for authority in ("remote.xdr.ooo","203.0.113.10:6099"):
+        cmd=zt.render_entry_command(authority,"A3xK9mP2","linux")
+        expect_true(cmd=="curl -kfsS https://"+authority+"/A3xK9mP2|sudo bash",
+                    "Zero-Touch entry fields changed", evidence=cmd)

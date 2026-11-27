@@ -290,9 +290,9 @@ CHATGPT_OWNER_UI_USER_AUTH_STATUS=BLOCKED_PENDING_OWNER_UI_AUTH
 features.mcp_included=true   # on the development candidate once MCP Bridge/AI Access are present
 ```
 
-The final v2.4.0 target includes the Control Plane/Object/Policy/MCP behavior frozen by `PRODUCT_MASTER.md` and `DATA_RELAY_LINK_CLI_AI_MASTER_v2.4_FINAL.md`; `CONTROL_PLANE_ARCHITECTURE.md` remains an internal schema/history reference.
+The final v2.4.0 target includes the Control Plane/Object/Policy/MCP behavior frozen by `PRODUCT_MASTER.md` and `DATA_RELAY_LINK_CLI_AI_MASTER_v2.4_FINAL.md`; `CONTROL_PLANE_ARCHITECTURE.md` defines current internal architecture without alternate historical public policy examples.
 
-The earlier decision to exclude MCP from v2.4.0 is superseded historical context only and is not a valid current release rule. No current checklist, test expectation, release manifest, generated artifact, or support statement may encode MCP exclusion as the expected v2.4.0 behavior.
+MCP inclusion is the current product requirement. Feature presence and release qualification are independent; every checklist, test, manifest, generated artifact and support statement must reflect actual candidate bytes.
 
 Before v2.4.0 candidate qualification, all implementation/governance artifacts must remain consistent with MCP inclusion. Machine-side MCP protocol and policy tests are necessary but do not clear the release blocker by themselves. Stable qualification also requires a real user on a ChatGPT plan/surface that officially supports full MCP at evidence-capture time to complete the interactive OAuth Authorization Code/consent flow against the public MCP endpoint, discover tools, complete one authorized operation, and observe one policy-denied operation with retained evidence. The owner/UI evidence payload is external input and is not a trust anchor by itself: stable v2.4.0 attestation additionally requires approval through the protected GitHub Environment `stable-release-owner-ui`. That environment must have a required reviewer configured and administrator bypass disabled. Its `PASS` signal is produced only by the environment-gated job and is not exposed as a `workflow_dispatch` input. The environment-gated approval records the SHA256 of the already validated owner/UI evidence, and release binding rejects any digest mismatch.
 

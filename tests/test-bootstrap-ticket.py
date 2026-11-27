@@ -965,23 +965,17 @@ def test_compact_redaction_and_command_length():
     if len(compact) != 22:
         fail('fixture length', len(compact))
         return
-    url = zt.short_url_for_ticket('remote.xdr.ooo', compact)
-    cmd = zt.short_url_command('remote.xdr.ooo', compact)
-    if len(url) != 47:
-        fail('compact reference URL length', len(url))
+    locator='A3xK9mP2'
+    cmd=zt.render_entry_command('remote.xdr.ooo',locator,'linux')
+    if cmd!='curl -kfsS https://remote.xdr.ooo/A3xK9mP2|sudo bash':
+        fail('fixed entry fields',cmd)
         return
-    # The 68-character raw curl|bash pipeline is obsolete: it masks download
-    # failures under POSIX shells. Keep the documented <=200-character public
-    # reference benchmark while requiring fail-closed execution behavior.
-    problem = _short_launcher_contract_error(cmd, url)
-    if problem:
-        fail('compact fail-closed command', problem)
-        return
-    quoted = zt.short_url_command('bad host.example', compact)
-    quoted_url = zt.short_url_for_ticket('bad host.example', compact)
-    problem = _short_launcher_contract_error(quoted, quoted_url)
-    if problem:
-        fail('unsafe host not quoted as a single argument', problem)
+    try:
+        zt.render_entry_command('bad host.example',locator,'linux')
+    except ValueError:
+        pass
+    else:
+        fail('unsafe authority accepted')
         return
     sb_spec = importlib.util.spec_from_file_location(
         'frp_support_bundle', ROOT / 'lib' / 'frp_support_bundle.py'
@@ -1055,45 +1049,7 @@ def test_compact_redaction_and_command_length():
     if redacted.get('ticket_id') != '[REDACTED]':
         fail('ticket key not redacted', redacted)
         return
-    pass_('COMPACT_REDACTION_AND_COMMAND_LENGTH')
-
-
-def _short_launcher_contract_error(command, url):
-    """Test a short fail-closed POSIX launcher without real curl or sudo.
-
-    The public reference is <=200 characters, not an absolute 68-char cap.
-    Both executable names are shadowed with shell functions: no outbound
-    traffic, privilege escalation, or remote script execution can occur.
-    """
-    if not command or command != command.strip() or '\n' in command or '\r' in command:
-        return 'launcher must be one copyable line'
-    if len(command) > 200:
-        return 'public reference exceeds the 200-character benchmark'
-    if command.count(url) != 1 or 'curl -fsSL ' not in command:
-        return 'verified HTTPS URL must be fetched exactly once'
-    if 'sudo bash' not in command or '--insecure' in command or 'curl -k' in command:
-        return 'verified HTTPS and controlled installer execution required'
-
-    environment = dict(os.environ, BOOTSTRAP_EXPECTED_URL=url)
-    failed = subprocess.run(
-        ['sh', '-c',
-         'curl() { return 22; }; '
-         'sudo() { printf "%s" "UNEXPECTED_SUDO_CALL"; }; ' + command],
-        capture_output=True, text=True, check=False, timeout=10, env=environment,
-    )
-    if failed.returncode == 0 or failed.stdout:
-        return 'download failure must stop before installer execution'
-
-    fetched = subprocess.run(
-        ['sh', '-c',
-         'curl() { test "$1" = -fsSL && test "$2" = "$BOOTSTRAP_EXPECTED_URL" '
-         '|| return 93; printf "%s\n" "echo safe"; }; '
-         'sudo() { test "$1" = bash || return 94; cat; }; ' + command],
-        capture_output=True, text=True, check=False, timeout=10, env=environment,
-    )
-    if fetched.returncode != 0 or fetched.stdout != 'echo safe\n':
-        return 'successful fetch must pass exact script data to installer'
-    return None
+    pass_('COMPACT_REDACTION_AND_ENTRY_FIELDS')
 
 
 def test_shell_safety_floor():
@@ -1110,25 +1066,14 @@ def test_shell_safety_floor():
     spec = importlib.util.spec_from_file_location('frp_zero_touch', ROOT / 'lib' / 'frp_zero_touch.py')
     zt = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(zt)
-    compact = 'A' * 22
-    url = 'https://remote.xdr.ooo/i/%s' % compact
-    if set(url) & unsafe:
-        fail('url metacharacter', url)
-        return
-    old_pipeline = 'curl -fsSL %s|sudo bash' % url
-    if _short_launcher_contract_error(old_pipeline, url) is None:
-        fail('unsafe historical pipeline incorrectly accepted')
-        return
-    for name, host, ticket in (
-        ('public reference', 'remote.xdr.ooo', compact),
-        ('random credential', 'remote.xdr.ooo', MOD.generate_compact_bootstrap_credential()),
-        ('unsafe host quoted', 'bad host.example', compact),
-    ):
-        command = zt.short_url_command(host, ticket)
-        expected_url = zt.short_url_for_ticket(host, ticket)
-        problem = _short_launcher_contract_error(command, expected_url)
-        if problem:
-            fail(name + ' fail-closed launcher', problem)
+    for _ in range(100):
+        locator=zt.new_bootstrap_locator()
+        if len(locator)!=8 or set(locator)-alphabet:
+            fail('locator alphabet',locator)
+            return
+        url='https://remote.xdr.ooo/'+locator
+        if set(url)&unsafe or zt.render_entry_command('remote.xdr.ooo',locator,'linux')!='curl -kfsS '+url+'|sudo bash':
+            fail('fixed entry syntax')
             return
     pass_('SHELL_SAFETY_COMPACT_FAIL_CLOSED')
 
@@ -1178,18 +1123,9 @@ def test_windows_renderer_frozen_and_launcher():
         )
         zt = importlib.util.module_from_spec(zt_spec)
         zt_spec.loader.exec_module(zt)
-        command = zt.windows_strict_launcher('remote.xdr.ooo', 'A' * 22, digest)
-        if len(command) != 420:
-            fail('windows launcher length', len(command))
-            return
-        if 'curl.exe' not in command or 'Get-FileHash' not in command:
-            fail('launcher missing curl or hash', command)
-            return
-        if 'powershell.exe -Command' in command or 'Invoke-Expression' in command:
-            fail('launcher uses outer command or iex', command)
-            return
-        if re.search(r'(^|[^A-Za-z0-9])(irm|iex)([^A-Za-z0-9]|$)', command):
-            fail('launcher uses irm or iex', command)
+        command = zt.render_entry_command('remote.xdr.ooo','A3xK9mP2','windows')
+        if command!='iex(curl.exe -kfsS https://remote.xdr.ooo/A3xK9mP2|Out-String)':
+            fail('Windows entry fields',command)
             return
         if handle in script or ticket not in script:
             fail('windows stage1 credential', 'handle leaked' if handle in script else 'bt1 missing')
@@ -1231,7 +1167,7 @@ def test_windows_renderer_frozen_and_launcher():
         if env.allocator.build_short_url_script(handle, 'linux') is not None:
             fail('corrupt wrap served linux stage1')
             return
-        pass_('WINDOWS_RENDERER_FROZEN_420')
+        pass_('LEGACY_WINDOWS_RENDERER_FROZEN')
     finally:
         MOD.windows_renderer_inputs_from_cfg = original
         env.cleanup()

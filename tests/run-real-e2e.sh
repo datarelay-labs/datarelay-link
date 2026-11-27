@@ -480,20 +480,9 @@ create_zero_touch() {
     python3 - "$out" "$cmd_out" <<'PY'
 import re, sys
 text = open(sys.argv[1], encoding="utf-8").read()
-# Allow only the current stock-trust FQDN launcher or the separately
-# CA-pinned numeric-IP launcher. Never accept a raw curl|bash pipeline,
-# a legacy opaque zt1 package, or an unpinned private-CA download.
+# Only the fixed owner-approved entry fields.
 commands = [line for line in text.splitlines()
-            if (line.startswith('(drlink_bootstrap=$(curl -fsSL https://')
-                and '/i/' in line and line.endswith(' | sudo bash)')
-                and 'bt1.' not in line)
-            or (re.match(r"^(?:sudo )?bash -c 'set -euo pipefail;", line)
-                and line.endswith("'")
-                and '--cacert' in line and '/i/' in line
-                and 'openssl dgst -sha256' in line
-                and 'FRP_ALLOCATOR_CA_FILE=' in line
-                and '--insecure' not in line
-                and 'bt1.' not in line)]
+            if re.fullmatch(r"curl -kfsS https://[^/\s]+/[A-Za-z0-9_-]{8}\|sudo bash",line)]
 if len(commands) != 1:
     raise SystemExit("missing or ambiguous current Zero-Touch command")
 open(sys.argv[2], "w", encoding="utf-8").write(commands[0] + "\n")
@@ -524,7 +513,7 @@ create_zero_touch_windows() {
   set -uo pipefail
   if [[ "$rc" -eq 0 ]]; then
     # Shared, unit-tested parser (tests/test-real-e2e-windows-command-parse.py):
-    # accepts -Command, -EncodedCommand and the raw private-CA IP script form.
+    # accepts the fixed PowerShell entry command.
     python3 "$ROOT/tests/lib/real_e2e_windows_command.py" "$out" "$enc_out"
     rc=$?
   fi

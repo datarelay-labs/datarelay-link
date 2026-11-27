@@ -1,24 +1,16 @@
 #!/usr/bin/env bash
-# Zero-Touch short URL: bootstrap_hostname, GET /i/<ticket>, command UX, redaction.
+# Fixed root-locator entry: CLI, TLS route, expiry/revoke, OS binding, redaction.
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 pass() { echo "PASS $1"; }
 fail() { echo "FAIL $1" >&2; exit 1; }
 
-bootstrap_record_id() {
-  python3 -c 'import hashlib,json,sys
-from pathlib import Path
-t=sys.argv[1].strip()
-root=Path(sys.argv[2])
-if t.lower().startswith("bt1.") and t.count(".")==2:
-    print(t.split(".")[1].lower())
-else:
-    digest=hashlib.sha256(t.encode("ascii")).hexdigest()
-    data=json.loads((root/"handles"/(digest[:16]+".json")).read_text())
-    if data.get("handle_hash")!=digest:
-        raise SystemExit("handle hash mismatch")
-    print(data["ticket_id"])' "$1" "$TREE/var/lib/drlink/bootstrap"
+entry_locator() {
+  sed -nE 's~^curl -kfsS https://[^/]+/([A-Za-z0-9_-]{8})\|sudo bash$~\1~p' "$1"
+}
+entry_id() {
+  awk '/^Enrollment ID:/{print $3;exit}' "$1"
 }
 
 WORKDIR="$(mktemp -d)"
@@ -116,111 +108,45 @@ fi
 pass "BOOTSTRAP_HOSTNAME_SET"
 
 python3 "$ROOT/tools/frp-server-set" bootstrap-hostname --unset >/dev/null
-# Standard Zero-Touch must never silently emit a 4,000-char private-CA command.
-if python3 "$ROOT/tools/frp-create-client" --one-line --client-name no-compact-host \
-  >"$WORKDIR/missing-compact.out" 2>"$WORKDIR/missing-compact.err"; then
-  fail "Default one-line unexpectedly emitted a long private-CA command"
-fi
-grep -q 'No enrollment ticket was issued' "$WORKDIR/missing-compact.err" \
-  || fail "Compact HTTPS prerequisite was not actionable"
+python3 "$ROOT/tools/frp-create-client" --one-line --client-name no-override >"$WORKDIR/ip.out"
+grep -Eq '^curl -kfsS https://203\.0\.113\.10:[0-9]+/[A-Za-z0-9_-]{8}\|sudo bash$' "$WORKDIR/ip.out" || fail "numeric IP command"
 pass "DEFAULT_NO_SILENT_LONG_COMMAND"
-# The retired long-form option is never an alternative when bootstrap trust is absent.
-if python3 "$ROOT/tools/frp-create-client" --one-line --long-bootstrap --client-name rejected-old-mode \
-  >"$WORKDIR/legacy.out" 2>"$WORKDIR/legacy.err"; then
+if python3 "$ROOT/tools/frp-create-client" --one-line --long-bootstrap --client-name rejected-old-mode >"$WORKDIR/legacy.out" 2>"$WORKDIR/legacy.err"; then
   fail "removed long-form issuance option was accepted"
 fi
-grep -q 'unrecognized arguments' "$WORKDIR/legacy.err" \
-  || fail "retired option must be rejected"
+grep -q 'unrecognized arguments' "$WORKDIR/legacy.err"
 pass "LEGACY_LONG_FORM_REMOVED"
 
 python3 "$ROOT/tools/frp-server-set" bootstrap-hostname bootstrap.example.com >/dev/null
-
-# Positive command-shape/allocator lifecycle uses a synthetic approved host.
-# The real public-trust gate is tested separately with strict TLS errors;
-# this test has no publicly trusted TLS endpoint. Test-only monkeypatch lives
-# in this isolated Python subprocess and never alters product security checks.
-cat >"$WORKDIR/qualified-short-url-fixture.py" <<'PY_QUALIFIED'
-import importlib.machinery
-import sys
-from pathlib import Path
-script = Path(sys.argv[1])
-mod = importlib.machinery.SourceFileLoader("zt_short_url_fixture", str(script)).load_module()
-def approved_fixture_hostname(cfg, **kwargs):
-    assert cfg.get("bootstrap_hostname") == "bootstrap.example.com", "fixture must be explicit"
-    return "bootstrap.example.com"
-mod.short_url_host_for_cfg = approved_fixture_hostname
-raise SystemExit(mod.main(sys.argv[2:]))
-PY_QUALIFIED
-frp_create_client_qualified_fixture() {
-  python3 "$WORKDIR/qualified-short-url-fixture.py" "$ROOT/tools/frp-create-client" "$@"
-}
-
+issue() { python3 "$ROOT/tools/frp-create-client" --one-line "$@"; }
 OUT_MGMT="$WORKDIR/mgmt.out"
-frp_create_client_qualified_fixture --one-line --client-name short-mgmt --note 'mgmt' \
-  >"$OUT_MGMT" || fail "mgmt short url"
-grep -E -q "curl -fsSL https://bootstrap\\.example\\.com/i/[A-Za-z0-9_-]{22}" \
-  "$OUT_MGMT" || { cat "$OUT_MGMT"; fail "mgmt short URL shape"; }
-if grep -q 'zt1\.' "$OUT_MGMT"; then
-  fail "mgmt short URL still printed zt1"
-fi
-pass "MANAGEMENT_ONLY_SHORT_URL"
-
+issue --client-name short-mgmt --note mgmt >"$OUT_MGMT"
 OUT_SSH="$WORKDIR/ssh.out"
-python3 "$ROOT/tools/frp-create-client" --one-line --ssh \
-  --client-name short-ssh --note 'ssh' >"$OUT_SSH" || fail "ssh short url"
-grep -E -q "curl -fsSL https://bootstrap\\.example\\.com/i/[A-Za-z0-9_-]{22}" "$OUT_SSH" \
-  || { cat "$OUT_SSH"; fail "ssh short URL shape"; }
-pass "SSH_ONLY_SHORT_URL"
-
+issue --ssh --client-name short-ssh --note ssh >"$OUT_SSH"
 SERVICES="$WORKDIR/services.json"
 cat >"$SERVICES" <<'JSON'
 [{"id":"ssh","preset":"ssh","local_ip":"127.0.0.1","local_port":22},
  {"id":"http","preset":"http","local_ip":"127.0.0.1","local_port":8080}]
 JSON
 OUT_MULTI="$WORKDIR/multi.out"
-frp_create_client_qualified_fixture --one-line --services-file "$SERVICES" \
-  --client-name short-multi --note 'multi' >"$OUT_MULTI" || fail "multi short url"
-grep -E -q "curl -fsSL https://bootstrap\\.example\\.com/i/[A-Za-z0-9_-]{22}" "$OUT_MULTI" \
-  || { cat "$OUT_MULTI"; fail "multi short URL shape"; }
+issue --services-file "$SERVICES" --client-name short-multi >"$OUT_MULTI"
+for f in "$OUT_MGMT" "$OUT_SSH" "$OUT_MULTI"; do
+  grep -Eq '^curl -kfsS https://bootstrap\.example\.com/[A-Za-z0-9_-]{8}\|sudo bash$' "$f"
+  ! grep -Eq 'bt1\.|zt1\.|/i/' "$f"
+done
+pass "MANAGEMENT_ONLY_SHORT_URL"
+pass "SSH_ONLY_SHORT_URL"
 pass "MULTI_SERVICE_SHORT_URL"
-
 OUT_WINDOWS="$WORKDIR/windows.out"
-frp_create_client_qualified_fixture --one-line --platform windows --rdp \
-  --client-name short-rdp --note 'rdp' >"$OUT_WINDOWS" \
-  || fail "Windows short URL command"
-grep -q 'curl.exe -fsSLo' "$OUT_WINDOWS" \
-  || fail "Windows one-line missing explicit curl.exe"
-grep -q 'Get-FileHash' "$OUT_WINDOWS" \
-  || fail "Windows one-line missing stage-1 hash check"
-grep -q 'powershell.exe -NoProfile -ExecutionPolicy Bypass -File' "$OUT_WINDOWS" \
-  || fail "Windows one-line missing file execution"
-if grep -q 'powershell.exe .* -Command' "$OUT_WINDOWS"; then
-  fail "Windows one-line still wraps an outer -Command"
-fi
-grep -q '?platform=windows' "$OUT_WINDOWS" \
-  || fail "Windows one-line missing platform dispatch"
-grep -q 'RDP local target: 127.0.0.1:3389' "$OUT_WINDOWS" \
-  || fail "Windows RDP custom TCP preset missing"
-if grep -qiE '(^|[;|[:space:]])(irm|iex)([;|[:space:]]|$)|Invoke-RestMethod' \
-  "$OUT_WINDOWS"; then
-  fail "Windows one-line contains download-and-execute alias"
-fi
+issue --platform windows --rdp --client-name short-rdp >"$OUT_WINDOWS"
+grep -Eq '^iex\(curl\.exe -kfsS https://bootstrap\.example\.com/[A-Za-z0-9_-]{8}\|Out-String\)$' "$OUT_WINDOWS"
+! grep -Eq 'bt1\.|zt1\.|/i/' "$OUT_WINDOWS"
+WIN_LOCATOR="$(sed -nE 's~^iex\(curl\.exe -kfsS https://[^/]+/([A-Za-z0-9_-]{8})\|Out-String\)$~\1~p' "$OUT_WINDOWS")"
 pass "WINDOWS_ONE_LINE"
-
-TICKET="$(python3 - "$OUT_SSH" <<'PY'
-import re
-import sys
-from pathlib import Path
-text = Path(sys.argv[1]).read_text()
-m = re.search(r"/i/([A-Za-z0-9_-]{22}|bt1\.[0-9a-f]+\.[0-9a-f]+)", text)
-assert m, text
-print(m.group(1))
-PY
-)"
-TICKET_ID="$(bootstrap_record_id "$TICKET")"
+TICKET="$(entry_locator "$OUT_SSH")"
+TICKET_ID="$(entry_id "$OUT_SSH")"
 TICKET_FILE="$TREE/var/lib/drlink/bootstrap/${TICKET_ID}.json"
-[[ -f "$TICKET_FILE" ]] || fail "ticket file missing"
-
+[[ -f "$TICKET_FILE" && ${#TICKET} == 8 && ${#WIN_LOCATOR} == 8 ]] || fail "entry index missing"
 ALLOC_LOG="$WORKDIR/alloc.log"
 python3 "$ROOT/server/frp-port-allocator.py" --config "$TREE/etc/drlink/config.json" \
   >"$ALLOC_LOG" 2>&1 &
@@ -254,351 +180,88 @@ assert d.get('completed_at') in (None, ''), d
 print('ok')
 PY
 
+ORIGIN="https://127.0.0.1:${FRP_TEST_ALLOC_PORT}"
 SCRIPT1="$WORKDIR/script1.sh"
-curl -fsSk "https://127.0.0.1:${FRP_TEST_ALLOC_PORT}/i/${TICKET}" -o "$SCRIPT1" \
-  || { cat "$ALLOC_LOG"; fail "GET /i first"; }
-curl -fsSk "https://127.0.0.1:${FRP_TEST_ALLOC_PORT}/i/${TICKET}" -o "$WORKDIR/script2.sh" \
-  || fail "GET /i second"
-python3 - "$TICKET_FILE" <<'PY' || fail "GET mutated bind state"
-import json
-import sys
-d = json.load(open(sys.argv[1]))
-assert d.get('completed_at') in (None, ''), d
-assert d.get('bound_machine_id') in (None, ''), d
-print('ok')
-PY
-grep -q 'FRP_BOOTSTRAP_TICKET=' "$SCRIPT1" || fail "stage1 missing ticket environment"
-! grep -q 'PACKAGE=' "$SCRIPT1" || fail "obsolete package in stage1"
-grep -q 'Data Relay Link' "$SCRIPT1" || fail "script header"
-if grep -qiE 'curl -k|curl --insecure|wget --no-check-certificate' "$SCRIPT1"; then
-  fail "short URL script contains insecure TLS"
-fi
-
-SCRIPT_WIN="$WORKDIR/script-windows.ps1"
-curl -fsSk "https://127.0.0.1:${FRP_TEST_ALLOC_PORT}/i/${TICKET}?platform=windows" \
-  -o "$SCRIPT_WIN" || fail "GET /i Windows query dispatch"
-grep -q 'Get-FileHash -Algorithm SHA256' "$SCRIPT_WIN" \
-  || fail "Windows bootstrap missing SHA256 verification"
-grep -q 'ExecutionPolicy Bypass -File \$installer -ZeroTouch' "$SCRIPT_WIN" \
-  || fail "Windows bootstrap missing -File -ZeroTouch execution"
-grep -q 'dist/bootstrap-client\\.ps1' "$SCRIPT_WIN" \
-  || fail "Windows bootstrap missing PS1 checksum entry"
-if grep -qiE 'Invoke-RestMethod|Invoke-WebRequest.+\|' "$SCRIPT_WIN"; then
-  fail "Windows bootstrap contains download-and-execute pipe"
-fi
-
-SCRIPT_UA="$WORKDIR/script-windows-ua.ps1"
-curl -fsSk -A 'WindowsPowerShell/5.1' \
-  "https://127.0.0.1:${FRP_TEST_ALLOC_PORT}/i/${TICKET}" \
-  -o "$SCRIPT_UA" || fail "GET /i Windows User-Agent dispatch"
-grep -q 'Get-FileHash -Algorithm SHA256' "$SCRIPT_UA" \
-  || fail "PowerShell User-Agent did not receive Windows bootstrap"
-
-SCRIPT_LINUX="$WORKDIR/script-explicit-linux.sh"
-curl -fsSk -A 'WindowsPowerShell/5.1' \
-  "https://127.0.0.1:${FRP_TEST_ALLOC_PORT}/i/${TICKET}?platform=linux" \
-  -o "$SCRIPT_LINUX" || fail "GET /i explicit Linux dispatch"
-grep -q '^#!/bin/bash' "$SCRIPT_LINUX" \
-  || fail "explicit Linux did not preserve bash bootstrap"
+curl -fsSk "$ORIGIN/$TICKET" -o "$SCRIPT1"
+curl -fsSk -A 'WindowsPowerShell/5.1' "$ORIGIN/$TICKET" -o "$WORKDIR/script2.sh"
+cmp "$SCRIPT1" "$WORKDIR/script2.sh"
+grep -q '^#!/bin/bash' "$SCRIPT1"
+grep -q 'FRP_BOOTSTRAP_LOCATOR=' "$SCRIPT1"
+! grep -Eq '^FRP_BOOTSTRAP_TICKET=|bt1\.|PACKAGE=|curl -k|curl --insecure' "$SCRIPT1"
+curl -fsSk "$ORIGIN/$WIN_LOCATOR" -o "$WORKDIR/windows.ps1"
+grep -q 'Get-FileHash -Algorithm SHA256' "$WORKDIR/windows.ps1"
+grep -q 'FRP_BOOTSTRAP_LOCATOR' "$WORKDIR/windows.ps1"
+! grep -Eq 'bt1\.|--insecure' "$WORKDIR/windows.ps1"
+curl -sSk -o /dev/null -w '%{http_code}' "$ORIGIN/$TICKET?platform=windows" | grep -qx 404
 pass "WINDOWS_AND_LINUX_DISPATCH"
-
+python3 - "$TICKET_FILE" <<'PYSTATE'
+import json,sys
+d=json.load(open(sys.argv[1]))
+assert not d.get('bound_machine_id') and not d.get('completed_at')
+assert not d['entry_approval']['candidates']
+PYSTATE
 HDRS="$WORKDIR/headers.txt"
-curl -sSk -D "$HDRS" -o /dev/null "https://127.0.0.1:${FRP_TEST_ALLOC_PORT}/i/${TICKET}" \
-  || fail "headers fetch"
-grep -qi 'Cache-Control: no-store' "$HDRS" || fail "Cache-Control"
-grep -qi 'Pragma: no-cache' "$HDRS" || fail "Pragma"
-grep -qi 'X-Content-Type-Options: nosniff' "$HDRS" || fail "nosniff"
-grep -qi 'Referrer-Policy: no-referrer' "$HDRS" || fail "Referrer-Policy"
+curl -sSk -D "$HDRS" -o /dev/null "$ORIGIN/$TICKET"
+for header in 'Cache-Control: no-store' 'Pragma: no-cache' 'X-Content-Type-Options: nosniff' 'Referrer-Policy: no-referrer'; do
+  grep -qi "$header" "$HDRS"
+done
 pass "GET_NO_CONSUME"
-
-curl -sSk -o "$WORKDIR/bad.txt" -w '%{http_code}' \
-  "https://127.0.0.1:${FRP_TEST_ALLOC_PORT}/i/bt1.deadbeefdeadbeef.$(printf 'a%.0s' {1..64})" \
-  | grep -qx '404' || fail "invalid ticket not 404"
-grep -q 'bootstrap unavailable' "$WORKDIR/bad.txt" || fail "invalid body"
-if grep -qiE 'secret|token|private|traceback|/var/lib' "$WORKDIR/bad.txt"; then
-  fail "invalid response leaked internals"
-fi
+curl -sSk -o "$WORKDIR/bad.txt" -w '%{http_code}' "$ORIGIN/ZT000000" | grep -qx 404
+grep -qx 'bootstrap unavailable' "$WORKDIR/bad.txt"
+! grep -qiE 'secret|token|private|traceback|/var/lib' "$WORKDIR/bad.txt"
 pass "GET_INVALID_SAFE"
-
 sleep 0.2
-if grep -F "$TICKET" "$ALLOC_LOG"; then
-  fail "allocator log leaked full ticket"
-fi
-grep -E 'GET /i/<redacted>|/i/<redacted>' "$ALLOC_LOG" \
-  || { cat "$ALLOC_LOG"; fail "allocator log missing redacted /i/ path"; }
+! grep -F "$TICKET" "$ALLOC_LOG"
+grep -q 'GET /<redacted>' "$ALLOC_LOG"
 pass "URL_LOG_REDACTION"
-
-BT1="$(python3 - "$SCRIPT1" <<'PY'
-import re,sys
-from pathlib import Path
-script=Path(sys.argv[1]).read_text()
-match=re.search(r"^FRP_BOOTSTRAP_TICKET='(bt1\.[0-9a-f]{16}\.[0-9a-f]{64})'$",script,re.M)
-assert match, 'stage1 must provide internal ticket directly'
-print(match.group(1))
-PY
-)" || fail "served stage1 missing internal bt1"
-[[ "$BT1" != "$TICKET" ]] || fail "served stage1 reused the short handle"
-
-python3 - "$TICKET" "$BT1" "$FRP_TEST_ALLOC_PORT" <<'PY' || fail "redeem binding semantics"
-import json
-import ssl
-import sys
-import urllib.error
-import urllib.request
-
-handle = sys.argv[1]
-ticket = sys.argv[2]
-port = sys.argv[3]
-ctx = ssl._create_unverified_context()
-
-def redeem(presented, machine_id):
-    body = json.dumps({
-        'ticket': presented,
-        'machine_id': machine_id,
-        'hostname': 'host-' + machine_id[:8],
-    }).encode()
-    req = urllib.request.Request(
-        'https://127.0.0.1:%s/bootstrap/redeem' % port,
-        data=body,
-        headers={'Content-Type': 'application/json'},
-        method='POST',
-    )
-    try:
-        with urllib.request.urlopen(req, context=ctx, timeout=5) as resp:
-            return resp.status, json.load(resp)
-    except urllib.error.HTTPError as exc:
-        return exc.code, json.load(exc)
-
-code, data = redeem(handle, 'machine-aaaa')
-assert code == 403, (code, data)
-code, data = redeem(ticket, 'machine-aaaa')
-assert code == 200, (code, data)
-code2, data2 = redeem(ticket, 'machine-aaaa')
-assert code2 == 200, (code2, data2)
-code3, data3 = redeem(ticket, 'machine-bbbb')
-assert code3 == 409, (code3, data3)
-print('ok')
-PY
-pass "FIRST_MACHINE_BINDING"
-
-python3 - "$TICKET_FILE" <<'PY'
-import json
-import sys
-import time
-path = sys.argv[1]
-d = json.load(open(path))
-d['expires_at'] = int(time.time()) - 10
-json.dump(d, open(path, 'w'), indent=2)
-print('expired')
-PY
-curl -sSk -o /dev/null -w '%{http_code}' \
-  "https://127.0.0.1:${FRP_TEST_ALLOC_PORT}/i/${TICKET}" | grep -qx '404' \
-  || fail "expired ticket GET should be unavailable"
-pass "EXPIRATION_GET"
-
-python3 "$ROOT/tools/frp-server-set" bootstrap-hostname bootstrap.example.com >/dev/null
-OUT_REV="$WORKDIR/rev.out"
-frp_create_client_qualified_fixture --one-line --client-name rev-test --note 'rev' \
-  >"$OUT_REV" || fail "create rev ticket"
-TICKET2="$(python3 - "$OUT_REV" <<'PY'
-import re
-import sys
-from pathlib import Path
-text = Path(sys.argv[1]).read_text()
-m = re.search(r"/i/([A-Za-z0-9_-]{22}|bt1\.[0-9a-f]+\.[0-9a-f]+)", text)
-assert m, text
-print(m.group(1))
-PY
-)"
-TICKET2_ID="$(bootstrap_record_id "$TICKET2")"
-TICKET2_FILE="$TREE/var/lib/drlink/bootstrap/${TICKET2_ID}.json"
-python3 - "$TICKET2_FILE" <<'PY'
-import json
-import sys
-from datetime import datetime, timezone
-path = sys.argv[1]
-d = json.load(open(path))
-d['revoked_at'] = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace('+00:00', 'Z')
-json.dump(d, open(path, 'w'), indent=2)
-PY
-curl -sSk -o /dev/null -w '%{http_code}' \
-  "https://127.0.0.1:${FRP_TEST_ALLOC_PORT}/i/${TICKET2}" | grep -qx '404' \
-  || fail "revoked ticket GET should be unavailable"
-pass "REVOCATION_GET"
-
-OUT_DONE="$WORKDIR/done.out"
-frp_create_client_qualified_fixture --one-line --client-name done-test --note 'done' \
-  >"$OUT_DONE" || fail "create done ticket"
-TICKET3="$(python3 - "$OUT_DONE" <<'PY'
-import re
-import sys
-from pathlib import Path
-text = Path(sys.argv[1]).read_text()
-m = re.search(r"/i/([A-Za-z0-9_-]{22}|bt1\.[0-9a-f]+\.[0-9a-f]+)", text)
-assert m, text
-print(m.group(1))
-PY
-)"
-TICKET3_ID="$(bootstrap_record_id "$TICKET3")"
-TICKET3_FILE="$TREE/var/lib/drlink/bootstrap/${TICKET3_ID}.json"
-curl -fsSk "https://127.0.0.1:${FRP_TEST_ALLOC_PORT}/i/${TICKET3}" -o "$WORKDIR/script3.sh" \
-  || fail "GET done ticket"
-BT1_DONE="$(python3 - "$WORKDIR/script3.sh" <<'PY'
-import re,sys
-from pathlib import Path
-script=Path(sys.argv[1]).read_text()
-match=re.search(r"^FRP_BOOTSTRAP_TICKET='(bt1\.[0-9a-f]{16}\.[0-9a-f]{64})'$",script,re.M)
-assert match, 'stage1 must provide internal ticket directly'
-print(match.group(1))
-PY
-)" || fail "served stage1 missing internal bt1"
-python3 - "$BT1_DONE" "$FRP_TEST_ALLOC_PORT" <<'PY' || fail "complete redeem"
-import json
-import ssl
-import sys
-import urllib.request
-ticket = sys.argv[1]
-port = sys.argv[2]
-ctx = ssl._create_unverified_context()
-body = json.dumps({
-    'ticket': ticket,
-    'machine_id': 'machine-done',
-    'hostname': 'done-host',
-}).encode()
-req = urllib.request.Request(
-    'https://127.0.0.1:%s/bootstrap/redeem' % port,
-    data=body,
-    headers={'Content-Type': 'application/json'},
-    method='POST',
-)
-with urllib.request.urlopen(req, context=ctx, timeout=5) as resp:
-    assert resp.status == 200
-print('redeemed')
-PY
-python3 - "$TICKET3_FILE" <<'PY'
-import json
-import sys
-from datetime import datetime, timezone
-path = sys.argv[1]
-d = json.load(open(path))
-d['completed_at'] = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace('+00:00', 'Z')
-json.dump(d, open(path, 'w'), indent=2)
-PY
-curl -sSk -o /dev/null -w '%{http_code}' \
-  "https://127.0.0.1:${FRP_TEST_ALLOC_PORT}/i/${TICKET3}" | grep -qx '404' \
-  || fail "completed ticket GET should be unavailable"
-python3 - "$BT1_DONE" "$FRP_TEST_ALLOC_PORT" <<'PY' || fail "completed redeem should fail"
-import json
-import ssl
-import sys
-import urllib.error
-import urllib.request
-ticket = sys.argv[1]
-port = sys.argv[2]
-ctx = ssl._create_unverified_context()
-body = json.dumps({
-    'ticket': ticket,
-    'machine_id': 'machine-done',
-    'hostname': 'done-host',
-}).encode()
-req = urllib.request.Request(
-    'https://127.0.0.1:%s/bootstrap/redeem' % port,
-    data=body,
-    headers={'Content-Type': 'application/json'},
-    method='POST',
-)
+# Public locator is never a credential; direct legacy redemption must fail.
+python3 - "$TICKET" "$ORIGIN" <<'PYREDEEM'
+import json,ssl,sys,urllib.request,urllib.error
+req=urllib.request.Request(sys.argv[2]+'/bootstrap/redeem',data=json.dumps({
+    'ticket':sys.argv[1],'machine_id':'machine-a','hostname':'host-a'}).encode(),
+    headers={'Content-Type':'application/json'})
 try:
-    urllib.request.urlopen(req, context=ctx, timeout=5)
-    raise SystemExit('redeem unexpectedly succeeded')
+    urllib.request.urlopen(req,context=ssl._create_unverified_context(),timeout=5)
+    raise AssertionError('locator redeemed')
 except urllib.error.HTTPError as exc:
-    assert exc.code == 409, exc.code
-print('ok')
-PY
-pass "SINGLE_USE"
-
+    assert exc.code==403,exc.code
+PYREDEEM
+pass "LOCATOR_NOT_CREDENTIAL"
+python3 - "$TICKET_FILE" <<'PYEXPIRE'
+import json,sys,time
+p=sys.argv[1]; d=json.load(open(p)); d['expires_at']=int(time.time())-10
+with open(p,'w') as f:json.dump(d,f)
+PYEXPIRE
+curl -sSk -o /dev/null -w '%{http_code}' "$ORIGIN/$TICKET" | grep -qx 404
+pass "EXPIRATION_GET"
+issue --client-name rev-test >"$WORKDIR/rev.out"
+TICKET2="$(entry_locator "$WORKDIR/rev.out")"
+python3 "$ROOT/tools/frp-enrollment-revoke" "$(entry_id "$WORKDIR/rev.out")" >/dev/null
+curl -sSk -o /dev/null -w '%{http_code}' "$ORIGIN/$TICKET2" | grep -qx 404
+pass "REVOCATION_GET"
 python3 "$ROOT/tools/frp-server-set" hostname access.example.com >/dev/null
-python3 - "$TREE/etc/drlink/config.json" <<'PY' || fail "hostname fields distinct"
-import json
-import sys
-cfg = json.load(open(sys.argv[1]))
-assert cfg.get('public_hostname') == 'access.example.com', cfg
-assert cfg.get('bootstrap_hostname') == 'bootstrap.example.com', cfg
-print('ok')
-PY
+python3 - "$TREE/etc/drlink/config.json" <<'PYCFG'
+import json,sys
+d=json.load(open(sys.argv[1]))
+assert d['public_hostname']=='access.example.com'
+assert d['bootstrap_hostname']=='bootstrap.example.com'
+PYCFG
 pass "PUBLIC_HOSTNAME_SEMANTICS_UNCHANGED"
-
-# Config edits on disk must apply to GET /i/ without restarting the allocator.
-# (frpctl set / installer-url tools do not restart services.)
 NEW_INSTALLER='https://example.test/bootstrap-client-reloaded.sh'
-python3 - "$TREE/etc/drlink/config.json" "$NEW_INSTALLER" <<'PY' || fail "mutate installer url"
-import json
-import sys
-import time
-path = sys.argv[1]
-url = sys.argv[2]
-cfg = json.load(open(path))
-cfg['client_installer_url'] = url
-json.dump(cfg, open(path, 'w'), indent=2, sort_keys=True)
-open(path, 'a').write('\n')
-# Ensure mtime advances on coarse filesystems.
-time.sleep(0.05)
-print('ok')
-PY
-# Need a fresh unused ticket for GET (previous ticket was completed).
-TICKET2="$(python3 "$ROOT/tools/frp-create-client" --one-line --ssh \
-  --client-name short-url-reload --note reload-cfg 2>"$WORKDIR/create-reload.err" \
-  | python3 -c "import re,sys; t=sys.stdin.read(); m=re.search(r\"/i/([A-Za-z0-9_-]{22}|bt1\\.[0-9a-f]+\\.[0-9a-f]+)\", t); print(m.group(1) if m else '')")"
-[[ -n "$TICKET2" ]] || { cat "$WORKDIR/create-reload.err"; fail "create reload ticket"; }
-SCRIPT_RELOAD="$WORKDIR/script-reload.sh"
-curl -fsSk "https://127.0.0.1:${FRP_TEST_ALLOC_PORT}/i/${TICKET2}" -o "$SCRIPT_RELOAD" \
-  || fail "GET /i after config mutate"
-grep -F "$NEW_INSTALLER" "$SCRIPT_RELOAD" \
-  || { cat "$SCRIPT_RELOAD"; fail "GET /i did not pick up reloaded installer URL"; }
+python3 - "$TREE/etc/drlink/config.json" "$NEW_INSTALLER" <<'PYCFG'
+import json,sys,time
+from pathlib import Path
+p=Path(sys.argv[1]);d=json.loads(p.read_text());d['client_installer_url']=sys.argv[2];p.write_text(json.dumps(d)+'\n');time.sleep(.05)
+PYCFG
+issue --client-name reload-test >"$WORKDIR/reload.out"
+curl -fsSk "$ORIGIN/$(entry_locator "$WORKDIR/reload.out")" -o "$WORKDIR/reload.sh"
+grep -Fq "$NEW_INSTALLER" "$WORKDIR/reload.sh"
 pass "CONFIG_RELOAD_WITHOUT_RESTART"
-
-python3 - "$ROOT/lib/frp_zero_touch.py" <<'PY' || fail "insecure TLS found in short URL helper"
-import importlib.util
-import sys
-from pathlib import Path
-path = Path(sys.argv[1])
-spec = importlib.util.spec_from_file_location("zt", path)
-mod = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(mod)
-script = mod.render_short_url_bootstrap_script(
-    "https://203.0.113.10/enroll",
-    "a" * 64,
-    "bt1." + ("b" * 16) + "." + ("c" * 64),
-    "https://bootstrap.example.com/artifacts/agent/bootstrap-client.sh",
-)
-win = mod.render_short_url_windows_bootstrap_script(
-    "https://203.0.113.10/enroll",
-    "a" * 64,
-    "bt1." + ("b" * 16) + "." + ("c" * 64),
-    "https://bootstrap.example.com/artifacts/agent/bootstrap-client.ps1",
-)
-cmd = mod.short_url_command("bootstrap.example.com", "A" * 22)
-blob = "\n".join([script, win, cmd])
-if "insecure" in blob or "curl -k" in blob or "no-check-certificate" in blob:
-    raise SystemExit("insecure TLS in short URL helper")
-print("ok")
-PY
-pass "NO_INSECURE_TLS_SHORT_URL_PATH"
-
-python3 - "$ROOT/lib/frp_zero_touch.py" "$TICKET" <<'PY' || fail "redact helper"
-import importlib.util
-import sys
-from pathlib import Path
-path = Path(sys.argv[1])
-ticket = sys.argv[2]
-spec = importlib.util.spec_from_file_location('zt', path)
-mod = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(mod)
-sample = 'GET /i/%s HTTP/1.1' % ticket
-out = mod.redact_text(sample)
-assert ticket not in out, out
-assert '/i/<redacted>' in out, out
-print('ok')
-PY
+PYTHONPATH="$ROOT/lib" python3 - "$TICKET" <<'PYREDACT'
+import frp_zero_touch as z,sys
+sample='GET /'+sys.argv[1]+' HTTP/1.1'
+assert z.redact_text(sample)=='GET /<redacted> HTTP/1.1'
+PYREDACT
 pass "REDACT_HELPER"
 
 # Real short-URL E2E mutates Server bootstrap_hostname and installer-url while

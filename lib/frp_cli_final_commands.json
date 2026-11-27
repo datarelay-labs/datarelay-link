@@ -134,7 +134,7 @@
     "roles": "server",
     "category": "Onboarding",
     "summary": "Show one enrollment lifecycle record",
-    "detail": "Shows enrollment ID, kind, lifecycle status, creation time, and expiry without redisplaying credential secret material.",
+    "detail": "Shows enrollment lifecycle and pending Agent key fingerprints without displaying credential secret material.",
     "examples": [
       "show enrollment enr_example"
     ],
@@ -608,7 +608,7 @@
     "roles": "server",
     "category": "Server",
     "summary": "Clear optional server hostname and installer URL settings",
-    "detail": "Unsetting public-hostname falls back to Public IP access. Unsetting bootstrap-hostname uses qualified public HTTPS or a Private-CA numeric-IP bootstrap with verified CA fingerprint/IP SAN. If neither route is safe, enrollment fails before ticket issuance. The long private-CA launcher remains explicit advanced-only. Unsetting installer URLs restores automatic/default installer sources.",
+    "detail": "Unsetting public-hostname falls back to Public IP access. Unsetting bootstrap-hostname uses the configured allocator HTTPS authority. Public and private HTTPS use the same entry form; route and downstream TLS readiness are checked before issuance. Unsetting installer URLs restores automatic/default installer sources.",
     "examples": [
       "unset server public-hostname",
       "unset server bootstrap-hostname",
@@ -1596,18 +1596,19 @@
     "roles": "server",
     "category": "AI Access",
     "summary": "Create or edit an AI Access rule",
-    "detail": "Create or edit an AI Access rule. The calculated security impact of an edit is checked before mutation. A y/N confirmation is required when that impact broadens or materially narrows access; safe creation and no-change paths need no additional confirmation.",
+    "detail": "Bare set ai-access opens the guided Rule name prompt; set ai-access enabled/disabled controls the entire policy. A named Rule edits or creates one rule; selecting a new destination replaces the old one. File scope examples: /**, /home/**, /home/**,/opt/**. The calculated security impact of an edit is checked before mutation. A y/N confirmation is required when that impact broadens or materially narrows access; safe creation and no-change paths need no additional confirmation. AI Access is WHITELIST-only; the first rule initializes this mode without a mode field. Explicit destination managed-hosts:trusted includes all current and future trusted Managed Hosts; never server:self.",
     "examples": [
+      "set ai-access",
       "set ai-access <RULE>",
-      "set ai-access allow-ops mode whitelist source automation-ai destination production-servers permission operations enabled",
-      "set ai-access allow-read mode whitelist source automation-ai destination ubuntu-prod permission read-only paths '/var/lib/vendor/**' enabled",
+      "set ai-access allow-ops source automation-ai destination production-servers permission operations enabled",
+      "set ai-access allow-read source automation-ai destination ubuntu-prod permission read-only paths '/var/lib/vendor/**' enabled",
       "set ai-access enabled",
       "set ai-access disabled"
     ],
     "args": [
       {
         "name": "RULE",
-        "required": true
+        "required": false
       }
     ],
     "tail": "any",
@@ -1620,9 +1621,6 @@
     "surface": "",
     "flags": [],
     "tail_fields": {
-      "mode": [
-        "whitelist"
-      ],
       "source": null,
       "destination": null,
       "permission": null,
@@ -1823,7 +1821,7 @@
     "roles": "server",
     "category": "AI Access",
     "summary": "Reset the AI Access policy",
-    "detail": "Remove the AI Access mode and all rules. Effective access becomes DENY ALL. This always requires explicit y/N confirmation.",
+    "detail": "Reset ALL AI Access Rules and the policy mode, not AI Identities or permission objects. Effective access becomes DENY ALL. This always requires explicit y/N confirmation; use unset ai-access <RULE> to remove only one rule.",
     "examples": [
       "unset ai-access policy"
     ],
@@ -2026,180 +2024,6 @@
   {
     "path": [
       "system",
-      "credential",
-      "rotate",
-      "ai-identity"
-    ],
-    "roles": "server",
-    "category": "AI Access",
-    "summary": "Rotate an AI Identity credential",
-    "detail": "Rotate invalidates the previous active credential and issues a replacement secret once. The explicit command is the operator approval; no additional confirmation prompt is used.",
-    "examples": [
-      "system credential rotate ai-identity automation-ai"
-    ],
-    "args": [
-      {
-        "name": "<IDENTITY>",
-        "complete": "ai-principals",
-        "required": true
-      }
-    ],
-    "tail": null,
-    "internal": null,
-    "aliases": [],
-    "destructive": true,
-    "hidden": false,
-    "risk": "security_change",
-    "confirmation": "none",
-    "surface": "",
-    "flags": []
-  },
-  {
-    "path": [
-      "system",
-      "credential",
-      "revoke",
-      "ai-identity"
-    ],
-    "roles": "server",
-    "category": "AI Access",
-    "summary": "Revoke an AI Identity credential",
-    "detail": "Revoke removes active credential material and can immediately interrupt clients using it. The explicit command is the operator approval; no additional confirmation prompt is used.",
-    "examples": [
-      "system credential revoke ai-identity automation-ai"
-    ],
-    "args": [
-      {
-        "name": "<IDENTITY>",
-        "complete": "ai-principals",
-        "required": true
-      }
-    ],
-    "tail": null,
-    "internal": null,
-    "aliases": [],
-    "destructive": true,
-    "hidden": false,
-    "risk": "outage",
-    "confirmation": "none",
-    "surface": "",
-    "flags": []
-  },
-  {
-    "path": [
-      "system",
-      "credential",
-      "configure",
-      "ai-identity"
-    ],
-    "roles": "server",
-    "category": "AI Access",
-    "summary": "Configure AI Identity authentication",
-    "detail": "Change the authentication mode or OAuth redirect configuration for an existing AI Identity. This can change which clients can authenticate. The explicit command is the operator approval; no additional confirmation prompt is used.",
-    "examples": [
-      "system credential configure ai-identity automation-ai authentication static-bearer",
-      "system credential configure ai-identity interactive-ai authentication oauth",
-      "system credential configure ai-identity interactive-ai oauth-redirect https://localhost/callback"
-    ],
-    "args": [
-      {
-        "name": "<IDENTITY>",
-        "complete": "ai-principals",
-        "required": true
-      },
-      {
-        "name": "<FIELD>",
-        "complete": [
-          "authentication",
-          "oauth-redirect"
-        ],
-        "required": true
-      },
-      {
-        "name": "<VALUE>",
-        "complete": null,
-        "required": true
-      }
-    ],
-    "tail": null,
-    "internal": null,
-    "aliases": [],
-    "destructive": true,
-    "hidden": false,
-    "risk": "security_change",
-    "confirmation": "none",
-    "surface": "",
-    "flags": []
-  },
-  {
-    "path": [
-      "system",
-      "credential",
-      "deny-oauth"
-    ],
-    "roles": "server",
-    "category": "AI Access",
-    "summary": "Deny a pending OAuth authorization request",
-    "detail": "Deny operator consent for one pending OAuth authorization request. The browser continuation receives access_denied. The explicit deny command is the operator decision; no additional confirmation prompt is used.",
-    "examples": [
-      "system credential deny-oauth <PENDING-ID>"
-    ],
-    "args": [
-      {
-        "name": "<PENDING-ID>",
-        "complete": null,
-        "required": true
-      }
-    ],
-    "tail": null,
-    "internal": null,
-    "aliases": [],
-    "destructive": false,
-    "hidden": false,
-    "risk": "security_change",
-    "confirmation": "none",
-    "surface": "",
-    "flags": []
-  },
-  {
-    "path": [
-      "system",
-      "credential",
-      "approve-oauth"
-    ],
-    "roles": "server",
-    "category": "AI Access",
-    "summary": "Approve a pending OAuth authorization request",
-    "detail": "Approve operator consent for one pending OAuth authorization request and issue a one-time authorization code through the browser continuation. The explicit approve command is the operator decision; no additional confirmation prompt is used.",
-    "examples": [
-      "system credential approve-oauth <PENDING-ID>",
-      "system credential approve-oauth <PENDING-ID> <AI-IDENTITY>"
-    ],
-    "args": [
-      {
-        "name": "<PENDING-ID>",
-        "complete": null,
-        "required": true
-      },
-      {
-        "name": "AI-IDENTITY",
-        "complete": "ai-principals",
-        "required": false
-      }
-    ],
-    "tail": null,
-    "internal": null,
-    "aliases": [],
-    "destructive": false,
-    "hidden": false,
-    "risk": "security_widening",
-    "confirmation": "none",
-    "surface": "",
-    "flags": []
-  },
-  {
-    "path": [
-      "system",
       "export",
       "configuration"
     ],
@@ -2332,15 +2156,17 @@
     "tail": "any",
     "path": [
       "set",
-      "mcp-tls"
+      "server",
+      "mcp"
     ],
     "category": "System",
-    "summary": "Configure MCP public TLS intent",
+    "summary": "Configure MCP Server settings",
     "examples": [
-      "set mcp-tls hostname mcp.example.com",
-      "set mcp-tls mode auto-acme",
-      "set mcp-tls contact-email ops@example.com",
-      "set mcp-tls acme-environment staging"
+      "set server mcp",
+      "set server mcp hostname mcp.example.com",
+      "set server mcp mode auto-acme",
+      "set server mcp contact-email ops@example.com",
+      "set server mcp acme-environment staging"
     ],
     "args": [
       {
@@ -2352,7 +2178,7 @@
           "acme-environment",
           "acme-directory"
         ],
-        "required": true
+        "required": false
       }
     ]
   },
@@ -2370,12 +2196,13 @@
     "tail": null,
     "path": [
       "unset",
-      "mcp-tls"
+      "server",
+      "mcp"
     ],
     "category": "System",
     "summary": "Clear MCP public TLS configuration",
     "examples": [
-      "unset mcp-tls"
+      "unset server mcp"
     ],
     "args": []
   },
@@ -2393,13 +2220,14 @@
     "tail": null,
     "path": [
       "unset",
-      "mcp-tls",
+      "server",
+      "mcp",
       "purge"
     ],
     "category": "System",
     "summary": "Purge MCP TLS certificate and ACME account material",
     "examples": [
-      "unset mcp-tls purge"
+      "unset server mcp purge"
     ],
     "args": []
   },
@@ -3468,7 +3296,7 @@
     "roles": "server",
     "category": "AI Access",
     "summary": "Show an AI Identity",
-    "detail": "Show an AI Identity",
+    "detail": "Show authentication status, enabled state and configured AI Access Rules including destinations, permissions and path scopes. Runtime authorization is evaluated per call.",
     "examples": [
       "show ai-identity <IDENTITY>"
     ],
@@ -3492,22 +3320,64 @@
   {
     "path": [
       "set",
+      "ai-mcp"
+    ],
+    "roles": "server",
+    "category": "AI Access",
+    "summary": "Set up and manage AI MCP connections",
+    "detail": "AI MCP Setup: MCP Server, MCP Bridge settings / diagnostics and AI service connections. AI Access remains separate authorization.",
+    "examples": [
+      "set ai-mcp"
+    ],
+    "args": [],
+    "tail": null,
+    "internal": null,
+    "aliases": [],
+    "destructive": false,
+    "hidden": false,
+    "risk": "none",
+    "confirmation": "none",
+    "surface": "",
+    "flags": []
+  },
+  {
+    "path": [
+      "set",
       "ai-identity"
     ],
     "roles": "server",
     "category": "AI Access",
-    "summary": "Connect / bind an AI Identity",
-    "detail": "Connect / bind an AI Identity",
+    "summary": "Manage AI Identity authentication",
+    "detail": "Connect and verify an AI client, or explicitly manage an existing Identity. Authentication never grants Managed Host access. Review the selected credential or OAuth action.",
     "examples": [
-      "set ai-identity <IDENTITY>"
+      "set ai-identity chatgpt",
+      "set ai-identity chatgpt approve <PENDING-ID>",
+      "set ai-identity chatgpt deny <PENDING-ID>",
+      "set ai-identity chatgpt rotate",
+      "set ai-identity chatgpt revoke",
+      "set ai-identity chatgpt authentication oauth",
+      "set ai-identity chatgpt oauth-redirect https://localhost/callback"
     ],
     "args": [
       {
-        "name": "IDENTITY",
-        "required": true
+        "name": "<IDENTITY>",
+        "complete": "ai-principals",
+        "required": false
+      },
+      {
+        "name": "ACTION",
+        "complete": [
+          "rotate",
+          "revoke",
+          "authentication",
+          "oauth-redirect",
+          "approve",
+          "deny"
+        ],
+        "required": false
       }
     ],
-    "tail": null,
+    "tail": "any",
     "internal": null,
     "aliases": [],
     "destructive": false,

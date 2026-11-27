@@ -26,46 +26,30 @@ class StrictCliParsingTests(unittest.TestCase):
     def test_status_alone_ok(self):
         self.assertIsNone(self.cat.strict_error(["show", "status"]))
 
-    def test_approve_oauth_optional_identity_arity(self):
-        one = ["system", "credential", "approve-oauth", "oap_fixture"]
-        two = one + ["plugin-qual"]
-        three = two + ["extra"]
-        self.assertIsNone(self.cat.strict_error(one))
+    def test_approve_requires_identity_and_pending_id(self):
+        one = ["set", "ai-identity", "plugin-qual", "approve"]
+        two = one + ["oap_fixture"]
+        self.assertIn("Missing argument", self.cat.strict_error(one))
         self.assertIsNone(self.cat.strict_error(two))
-        err = self.cat.strict_error(three)
-        self.assertIsNotNone(err)
-        self.assertIn("unexpected argument: extra", err)
-        cmd = self.cat.find(one)
-        self.assertEqual(
-            self.cat.usage_line(cmd),
-            "system credential approve-oauth <PENDING-ID> [AI-IDENTITY]",
-        )
+        self.assertIn("unexpected argument: extra", self.cat.strict_error(two + ["extra"]))
+        self.assertEqual(self.cat.usage_line(self.cat.find(two)), "set ai-identity <IDENTITY> approve <PENDING-ID>")
 
     def test_ai_identity_credential_lifecycle_is_canonical(self):
-        canonical = [
-            ["system", "credential", "rotate", "ai-identity", "example-ai"],
-            ["system", "credential", "revoke", "ai-identity", "example-ai"],
-            ["system", "credential", "configure", "ai-identity", "example-ai", "authentication", "oauth"],
-            ["system", "credential", "approve-oauth", "pending-example"],
-            ["system", "credential", "deny-oauth", "pending-example"],
-        ]
-        for tokens in canonical:
+        for suffix in (["rotate"], ["revoke"], ["authentication", "oauth"],
+                       ["approve", "pending-example"], ["deny", "pending-example"],
+                       ["oauth-redirect", "https://localhost/callback"]):
+            tokens = ["set", "ai-identity", "example-ai", *suffix]
             cmd = self.cat.find(tokens, role="server")
             self.assertIsNotNone(cmd, tokens)
             self.assertFalse(cmd["hidden"], tokens)
             self.assertIsNone(self.cat.strict_error(tokens), tokens)
-
-        self.assertIsNone(
-            self.cat.find(
-                ["system", "credential", "rotate", "ai-principal", "example-ai"],
-                role="server",
-            )
-        )
-        self.assertIsNotNone(
-            self.cat.strict_error(
-                ["system", "credential", "deny-oauth", "pending-example", "extra"]
-            )
-        )
+        import frp_ctl_grammar as grammar
+        for old in (["system", "credential", "rotate", "ai-identity", "example-ai"],
+                    ["system", "credential", "approve-oauth", "pending-example"]):
+            self.assertIsNone(self.cat.find(old, role="server"))
+            self.assertEqual(grammar.match(old, role="server").get("status"), "error")
+            self.assertEqual(grammar.match(old + ["?"], role="server").get("status"), "error")
+        self.assertIsNotNone(self.cat.strict_error(["set", "ai-identity", "example-ai", "deny", "pending-example", "extra"]))
 
     def test_guided_menu_categories(self):
         text = self.cat.render_guided_menu("server")

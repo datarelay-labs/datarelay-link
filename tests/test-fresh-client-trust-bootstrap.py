@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Fresh client with no private CA must still run the advertised Zero-Touch line.
 
-Stock ``curl -fsSL https://ip/i/<handle>`` fails when the enrollment host
+Stock TLS verification fails when the enrollment host
 presents the project private CA. The advertised command has to succeed on that
-same client without --insecure and without a preinstalled CA.
+same client via the approved initial -k; subsequent downloads verify TLS.
 """
 from __future__ import annotations
 
@@ -25,7 +25,7 @@ sys.path.insert(0, str(ROOT / "lib"))
 
 import frp_zero_touch as zt  # noqa: E402
 
-TICKET = "AbcdEFghij1234567890ab"
+TICKET = "A3xK9mP2"
 
 
 def _openssl(args, **kwargs):
@@ -79,8 +79,160 @@ def _free_port():
     return port
 
 
+def _verify_orphan_allocator_ca_recovery(tmp, origin, installer_url, installer, ca_pem):
+    """Exercise the actual installer helpers against qualified HTTPS metadata."""
+    old_key = tmp / "old-ca.key"
+    old_ca = tmp / "old-ca.crt"
+    _openssl([
+        "req", "-x509", "-newkey", "rsa:2048", "-nodes",
+        "-keyout", str(old_key), "-out", str(old_ca),
+        "-days", "2", "-subj", "/CN=old-unclaimed-drlink-ca",
+    ])
+    new_ca = tmp / "replacement-ca.crt"
+    new_ca.write_text(ca_pem, encoding="utf-8")
+    bundle = tmp / "qualified-agent.sh"
+    bundle.write_text(installer, encoding="utf-8")
+    expected = hashlib.sha256(ssl.PEM_cert_to_DER_cert(ca_pem)).hexdigest()
+    scenarios = (
+        ("orphan", None, {}, True),
+        ("corrupt-orphan", None, {}, True),
+        ("old-ca-and-scratch", None, {}, True),
+        ("scratch-only", None, {}, True),
+        ("same-ca-and-scratch", None, {}, True),
+        ("scratch-with-invalid-pin", None, {"FRP_ALLOCATOR_CA_SHA256": "a" * 64}, False),
+        ("scratch-symlink", None, {}, False),
+        ("scratch-unknown-name", "etc/drlink/allocator-ca.crt.manual-backup", {}, False),
+        ("committed", "etc/frp/client-state.json", {}, False),
+        ("pending", "etc/frp/enroll-pending.json", {}, False),
+        ("identity", "etc/frp/client-identity.key", {}, False),
+        ("server", "etc/drlink/config.json", {}, False),
+        ("runtime", "usr/local/bin/drlink", {}, False),
+        ("empty-roots", None, {}, True),
+        ("owned-runtime", None, {}, True),
+        ("owned-service", None, {}, True),
+        ("owned-runtime-with-identity", "etc/frp/client-identity.key", {}, False),
+        ("foreign-unit", None, {}, False),
+        ("foreign-engine", "usr/local/bin/frpc", {}, False),
+        ("unknown-lib", "usr/local/lib/drlink/custom.py", {}, False),
+        ("foreign-server", "etc/systemd/system/drlink-server.service", {}, False),
+        ("mac-orphan", None, {}, True),
+        ("mac-protected", "Library/Application Support/drlink/client-state.json", {}, False),
+        ("unknown", "etc/drlink/.unknown", {}, False),
+        ("symlink", None, {}, False),
+        ("bad-pin", None, {"FRP_ALLOCATOR_CA_SHA256": "a" * 64}, False),
+        ("bad-source", None, {"FRP_EXPECTED_SOURCE_REF": "c" * 40}, False),
+    )
+    for name, marker, overrides, success in scenarios:
+        root = tmp / ("case-" + name)
+        mac = name.startswith("mac-")
+        ca = root / ("Library/Application Support/drlink/allocator-ca.crt" if mac else "etc/drlink/allocator-ca.crt")
+        ca.parent.mkdir(parents=True)
+        machine_id = root / ("Library/Application Support/drlink/client-id" if mac else "etc/frp/client-id")
+        machine_id.parent.mkdir(parents=True, exist_ok=True)
+        machine_id.write_text("test-machine-id\n")
+        if name in ("old-ca-and-scratch", "scratch-only", "same-ca-and-scratch",
+                    "scratch-with-invalid-pin", "scratch-symlink"):
+            scratch = ca.parent / "allocator-ca.crt.Abc123"
+            if name == "scratch-symlink":
+                scratch.symlink_to(old_ca)
+            else:
+                scratch.write_bytes(old_ca.read_bytes())
+        else:
+            scratch = None
+        if name == "scratch-only":
+            pass
+        elif name == "same-ca-and-scratch":
+            ca.write_bytes(new_ca.read_bytes())
+        elif name == "symlink":
+            ca.symlink_to(old_ca)
+        elif name == "corrupt-orphan":
+            ca.write_text("invalid old CA residue\n")
+        else:
+            ca.write_bytes(old_ca.read_bytes())
+        if marker:
+            target = root / marker
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text("preserve even incomplete or corrupt evidence\n")
+        residues = []
+        if name in ("empty-roots", "owned-runtime", "owned-service", "owned-runtime-with-identity"):
+            for rel in ("var/lib/drlink", "var/log/drlink", "opt/drlink"):
+                d = root / rel
+                d.mkdir(parents=True)
+                residues.append(d)
+        if name in ("owned-runtime", "owned-service", "owned-runtime-with-identity"):
+            for dest, source in (
+                ("usr/local/bin/drlink", "tools/drlink"),
+                ("usr/local/lib/drlink/frp-client-common.sh", "lib/frp-client-common.sh"),
+                ("usr/local/lib/drlink/frpctl", "tools/frpctl"),
+            ):
+                f = root / dest
+                f.parent.mkdir(parents=True, exist_ok=True)
+                f.write_bytes((ROOT / source).read_bytes())
+                residues.append(f)
+        if name in ("owned-service", "foreign-unit"):
+            f = root / "etc/systemd/system/drlink-client.service"
+            f.parent.mkdir(parents=True)
+            f.write_bytes((ROOT / "client/drlink-client.service").read_bytes() if name == "owned-service" else b"[Service]\nExecStart=/bin/false\n")
+            residues.append(f)
+            if name == "owned-service":
+                f = root / "usr/local/bin/frpc"
+                f.write_bytes(b"owned-engine-fixture")
+                residues.append(f)
+        if mac:
+            for subdir in ("state", "lib", "logs", "bin"):
+                (ca.parent / subdir).mkdir()
+        before = ca.read_bytes() if ca.exists() else None
+        scratch_before = scratch.read_bytes() if scratch is not None else None
+        env = {
+            **os.environ,
+            "FRP_CLIENT_TEST_ROOT": str(root),
+            "FRP_TEST_UNAME_S": "Darwin" if mac else "Linux",
+            "FRP_BOOTSTRAP_LOCATOR": TICKET,
+            "FRP_ALLOCATOR_URL": origin + "/enroll",
+            "ALLOCATOR_URL": origin + "/enroll",
+            "FRP_ALLOCATOR_CA_FILE": str(new_ca),
+            "FRP_ALLOCATOR_CA_SHA256": expected,
+            "FRP_INSTALLER_URL": installer_url,
+            "FRP_BUNDLE_FILE": str(bundle),
+            "FRP_EXPECTED_SOURCE_REF": "b" * 40,
+            "FRP_EXPECTED_SOURCE_HEAD": "b" * 40,
+            "FRP_EXPECTED_RELEASE_CHANNEL": "development",
+            **overrides,
+        }
+        ran = subprocess.run(
+            [
+                "bash", "-c",
+                'set -euo pipefail; . "$1"; '
+                'frp_client_recover_orphan_allocator_ca "$ALLOCATOR_URL"; '
+                'frp_bootstrap_allocator_ca "$ALLOCATOR_URL"',
+                "bash", str(ROOT / "lib/frp-client-common.sh"),
+            ],
+            env=env, capture_output=True, text=True,
+        )
+        if (ran.returncode == 0) != success:
+            raise AssertionError(f"{name}: unexpected result {ran.returncode}\n{ran.stdout}\n{ran.stderr}")
+        if ca.read_bytes() != (new_ca.read_bytes() if success else before):
+            raise AssertionError(f"{name}: allocator CA preservation/replacement failed")
+        if scratch is not None:
+            if success and (scratch.exists() or scratch.is_symlink()):
+                raise AssertionError(f"{name}: staging residue remains")
+            if not success and scratch.read_bytes() != scratch_before:
+                raise AssertionError(f"{name}: protected staging residue changed")
+            if name == "scratch-symlink" and not scratch.is_symlink():
+                raise AssertionError("scratch symlink was replaced")
+        for residue in residues:
+            if residue.exists() == success:
+                raise AssertionError(f"{name}: unexpected residue state: {residue}")
+        if marker and not (root / marker).exists():
+            raise AssertionError(f"{name}: protected state was removed")
+        if name == "symlink" and not ca.is_symlink():
+            raise AssertionError("symlink was replaced")
+    print(f"ORPHAN_RESIDUE_SCENARIOS={len(scenarios)}")
+    print("ORPHAN_ALLOCATOR_CA_RECOVERY=PASS")
+
+
 def main():
-    tmp = Path(tempfile.mkdtemp(prefix="drlink-fresh-ca-"))
+    tmp = Path(tempfile.mkdtemp(prefix="drlink-fresh-ca-")).resolve()
     httpd = None
     try:
         ca_pem, server_crt, server_key = _make_ca_and_leaf(tmp)
@@ -107,9 +259,8 @@ def main():
         sums = "%s  agent/bootstrap-client.sh\n" % digest
         script = zt.render_short_url_bootstrap_script(
             origin + "/enroll",
-            "ab" * 32,
-            "bt1." + ("a" * 16) + "." + ("b" * 64),
-            installer_url,
+            hashlib.sha256(ssl.PEM_cert_to_DER_cert(ca_pem)).hexdigest(),
+            None, installer_url, entry_locator=TICKET, ca_pem=ca_pem,
         )
         if "--insecure" in script or "curl -k" in script:
             raise SystemExit("stage-1 script disables TLS verification")
@@ -117,7 +268,7 @@ def main():
             raise SystemExit("same-origin stage-1 script does not pin the private CA")
 
         bodies = {
-            "/i/%s" % TICKET: script.encode("utf-8"),
+            "/%s" % TICKET: script.encode("utf-8"),
             "/artifacts/SHA256SUMS": sums.encode("utf-8"),
             "/artifacts/manifest.json": json.dumps({"qualification_status":"PASS", "channel":"development", "immutable_source_ref":"b"*40, "artifacts":[{"relative_path":"agent/bootstrap-client.sh", "source_head":"b"*40, "sha256":digest}]}).encode(),
             "/artifacts/agent/bootstrap-client.sh": installer.encode("utf-8"),
@@ -148,7 +299,7 @@ def main():
         thread = threading.Thread(target=httpd.serve_forever, daemon=True)
         thread.start()
 
-        bare_url = origin + "/i/" + TICKET
+        bare_url = origin + "/" + TICKET
         bare = subprocess.run(
             ["curl", "-fsSL", "--proto", "=https", "--tlsv1.2", bare_url],
             stdout=subprocess.PIPE,
@@ -170,20 +321,8 @@ def main():
         if health.returncode == 0:
             raise SystemExit("stock healthz curl trusted a private CA")
 
-        command = zt.private_ca_ip_linux_command(
-            origin + '/enroll',
-            hashlib.sha256(ssl.PEM_cert_to_DER_cert(ca_pem)).hexdigest(),
-            TICKET,
-        )
-        if "\n" in command.strip():
-            raise SystemExit("advertised command is not one line")
-        if "--insecure" in command or "curl -k" in command:
-            raise SystemExit("advertised command disables TLS verification")
-        if "--cacert" not in command or bare_url not in command:
-            raise SystemExit("advertised command does not pin the short URL: %s" % command)
-        if not command.startswith("bash -c "):
-            raise SystemExit("advertised command is not the sudo one-liner")
-
+        command=zt.render_entry_command(origin.split("://",1)[1],TICKET,"linux")
+        assert command=="curl -kfsS "+bare_url+"|sudo bash"
         # Execute the displayed command unchanged.
         ran = subprocess.run(
             ["bash", "-lc", command],
@@ -199,12 +338,13 @@ def main():
             )
         if "unable to get local issuer certificate" in output.lower():
             raise SystemExit("advertised command still failed private-CA trust")
+        _verify_orphan_allocator_ca_recovery(tmp, origin, installer_url, installer, ca_pem)
         # The direct stage-1 still enforces immutable candidate provenance.
         (tmp / "ca.crt").write_text(ca_pem)
         for key, value in (("FRP_EXPECTED_SOURCE_HEAD", "c"*40),
                            ("FRP_EXPECTED_RELEASE_CHANNEL", "stable")):
             rejected = subprocess.run(
-                ["bash", "-c", script], capture_output=True, text=True,
+                (["sudo","-n","env",key+"="+value,"bash","-c",script] if os.geteuid()!=0 else ["bash","-c",script]), capture_output=True, text=True,
                 env={**os.environ, key:value,
                      "FRP_ALLOCATOR_CA_FILE":str(tmp / "ca.crt")},
             )

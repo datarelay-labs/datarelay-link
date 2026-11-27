@@ -8,14 +8,14 @@
   Reuses the existing allocator bootstrap/enroll protocol (no forked enrollment).
 
 .EXAMPLE
-  .\install-client.ps1 -ZeroTouch -AllocatorUrl https://frp.example/enroll `
-    -CaSha256 <sha256> -BootstrapTicket 'bt1.xxx.yyy'
+  iex(curl.exe -kfsS https://frp.example/A3xK9mP2|Out-String)
 #>
 [CmdletBinding()]
 param(
     [string]$AllocatorUrl = $env:FRP_ALLOCATOR_URL,
     [string]$CaSha256 = $env:FRP_ALLOCATOR_CA_SHA256,
     [string]$BootstrapTicket = $env:FRP_BOOTSTRAP_TICKET,
+    [string]$BootstrapLocator = $env:FRP_BOOTSTRAP_LOCATOR,
     [switch]$ZeroTouch,
     [string]$Platform = 'windows',
     [string]$ServicesJson = $env:FRP_SERVICES_JSON,
@@ -33,8 +33,8 @@ function Show-FrpInstallHelp {
 Data Relay Link Windows Agent Host installer
 
 Zero-touch:
-  .\install-client.ps1 -ZeroTouch -AllocatorUrl https://HOST/enroll `
-      -CaSha256 <DER-SHA256> -BootstrapTicket 'bt1.<id>.<secret>'
+  iex(curl.exe -kfsS https://HOST/A3xK9mP2|Out-String)
+  Use the Server-issued locator. The first valid Agent claim is registered automatically.
 
 Existing enrolled Agent software upgrade:
   .\bootstrap-client.ps1 -Upgrade
@@ -42,7 +42,7 @@ Existing enrolled Agent software upgrade:
   Preserves enrollment, CA, engine, desired services and public ports.
 
 Environment equivalents:
-  FRP_ALLOCATOR_URL, FRP_ALLOCATOR_CA_SHA256, FRP_BOOTSTRAP_TICKET
+  FRP_ALLOCATOR_URL, FRP_ALLOCATOR_CA_SHA256, FRP_BOOTSTRAP_LOCATOR (internal bootstrap inputs)
 
 After enrollment:
   tools\drlink.cmd show status
@@ -64,7 +64,7 @@ After enrollment:
 
 Notes:
   - ENROLL ONCE: if already enrolled, refuse ticket re-use; use drlink system resume
-  - No irm|iex. Download this script, verify SHA256, then execute with -File
+  - Initial entry HTTPS does not authenticate the TLS peer; downstream installer verification is separate.
   - Does not modify Windows Firewall
 '@ | Write-Host
 }
@@ -88,7 +88,7 @@ foreach ($mod in @(
 try { Add-Type -AssemblyName System.Security -ErrorAction SilentlyContinue | Out-Null } catch { }
 
 if ($Upgrade) {
-    if ($ZeroTouch -or $BootstrapTicket) {
+    if ($ZeroTouch -or $BootstrapTicket -or $BootstrapLocator) {
         Write-Host 'ERROR: -Upgrade does not enroll or accept a Bootstrap Ticket.'
         exit 2
     }
@@ -165,14 +165,14 @@ try {
             Write-Host 'ERROR: -CaSha256 / FRP_ALLOCATOR_CA_SHA256 is required'
             exit 1
         }
-        if (-not $BootstrapTicket) {
-            Write-Host 'ERROR: -BootstrapTicket / FRP_BOOTSTRAP_TICKET is required'
+        if (-not $BootstrapTicket -and -not $BootstrapLocator) {
+            Write-Host 'ERROR: Bootstrap locator is required'
             exit 1
         }
     }
 
     $rc = Invoke-FrpZeroTouch -AllocatorUrl $AllocatorUrl -CaSha256 $CaSha256 `
-        -BootstrapTicket $BootstrapTicket -Platform $Platform -ServicesJson $ServicesJson `
+        -BootstrapTicket $BootstrapTicket -BootstrapLocator $BootstrapLocator -Platform $Platform -ServicesJson $ServicesJson `
         -Hostname $Hostname -SkipStart:$SkipStart -SkipDownload:$SkipDownload
     exit [int]$rc
 } finally {

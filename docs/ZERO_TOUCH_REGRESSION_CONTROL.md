@@ -4,52 +4,55 @@
 > **Applies to:** Data Relay Link v2.4 development and all later onboarding changes.
 > **Authority:** Product Master + CLI/AI Master; the current contract in this file governs the Zero-Touch user-journey acceptance tests. Prior version-specific evidence is historical, never acceptance for a different installed Source HEAD.
 > **Scope:** single and bulk compact bootstrap commands, interactive guided CLI, TLS trust, token issuance, Server/Agent target projection, generated installers, actual external-user E2E.
-> **Tracking:** [P0 Draft PR #222](https://github.com/datarelay-labs/datarelay-link/pull/222), [Issue #165](https://github.com/datarelay-labs/datarelay-link/issues/165). A Draft PR or machine-only PASS is not installed-product acceptance.
+> **Tracking:** [PR #305](https://github.com/datarelay-labs/datarelay-link/pull/305), [Issue #165](https://github.com/datarelay-labs/datarelay-link/issues/165). A Draft PR or machine-only PASS is not installed-product acceptance.
 
-## What regressed (observed)
+## Fixed customer entry design (2026-11-24)
 
-The operator requested a short one-line Agent enrollment. The installed Server produced a several-thousand-character pinned-private-CA command with no upfront explanation. The `bootstrap_hostname` value was absent even though `remote.xdr.ooo` had externally trusted HTTPS and a functioning `/i/` handler. The previous default-mode tests deliberately expected this long command and reported PASS. In a separate failure, a Zero-Touch LAN service requested `192.168.219.125` but Server/Agent v2.4 projection labeled it `this-host` (127.0.0.1), causing `AUTHORITATIVE_TARGET_MISMATCH` on 6001/6002. LAN SSH port 22 was reachable from the Agent; LAN HTTPS 443 was not yet running, by operator intent.
+**ZT-P0-CONTRACT-20261026 — fixed eight-character entry target (owner revision 2026-11-25).** The customer starts with one OS-native command, one HTTPS authority (FQDN or IP), and one eight-character root-path file locator. Public and private HTTPS use the same target form. No preinstalled DataRelay software, inline configuration, separate enrollment ID, fingerprint, artifact hash, or installer body in the customer command. All subsequent configuration, downloads, verification, installation, recovery and enrollment belong to the multi-stage Bootstrap; their size and count are unrestricted. Issuing the command authorizes one automatic registration by the first valid signed Agent claim. Treat the short locator as a sensitive, expiring bearer capability; it is not the downstream enrollment code. The exact templates, first-claim policy, initial-transport risk and acceptance status follow below. This is a design target, not installed-product qualification.
 
-## Root-cause chain (do not treat any one patch as complete)
+### Command fields (normative)
 
-| ID | Actual cause | Old false-positive oracle / blind spot | Required prevention |
-|---|---|---|---|
-| ZT-RC-01 | Short URL was opt-in only via `bootstrap_hostname`; missing field silently selected multi-kilobyte `zt1` fallback | `tests/test-zero-touch-short-url.sh` positively asserted `zt1` for default missing-host and `public_url_host` cases | Default must qualify public HTTPS or emit a clear error **before ticket issuance**; retire long-form Zero-Touch issuance for all new tickets |
-| ZT-RC-02 | Historical short-URL documentation (v2.1.3 Option B) remained written as the current v2.4 default | CLI/AI Master repeated the old opt-in rule; Product Master did not provide a quantitative operator command contract | Link all product/CLI/QA surfaces to this single current contract; mark v2.1.3 behavior historical |
-| ZT-RC-03 | A synthetic configured FQDN and a mocked handle proved URL shape without proving real stock-OS TLS, current `/i/` routing or actual host installation | Unit tests passed when deployed Server `bootstrap_hostname` was absent and real output was long | Test public TLS and the exact DRLink invalid-handle 404 body; run the literal emitted launcher on a clean external Agent; record user-visible bytes and result |
-| ZT-RC-04 | Guided, backend `frp-create-client`, CLI/AI advice, and Windows/macOS paths diverged; SSH username was treated as setup input even though the tunnel requires only target address/port | `tests/test-create-zero-touch.sh` still counts an optional SSH prompt as a positive assertion | Remove SSH login username input, options and service metadata entirely. SSH account selection belongs to the SSH client. Guided/direct paths must yield the same usable launcher |
-| ZT-RC-05 | Zero-Touch raw LAN target (`local_ip`) was materialized as `this-host` in both Server and Agent catalogs | Bootstrap regression mostly used `127.0.0.1` and checked local reachability/port retention, not signed LAN authority and public external SSH traffic | Preserve exact destination IP/port/immutable Service ID and public port; use a named Network Object for routed LAN targets; mismatch remains fail-closed. Existing-install migration may affect only provably untouched bootstrap seeds |
-| ZT-RC-06 | Code tests ran on checkout bytes but installed Server/Agent and embedded `dist/bootstrap-*` sometimes remained older | Functional source PASS mistaken for installed acceptance; CI subsequently flagged `DERIVED_BUNDLE_STALE` | Generate and verify bundles, SHA256SUMS and manifest at candidate HEAD; inspect installed Source HEAD on Server and Agent; run real public CLI and external traffic on those exact bytes |
-| ZT-RC-07 | Test-run configuration mutations clear and restore `bootstrap_hostname` | Resetting to the original unset setting was a correct cleanup, but an *unset = silently long* default reappeared in later tests | Always restore original settings and then assert the **current documented default**, rather than reporting PASS because the old long mode returned |
+| Item | Linux/macOS | Windows (administrator PowerShell) |
+|---|---|---|
+| Downloader | `curl` | `curl.exe` |
+| Download options | `-kfsS` | `-kfsS` |
+| Protocol | `https://` | `https://` |
+| Server authority | FQDN or IP, with configured port if required | Same |
+| Bootstrap filename | `/` followed by one eight-character locator | Same |
+| Execute downloaded Bootstrap | `\|sudo bash` | `iex(...\|Out-String)` |
 
-## Normative v2.4 behavior (ZT-P0-CONTRACT-20261026)
+The only variable fields are Server authority and Bootstrap filename. Select the OS at Server issuance; all other syntax is fixed by the platform template. Public and private HTTPS use identical fields. No enrollment credential, hash, certificate, installer URL, configuration or other argument in the entry command. Acceptance compares these fields and exact template.
 
-1. **Beginner default:** `set enrollment zero-touch` uses a short launcher through qualified public HTTPS or an independently CA-pinned numeric IP allocator. DNS is not required. The command must be copyable as one line and must not include the multi-kilobyte `zt1` package. The public-domain reference benchmark on `remote.xdr.ooo` is **Linux/macOS <= 200 characters; Windows <= 500 characters** with an opaque 22-character handle. These benchmark limits are not a universal maximum for arbitrary long DNS names. The old 68-character `curl|sudo bash` launcher is **not** a product acceptance limit: it can report success on a failed download in ordinary POSIX shells. Keep the launcher as short as safely possible while ensuring a failed fetch cannot invoke the installer or return false success.
-2. **Trust qualification:** explicit operator-configured `bootstrap_hostname` is an assertion of trusted public-TLS intent; stock-client TLS verification still MUST succeed at actual fetch. Otherwise a DNS `public_hostname`/`public_url_host` may qualify only via real HTTPS verification of `/i/invalid-qualification-probe`, expecting **HTTP 404 + body exactly `bootstrap unavailable`** from DRLink's handler. A generic nginx 404, HTTP 200 default HTML, redirect, invalid/expired certificate, unresolvable DNS or plain IP is not sufficient.
-3. **Unqualified default:** show an actionable error describing qualified public HTTPS or a direct numeric IP allocator with a matching Private CA fingerprint and TLS IP SAN, before collecting any service configuration. Do not issue a ticket and do not silently print a 4,000-character command.
-4. **No long-form issuance:** neither single nor bulk Enrollment may emit legacy pinned-package commands. Numeric-IP clients use the verified Private-CA launcher; unqualified endpoints fail before ticket issuance. Opaque package decoding has been removed; previously issued package commands are unsupported.
-5. **Three OS paths:** Linux/macOS first pin a public CA fingerprint without transmitting a handle and then use strict `curl --cacert`; there is no `curl -k` or `--insecure` on this path. Windows may use `curl.exe --insecure` **only** to retrieve the public CA certificate without any credential, must check its DER SHA256, then use strict `--cacert` for the handle and verify the separately frozen stage-1 SHA256 **before** executing PowerShell. Missing/invalid trust fails closed.
-6. **No SSH account prerequisite:** SSH username is not a supported enrollment or Remote Service field. Never prompt for, store, infer, or accept an SSH login username on the Zero-Touch path.
-7. **Signed enrollment and routing:** bootstrap tickets are bounded, one-time and bound to first machine. For another LAN destination, the Server/Agent authoritative reference must represent the exact signed IP or FQDN, not `this-host`. Preserve Service ID, target port, public port and intentional disabled state; a TCP-open local target alone must not mark public service `HEALTHY`.
-8. **No false acceptance:** generated installer parity, stock TLS, issued-command bytes, installation, reported Source HEAD, real external SSH/HTTPS traffic, and cleanup are distinct observable gates. Success on a different HEAD, internal-only mock or an unopened destination listener is not interchangeable.
+Linux/macOS:
 
-## Compact Private CA + IP reference bounds (2026-11-01)
+```bash
+curl -kfsS https://remote.xdr.ooo/A3xK9mP2|sudo bash
+```
 
-For a representative numeric allocator at `192.0.2.20:6099` and a 22-character
-handle, the source command renderers are regression-bounded to **700 characters**
-on Linux/macOS and **1,300 characters** on Windows. These are fixture bounds,
-not universal limits for longer IPv6 authorities or custom endpoints.
+Windows (administrator PowerShell):
 
-Shortening must not compromise the trust chain: Linux/macOS fetch the CA through
-OpenSSL and pin its DER SHA256 before transmitting the handle; Windows's
-unauthenticated fetch is limited to the public CA and must pin the CA before
-strict `--cacert` credential retrieval. Windows must separately hash-check
-stage-1 before PowerShell execution. Neither path may bypass failures, redirect
-a credential-bearing request, or execute a partially downloaded stage.
+```powershell
+iex(curl.exe -kfsS https://remote.xdr.ooo/A3xK9mP2|Out-String)
+```
 
-A qualified publicly trusted bootstrap hostname is still preferred for the
-shortest launcher. Private-CA-only hosts cannot safely achieve the same command
-length without a pre-established independent trust anchor.
+The examples use a fictitious locator and are not installed-product qualification. The Server selects the OS-specific response at issuance. Permit exactly `[A-Za-z0-9_-]{8}` in the root-path locator, collision-check atomically, reserve existing routes, expire and rate-limit lookups. No second customer command or extra customer-supplied argument. Internal enrollment protocol remains separate.
+
+### Stage boundary and security scope
+
+1. Stage 0: fixed native fetch/execute template, identical for public/private certificates. The operator sends the command through the established customer communication channel. `-k` explicitly disables TLS peer certificate authentication for this initial download. It does not establish server identity or protect against an active replacement response. Later checks cannot retroactively authenticate executed code. This risk must remain visible; do not present the template as security-qualified or silently mark the existing security gate PASS.
+2. Stage 1: small, platform-specific entry file; handle ordinary truncated-script cases, clear failure/success output, subsequent artifact retrieval, temporary file cleanup, and retry without destructive side effects. Subsequent files, manifests, scripts and installer payloads have no arbitrary size or count cap. Do not embed long-lived keys or raw enrollment secrets in the publicly retrievable entry file.
+3. Stage 2: validate downstream artifacts and use authenticated connections. Establish actual downstream trust independently where required; a CA learned solely from an unauthenticated response is not independently verified. Keep TLS exceptions local to Stage 0; do not change OS trust or disable management-plane TLS validation.
+4. Stage 3: redeem a separate high-entropy, expiring, one-time enrollment credential after authorization; bind the authorized identity and destination, consume atomically, preserve existing identity/ports on retries. Issuance authorizes the first valid signed Agent claim; bind its machine ID and key atomically, reject other claims, and require fresh signed challenge redemption and signed enrollment. No manual approval for new commands. Existing six-character tickets are not accepted after upgrade; revoke and reissue them. Already enrolled Agents are unaffected. Possession of the short locator is sufficient to attempt first claim; no independent verification of the intended Agent exists. Eight random characters provide at most 48 bits of entropy. Expiry, bounded lookup rate and one-time binding reduce but do not eliminate guessing, interception or first-claim theft. Do not present these controls as independent identity authentication.
+
+### Endpoint configuration and operator workflow
+
+Select OS and enrollment profile on the Server, then privately send the generated one-line command. `bootstrap_hostname` selects the entry authority; `public_hostname` remains the Remote Service access alias. Hostname configuration does not create DNS, NAT/firewall rules or certificates. Serve only the exact eight-character root-path lookup on the configured HTTPS authority, reserve product routes, redact sensitive locators and disable caching. Readiness must verify reachability and the actual locator handler; downstream authenticated enrollment and installer readiness remain separate. Print an explicit install result and preserve existing identities and reservations on retry.
+
+### Acceptance
+
+- Clean Linux, macOS, Windows: one exact OS template, same for public/private HTTPS, no extra customer-supplied arguments. Numeric IP or FQDN; validate the allowed fields and exact invocation.
+- Same entry command can be retried after interruption; success requires actual installed identity, authenticated enrollment and working service, not a shell exit code alone. Server-side lookup, capacity, collisions, expiry and concurrent redemption are tested.
+- Actual OS runs, installer integrity, automatic first-claim enrollment, signed service routing and external E2E remain required. The initial unverified execution risk remains a security qualification failure unless separately dispositioned under the applicable release authority. No network attack detection feature is in scope.
 
 ## Historical Agent self-target recovery contract
 
@@ -83,11 +86,9 @@ real-environment acceptance requirements.
 
 | Scenario | Expected output/behavior | Actual gate |
 |---|---|---|
-| Qualified real DNS + DRLink `/i/` 404 signature | Short command on Linux/macOS/Windows; TLS verified; real ticket installation succeeds | `tests/test-zero-touch-operator-command-bound.py`; `tests/test-zero-touch-short-url.sh`; U-009/O-002 real external E2E |
-| Explicit `bootstrap_hostname`, expired/wrong certificate | Generated command may exist, but stock client fetch MUST fail; no unsafe bypass or consumed ticket | TLS negative suite + clean external client |
-| Generic HTTPS 404 or unrelated web application | Refuse false short-URL discovery, no ticket | Qualification probe negative test |
-| DNS configured but no public trusted `/i/` route | Use CA-pinned numeric IP route when the local Server certificate and CA qualify; otherwise fail before collecting services, no default long command | IP fallback and original default-no-long tests |
-| Private-CA-only / numeric IP with matching Server certificate IP SAN | Compact CA-pinned command, no DNS required; CA fingerprint checked **before** any handle is transmitted, then strict TLS; Windows checks stage-1 SHA256 before execution | IP/private-CA issuer + Windows PowerShell negative/positive regression |
+| FQDN/IP, public/private HTTPS | Exact fixed eight-character entry template; actual installation and automatic first-claim enrollment | Native OS E2E |
+| Invalid/expired locator or unavailable endpoint | No enrollment; clear failure or retry guidance; do not infer success from pipeline exit | Server lookup + retry tests |
+| Replacement initial response | Unverified Stage 0 is a recorded security risk; not an authenticated-download PASS | Security qualification |
 | Optional SSH user blank | End-to-end enrollment/tunnel functions; no misleading account inference | Guided and backend user journey |
 | LAN SSH remote 6001 | Signed target `192.168.219.125:22`, correct Network Object, preserve 6001, real external SSH banner and session | Server/Agent projection + remote actual traffic |
 | LAN HTTPS remote 6002 with target 443 intentionally down | Configuration references consistent, do not fabricate HTTPS PASS; DEGRADED is truthful until listener starts | Server/Agent state inspection |
@@ -101,10 +102,10 @@ real-environment acceptance requirements.
 - **Local focused checks:** `python3 tests/test-zero-touch-operator-command-bound.py`, `python3 tests/test-zero-touch-guided-preflight.py` (real public `drlink` preflight-before-identity across Linux/Windows/macOS), `bash tests/test-zero-touch-short-url.sh`, `python3 tests/test-enrolled-routed-target-parity.py`, `python3 tests/test-cli-inventory-selection-journey.py` and `python3 tests/test-zero-touch-doc-contract.py` (the documentation consistency check).
 - **Artifact closure:** `bash tests/test-change-closure-artifacts.sh` at the exact product source HEAD; reject `DERIVED_BUNDLE_STALE` or checksum/manifest drift.
 - **Installed candidate:** record `drlink system version` Source HEAD for Server and Agent and exact bundle SHA256; external new-user command generated from the actual installed Server, not a copied example or source runner.
-- **Real negative/positive:** trusted public TLS, real `/i/<handle>` redemption, one-time binding, service lifecycle, 6000 preservation and 6001 real external SSH. HTTPS :443 behind 6002 may remain legitimately down and must be recorded honestly.
+- **Real negative/positive:** public/private entry flow, eight-character locator lookup, automatic first-claim enrollment, one-time binding, service lifecycle, 6000 preservation and 6001 real external SSH. HTTPS :443 behind 6002 may remain legitimately down and must be recorded honestly.
 - **User gate:** execute U-009, O-002, A-018 and relevant CLI-008/FCS-002 as actual personas. No silently skipped prerequisite or preexisting config reset. For v2.4 release, both complete 116-ID Full User E2E PASS runs must be on one frozen, installed, verified HEAD.
-- **Observability:** redact all raw `bt1`, short handles, OAuth codes and private keys; retain lengths, mode, endpoint/status, exit codes and provenance. Do not retain a readable one-time credential in evidence.
+- **Observability:** redact all raw `bt1`, short handles, OAuth codes and private keys; retain mode, endpoint/status, exit codes and provenance. Do not retain a readable one-time credential in evidence.
 
 ## Disposition / known remaining work
 
-PR #222 contains isolated source and targeted tests, but live Server/Agent upgrades and public :6001 end-to-end acceptance remain separate. The connected DRLink MCP exposes Managed Hosts and, only when AI Access separately authorizes it, the Server itself (Server-self target, PR #237). Whether it can mutate Server-only Network Objects or perform Server deployment depends on that authorization and the execution profile in effect; record the actual capability from receipts, not from this document. A service intentionally not listening on LAN :443 must not be marked an HTTPS relay regression. Mark these outcomes `NOT_RUN`, `BLOCKED_TOOLING`, or `FAIL` from actual receipts; never PASS from a code review.
+PR #305 is historical tracking for the original remediation; use the current exact Main or designated qualification candidate, not the historical PR, for new acceptance evidence. Source tests and live Server/Agent upgrades and public :6001 end-to-end acceptance remain separate. The connected DRLink MCP exposes Managed Hosts and, only when AI Access separately authorizes it, the Server itself (Server-self target, PR #237). Whether it can mutate Server-only Network Objects or perform Server deployment depends on that authorization and the execution profile in effect; record the actual capability from receipts, not from this document. A service intentionally not listening on LAN :443 must not be marked an HTTPS relay regression. Mark these outcomes `NOT_RUN`, `BLOCKED_TOOLING`, or `FAIL` from actual receipts; never PASS from a code review.

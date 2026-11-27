@@ -238,67 +238,25 @@ def _looks_secret(grammar, line):
         return False
 
 
-_MUTATING_PUBLIC_PREFIXES = (
-    ("set", "managed-host"),
-    ("unset", "managed-host"),
-    ("set", "managed-host-group"),
-    ("unset", "managed-host-group"),
-    ("set", "network-object"),
-    ("unset", "network-object"),
-    ("set", "network-group"),
-    ("unset", "network-group"),
-    ("set", "ai-identity"),
-    ("unset", "ai-identity"),
-    ("set", "ai-access"),
-    ("unset", "ai-access"),
-    ("set", "remote-service"),
-    ("unset", "remote-service"),
+# Set/unset resources are taken from the canonical command catalog so newly
+# added resources cannot retain stale completion inventory in the same REPL.
+_MUTATING_SYSTEM_PREFIXES = (
     ("system", "apply", "configuration"),
     ("system", "synchronize"),
-    # Guided menus may change inventory before returning to this session.
-    ("menu",),
-    ("set", "client"),
-    ("unset", "client"),
-    ("set", "client-group"),
-    ("unset", "client-group"),
-    ("set", "group"),
-    ("unset", "group"),
-    ("set", "object"),
-    ("unset", "object"),
-    ("set", "object-group"),
-    ("unset", "object-group"),
-    ("set", "remote-access"),
-    ("unset", "remote-access"),
-    ("set", "internet-access"),
-    ("unset", "internet-access"),
-    ("set", "published-service"),
-    ("unset", "published-service"),
-    ("set", "fixed-tcp"),
-    ("unset", "fixed-tcp"),
-    ("set", "ai-access"),
-    ("unset", "ai-access"),
-    ("set", "ai-principal"),
-    ("unset", "ai-principal"),
-    ("set", "enrollment"),
-    ("unset", "enrollment"),
-    ("set", "service"),
-    ("unset", "service"),
     ("system", "restore"),
     ("system", "rollback"),
-    ("system", "import"),
     ("system", "backup"),
-    ("system", "cleanup"),
     ("system", "update", "product"),
     ("system", "update", "engine"),
-    ("system", "services", "apply"),
-    ("system", "services", "discard"),
-    ("system", "services", "sync"),
     ("system", "pause"),
     ("system", "resume"),
     ("system", "restart"),
     ("system", "autostart", "enable"),
     ("system", "autostart", "disable"),
     ("system", "uninstall"),
+    ("system", "certificate", "issue"),
+    ("system", "certificate", "import"),
+    ("system", "certificate", "renew"),
 )
 
 
@@ -306,32 +264,16 @@ def _should_refresh_inventory(tokens):
     if not tokens:
         return False
     root = tokens[0]
-    # Read-only / discovery — never refresh.
-    if root in ("show", "test", "help", "?", "exit", "quit", "q"):
-        return False
-    for prefix in _MUTATING_PUBLIC_PREFIXES:
-        if tuple(tokens[: len(prefix)]) == prefix:
-            return True
-    # Hidden compatibility mutations that still change inventory.
-    if root in (
-        "create",
-        "delete",
-        "add",
-        "remove",
-        "rename",
-        "release",
-        "revoke",
-        "enable",
-        "disable",
-        "purge",
-        "import",
-        "restore",
-        "apply",
-        "discard",
-        "sync",
-    ):
+    if root == "menu":
         return True
-    return False
+    if root in ("set", "unset"):
+        return any(
+            len(cmd["path"]) >= 2 and not cmd.get("hidden")
+            and tuple(tokens[:2]) == tuple(cmd["path"][:2])
+            for cmd in _load_grammar().CATALOG.COMMANDS
+        )
+    return any(tuple(tokens[:len(prefix)]) == prefix
+               for prefix in _MUTATING_SYSTEM_PREFIXES)
 
 
 def _refresh_editor_inventory(editor, frpctl_bin):

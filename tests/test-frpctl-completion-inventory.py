@@ -65,7 +65,7 @@ class CompletionInventoryTests(unittest.TestCase):
             "permission-group": ["members"],
             "permission-object": ["permissions"],
             "internet-access": ["mode", "source", "destination", "service", "enabled", "disabled"],
-            "ai-access": ["mode", "source", "destination", "permission", "paths", "enabled", "disabled"],
+            "ai-access": ["source", "destination", "permission", "paths", "enabled", "disabled"],
             "remote-service": ["destination", "service", "enabled", "disabled"],
         }.items():
             role = "client" if resource == "remote-service" else "server"
@@ -79,7 +79,7 @@ class CompletionInventoryTests(unittest.TestCase):
                 self.assertNotIn("Remote Services", rendered)
                 self.assertNotIn("System", rendered)
                 self.assertIn("Fields after the name:", GRAMMAR.help_text(["set", resource], role))
-        for resource in ("internet-access", "ai-access"):
+        for resource in ("internet-access",):
             self.assertEqual(GRAMMAR.completion_candidates(
                 "set %s example mode " % resource, "server", [], {}, []), ["whitelist"])
         self.assertEqual(GRAMMAR.completion_candidates(

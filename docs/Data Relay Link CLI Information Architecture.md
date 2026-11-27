@@ -122,14 +122,18 @@ Data Relay Link — DRLink Server
 │   └── Test / Explain
 │
 ├── 6. AI Access
-│   ├── Connect AI / AI Identities
-│   ├── Permission Objects
-│   ├── Permission Groups
-│   ├── Rules
+│   ├── AI MCP Setup
+│   ├── Access Rules
 │   ├── Access Log
-│   └── Test / Explain
+│   ├── Test / Explain
+│   └── Advanced Permissions
+│       ├── Permission Objects
+│       └── Permission Groups
 │
 ├── 7. System
+│   ├── Server Settings
+│   │   └── MCP Server Settings
+│   └── Certificates
 ├── 8. Help
 └── 9. Exit
 ```
@@ -188,7 +192,8 @@ Diagnostics, support-bundle human output, menus, help, and errors use the same
 | Service Group | Flat reusable collection of Service Objects |
 | Permission Object | Reusable AI permission set |
 | Permission Group | Reusable collection of Permission Objects |
-| AI Identity | Verified authenticated AI identity |
+| AI MCP Setup | User-facing MCP Server, MCP Bridge and AI service connection setup |
+| AI Identity | Authenticated security resource; not a setup menu label |
 | Remote Service | Agent-owned connectivity object with a DRLink endpoint |
 | Relay Host | Current Agent Host when forwarding to another destination |
 | Remote Access | Authorization policy for Remote Services |
@@ -316,7 +321,14 @@ set service-object legacy-db type fixed-tcp port 1521
 
 When a Remote Service uses it, DRLink allocates an endpoint from the separate Fixed TCP endpoint pool. The operator does not choose the external listen port.
 
-## 12. AI Identity UX
+## 12. AI MCP Setup UX
+
+The canonical guided menu selector is `set ai-mcp` (AI MCP Setup), with help text `Set up and manage AI MCP connections`. It covers MCP Server, MCP Bridge and AI service connection setup; AI Access continues to control authorization. AI Identity denotes the authenticated security resource, not the guided menu. Existing action-first identity commands retain their grammar:
+
+### AI MCP Setup and AI Access workflow
+
+The single workflow specification is [AI_ACCESS_MCP.md](AI_ACCESS_MCP.md). Managed Hosts owns enrollment; AI MCP Setup manages infrastructure and connections; AI Identity retains verified authentication and credential lifecycle; AI Access Rules own Source → Destination → Permission authorization; System owns shared MCP settings and certificates. AI MCP Setup checks readiness and uses that same settings flow only when necessary, then optionally opens the separate Access Rule wizard. No automatic privilege grant from OAuth or first connection; explicitly reviewed Owner scope is optional. Basic permissions use built-in profiles; custom Objects/Groups are advanced. AI Access mode is fixed WHITELIST, not an operator input. Preserve existing state and all fail-closed controls. No duplicate public command/menu paths. These are target requirements, not installed-product evidence.
+
 
 ```text
 set ai-identity <NAME>
@@ -390,7 +402,7 @@ BUNDLE_ATOMICITY=CURRENT_CLI_CONTEXT
 Regression tests must protect:
 
 - role-aware Server/Agent roots;
-- canonical nouns and help/menu discovery;
+- canonical nouns and help/menu discovery: `ai-mcp` / `AI MCP Setup` / `Set up and manage AI MCP connections` must agree with the CLI/AI Master; reject retired setup-menu wording in help, menus, completion, guidance and current docs; preserve action-first AI Identity resource syntax and security behavior;
 - Guided Create/Edit and Cancel atomicity;
 - plane-specific policy semantics: Remote BLACKLIST/WHITELIST; Internet/AI WHITELIST-only;
 - policy disable/enable/reset;

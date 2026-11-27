@@ -236,6 +236,26 @@ class ConfigurationBundleTests(unittest.TestCase):
         self.assertNotIn("private_key", a)
         self.assertNotIn("client_secret", a)
 
+    def test_export_rejects_incomplete_legacy_object_without_invalid_file(self):
+        from drlink_v24_bundle import export_configuration_v24
+        self.plane.set_object_type("legacy-empty", "network")
+        rev = self.plane.current_revision()
+        dst = Path(self.tmp) / "export.yaml"
+        dst.write_text("existing file must remain unchanged", encoding="utf-8")
+        err = io.StringIO()
+        with redirect_stderr(err):
+            rc = cli.dispatch(["system", "export", "configuration", str(dst)], root=self.tmp, plane=self.plane)
+        self.assertEqual(rc, 1)
+        self.assertIn("legacy-empty", err.getvalue())
+        self.assertIn("exactly one value", err.getvalue())
+        self.assertEqual(dst.read_text(), "existing file must remain unchanged")
+        self.assertEqual(self.plane.current_revision(), rev)
+        # Correct the original object, without fabricating a value or erasing
+        # references in the exporter. The public export then validates.
+        self.plane.set_object_value("legacy-empty", "192.0.2.0/24")
+        raw = export_configuration_v24(self.plane)
+        self.assertTrue(prepare_v24_plan(self.plane, raw).no_change)
+
     def test_stdin_and_file_cli(self):
         raw = _public_bundle("cli-obj", "198.51.100.3")
         path = Path(self.tmp) / "bundle.yaml"

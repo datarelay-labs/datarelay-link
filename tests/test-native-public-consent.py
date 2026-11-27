@@ -66,7 +66,7 @@ frpctl_json_get() { python3 -c 'import json,sys; print(json.loads(sys.argv[1]).g
                         'server': 'frpctl_server_uninstall_flow'}[name]
             body = native_function(self.source, function) + '\n' + function
             if name == 'enrollment':
-                body += ' fixture-nonsecret-id'
+                body += ' 0123456789abcdef'
             body += '\n'
         return self.read_helpers + '\n' + self.stubs + '\n' + body
 
@@ -125,6 +125,15 @@ frpctl_json_get() { python3 -c 'import json,sys; print(json.loads(sys.argv[1]).g
                 prompted, output = self.run_tty('group', answer)
                 self.assertTrue(prompted, output)
                 self.assertEqual('STUB_EFFECT_TOOL' in output, answer == 'yes\n', output)
+
+    def test_malformed_enrollment_id_rejected_before_prompt(self):
+        script = self.shell_script('enrollment').replace('0123456789abcdef', '0123456789abcdef0123456789abcdef')
+        proc = subprocess.run(['bash', '-c', script], input='yes\n', env=self.env, text=True, capture_output=True)
+        output = proc.stdout + proc.stderr
+        self.assertNotEqual(proc.returncode, 0, output)
+        self.assertIn('16 hexadecimal characters', output)
+        self.assertNotIn('Continue?', output)
+        self.assertNotIn('STUB_EFFECT', output)
 
     def test_enrollment_normal_stdin_controls_consent(self):
         for answer in ('', 'no\n', '\n', 'y\n', 'yes\n'):

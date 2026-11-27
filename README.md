@@ -137,7 +137,7 @@ sudo drlink
 
 | Context | Owns |
 |---|---|
-| **Server** | Managed Hosts, Network/Service/Permission Objects and Groups, Access Policies, Internet Access, AI Access / AI Identity, Server ConfigurationBundle |
+| **Server** | Managed Hosts, Network/Service/Permission Objects and Groups, Access Policies, Internet Access, AI MCP Setup / AI Access, Server ConfigurationBundle |
 | **Agent Host** | Local Agent lifecycle and Remote Services owned by that Agent Host, Agent ConfigurationBundle |
 
 Remote Service mutation is local to the Agent Host that owns it. Server inspection of Remote Service configuration is read-only. When a Remote Service destination is another host, the current Agent Host is the Relay Host.
@@ -145,6 +145,13 @@ Remote Service mutation is local to the Agent Host that owns it. Server inspecti
 ## Safe quick start / discovery
 
 Until an immutable `v2.4.0` tag exists, install only from an exact SHA or owner-directed candidate artifact. A future-looking tag URL such as `v2.4.0/dist/bootstrap-server.sh` would 404 until that tag is created.
+
+For online Server installation, use the small entry script with the verified exact SHA. It downloads the common core and required platform archives with progress, bounded timeouts and SHA256 verification. The original `dist/bootstrap-server.sh` remains available for offline installation.
+
+```bash
+REF='<EXACT_SHA>'
+curl -fL --connect-timeout 10 --max-time 30 "https://raw.githubusercontent.com/datarelay-labs/datarelay-link/$REF/dist/bootstrap-server-online.sh" | sudo bash -s -- "$REF"
+```
 
 After install, prefer discovery commands that do not mutate state:
 
@@ -166,7 +173,7 @@ set enrollment zero-touch
 
 (or Guided menu → Managed Hosts → Connect a Managed Host)
 
-The operator-facing install command is a short HTTPS launcher that preserves private-CA fingerprint verification and one-time ticket semantics inside the maintained bootstrap artifact.
+The fixed eight-character entry target is `curl -kfsS https://remote.xdr.ooo/A3xK9mP2|sudo bash` (Linux/macOS) or `iex(curl.exe -kfsS https://remote.xdr.ooo/A3xK9mP2|Out-String)` (administrator PowerShell). Public/private HTTPS use the same form; no client-side DataRelay prerequisite. Issuance authorizes one automatic first-claim registration; share the short command privately. Later stages handle downloads, verification, enrollment and retry. Initial TLS peer authentication is not provided by `-k`; see [the canonical contract](docs/ZERO_TOUCH_REGRESSION_CONTROL.md). This target is pending product qualification.
 
 After a Managed Host enrolls and a Remote Service is enabled, operators connect with the reserved public endpoint:
 
@@ -248,7 +255,7 @@ existing authenticated DRLink control path
 Managed Host / private target
 ```
 
-AI Access source is a verified **AI Identity**. Capability and path permissions are granted through Permission Objects / Permission Groups. MCP is an integration layer, not a separate public identity model.
+AI Access source is a verified **AI Identity**. The [AI MCP Setup guide](docs/AI_ACCESS_MCP.md) separates Managed Host enrollment, AI MCP Setup (authentication), and firewall-style Access Rules (Source, Destination, Permission). AI MCP Setup checks shared MCP readiness; built-in permission profiles avoid manual Object creation for ordinary rules, while custom Objects/Groups remain advanced. Authentication alone grants no access. This describes the candidate workflow; installed release qualification is separate.
 
 ## ConfigurationBundle / AI-assisted configuration
 
@@ -324,7 +331,7 @@ Start here:
 - [`docs/INSTALLATION.md`](docs/INSTALLATION.md) — Server/Agent installation and enrollment
 - [`docs/UPGRADE.md`](docs/UPGRADE.md) — upgrade channels, migration, and rollback
 - [`docs/REMOTE_ACCESS.md`](docs/REMOTE_ACCESS.md) — Remote Service and Remote Access operation
-- [`docs/AI_ACCESS_MCP.md`](docs/AI_ACCESS_MCP.md) — AI Identity, permissions, AI Access, and MCP
+- [`docs/AI_ACCESS_MCP.md`](docs/AI_ACCESS_MCP.md) — AI MCP Setup, permissions and AI Access
 - [`docs/TROUBLESHOOTING.md`](docs/TROUBLESHOOTING.md) — diagnosis and recovery guidance
 - [`docs/CONTROLLED_EGRESS.md`](docs/CONTROLLED_EGRESS.md) — Internet Access behavior
 - [`docs/SECURITY.md`](docs/SECURITY.md) — security boundaries

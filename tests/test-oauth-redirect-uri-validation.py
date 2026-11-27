@@ -240,7 +240,7 @@ class OAuthRedirectUriValidationTests(unittest.TestCase):
                 }
             )
             page = urllib.request.urlopen(base + "/oauth/authorize?" + qs_ok, timeout=10).read().decode("utf-8")
-            self.assertIn("approve-oauth", page)
+            self.assertIn("set ai-identity", page)
             print("OAUTH_REDIRECT_LOOPBACK_VALIDATION=PASS")
             print("OAUTH_REDIRECT_DECEPTIVE_PREFIX_REJECTED=PASS")
             print("OAUTH_DCR_DECEPTIVE_REDIRECT_REJECTED=PASS")

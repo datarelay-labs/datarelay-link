@@ -4,7 +4,7 @@
 > **Source:** `docs/FULL_USER_E2E_SCENARIOS.md` (all 116 original IDs and headings preserved in its canonical document).
 > **Product baseline:** v2.4.0 **includes** AI Access and MCP Bridge; they are excluded **only from this test profile**, not removed from the product.
 > **Executor:** current owner-selected runtime (default `CHATGPT_CHAT`); current explicit instruction overrides historical Codex-only text.
-> **Canonical Full User E2E SHA256:** `a41c5b292aa9d312695d707534a7496ca88203577c7cdce56e89dd40a60b9535`
+> **Canonical Full User E2E SHA256:** `07691e0b4acf9cf6f99f649a75e094f7bbb962245f70784b37097f2062f19b22`
 > **Generation:** `python3 tools/generate_cli_only_e2e_contract.py --write`; `--check` verifies no source drift.
 > **Safety:** preserve current authorization, exact live platform/tool refusals, other actors, host ownership and management access; never reroute a denied effect.
 > **Candidate:** do not infer installed Source HEAD from a Git checkout; record each installed Server/Agent's provenance.
@@ -22,13 +22,15 @@
 
 ## 2. Start eligibility: no global test-start gate
 
-1. Resolve `datarelay-labs/datarelay-link`, read `AGENTS.md`, `.engineering/project.yaml`, current installed candidate identities and this entire executable contract before the first user action.
+**Owner directive (2026-11-25): No separate connection preflight.** Use the owner-configured SSH aliases and existing SSH settings as-is. Do not run standalone SSH login/reachability probes, ping, TCP/port scans, SSH host-key checks, readiness scripts, or preliminary TLS/DNS checks merely to decide whether to start E2E. Read local inventory/config without network probes and execute the first actual scenario action directly. Record connection errors from that action only, classify the affected criterion, and continue independent scenarios; do not stop for repeated preflight or operator reconfirmation. Preserve normal SSH/security enforcement and genuine product DNS/TLS/OAuth, lifecycle and access-control assertions within their actual scenarios.
+
+1. Resolve `datarelay-labs/datarelay-link`, read `AGENTS.md`, `.engineering/project.yaml`, this entire executable contract before the first user action. Record installed candidate identities as part of the first actual scenario action, not a separate connection probe.
 2. Inspect branch/HEAD/dirty status, active owners and existing RUN_ID/processes **once**. Do not start a competing actor, repin its candidate, edit its owned state or replace its evidence. Use independent safe resources/hosts. A live actor owns only its own mutable scope, not the entire lab.
 3. **There is no global LAB_GO** or `phase-state.json`, universal host-GO, AI/MCP/OAuth readiness, FCS completion, whole CI wait, newly created VM/snapshot or repeated owner permission required to begin an independently runnable CLI scenario.
 4. Dirty worktree: never build a falsely qualified candidate from uncommitted source. Continue public CLI observations against a truthfully pinned existing installation, with its actual `INSTALLED_HEAD`; only an exact installed HEAD or a cryptographically verified generated-only provenance commit whose first content parent matches the installed Source HEAD may qualify for candidate PASS. Never accept an older ancestor, another branch or product-file changes in that provenance commit.
 5. Missing prerequisite blocks only the dependent action. `ENVIRONMENT_BLOCKER` must mean demonstrated host/topology/required external resource unavailability, not a personal preference, stale report, absent release SLO or unstarted setup work.
 6. Historical platform/tool refusal is **evidence to re-check under present policy**, not a permanent ban. An actual current denial remains binding for that **exact operation**: do not bypass it by changing executor, sandbox, host, command, identity, permissions or route. Record tool, host, attempted command, literal error and impact, continue independent checks. High-risk production/credential/permission/release effects still need their own authority.
-7. Separate the functional Server (`frp-e2e-server`) from the owner-assigned public DNS/hostname Server (`frp-release-server`) when applicable. Ordinary CLI, lifecycle, traffic, concurrency and performance use the functional Server; public hostname/DNS-specific substeps use the approved DNS target. Missing DNS affects only those substeps.
+7. Use the owner-assigned functional Server (`frp-e2e-server`) for all CLI-only tests, including real public DNS/FQDN, public/bootstrap hostname and fallback, enrollment, lifecycle, traffic, concurrency, performance and Soak. Resolve its real public FQDN from the owner-private host map; the SSH IP is not the FQDN. Missing DNS affects only the dependent hostname criteria. The separate MCP Server is excluded from this CLI-only profile.
 8. All claims require **actual public CLI actions** through `drlink`; helper scripts can orchestrate/measure/record but cannot replace a user-role discovery path, a real confirmation or actual application traffic. Every per-host prerequisite and effect must be observed directly. Interactive PTY/TTY is required **only for an operation whose public CLI contract needs it**; a failed TTY tool blocks its interactive criterion alone. Do not turn CI, source inspection or scripted PASS into user E2E PASS.
 
 ## 3. Per-run state, ownership, lifecycle and evidence
@@ -50,14 +52,17 @@
 - Functional load requires **60-second warmup**, **300-second steady state for every applicable case**, and **P-013 3,600-second functional soak** once representative real application data paths work. **P-019 8h/24h is optional until explicitly selected.**
 - Exact labels retained for machine audit: `WARMUP=60s`, `STEADY_STATE_EACH_CASE=300s`, `SOAK=3600s`, `EXTENDED_SOAK=8h`, `ENDURANCE_SOAK=24h`; only the last two require explicit selection.
 - Run independent persistent workloads via managed `tmux`/systemd/equivalent when a connection cannot guarantee process lifetime. Retain PID/session, start/end UTC, real 60/300/3600-second samples and terminal results; do not claim elapsed PASS from an active PID or timer.
-- Measure receiver-confirmed 1KiB/64KiB/1MiB and stream/full-duplex goodput, checksum, CPS, 4/16/64+ connections, p50/p95/p99 latency, CPU/RSS/FD, mixed applications, denied traffic, saturation and function-under-load collision/recovery. Apply existing approved numeric SLOs without weakening them. **Unknown numeric SLO** is `MEASURED_NOT_QUALIFIED` for numeric qualification only, never justification to skip runnable functional measurements or hide actual errors.
+- Measure receiver-confirmed 1KiB/64KiB/1MiB and stream/full-duplex goodput, checksum, CPS, 4/16/64+ connections, p50/p95/p99 latency, CPU/RSS/FD, mixed applications, denied traffic, saturation and function-under-load collision/recovery. Apply existing approved numeric SLOs without weakening them. **Unknown numeric SLO** is `MEASURED_NOT_QUALIFIED` for numeric qualification only, never justification to skip runnable functional measurements or hide actual errors. After all functional assertions and required measurements actually pass, record `FUNCTIONAL_PASS_NUMERIC_UNQUALIFIED` with exact-HEAD evidence, not a qualified numeric PASS. A measured sample alone is insufficient.
 
 ## 5. Dispositions and truthfully separate completion gates
 
-Allowed outcomes: `NOT_RUN`, `IN_PROGRESS`, `PASS`, `FAIL`, `PARTIAL`, `FAIL_PRECONDITION`, `BLOCKED_ENVIRONMENT`, `BLOCKED_TOOLING`, `BLOCKED_PLATFORM_DENIAL`, `BLOCKED_MANAGEMENT_PATH`, `MEASURED_NOT_QUALIFIED`, `EXCLUDED_AI_MCP`; `P-019` may remain `NOT_RUN` when unselected. Always distinguish `BLOCKED` vs `FAIL`, the product cause vs management/tool limitations, candidate qualification vs valid installed-version behavior, functional PASS vs unqualified numeric SLO.
+Use the finite criterion groups in `docs/CLI_ONLY_E2E_CRITERIA.md` to track completed and remaining substeps with the inventory tool. A group is complete only when every corresponding original assertion has evidence; these groups do not replace the original scenario body. Freeze the per-run criterion plan from the installed public CLI catalog and selected host inventory (local information, no connectivity preflight). Record an actual unsupported feature separately from a claimed but missing user path. Do not label an unattempted or merely inconvenient test as unsupported.
+
+Allowed outcomes: `NOT_RUN`, `IN_PROGRESS`, `PASS`, `FAIL`, `PARTIAL`, `FAIL_PRECONDITION`, `BLOCKED_ENVIRONMENT`, `BLOCKED_TOOLING`, `BLOCKED_PLATFORM_DENIAL`, `BLOCKED_MANAGEMENT_PATH`, `MEASURED_NOT_QUALIFIED`, `FUNCTIONAL_PASS_NUMERIC_UNQUALIFIED`, `NOT_APPLICABLE`, `EXCLUDED_AI_MCP`; `P-019` may remain `NOT_RUN` when unselected. Entire-scenario NOT_APPLICABLE is restricted to the explicitly conditional P-020 when the actual infrastructure does not support controlled impairment, with evidence; missing access, a refused effect or unprepared setup is not N/A. Always distinguish `BLOCKED` vs `FAIL`, the product cause vs management/tool limitations, candidate qualification vs valid installed-version behavior, functional PASS vs unqualified numeric SLO.
 
 - `EXECUTABLE_SCOPE_COMPLETE`: every safe runnable original CLI-only criterion has a supported result or a concrete, attributable dependency-specific blocking record. No missing substeps hiding behind a completed parent row.
-- `ALL_APPLICABLE_CLI_E2E_PASS`: every required CLI-only criterion and its native/traffic/performance conditions is qualified PASS on the exact candidate, with no unresolved mandatory defect or blocker. Optional profiles are identified separately.
+- `CLI_FUNCTIONAL_E2E_PASS`: every required applicable functional assertion passes on the exact candidate, including actual mandatory load, integrity, recovery and measurements; absent numeric SLO remains explicitly unqualified. An observed FAIL is never waived.
+- `ALL_APPLICABLE_CLI_E2E_PASS`: every required CLI-only criterion and its native/traffic/performance conditions is qualified PASS on the exact candidate, with no unresolved mandatory defect or blocker. Optional profiles are identified separately. Select P-019 explicitly at initialization with --extended-soak; unselected optional progress does not prevent required completion, but any observed functional failure remains visible and blocks a positive gate. Do not claim unselected optional qualification.
 - Neither status implies `FULL_USER_E2E_PASS`, AI/MCP acceptance, a production deployment, a release, merge/tag or owner acceptance.
 - A tool or platform failure should be attempted/recorded as a bounded concrete operation and **must not be inflated into a global blocker**. Close out run-owned resources via public paths and report which original IDs remain FAIL/PARTIAL/BLOCKED/NOT_RUN.
 
@@ -123,6 +128,10 @@ DELIBERATE_MISTAKE_COVERAGE=100%
 RECOVERY_USING_ONLY_CLI=100%
 UNDOCUMENTED_KNOWLEDGE_REQUIRED=0
 ~~~
+
+
+
+For CLI-only, freeze the finite high-risk workflow families and deliberate mistake classes in the criterion catalog; expand only for an actual new public behavior discovered during the run, record applicability with evidence, and share overlapping same-run receipts across IDs. A missing receipt is pending, not automatically a product failure. Preserve the minimum repetition counts for each applicable family.
 
 ### 1.4.1 Scenario prerequisites, evidence reuse, and bounded stop rules
 
@@ -455,12 +464,12 @@ When a public DNS hostname is configured, verify entirely through the public CLI
 
 - Enrollment HTTPS output uses the configured public hostname;
 - Zero-Touch bootstrap output uses the configured public hostname;
-- the short launcher remains short and usable through the documented Zero-Touch workflow;
+- the generated command contains only the canonical OS-native downloader, download options, HTTPS protocol, Server authority, eight-character root-path Bootstrap filename and OS execution wrapper; public/private HTTPS use the same fields, with no client-side prerequisite or extra argument;
 - public IP is shown only as the supported fallback/alternative, not as an unexplained replacement for the configured hostname;
 - Remote Service endpoint presentation uses the configured public hostname where the current product contract says it should;
 - clearing an optional hostname returns to the documented default/fallback behavior.
 
-Execute the generated bootstrap path from a real external test host and verify DNS, TLS, enrollment, and final Remote Service usability end to end.
+Execute the generated command on clean native Linux, macOS and Windows targets for FQDN/IP and public/private HTTPS. Interrupt and retry the same command; require stable identity, no duplicate enrollment, authenticated downstream connections and actual Remote Service usability. Record initial transport security disposition independently; no network attack detection is required.
 
 
 ## U-010 — Guided CLI user journey parity — MANDATORY
@@ -501,14 +510,14 @@ In addition to U-006, explicitly exercise every currently supported Internet Acc
 
 For each allowed path include a paired denied path using wrong source, destination, or service. Discover and use the public policy/explain helper (`test internet-access source <SOURCE> destination <DESTINATION> service <SERVICE>`) and then prove the same outcome with the real application client; a passing explain result alone is not traffic evidence.
 
-U-012 inherits the U-006 protected-host proxy hard gate. HTTP/HTTPS coverage must use the protected host's configured proxy path, not only per-command `-x/--proxy` overrides. `curl` coverage does not substitute for applicable `wget`, `git`, or `apt` coverage. Fixed TCP is a separate path for proxy-unaware applications and does not satisfy the HTTP/HTTPS proxy-aware application matrix.
+U-012 inherits the U-006 protected-host proxy hard gate. HTTP/HTTPS coverage must use the protected host's configured proxy path, not only per-command `-x/--proxy` overrides. `curl` coverage does not substitute for applicable `wget`, `git`, or `apt` coverage. A distinct outbound Fixed TCP listener is conditional on an actually supported public journey, as specified by the controlling Product Master and CONTROLLED_EGRESS.md section 17. Capture current public help/catalog evidence and record the applicability disposition. If claimed or supported, real paired traffic is mandatory and a missing public provisioning path is a finding. An unqualified architecture target without a current public claim does not require a hidden command. Neither outbound Fixed TCP nor an inbound Fixed TCP Remote Service substitutes for the HTTP/HTTPS proxy-aware application matrix.
 
 For the package/update workflow, retain evidence of the exact repository FQDNs used, the effective proxy configuration, successful update through Data Relay Link, policy-caused failure after removing a required destination, and successful recovery after restoring it. The final result must include `PROXY_CONFIGURATION_VERIFIED=PASS` and `PROXY_APPLICATION_PATH=PASS`; do not require disabling the host's direct Internet path.
 
 
 ## U-013 — Cross-surface terminology, clarity, and operator-guidance consistency — MANDATORY
 
-Treat **every user-visible output encountered in the run** as UX evidence, not only whether the command succeeded. Compare terminology and guidance across Server/Agent REPL, one-shot output, menus, `?`, help topics, Tab completion, wizards, errors, status/detail views, diagnostics, generated enrollment/bootstrap commands, ConfigurationBundle plans, update/recovery output, and AI-generated guidance.
+Treat **every user-visible output encountered in the run** as UX evidence, not only whether the command succeeded. Compare terminology and guidance across Server/Agent REPL, one-shot output, menus, `?`, help topics, Tab completion, wizards, errors, status/detail views, diagnostics, generated enrollment/bootstrap commands, ConfigurationBundle plans, update/recovery output.
 
 Continuously look for and record:
 
@@ -1115,7 +1124,7 @@ PUBLIC_CLI_COMMAND_OR_VARIANT
 -> DIRECT_RESULT/EVIDENCE
 ~~~
 
-Every applicable runtime-discovered/reconciled public command and behavior-changing variant must have at least one current-run Direct execution record **inside a real use case**. Section 14 is reconciled after public discovery; it is not the human operator's command script.
+Each distinct applicable command and behavior-changing variant in the frozen current installed public CLI catalog (reconciled with section 14 and current CLI Reference) must have at least one current-run Direct execution record **inside a real use case**. Section 14 is reconciled after public discovery; it is not the human operator's command script.
 
 Separately map every canonical current v2.4.0 CLI Reference scenario relevant to the current candidate, including:
 
@@ -1195,7 +1204,7 @@ After each relevant change, regenerate or inspect:
 - Remote Service endpoint presentation where applicable;
 - diagnostics/version/support evidence.
 
-Verify no change to an optional friendly hostname silently changes control/allocator identity unless the current product contract explicitly says so. Verify Linux and Windows onboarding receive the intended platform-specific installer URL and that clearing optional overrides returns to the supported default. After cleanup, verify the restored Zero-Touch command mode matches the pre-scenario mode (short URL versus pinned-CA fallback) rather than merely checking that the fields are syntactically present.
+Verify no change to an optional friendly hostname silently changes control/allocator identity unless the current product contract explicitly says so. Verify Linux and Windows onboarding receive the intended platform-specific installer URL and that clearing optional overrides returns to the supported default. After cleanup, verify the actual restored Zero-Touch launcher matches the fixed eight-character root-path entry target (ZT-P0-CONTRACT-20261026, owner revision 2026-11-25): one OS-native invocation, one HTTPS authority and one eight-character locator, identical for public/private certificates. No extra configuration or inline verifier. Verify retry, downstream authenticated installation and automatic first-claim enrollment; the unauthenticated initial fetch is not a security PASS.
 
 
 ## A-019 — Prior-stable upgrade to candidate — MANDATORY when an upgrade path is claimed
@@ -2077,7 +2086,7 @@ POST_COLLISION_RECOVERY=PASS
 
 # 13. Platform matrix
 
-For CLI_ONLY_E2E, test every platform currently claimed by the candidate at its actual qualification level.
+For CLI_ONLY_E2E, record every claimed platform at its actual qualification level. Test all currently assigned, suitable native hosts; missing claimed platforms remain explicit platform-qualification gaps, not a reason to stop other available-host scenarios. A configured required host that fails an actual scenario action remains BLOCKED, not N/A. Do not invent additional host-count tiers.
 
 Current release validation includes this matrix:
 

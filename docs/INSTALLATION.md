@@ -26,17 +26,18 @@ Until an immutable `v2.4.0` tag exists, do not install from a future tag, mutabl
 
 Development/pre-release installation uses an exact immutable Git SHA or an explicitly qualified candidate artifact.
 
-Conceptual exact-SHA bootstrap:
+Recommended online installation (replace the placeholder with the verified candidate SHA):
 
 ```bash
-curl -fsSL \
-  https://raw.githubusercontent.com/datarelay-labs/datarelay-link/<EXACT_SHA>/dist/bootstrap-server.sh \
-  | sudo bash
+REF='<EXACT_SHA>'
+curl -fL --connect-timeout 10 --max-time 30 "https://raw.githubusercontent.com/datarelay-labs/datarelay-link/$REF/dist/bootstrap-server-online.sh" | sudo bash -s -- "$REF"
 ```
 
-The exact SHA must be the candidate or source-preparation HEAD that the operator intends to test.
+The initial script is small. It checks the Linux CPU architecture, downloads the common core and native FRP archive first, and then fetches the remaining archives required for Server-local Agent distribution. All transfers have visible progress, timeouts, and SHA256 checks. The exact qualified standalone installer is reconstructed and verified before it runs. A failed transfer or integrity check does not start installation. The same immutable ref can be retried.
 
-Stable installation may use the immutable stable tag only after that tag and its qualified artifacts actually exist.
+For offline or pre-staged installation, retain the original self-contained `dist/bootstrap-server.sh` artifact, verify it against the qualified SHA256SUMS, and run it locally. It includes all platform archives and must not be confused with the small online entry. The traditional `curl .../dist/bootstrap-server.sh | sudo bash` command is also supported: the small stream prefix stages the remaining bytes with buffered I/O, checks their SHA256 before Bash parses them, and reports byte progress every five seconds. The file restoration step reports large files by name and stops progress messages before interactive setup. An interrupted or incomplete payload fails before installation starts.
+
+Stable online installation may use `REF='v2.4.0'` only after the immutable stable tag and its qualified artifacts actually exist.
 
 ## 3. Server installation result
 
@@ -79,33 +80,11 @@ If installation allows a domain to be selected as the product public identity, t
 
 Changing a friendly Remote Service hostname alias must not silently change management identity.
 
-### Zero-Touch HTTPS readiness with a private CA
+### Zero-Touch entry readiness
 
-The Server install can complete even if Zero-Touch reports `NOT_READY`:
-service health and secure Agent bootstrap readiness are separate checks.
-A private Server CA is **not** automatically trusted by Agent operating systems.
-Do not disable TLS verification or make an unverified `curl | bash` pipeline
-to work around this.
+The fixed eight-character entry target (not yet installed-product qualified) is `curl -kfsS https://remote.xdr.ooo/A3xK9mP2|sudo bash` on Linux/macOS, or `iex(curl.exe -kfsS https://remote.xdr.ooo/A3xK9mP2|Out-String)` in administrator PowerShell on Windows. Public/private HTTPS use the same form; no DataRelay prerequisite. Issuance grants one automatic first-claim registration; share the short command privately. All subsequent work is handled by Bootstrap. Initial `-k` skips peer certificate authentication; see [the canonical contract](ZERO_TOUCH_REGRESSION_CONTROL.md) for the explicit risk and automatic first-claim policy.
 
-If the configured public/Bootstrap FQDN serves a publicly trusted certificate
-with the expected DNS SAN and the exact short-URL proof, the CLI uses the
-compact FQDN Zero-Touch command. Otherwise, where the Server's **configured
-numeric public IP** and the FQDN both appear in its valid private-CA-signed
-Server certificate, the CLI can use a pinned-CA numeric-IP bootstrap without
-changing the saved FQDN, enrollment identity, or TLS credentials. It checks
-the issuer-owned CA fingerprint and certificate signature/IP SAN before
-creating a ticket. The Agent verifies the same CA before fetching any
-ticket-bearing stage and continues to validate TLS against the configured
-allocator hostname.
-
-The installation summary explicitly distinguishes `READY (numeric IP +
-pinned Private CA)` from FQDN stock-trust readiness. An automatic hostname
-selection is not a promise of publicly trusted FQDN TLS. If both routes fail,
-no Zero-Touch ticket is issued; inspect `system diagnostics`, the public
-`/ca.crt` endpoint, DNS, firewall/NAT and the certificate SANs. A configured
-service range (for example `6000-6098`) is preserved across reinstall;
-the private Relay Engine backend port (often `7000`) must not overlap a
-published-service range.
+Server installation and entry handler reachability are separate. Validate the configured entry authority and exact eight-character handler, then downstream installer and enrollment readiness. No public/private certificate-specific customer command or certificate registration requirement. Actual installation and automatic first-claim enrollment determine success.
 
 ### Internet Access listener recovery
 
@@ -190,7 +169,7 @@ maximum TTL                   24 hours
 use count                     1
 ```
 
-Raw ticket/install URL material is shown only at issuance. Server persistent state retains verifier/hash plus lifecycle metadata, not a redisplayable raw ticket.
+Enrollment credentials are separate from the eight-character Bootstrap filename, remain confidential and are never included in the public entry file. Server persistent state retains verifier/hash plus lifecycle metadata.
 
 For manual enrollment, an Enrollment Code is also a one-time authorization for a fresh enrollment operation. After enrollment succeeds, do not reuse that Code for uninstall/reinstall or a later recovery; create a new Enrollment Code instead. If the original `/enroll` response is lost or the installer is interrupted, the Agent resumes from its protected local pending-enrollment state and replays only the original enrollment operation. This crash-recovery replay does not make the consumed Code valid for a new install.
 

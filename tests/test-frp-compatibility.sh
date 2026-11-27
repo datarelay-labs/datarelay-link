@@ -51,7 +51,7 @@ unset FRP_COMPAT_SKIP_ARCHIVES
 
 [[ -f "$ROOT/docs/FRP_UPGRADE.md" ]] || fail "FRP_UPGRADE.md missing"
 grep -q 'never installs GitHub' "$ROOT/docs/FRP_UPGRADE.md" || fail "upgrade policy"
-[[ -f "$ROOT/docs/OCI_ACCEPTANCE.md" ]] || fail "OCI plan missing"
+[[ -f "$ROOT/docs/FULL_USER_E2E_SCENARIOS.md" ]] || fail "Canonical Full User E2E contract missing"
 pass "UPGRADE_DOCS"
 
 export FRP_UPSTREAM_VERSION_OVERRIDE="0.99.0"

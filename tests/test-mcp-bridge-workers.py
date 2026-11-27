@@ -200,7 +200,7 @@ class WorkerSupervisorTests(unittest.TestCase):
             all(status == 200 and "lab1" not in json.dumps(payload) for status, payload, _ in after),
             "a worker still showed the revoked host",
         )
-        _E2E.run_cli(self.tmp, ["system", "credential", "revoke", "ai-identity", "cursor-dev"])
+        _E2E.run_cli(self.tmp, ["set", "ai-identity", "cursor-dev", "revoke"])
         denied = self.calls(port, self.cursor, 30)
         self.assertEqual({status for status, _, _ in denied}, {401})
         self.assertGreaterEqual(len({worker for _, _, worker in denied}), 2)

@@ -50,16 +50,10 @@ class WindowsCommandParse(unittest.TestCase):
         line = "%s -Command %s" % (PREFIX, quoted)
         self.assertEqual(decode(parser.extract_encoded_command(cli_output(line))), SCRIPT)
 
-    def test_raw_private_ca_ip_form_is_accepted(self):
-        # Real product output for the private-CA IP plan: no powershell.exe
-        # wrapper, the script itself is printed as the command line.
-        script = zt.private_ca_ip_windows_command(
-            "https://192.0.2.20:6099/enroll", "a" * 64, "b" * 64, "x" * 22
-        )
-        self.assertTrue(script.startswith("$ErrorActionPreference="))
-        self.assertEqual(
-            decode(parser.extract_encoded_command(cli_output(script))), script
-        )
+    def test_fixed_windows_entry_is_accepted(self):
+        for authority in ("192.0.2.20:6099","remote.example.test"):
+            script=zt.render_entry_command(authority,"A3xK9mP2","windows")
+            self.assertEqual(decode(parser.extract_encoded_command(cli_output(script))),script)
 
     def test_encoded_command_form_passes_through_validated(self):
         enc = encode(SCRIPT)
