@@ -40,6 +40,10 @@ class SharedControlPlaneLoad(scale.MCPBridgeScaleTargetTests):
     MAX_P95_SECONDS = 0.55
 
     def test_mcp_and_egress_share_control_plane(self):
+        self.assertEqual(scale.MCPBridgeScaleTargetTests.MAX_P95_SECONDS, 0.5,
+                         "standalone MCP scale target must remain 500 ms")
+        self.assertEqual(self.MAX_P95_SECONDS, 0.55,
+                         "mixed-plane acceptance ceiling must remain 550 ms")
         duration=int(os.environ.get("LPERF_SHARED_SOAK_SECONDS","0"))
         self.assertTrue(0 <= duration <= 3600, "soak duration must be 0..3600 seconds")
         print("LPERF_MCP_P95_ACCEPTANCE preferred_ms=500 maximum_ms=550", flush=True)
@@ -190,11 +194,18 @@ class SharedControlPlaneLoad(scale.MCPBridgeScaleTargetTests):
             prior_audits=audit_ids()
             prior_jobs=done_ids()
             prior_acks=origin.acknowledged_transfers
+            mcp_error=None
             with ThreadPoolExecutor(max_workers=2) as pool:
                 mcp_task=pool.submit(self._simultaneous_calls,lambda i:"scale%03d"%i)
                 egress_task=pool.submit(egress_burst)
                 egress_task.result(timeout=45)
-                mcp_task.result(timeout=90)
+                try:
+                    mcp_task.result(timeout=90)
+                except Exception as exc:
+                    # Preserve Egress and MCP receipt checks for diagnosis even if
+                    # the MCP latency assertion fails. Re-raise after both lanes'
+                    # functional/security counters have been validated.
+                    mcp_error=exc
             # Let the origin and gateway finish accounting after socket receipt.
             deadline=time.monotonic()+2
             while time.monotonic()<deadline and (len(audit_ids()-prior_audits)<21 or
@@ -221,6 +232,8 @@ class SharedControlPlaneLoad(scale.MCPBridgeScaleTargetTests):
                   "EGRESS_DENIED",denies,"EGRESS_AUDITS",len(ids),"ACKS",acks,
                   "FORBIDDEN_CONNECTS",len(attempts),"EGRESS_ERRORS",errors[:3],
                   "WAVE",waves,"ELAPSED_S",round(elapsed,3),"FD_COUNT",fds,flush=True)
+            if mcp_error is not None:
+                raise mcp_error
             remaining=duration-elapsed
             if remaining<=0: break
             # No additional wave within the last incomplete rate-limit window.

@@ -585,6 +585,24 @@ class MCPBridgeScaleTargetTests(unittest.TestCase):
         ), "Every call must have bounded queue/run/total metrics and audit correlation ID")
         correlation_ids = {row[5] for row in job_rows}
         self.assertEqual(len(correlation_ids), total, "No duplicate correlation IDs")
+        completed_activity = self.plane.conn.execute(
+            "SELECT duration_ms FROM ai_activity WHERE correlation_id IN (%s) "
+            "AND result != 'DISPATCHING' AND duration_ms IS NOT NULL"
+            % ",".join("?" for _ in correlation_ids),
+            tuple(correlation_ids),
+        ).fetchall()
+        self.assertEqual(len(completed_activity), total,
+                         "Every completed MCP job must have one correlated operation duration")
+        activity_ms = [row[0] for row in completed_activity]
+        print(
+            "SCALE_OPERATION_METRICS audit_duration_p50_ms=%.0f "
+            "audit_duration_p95_ms=%.0f audit_duration_p99_ms=%.0f"
+            % (_pct([v / 1000 for v in activity_ms], 0.5),
+               _pct([v / 1000 for v in activity_ms], 0.95),
+               _pct([v / 1000 for v in activity_ms], 0.99)),
+            file=sys.stderr,
+            flush=True,
+        )
         activity_correlations = {
             row[0] for row in self.plane.conn.execute(
                 "SELECT DISTINCT correlation_id FROM ai_activity WHERE correlation_id IS NOT NULL"

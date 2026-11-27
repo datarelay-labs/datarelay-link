@@ -316,6 +316,23 @@ job 90/90, 거부 3건, ACK 20/20, audit ID 21개, 비인가 job/upstream 0건,
 fixture FD 38개가 유지됐습니다. 두 번째 검사는 `ResourceWarning`을 오류로 처리했고,
 Agent/Server 자식 프로세스 stream을 teardown에서 닫은 뒤 통과했습니다. 이는 단일 wave 검사이며
 550ms 상한을 적용한 새 3,600초 실행은 아직 필요합니다.
+`172e988` exact artifact의 3,600초 실행은 동일 workload와 500/550ms 목표로
+진행했지만 368.8초, wave 6에서 MCP p95 592ms(각 round 647/542/496ms)로 중단됐습니다.
+queue/run/total p95는 119/297/361ms였고 job 90건 완료 및 거부 3건이 확인됐습니다.
+latency assertion이 먼저 발생해 해당 wave의 Egress/audit receipt 집계는 출력되지 않았으므로
+그 wave의 receipt PASS를 주장하지 않습니다. 별도 진단 wave에서는 client p95 620ms,
+연결된 audit duration p95 473ms, 저장된 job total p95 371ms, round p95 528/640/457ms,
+거부 3건 및 비인가 job 0건을 기록했습니다. 저장 job 구간 밖에서 변동이 있었지만 안전한 runtime
+튜닝 원인은 아직 확인되지 않았습니다. soak 후 시스템 가용 RAM은 26GiB, service cgroup CPU
+throttling은 없었으며 첫 `vmstat` sample의 swap/I/O burst 뒤 후속 sample은 유휴 상태였습니다.
+따라서 조건부 600ms 상한은 적용하지 않았습니다. runner는 이후 latency 실패 시에도 Egress/audit
+receipt를 확인하고 출력한 뒤 실패를 다시 올리도록 보완했습니다.
+receipt 보존 진단은 MCP p95 621ms(round 654/527/441ms), audit duration p95 458ms,
+job total p95 296ms로 재현됐습니다. 이 wave는 job 90/90, 거부 3건, Egress ACK 20/20,
+policy 403 1건, audit ID 21개, 비인가 job/upstream 0건, FD 38개를 출력하고 검증했습니다.
+wave 후 가용 RAM은 26GiB, cgroup CPU throttling은 없었지만 CPU PSI avg10 1.43%,
+cgroup I/O pressure avg10 0.07%, 세 번째 `vmstat` sample CPU 사용량 11%였습니다.
+환경 contention을 완전히 배제하지 못했으므로 조건부 600ms 기준 요건을 충족하지 않습니다.
 
 ### AI Access / MCP
 
