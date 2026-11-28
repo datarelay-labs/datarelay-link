@@ -645,3 +645,25 @@ The current authorized-host inventory still contains only
 `ai_executor=not_ready`. Surface Reconciliation and real Direct/AI-assisted
 Full User E2E remain NOT_RUN. No production, merge, release, or permission/auth
 action was taken.
+
+## Owner-approved scoped Rust workstream closeout (2026-11-28)
+
+The latest Issue #302 owner decision and PR #304 comment `7231534607` explicitly
+exclude unavailable lab host `final-e2e-rocky9-pass2` from this workstream's
+implementation/local qualification. The exact artifact `7a4b886` completed
+the 3,600-second Rust-selected synthetic shared-plane soak with 54/54 waves
+and receipt sets passing, p95 262–426 ms, and bounded resources; exact PR
+HEAD `5c281ed` passed the full local fast gate, artifact closure, applicable
+PR CI, and exact-head independent review. The `5c281ed` delta over the soak
+candidate is documentation and derived artifact refresh; the qualified runtime
+source and native libraries are unchanged.
+
+Because the excluded host remains `connectivity=disconnected` and
+`ai_executor=not_ready`, Surface Reconciliation and real Direct/AI-assisted
+Full User E2E remain **NOT_RUN/BLOCKED**. The owner-approved exception closes
+this Rust workstream's implementation/local qualification only and records the
+residual real-user validation risk. It does not convert unexecuted E2E to PASS,
+weaken any global E2E/security/release requirement, or authorize release.
+PR #304 remains OPEN/DRAFT; merge and release remain subject to their separate
+authorization and global gates. Real-user E2E and release qualification are
+deferred.

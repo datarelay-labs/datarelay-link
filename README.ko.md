@@ -301,7 +301,7 @@ Rust helper는 즉시 읽을 수 있는 양쪽 pipe 데이터를 EOF까지 계�
 없는데 pipe가 열린 경우에만 descendant-held 상태 9를 반환하도록 수정했습니다. 기존
 210 KiB 양방향 출력 회귀와 Apple Silicon process lifecycle, client-port 및 pinned FRP
 검증이 exact source `be9b8f3` workflow `46062751724`에서 통과했습니다. 새 native package와
-full local gate 검증은 계속 진행 중입니다.
+full local gate 검증은 아래 `7a4b886` exact artifact qualification에서 통과했습니다.
 
 2026-11-27 exact artifact `7a4b886`에서 target별 MCP Rust library provenance와
 bundle closure 검증, 전체 `tests/run-fast-pr.sh`, PR lint/governance/adoption/
@@ -325,6 +325,21 @@ unauthorized job/upstream connect는 0건, fixture FD는 계속 38개였습니�
 `connectivity=disconnected`, `ai_executor=not_ready`입니다. 따라서 Surface
 Reconciliation 및 Direct/AI-assisted Full User E2E는 NOT_RUN 상태입니다. 실제
 production, merge, release 또는 permission/auth 변경은 수행하지 않았습니다.
+
+### 2026-11-28 Rust workstream closeout exception
+
+Issue #302의 최신 owner decision 및 PR #304 comment `7231534607`에 따라
+현재 Rust workstream qualification에서는 사용할 수 없는 `final-e2e-rocky9-pass2`를
+제외합니다. 따라서 Surface Reconciliation 및 실제 Direct/AI-assisted Full User E2E는
+NOT_RUN/BLOCKED로 유지하며, 구현 테스트나 synthetic lab 결과를 실제 사용자 E2E PASS로
+표시하지 않습니다. 이 예외는 이 Rust workstream의 구현/local qualification closeout에만
+적용되고, 전역 E2E, 보안 또는 release 요구사항을 변경하거나 면제하지 않습니다.
+
+R1-R3 구현, target package provenance/install/update/rollback, exact-candidate full local
+regression, native platform CI, independent review 및 3,600초 lab soak evidence는 완료했습니다.
+soak은 runtime artifact `7a4b886`에서 실행됐으며 이후 `fe409c2`와 `5c281ed`는 문서 및
+source-bound artifact 갱신만 포함합니다. PR #304는 별도 merge 권한 전까지 OPEN/DRAFT로
+유지하고, real-user E2E 및 release qualification은 별도로 deferred 상태입니다.
 이전 Agent helper의 flat snapshot은 manifest 경로가 파일 basename 하나에 유일하게 대응할 때만
 복구합니다. 새 native 파일은 Python fallback을 복구하도록 제거합니다. 중복 basename이나
 모호한 경로는 설치 파일을 변경하기 전에 거부합니다.
