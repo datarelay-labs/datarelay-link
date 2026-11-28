@@ -66,7 +66,8 @@ class CliFeatureScenarioRemediation(unittest.TestCase):
                         os.write(master, b"0\n")
                         sent_cancel = True
                     if b"Cancelled." in output and not sent_exit:
-                        os.write(master, b"5\n9\n")
+                        # 0 is the stable Back key even when domain menu leaves change.
+                        os.write(master, b"0\n9\n")
                         sent_exit = True
                 if proc.poll() is not None:
                     break
