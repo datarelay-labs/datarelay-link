@@ -129,6 +129,20 @@ class WorkflowGrammarTests(unittest.TestCase):
             self.assertIn(expected,result["message"])
             self.assertNotIn(forbidden,result["message"])
 
+    def test_documented_automation_options_are_visible_only_on_supported_commands(self):
+        for path, options in (
+            (["system","diagnostics"], ("--json","--verbose","--quiet")),
+            (["system","support-bundle"], ("--output",)),
+            (["set","managed-host-group"], ("--description",)),
+        ):
+            result=GRAMMAR.match(path+["?"],"server")
+            self.assertEqual(result["status"],"ok")
+            self.assertIn("Automation options:",result["message"])
+            for option in options:self.assertIn(option,result["message"])
+        result=GRAMMAR.match(["set","enrollment","?"],"server")
+        for option in ("--ttl","--yes","--count","--one-line"):
+            self.assertNotIn(option,result["message"])
+
     def test_audit_menu_paths_are_discoverable(self):
         tree=CATALOG.NAVIGATION_TREE
         for key, target in (
@@ -139,6 +153,11 @@ class WorkflowGrammarTests(unittest.TestCase):
             ("server.system","server.system.certificates"),
             ("client.agent","client.agent.autostart"),
             ("client.agent","system synchronize"),
+            ("both.system","client.agent.autostart"),
+            ("both.system","server.system.configuration"),
+            ("both.system","server.system.revisions"),
+            ("both.system","server.system.certificates"),
+            ("both.system","system synchronize"),
         ):
             self.assertIn(target,[row[4] for row in tree[key]])
 

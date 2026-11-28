@@ -297,7 +297,7 @@ try:
             if not data:
                 break
             output.extend(data)
-            if not answered and b'Delete Managed Host Group? [y/N]:' in output:
+            if not answered and b'[y/N]: ' in output:
                 os.write(master, b'y\n')
                 answered = True
         if proc.poll() is not None:
@@ -318,6 +318,46 @@ del_rc=0
 cat "$WORKDIR/del-cli.out"
 [[ "$del_rc" -eq 0 ]] || { echo "FAIL: unset managed-host-group rc=$del_rc" >&2; exit 1; }
 grep -qi 'Deleted Managed Host Group' "$WORKDIR/del-cli.out" || { echo "FAIL: Managed Host Group delete missing confirmation output" >&2; exit 1; }
+# A second operator may change the reviewed group while a public TTY is
+# awaiting approval. Never delete an unreviewed membership or renamed group.
+python3 - "$ROOT/tools/drlink" "$REG" <<'PY_RACE'
+import json, os, pty, select, subprocess, sys, time
+cli, registry = sys.argv[1:]
+def invoke(*args):
+    return subprocess.run([cli,*args],stdin=subprocess.DEVNULL,
+                          capture_output=True,text=True,check=True,timeout=20)
+def race(name, change, reason):
+    invoke("set","managed-host-group",name)
+    master, slave = pty.openpty()
+    proc = subprocess.Popen([cli,"unset","managed-host-group",name],
+                            stdin=slave,stdout=slave,stderr=slave)
+    os.close(slave)
+    out = bytearray()
+    try:
+        end=time.monotonic()+20
+        while b"[y/N]" not in out and time.monotonic()<end:
+            if select.select([master],[],[],.2)[0]:
+                out.extend(os.read(master,65536))
+        assert b"[y/N]" in out, out
+        assert b"Group ID" in out and b"Managed Hosts" in out,out
+        invoke(*change)
+        os.write(master,b"y\n")
+        while proc.poll() is None and time.monotonic()<end:
+            if select.select([master],[],[],.2)[0]:
+                try: out.extend(os.read(master,65536))
+                except OSError: break
+        proc.wait(timeout=3)
+        assert proc.returncode != 0, out
+        assert reason.encode() in out, out
+        state=json.load(open(registry))
+        assert any(g["name"] in (name,"race-renamed") for g in state["groups"].values()),state
+        print("PASS public group deletion rejects changed reviewed "+reason)
+    finally:
+        if proc.poll() is None:proc.kill();proc.wait()
+        os.close(master)
+race("race-members",("set","managed-host","cccccccc","group","race-members"),"membership changed")
+race("race-name",("set","managed-host-group","race-name","name","race-renamed"),"name changed")
+PY_RACE
 # Action-first help topics describe the canonical create/add/remove trees
 # or reject obsolete topics with a pointer to help commands.
 "$CTL" help create >"$WORKDIR/help-create" 2>&1 || true

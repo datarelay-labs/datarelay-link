@@ -338,7 +338,7 @@ For `server:self`, the test reports configured policy separately from each nativ
 
 ## 8. Server system commands
 
-The Server guided System menu includes Configuration (Test / Diff / Apply / Export), Revisions / Rollback, Backup & Restore, Certificates, Updates, Diagnostics and Audit Log. Under Managed Hosts, use Managed Host Groups to create, inspect, edit, manage membership or delete groups, and Managed Services to inspect all published Remote Services. On the Agent Host, Agent → Autostart offers Show / Enable / Disable; Synchronize Remote Services uses the existing local Agent command.
+The Server guided System menu includes Configuration (Test / Diff / Apply / Export), Revisions / Rollback, Backup & Restore, Certificates, Updates, Diagnostics and Audit Log. Under Managed Hosts, use Managed Host Groups to create, inspect, edit, manage membership or delete groups, and Managed Services to inspect all published Remote Services. On the Agent Host, Agent → Autostart offers Show / Enable / Disable; Synchronize Remote Services uses the existing local Agent command. A dual-role host exposes the same Server System submenus together with Agent status, Autostart and synchronization. Certificate Import accepts the certificate and private key paths and optionally a separate chain file. Managed Host Group deletion shows the immutable Group ID, name and reviewed member count before prompting; a concurrent name or membership change rejects the deletion without applying changes.
 
 For Internet Access, Policy readiness describes configuration enforcement only. Runtime readiness separately reports unavailable endpoints or connectivity not tested. Use `system diagnostics` to investigate runtime readiness.
 

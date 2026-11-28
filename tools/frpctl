@@ -1021,6 +1021,8 @@ if not title:
         title = "Internet Access"
     elif menu_key.endswith(".system"):
         title = "System"
+    elif menu_key == "server.hosts.groups":
+        title = "Managed Host Groups"
     elif menu_key.endswith(".groups"):
         title = "Groups"
     elif menu_key.endswith(".enrollments"):
@@ -1043,6 +1045,12 @@ if not title:
         title = "Updates"
     elif menu_key.endswith(".diagnostics"):
         title = "Diagnostics"
+    else:
+        # Use the actual parent navigation label for every reachable menu.
+        # A new submenu must not render as a nameless list of numbers.
+        title = next((row[1] for entries in mod.NAVIGATION_TREE.values()
+                      for row in entries if row[3] == "submenu" and row[4] == menu_key),
+                     menu_key.rsplit(".", 1)[-1].replace("_", " ").title())
 sys.stdout.write(mod.render_navigation_menu(menu_key, title=title))
 PY
 }
@@ -1106,7 +1114,10 @@ frpctl_nav_dispatch_command() {
     "system export configuration")
       prompt="Output file path (? help, 0 or empty cancels): "
       ;;
-    "set managed-host-group"|"show managed-host-group"|"unset managed-host-group")
+    "set managed-host-group")
+      prompt="New Managed Host Group name (? help, 0 or empty cancels): "
+      ;;
+    "show managed-host-group"|"unset managed-host-group")
       prompt="Managed Host Group name or ID (? help, 0 or empty cancels): "
       ;;
     "system revision"|"system rollback")
@@ -1399,7 +1410,13 @@ frpctl_nav_workflow() {
       [[ -n "$path" ]] || return 0
       value="$(frpctl_nav_prompt_id "Private key file path (? help, 0 cancels): " true)" || return 1
       [[ -n "$value" ]] || return 0
-      frpctl_dispatch system certificate import "$path" "$value"
+      # Empty means the certificate already contains its chain; 0 cancels.
+      profile="$(frpctl_read_step "Optional chain file path (Enter skips, ? help, 0 cancels): " "")" || return 1
+      if [[ -n "$profile" ]]; then
+        frpctl_dispatch system certificate import "$path" "$value" "$profile"
+      else
+        frpctl_dispatch system certificate import "$path" "$value"
+      fi
       ;;
     create_group)
       id="$(frpctl_nav_prompt_id "Group name: ")" || return 1
@@ -4917,36 +4934,14 @@ frpctl_dispatch_canonical() {
       ;;
     delete_group)
       frpctl_require_server || return 1
-      _del_group="$(frpctl_json_get "$result" group)"
-      frpctl_load_passthrough "$result"
-      # Product-owned confirmation. Public group deletion is interactive only;
-      # backend --yes is internal and is used only after this public y/N gate.
-      _del_ans=""
-      if [[ -t 0 ]]; then
-        echo
-        echo "Delete Managed Host Group \"${_del_group}\"?"
-        echo "Group membership is removed. Managed Host identity, Remote Services, and public ports"
-        echo "are not changed."
-        _del_ans="$(FRP_CTL_TEST_INPUT= frpctl_read_step "Delete Managed Host Group? [y/N]: " "N")" || {
-          _del_rc=$?
-          frpctl_read_abort "$_del_rc" || true
-          [[ "$_del_rc" == 3 ]] || _FRP_CTL_RC=1
-          return 0
-        }
-      else
+      # Resolve and review the immutable Group ID and membership in one
+      # operation; never resolve a mutable name again after approval.
+      if [[ ! -t 0 ]]; then
         echo "ERROR: deleting a Managed Host Group requires interactive confirmation." >&2
         echo "Run this command interactively and answer y/N." >&2
-        _FRP_CTL_RC=1
-        return 0
+        return 1
       fi
-      case "$(printf '%s' "$_del_ans" | tr '[:upper:]' '[:lower:]')" in
-        y|yes) ;;
-        *)
-          echo "Aborted."
-          return 0
-          ;;
-      esac
-      frpctl_invoke frp-group-set delete "$_del_group" --yes
+      FRP_CTL_TEST_INPUT= frpctl_invoke frp-group-set delete "$(frpctl_json_get "$result" group)"
       ;;
     delete_profile) frpctl_require_server || return 1; frpctl_invoke frp-profile delete "$(frpctl_json_get "$result" profile)" ;;
     add_group_member)

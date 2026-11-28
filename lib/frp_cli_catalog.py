@@ -1990,10 +1990,9 @@ def command_help(cmd):
             rows.append((field, description))
         lines.extend(["", "Fields after the name:"])
         lines.extend(_fmt_rows(rows))
-    shown_flags = []
-    # Public command help never advertises GNU-style --options.
-    if False:
-        shown_flags = [flag for flag in cmd["flags"] if not flag.get("hidden")]
+    # Only explicitly documented automation exceptions are visible. Retired
+    # backend flags remain hidden and must never appear in operator help.
+    shown_flags = [flag for flag in cmd["flags"] if not flag.get("hidden")]
     if shown_flags:
         rows = []
         for flag in shown_flags:
@@ -2016,7 +2015,7 @@ def command_help(cmd):
             if flag.get("examples"):
                 bits.append("e.g. %s" % ", ".join(flag["examples"]))
             rows.append((label, "; ".join(bits)))
-        lines.extend(["", "Options:"])
+        lines.extend(["", "Automation options:"])
         lines.extend(_fmt_rows(rows))
     if cmd.get("risk") and cmd["risk"] != "none":
         lines.extend(["", "Risk: %s" % cmd["risk"]])
@@ -2571,12 +2570,17 @@ NAVIGATION_TREE["both.system"] = (
     ("both_sys_pause", "Pause Agent", "", "command", "system pause"),
     ("both_sys_resume", "Resume Agent", "", "command", "system resume"),
     ("both_sys_restart", "Restart Agent", "", "command", "system restart"),
-    ("both_sys_autostart", "Agent autostart", "", "command", "system autostart"),
+    ("both_sys_autostart", "Agent Autostart", "", "submenu", "client.agent.autostart"),
     ("both_sys_updates", "Updates", "", "submenu", "server.system.updates"),
     ("both_sys_diag", "Diagnostics", "", "submenu", "server.system.diagnostics"),
     ("both_sys_audit", "Audit Log", "", "command", "system audit"),
     ("both_sys_version", "Version Information", "", "command", "system version"),
     ("both_sys_uninstall", "Uninstall Data Relay Link", "", "command", "system uninstall"),
+    ("both_sys_config", "Configuration", "", "submenu", "server.system.configuration"),
+    ("both_sys_revisions", "Revisions / Rollback", "", "submenu", "server.system.revisions"),
+    ("both_sys_certificates", "Certificates", "", "submenu", "server.system.certificates"),
+    ("both_sys_agent", "Agent status", "", "command", "show agent"),
+    ("both_sys_sync", "Synchronize Remote Services", "", "command", "system synchronize"),
     ("back", "Back", "", "back", None),
 )
 NAVIGATION_TREE["both.services"] = (
