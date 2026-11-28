@@ -925,7 +925,9 @@ def _catalog_help_topic(tokens, role):
     probe = [root] + list(tokens[1:])
     cmd = CATALOG.find(probe)
     if cmd is not None and len(cmd["path"]) == len(probe):
-        return CATALOG.command_help(cmd)
+        if not CATALOG.role_allows(cmd["roles"], role):
+            return "Unknown help topic: %s\n\n%s\n" % (" ".join(probe), _ownership_error_message(probe, cmd["roles"]))
+        return _role_command_help(cmd, role)
     # Help may name a documented positional enum (for example
     # `help set enrollment zero-touch`). Resolve the longest command prefix
     # and accept only values advertised by that command's argument metadata.
@@ -939,12 +941,14 @@ def _catalog_help_topic(tokens, role):
             continue
         valid = True
         for value, arg in zip(trailing, args):
-            choices = arg.get("complete")
+            choices = _role_argument_completion(parent, arg, role)
             if isinstance(choices, (list, tuple)) and value not in choices:
                 valid = False
                 break
         if valid:
-            return CATALOG.command_help(parent)
+            return _role_command_help(parent, role)
+        if tuple(parent["path"]) == ("system", "diagnostics") and trailing[0] in ("mcp", "control-plane") and not _role_parts(role)[1]:
+            return "Unknown help topic: %s\n\n%s\n" % (" ".join(probe), _ownership_error_message(probe, "server"))
     if len(probe) == 1 and CATALOG.canonical_actions(root):
         text = CATALOG.resource_help(root, role)
         if text is not None:
@@ -1273,12 +1277,7 @@ def _catalog_context_help(tokens, role, names=None, clients=None):
     if probe[:2] == ["set", "enrollment"] and len(probe) == 3 and probe[2] in ("zero-touch","manual"):
         return _catalog_help_topic(probe, role)
     if tuple(probe) == ("system", "diagnostics") and client and not server:
-        role_cmd = dict(cmd)
-        role_cmd["args"] = [dict(arg) for arg in cmd.get("args", [])]
-        if role_cmd["args"]:
-            role_cmd["args"][0]["complete"] = ["runtime"]
-        role_cmd["examples"] = ["system diagnostics", "system diagnostics runtime"]
-        return CATALOG.command_help(role_cmd)
+        return _role_command_help(cmd, role)
 
     # Named Identity actions have their own risk/approval contract even
     # when the next positional operand has enumerated choices.
@@ -1348,6 +1347,22 @@ def _catalog_context_help(tokens, role, names=None, clients=None):
             return _context_client_list(names, clients)
         if isinstance(complete, (list, tuple)):
             return _fmt_available([(item, "") for item in complete])
+    return CATALOG.command_help(cmd)
+
+
+def _role_command_help(cmd, role):
+    """Render the same role-specific argument contract for help and question help."""
+    client, server = _role_parts(role)
+    if tuple(cmd["path"]) == ("system", "diagnostics") and client and not server:
+        cmd = dict(cmd)
+        cmd["args"] = [dict(arg) for arg in cmd.get("args", [])]
+        if cmd["args"]:
+            cmd["args"][0]["complete"] = ["runtime"]
+        if "help_args" in cmd:
+            cmd["help_args"] = [dict(arg) for arg in cmd["help_args"]]
+            if cmd["help_args"]:
+                cmd["help_args"][0]["complete"] = ["runtime"]
+        cmd["examples"] = ["system diagnostics", "system diagnostics runtime"]
     return CATALOG.command_help(cmd)
 
 

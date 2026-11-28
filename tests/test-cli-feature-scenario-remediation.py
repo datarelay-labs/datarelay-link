@@ -1884,6 +1884,11 @@ frpctl_nav_workflow manage_host
         self.assertNotIn("mcp", help_text.lower())
         self.assertNotIn("control-plane", help_text.lower())
 
+        self.assertEqual(grammar.help_text(["system","diagnostics"], "client"), help_text)
+        for scope in ("mcp","control-plane"):
+            direct=grammar.help_text(["system","diagnostics",scope], "client")
+            self.assertTrue(direct.startswith("Unknown help topic:"), direct)
+            self.assertIn("DRLink Server",direct)
         runtime = grammar.match(["system", "diagnostics", "runtime"], "client")
         self.assertEqual(runtime.get("status"), "ok", runtime)
         for scope in ("mcp", "control-plane"):

@@ -914,6 +914,9 @@ spec:
     def test_http01_publish_permissions_keep_secrets_closed(self):
         # Reproduces root operator's restrictive umask: mkdir(parents=True)
         # creates .well-known as 0700 unless the intermediate is chmod'd.
+        parent = Path(self.tmp) / "var" / "lib" / "drlink"
+        parent.mkdir(parents=True, exist_ok=True)
+        parent.chmod(0o700)
         previous_umask = os.umask(0o077)
         try:
             mcp_tls.ensure_tree(self.tmp)
@@ -926,10 +929,14 @@ spec:
         self.assertEqual(stat.S_IMODE(mcp_tls.challenges_dir(self.tmp).stat().st_mode), 0o755)
         self.assertEqual(stat.S_IMODE(mcp_tls.account_dir(self.tmp).stat().st_mode), 0o700)
         self.assertEqual(stat.S_IMODE(mcp_tls.active_dir(self.tmp).stat().st_mode), 0o700)
-        # Parent state dirs under test root are made traversable for HTTP-01.
-        parent = Path(self.tmp) / "var" / "lib" / "drlink"
+        # Storage setup alone must not grant extra traversal permissions;
+        # publication is a separate operation and verifies frontend identity.
         self.assertTrue(parent.is_dir())
+        self.assertEqual(stat.S_IMODE(parent.stat().st_mode), 0o700)
+        mcp_tls.ensure_http01_publish_permissions(self.tmp)
         self.assertTrue(stat.S_IMODE(parent.stat().st_mode) & 0o001)
+        self.assertEqual(stat.S_IMODE(mcp_tls.account_dir(self.tmp).stat().st_mode), 0o700)
+        self.assertEqual(stat.S_IMODE(mcp_tls.active_dir(self.tmp).stat().st_mode), 0o700)
 
     def test_http01_acl_uses_actual_frontend_worker_not_distro_nginx_user(self):
         # Real incident: distro nginx.conf uses 'www-data', but the DRLink
