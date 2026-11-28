@@ -400,7 +400,11 @@ frpctl_nav_prompt_id 'Name: '
                             result = grammar.match(form, role)
                             self.assertEqual(result.get("status"), "error", result)
                             self.assertEqual(result.get("exit_code"), 2, result)
-                            self.assertIn("managed-host", result["message"])
+                            if role == "server":
+                                self.assertIn("managed-host", result["message"])
+                            else:
+                                self.assertIn("show agent", result["message"])
+                                self.assertIn("DRLink Server", result["message"])
                     self.assertEqual(grammar.completion_candidates(
                         " ".join(tokens) + " ", role, [], {}, []), [])
 
