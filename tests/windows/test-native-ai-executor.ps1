@@ -100,5 +100,56 @@ try {
     Assert-FrpTrue (Invoke-FrpNativeAiWorkerStep) 'signed job completion path'
     Assert-FrpEqual 1 $script:claims 'one claim'
     Assert-FrpEqual 1 $script:completions 'one completion without re-execution'
+    # A healthy signed AI claim must not depend on Remote Service convergence.
+    $script:cycleClaims=0
+    $script:cycleSync=0
+    $script:cycleProfile=$true
+    $script:cycleEnrolled=$true
+    $script:cycleFailure=$false
+    function Test-FrpIsEnrolled { return $script:cycleEnrolled }
+    function Get-FrpAiExecutorProfile { if ($script:cycleProfile) { return [pscustomobject]@{Patterns=@();AllowCommandExec=$false} }; return $null }
+    function Invoke-FrpAgentLifecycle { param($State) return @{ok=$true} }
+    function Invoke-FrpWithClientLock { param($Action) return (& $Action) }
+    function Invoke-FrpV24LifecycleSync { $script:cycleSync++; return 1 }
+    function Invoke-FrpNativeAiWorkerStep {
+        $script:cycleClaims++
+        if ($script:cycleFailure) { throw 'ERROR: Server management response failed integrity verification: SECRET_FIXTURE' }
+        return $true
+    }
+    $cycle=Invoke-FrpLifecycleWorkerCycle -LifecycleDue -AiDue
+    Assert-FrpEqual 'SYNC_FAILED' $cycle.Lifecycle 'sync failure is visible'
+    Assert-FrpEqual 'CLAIM_OK' $cycle.Ai 'AI claim independent of sync failure'
+    Assert-FrpEqual 1 $script:cycleClaims 'one claim after failed synchronization'
+    $script:cycleFailure=$true
+    $cycle=Invoke-FrpLifecycleWorkerCycle -AiDue
+    Assert-FrpEqual 'INTEGRITY_FAILED' $cycle.Ai 'bounded error class'
+    Assert-FrpTrue (($cycle | ConvertTo-Json -Compress) -notmatch 'SECRET_FIXTURE') 'no raw exception or credentials in worker status'
+    $script:cycleProfile=$false
+    $cycle=Invoke-FrpLifecycleWorkerCycle -AiDue
+    Assert-FrpEqual 'LOCAL_PROFILE_UNAVAILABLE' $cycle.Ai 'missing local grant fails closed'
+    Assert-FrpEqual 2 $script:cycleClaims 'no claim without local profile'
+    $script:cycleEnrolled=$false
+    $cycle=Invoke-FrpLifecycleWorkerCycle -LifecycleDue -AiDue
+    Assert-FrpEqual 'NOT_ENROLLED' $cycle.Ai 'no claim when unenrolled'
+    Assert-FrpEqual 1 $script:cycleSync 'no lifecycle sync when unenrolled'
+    Assert-FrpEqual 2 $script:cycleClaims 'no additional claim when unenrolled'
+    $script:cycleEnrolled=$true
+    $script:cycleProfile=$true
+    $script:cycleFailure=$false
+    function Invoke-FrpAgentLifecycle { param($State) throw 'ERROR: lifecycle response HMAC verification failed' }
+    $cycle=Invoke-FrpLifecycleWorkerCycle -LifecycleDue -AiDue
+    Assert-FrpEqual 'INTEGRITY_FAILED' $cycle.Lifecycle 'lifecycle authentication error remains visible'
+    Assert-FrpEqual 'CLAIM_OK' $cycle.Ai 'separately signed claim remains independently authenticated'
+    # Receipt contains only fixed classifications; never arbitrary exception text.
+    function Test-FrpAiProfileAcl { param($Path) return $true }
+    Assert-FrpTrue ((Get-FrpWorkerStatusText) -match 'NOT TESTED') 'missing receipt not readiness'
+    Write-FrpWorkerStatus -Lifecycle 'SYNC_FAILED' -Ai 'CLAIM_OK'
+    Assert-FrpTrue ((Get-FrpWorkerStatusText) -match 'Lifecycle=SYNC_FAILED; AI=CLAIM_OK') 'fresh receipt reports distinct channels'
+    Write-FrpWorkerStatus -Lifecycle 'SYNC_OK' -Ai 'INTEGRITY_FAILED'
+    Assert-FrpTrue ((Get-FrpWorkerStatusText) -match 'Lifecycle=SYNC_OK; AI=INTEGRITY_FAILED') 'receipt replaces previous status'
+    Write-FrpWorkerStatus -Lifecycle 'SYNC_OK' -Ai 'SECRET_FIXTURE'
+    Assert-FrpTrue ((Get-FrpWorkerStatusText) -notmatch 'SECRET_FIXTURE') 'reject arbitrary receipt values'
+    @{timestamp=[DateTimeOffset]::UtcNow.AddMinutes(-3).ToString('o');lifecycle='SYNC_OK';ai='CLAIM_OK'} | ConvertTo-Json | Set-Content -LiteralPath (Get-FrpWorkerStatusPath)
+    Assert-FrpTrue ((Get-FrpWorkerStatusText) -match 'stale') 'old successful receipt cannot imply live readiness'
     Write-FrpTestPass 'test-native-ai-executor'
 } finally { Remove-FrpWindowsTestRoot }

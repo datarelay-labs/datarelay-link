@@ -1057,6 +1057,7 @@ function Get-FrpClientDoctorReport {
         }
     }
     [void]$lines.Add(('AI executor       : {0}' -f (Get-FrpAiExecutorStatusText)))
+    [void]$lines.Add(('Worker receipt    : {0}' -f (Get-FrpWorkerStatusText)))
     [void]$lines.Add(("Running: {0} pid={1}" -f $st.Running, $st.Pid))
     if ($issues -gt 0) {
         [void]$lines.Add(("Doctor found {0} issue(s)" -f $issues))

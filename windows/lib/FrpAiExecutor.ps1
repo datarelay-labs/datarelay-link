@@ -649,3 +649,98 @@ function Invoke-FrpNativeAiWorkerStep {
     }
     return $true
 }
+
+# Keep signed AI claims independent of Remote Service convergence. The Server
+# still authenticates/adjudicates each claim and the local profile is checked
+# again before executing a claimed job. Report only bounded classifications.
+function Get-FrpWorkerFailureClass {
+    param($Failure)
+    $message = [string]$Failure.Exception.Message
+    if ($message -match 'HMAC|integrity verification|Malformed signed AI job|missing signed AI job') { return 'INTEGRITY_FAILED' }
+    if ($message -match 'rejected|401|403|not enrolled|identity is incomplete') { return 'AUTH_OR_REQUEST_REJECTED' }
+    if ($message -match 'allocator request failed|trusted allocator CA|management URL|certificate|timed out') { return 'TRANSPORT_FAILED' }
+    return 'WORKER_FAILED'
+}
+
+function Invoke-FrpLifecycleWorkerCycle {
+    param([switch]$LifecycleDue, [switch]$AiDue)
+    $result = [ordered]@{Lifecycle='NOT_DUE'; Ai='NOT_DUE'}
+    try {
+        $enrolled = Test-FrpIsEnrolled
+    } catch {
+        $enrolled = $false
+    }
+    if (-not $enrolled) {
+        if ($LifecycleDue) { $result.Lifecycle='NOT_ENROLLED' }
+        if ($AiDue) { $result.Ai='NOT_ENROLLED' }
+        return [pscustomobject]$result
+    }
+    if ($LifecycleDue) {
+        try {
+            $null = Invoke-FrpAgentLifecycle -State 'connected'
+            $rc = Invoke-FrpWithClientLock { Invoke-FrpV24LifecycleSync }
+            $result.Lifecycle = if ($rc -eq 0) { 'SYNC_OK' } else { 'SYNC_FAILED' }
+        } catch {
+            $result.Lifecycle = Get-FrpWorkerFailureClass $_
+        }
+    }
+    if ($AiDue) {
+        try {
+            if (-not (Get-FrpAiExecutorProfile)) {
+                $result.Ai='LOCAL_PROFILE_UNAVAILABLE'
+            } elseif (Invoke-FrpNativeAiWorkerStep) {
+                $result.Ai='CLAIM_OK'
+            } else {
+                $result.Ai='LOCAL_PROFILE_UNAVAILABLE'
+            }
+        } catch {
+            $result.Ai=Get-FrpWorkerFailureClass $_
+        }
+    }
+    return [pscustomobject]$result
+}
+
+function Get-FrpWorkerStatusPath { Join-Path (Get-FrpStateDir) 'lifecycle-worker-status.json' }
+function Test-FrpWorkerReceiptClass {
+    param([string]$Value)
+    return ($Value -cin @('NOT_TESTED','NOT_ENROLLED','SYNC_OK','SYNC_FAILED','CLAIM_OK','LOCAL_PROFILE_UNAVAILABLE','INTEGRITY_FAILED','AUTH_OR_REQUEST_REJECTED','TRANSPORT_FAILED','WORKER_FAILED'))
+}
+
+function Write-FrpWorkerStatus {
+    param([string]$Lifecycle, [string]$Ai)
+    # The status is advisory only. Do not write through an unsafe execution
+    # tree or profile ancestor and never persist arbitrary error messages.
+    $tmp = $null
+    try {
+        if (-not (Test-FrpWorkerReceiptClass $Lifecycle) -or -not (Test-FrpWorkerReceiptClass $Ai)) { return }
+        if (-not (Test-FrpAiProfileAcl (Get-FrpAiExecutorProfilePath))) { return }
+        $path = Get-FrpWorkerStatusPath
+        $tmp = $path + '.' + [guid]::NewGuid().ToString('N') + '.tmp'
+        $body = @{ timestamp=[DateTimeOffset]::UtcNow.ToString('o'); lifecycle=$Lifecycle; ai=$Ai }
+        [IO.File]::WriteAllText($tmp, ($body | ConvertTo-Json -Compress))
+        Restrict-FrpFileAcl -Path $tmp
+        if (Test-Path -LiteralPath $path) {
+            if ((Get-Item -LiteralPath $path -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) { return }
+            [IO.File]::Replace($tmp, $path, [System.Management.Automation.Language.NullString]::Value)
+        } else {
+            [IO.File]::Move($tmp,$path)
+        }
+    } catch {
+        # A diagnostic write must never change execution or retry behavior.
+    } finally {
+        if ($tmp -and (Test-Path -LiteralPath $tmp)) { Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue }
+    }
+}
+
+function Get-FrpWorkerStatusText {
+    try {
+        if (-not (Test-FrpAiProfileAcl (Get-FrpAiExecutorProfilePath))) { return 'NOT TESTED (local profile unavailable)' }
+        $item = Get-Item -LiteralPath (Get-FrpWorkerStatusPath) -Force -ErrorAction Stop
+        if ($item.Attributes -band [IO.FileAttributes]::ReparsePoint -or $item.Length -gt 4096) { return 'NOT TESTED (invalid receipt)' }
+        $body = Get-Content -LiteralPath $item.FullName -Raw | ConvertFrom-Json
+        $age = ([DateTimeOffset]::UtcNow - [DateTimeOffset]::Parse([string]$body.timestamp)).TotalSeconds
+        if ($age -lt 0 -or $age -gt 120) { return 'NOT TESTED (worker receipt stale)' }
+        if (-not (Test-FrpWorkerReceiptClass $body.lifecycle) -or -not (Test-FrpWorkerReceiptClass $body.ai)) { return 'NOT TESTED (invalid receipt)' }
+        return ('Lifecycle={0}; AI={1} (local receipt, verify Server readiness)' -f $body.lifecycle,$body.ai)
+    } catch { return 'NOT TESTED (no worker receipt)' }
+}
