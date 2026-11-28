@@ -505,8 +505,9 @@ def authorize_fixed_tcp(
     *,
     relay_id: str,
     source_ip: str,
+    validated_revision: Optional[int] = None,
 ) -> dict:
-    gen = generation_status(plane, "internet")
+    gen = generation_status(plane, "internet", validated_revision=validated_revision)
     result = {
         "source_ip": source_ip,
         "relay_id": relay_id,
@@ -569,6 +570,7 @@ def authorize_fixed_tcp(
         hostname=result["hostname"],
         port=result["port"],
         protocol="tcp",
+        validated_revision=validated_revision,
     )
     result["decision"] = policy["decision"]
     result["reason"] = policy["reason"]

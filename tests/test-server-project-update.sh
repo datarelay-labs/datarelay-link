@@ -845,6 +845,11 @@ grep -Eq 'frp_server_health_tcp_egress|frp_wait_unit_active drlink-tcp-egress' \
 # Injected post-mutation failure must restore egress/tcp-egress project files.
 RB="$WORKDIR/rollback-egress-runtime"
 setup_tree "$RB"
+mkdir -p "$RB/usr/local/lib/drlink/native/x86_64-unknown-linux-gnu"
+printf 'old-native-egress\n' \
+  >"$RB/usr/local/lib/drlink/native/x86_64-unknown-linux-gnu/libdrlink_egress.so"
+printf 'old-native-mcp\n' \
+  >"$RB/usr/local/lib/drlink/native/x86_64-unknown-linux-gnu/libdrlink_mcp_runtime.so"
 printf '[Unit]\nDescription=tcp-egress\n' >"$RB/etc/systemd/system/drlink-tcp-egress.service"
 printf '[Unit]\nDescription=egress\n' >"$RB/etc/systemd/system/drlink-egress.service"
 printf 'old-tcp-egress\n' >"$RB/usr/local/lib/drlink/drlink-tcp-egress.py"
@@ -860,6 +865,10 @@ cmp "$RB/usr/local/lib/drlink/drlink-tcp-egress.py" <(printf 'old-tcp-egress\n')
   || fail "tcp-egress file not restored"
 cmp "$RB/usr/local/lib/drlink/frp-egress-gateway.py" <(printf 'old-egress-gw\n') >/dev/null \
   || fail "egress gateway file not restored"
+cmp "$RB/usr/local/lib/drlink/native/x86_64-unknown-linux-gnu/libdrlink_egress.so" \
+  <(printf 'old-native-egress\n') >/dev/null || fail "native egress library not restored"
+cmp "$RB/usr/local/lib/drlink/native/x86_64-unknown-linux-gnu/libdrlink_mcp_runtime.so" \
+  <(printf 'old-native-mcp\n') >/dev/null || fail "native MCP library not restored"
 # Ensure restore path still names both runtimes (test mode skips live systemctl).
 python3 - "$ROOT/lib/frp-server-upgrade.sh" <<'PY'
 from pathlib import Path

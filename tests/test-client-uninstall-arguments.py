@@ -27,6 +27,32 @@ class ClientUninstallArguments(unittest.TestCase):
             self.assertEqual(identity.read_text(), 'argument-regression-sentinel\n')
             return result
 
+    def test_explicit_empty_test_root_fails_before_uninstall(self):
+        # Execute only the actual argument/early-root-check prefix. Never
+        # execute the destructive tail, even if the guard regresses while
+        # this test is run by root on an installed development server.
+        for role, variables in (
+            ("server", ("FRP_UNINSTALL_TEST_ROOT",)),
+            ("client", ("FRP_UNINSTALL_TEST_ROOT", "FRP_CLIENT_TEST_ROOT")),
+        ):
+            source = (ROOT / ("uninstall-" + role + ".sh")).read_text()
+            boundary = "# Resolve the directory of this script when executed as a real file."
+            self.assertEqual(source.count(boundary), 1)
+            prefix = source.split(boundary, 1)[0]
+            for variable in variables:
+                with self.subTest(role=role, variable=variable):
+                    env = os.environ.copy()
+                    for name in ("FRP_UNINSTALL_TEST_ROOT", "FRP_CLIENT_TEST_ROOT"):
+                        env.pop(name, None)
+                    env[variable] = ""
+                    result = subprocess.run(
+                        ["bash", "-c", prefix + "\necho UNINSTALL_PREFIX_FELL_THROUGH\n"],
+                        env=env, capture_output=True, text=True, timeout=15,
+                    )
+                    self.assertEqual(result.returncode, 2, result.stderr)
+                    self.assertIn("FAILURE_CLASS=PATH_DELETION_REFUSED", result.stderr)
+                    self.assertNotIn("UNINSTALL_PREFIX_FELL_THROUGH", result.stdout)
+
     def test_long_help_preserves_state(self):
         result = self.invoke(['--help'])
         self.assertEqual(result.returncode, 0, result.stderr)

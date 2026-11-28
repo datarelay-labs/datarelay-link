@@ -1,0 +1,17 @@
+{
+  "build_script": "a71c145828778d2864c0cb0978ba4145618695d3df5f39872168b16f255c40d6",
+  "cargo_locks": {
+    "drlink-egress": "ae4bb66a56523c20e2e1d5806681747445ee7e9e3cfb6c6db0bb7a7fc56c6412",
+    "drlink-mcp-runtime": "11d2766469f396dd6af54653689735b2977099e59f0a2235e5efdea3d7df1f49"
+  },
+  "libraries": {
+    "libdrlink_egress.dylib": "470ba85bcb4f353b010f4afb99249d7f8a648938e4a89bcb5868d93e868c2c8e",
+    "libdrlink_mcp_runtime.dylib": "5f5ff4258330305c4526db400ded5d38b33ea96246c55844f605002762232cea"
+  },
+  "linker": "cc",
+  "linker_version": "Apple clang version 17.0.0 (clang-1700.0.13.5)",
+  "rustc": "1.75.0",
+  "schema": 1,
+  "source_head": "be9b8f33dd92f7367cd97be6761189e8e95f1861",
+  "target": "aarch64-apple-darwin"
+}

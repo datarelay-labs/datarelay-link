@@ -23,7 +23,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "lib"))
 
-from drlink_db_watch import DbChangeWatcher  # noqa: E402
+from drlink_db_watch import DbChangeWatcher, Subscription  # noqa: E402
 
 
 def _make_db(directory: Path) -> Path:
@@ -135,6 +135,33 @@ class DbChangeWatcherTests(unittest.TestCase):
         self.assertEqual(conn.execute("SELECT COUNT(*) FROM t").fetchone()[0], 0)
         conn.close()
         self.assertEqual(self.db.stat().st_mtime_ns, before)
+
+    def test_notify_retains_signal_when_close_clears_subscription_field(self):
+        class Signal:
+            called = False
+
+            def signal(self):
+                self.called = True
+
+        class CloseInterleavingSubscription(Subscription):
+            def __getattribute__(self, name):
+                if name == "_native_signal":
+                    signal = object.__getattribute__(self, name)
+                    # Model close() clearing the field after the first load,
+                    # before the caller can dereference it a second time.
+                    object.__setattr__(self, name, None)
+                    return signal
+                return object.__getattribute__(self, name)
+
+        subscription = object.__new__(CloseInterleavingSubscription)
+        signal = Signal()
+        object.__setattr__(subscription, "_event", threading.Event())
+        object.__setattr__(subscription, "_native_signal", signal)
+
+        subscription._signal()
+
+        self.assertTrue(subscription._event.is_set())
+        self.assertTrue(signal.called)
 
 
 if __name__ == "__main__":

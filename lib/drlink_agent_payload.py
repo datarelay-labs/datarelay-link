@@ -18,6 +18,15 @@ RUNTIME_MANIFEST_NAME = "runtime-sha256.json"
 # Required files installed under the Agent lib directory (basename = source
 # name under lib/). Keep this list complete for the public v2.4 Agent CLI.
 AGENT_LIB_FILES: tuple[str, ...] = (
+    "native/aarch64-unknown-linux-gnu/libdrlink_egress.so",
+    "native/aarch64-unknown-linux-gnu/libdrlink_mcp_runtime.so",
+    "native/aarch64-unknown-linux-gnu/runtime-build.json",
+    "native/aarch64-apple-darwin/libdrlink_egress.dylib",
+    "native/aarch64-apple-darwin/libdrlink_mcp_runtime.dylib",
+    "native/aarch64-apple-darwin/runtime-build.json",
+    "native/x86_64-unknown-linux-gnu/libdrlink_egress.so",
+    "native/x86_64-unknown-linux-gnu/libdrlink_mcp_runtime.so",
+    "native/x86_64-unknown-linux-gnu/runtime-build.json",
     "frp-client-common.sh",
     "frp-common.sh",
     "frp-macos.sh",
@@ -55,6 +64,7 @@ AGENT_LIB_FILES: tuple[str, ...] = (
     "drlink_upgrade_reconcile.py",
     "drlink_agent_payload.py",
     "drlink_agent_residue.py",
+    "drlink_mcp_runtime.py",
 )
 
 # Subset used for live lineage proof. A mismatch here is a release blocker

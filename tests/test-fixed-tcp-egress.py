@@ -610,12 +610,149 @@ class SQLiteFixedTcpRuntimeTests(unittest.TestCase):
             os.environ["FRP_DEPLOY_TEST_ROOT"] = self.saved_root
         self.tmp.cleanup()
 
+    def test_relay_backlog_is_applied_before_socket_listen(self):
+        """The configured bounded backlog must be effective at activation."""
+        from unittest import mock
+
+        observed = []
+        activate = TCP.socketserver.TCPServer.server_activate
+
+        def observe(server):
+            observed.append(server.request_queue_size)
+            return activate(server)
+
+        with mock.patch.object(TCP.socketserver.TCPServer, "server_activate", observe):
+            with TCP.RelayServer(("127.0.0.1", 0), self.state, self.relay_id):
+                pass
+        self.assertEqual(observed, [64])
+
     def test_sqlite_policy_allows_bidirectional_fixed_tcp_application_data(self):
         with socket.create_connection(("127.0.0.1", self.listen_port), timeout=2) as client:
             client.settimeout(2)
             client.sendall(b"fixed-tcp-application-payload")
             self.assertEqual(client.recv(128), b"fixed-tcp-application-payload")
         self.assertEqual(self.connect_attempts, [("8.8.8.8", 443, "fixed.test")])
+
+    def test_admission_audit_uses_pinned_policy_generation_without_extra_snapshot(self):
+        """A healthy commit between cache reload and pinning must not mislabel audit."""
+        from unittest import mock
+        from drlink_control_plane import ControlPlane
+        import drlink_v24 as v24
+
+        before = self.cache.engine.snapshot().generation
+        actual_open = self.cache._cp.open_isolated
+        revisions = []
+
+        def commit_before_open():
+            writer = ControlPlane(str(self.root))
+            try:
+                v24.set_network_object(writer, "unrelated-generation", type="ip",
+                                       value="192.0.2.18", oneshot=True)
+                writer.compile_runtime()
+                revisions.append(writer.current_revision())
+            finally:
+                writer.close()
+            return actual_open()
+
+        with mock.patch.object(self.cache._cp, "open_isolated", side_effect=commit_before_open), \
+                mock.patch.object(self.cache, "snapshot", wraps=self.cache.snapshot) as snapshot:
+            with socket.create_connection(("127.0.0.1", self.listen_port), timeout=5) as client:
+                client.settimeout(5)
+                client.sendall(b"pinned-generation")
+                self.assertEqual(client.recv(128), b"pinned-generation")
+            self.assertEqual(len(revisions), 1)
+            self.assertGreater(revisions[0], before)
+            records = [json.loads(line) for line in self.log_path.read_text().splitlines()]
+            connected = [r for r in records if r.get("outcome") == EG.AUDIT_CONNECTED]
+            self.assertEqual(len(connected), 1, records)
+            self.assertEqual(connected[0].get("policy_generation"), revisions[0])
+            snapshot.assert_not_called()
+
+    def test_concurrent_fixed_tcp_policy_has_request_private_sqlite_cursors(self):
+        """Regression: concurrent handlers must not share one SQLite cursor.
+
+        Prior code used PolicyCache.snapshot().plane after releasing its lock,
+        producing SQLITE_MISUSE and sometimes a Python segfault at 10 clients.
+        """
+        from concurrent.futures import ThreadPoolExecutor
+
+        self.state.max_concurrent = 16
+        self.state.per_source_limit = 16
+        self.state._sem = threading.BoundedSemaphore(16)
+        # Increase the local origin listener backlog; the echo handler is
+        # single-threaded, but connections should all finish within timeout.
+        self.echo.listen(64)
+
+        concurrency = 10
+        barrier = threading.Barrier(concurrency)
+        payload = b"fixed-sqlite-isolation-" * 40
+
+        def one(i):
+            barrier.wait(timeout=12)
+            with socket.create_connection(("127.0.0.1", self.listen_port), timeout=10) as client:
+                client.settimeout(10)
+                client.sendall(payload)
+                result = bytearray()
+                while len(result) < len(payload):
+                    part = client.recv(len(payload) - len(result))
+                    if not part:
+                        break
+                    result.extend(part)
+                return bytes(result)
+
+        with ThreadPoolExecutor(max_workers=concurrency) as pool:
+            receipts = list(pool.map(one, range(concurrency)))
+        self.assertEqual(receipts, [payload] * concurrency)
+        self.assertEqual(len(self.connect_attempts), concurrency)
+        # The audit log records both admission and terminal status per session.
+        audits = [json.loads(line) for line in self.log_path.read_text().splitlines()]
+        allowed = [row for row in audits if row.get("decision") == EG.DECISION_ALLOW]
+        self.assertEqual(len(allowed), 2 * concurrency, audits)
+        self.assertEqual(len({row["connection_id"] for row in allowed}), concurrency)
+
+    def test_fixed_tcp_session_revocation_uses_private_policy_snapshot(self):
+        """A live Fixed TCP session must fail closed after a policy revocation."""
+        from drlink_control_plane import ControlPlane
+        import drlink_v24 as v24
+
+        session = {
+            "session_id": "test-revocation",
+            "relay_id": self.relay_id,
+            "source_ip": "127.0.0.1",
+        }
+        self.state.register_session(session)
+        try:
+            self.assertTrue(TCP._session_still_authorized(self.state, session))
+            plane = ControlPlane(str(self.root))
+            try:
+                from unittest import mock
+                # Explicit confirmation is scoped to this disposable test DB.
+                with mock.patch.dict(os.environ, {"DRLINK_CONFIRM": "yes"}):
+                    v24.set_access_rule(
+                        plane, "internet", "fixed-allow", enabled=False, oneshot=True
+                    )
+                plane.compile_runtime()
+            finally:
+                plane.close()
+            self.assertFalse(TCP._session_still_authorized(self.state, session))
+        finally:
+            self.state.unregister_session(session["session_id"])
+
+    def test_concurrent_fixed_tcp_no_private_connection_fails_closed(self):
+        """A failed private DB acquisition must never fallback to shared conn."""
+        from unittest import mock
+
+        with mock.patch.object(
+            self.cache._cp, "open_isolated", return_value=(None, "db unavailable", {})
+        ):
+            with socket.create_connection(("127.0.0.1", self.listen_port), timeout=5) as client:
+                client.settimeout(5)
+                self.assertEqual(client.recv(1), b"")
+        self.assertFalse(self.connect_attempts)
+        audits = [json.loads(line) for line in self.log_path.read_text().splitlines()]
+        self.assertTrue(
+            any(row.get("decision") == EG.DECISION_DENY for row in audits), audits
+        )
 
     def test_sqlite_policy_denies_unmatched_source_before_connect(self):
         client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)

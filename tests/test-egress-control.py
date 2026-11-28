@@ -535,6 +535,27 @@ class EgressProxyFunctionalTests(unittest.TestCase):
                 chunks.append(data)
             return b"".join(chunks)
 
+    def test_gateway_listener_backlog_is_applied_before_socket_listen(self):
+        """Configured bounded worker capacity must be reflected in listen()."""
+        from unittest import mock
+
+        observed = []
+        activate = self.GW.socketserver.TCPServer.server_activate
+
+        def observe(server):
+            observed.append(server.request_queue_size)
+            return activate(server)
+
+        with mock.patch.object(
+            self.GW.socketserver.TCPServer, "server_activate", observe
+        ):
+            with self.GW.ThreadedTCPServer(("127.0.0.1", 0), self.gw_state):
+                pass
+            self.gw_state.max_concurrent = 2048
+            with self.GW.ThreadedTCPServer(("127.0.0.1", 0), self.gw_state):
+                pass
+        self.assertEqual(observed, [32, 512])
+
     def _upstream_saw(self, needle: bytes) -> bool:
         deadline = time.time() + 2.0
         while time.time() < deadline:
@@ -1939,7 +1960,17 @@ class EgressHardeningFeatureTests(unittest.TestCase):
                 except socket.timeout:
                     continue
             self.assertTrue(closed)
-            self.assertIn("POLICY_REVOKED", self._conn_log())
+            # The relay closes its sockets before the Python adapter appends
+            # the terminal policy audit; observe the receipt independently of
+            # the peer-close timing to avoid a false race on the native path.
+            audit_deadline = time.time() + 1.0
+            log = ""
+            while time.time() < audit_deadline:
+                log = self._conn_log()
+                if "POLICY_REVOKED" in log:
+                    break
+                time.sleep(0.02)
+            self.assertIn("POLICY_REVOKED", log)
         finally:
             try:
                 s.close()

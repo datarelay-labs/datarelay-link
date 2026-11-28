@@ -8,8 +8,10 @@ drlink_runtime_policy; destination DNS/SSRF validation remains here.
 from __future__ import annotations
 
 import importlib.util
+import ctypes
 import json
 import os
+import platform
 import select
 import socket
 import sys
@@ -38,6 +40,68 @@ RELAY_BUF = 65536
 RELAY_MAX_BUFFER = 256 * 1024
 SESSION_REVALIDATE_INTERVAL = 2.0
 AUDIT_HOSTNAME_REDACTED = "<invalid-or-redacted>"
+
+
+_NATIVE_RELAY = None
+_NATIVE_RELAY_CHECKED = False
+_NATIVE_RELAY_LOCK = threading.Lock()
+
+
+def _native_relay():
+    """Load the optional packaged Rust data-plane library once.
+
+    `DRLINK_EGRESS_RUNTIME=python` is the scoped rollback switch. `rust`
+    requires the native library and fails closed when it is unavailable;
+    `auto` uses Rust only when the verified packaged library is present.
+    """
+    global _NATIVE_RELAY, _NATIVE_RELAY_CHECKED
+    mode = os.environ.get("DRLINK_EGRESS_RUNTIME", "auto").strip().lower()
+    if mode == "python":
+        return None
+    if mode not in ("auto", "rust"):
+        raise ValueError("DRLINK_EGRESS_RUNTIME must be auto, python or rust")
+    with _NATIVE_RELAY_LOCK:
+        if _NATIVE_RELAY_CHECKED:
+            return _NATIVE_RELAY
+        _NATIVE_RELAY_CHECKED = True
+        here = Path(__file__).resolve().parent
+        configured = os.environ.get("DRLINK_EGRESS_NATIVE_LIBRARY", "").strip()
+        candidates = [Path(configured)] if configured else []
+        machine = platform.machine().lower()
+        if sys.platform.startswith("linux") and machine in ("x86_64", "amd64"):
+            target = "x86_64-unknown-linux-gnu"
+        elif sys.platform.startswith("linux") and machine in ("aarch64", "arm64"):
+            target = "aarch64-unknown-linux-gnu"
+        elif sys.platform == "darwin" and machine in ("arm64", "aarch64"):
+            target = "aarch64-apple-darwin"
+        elif sys.platform == "darwin" and machine in ("x86_64", "amd64"):
+            target = "x86_64-apple-darwin"
+        else:
+            target = ""
+        if target:
+            extension = ".dylib" if sys.platform == "darwin" else ".so"
+            candidates.append(here / "native" / target / ("libdrlink_egress" + extension))
+        candidates.extend((
+            here / "native" / "libdrlink_egress.so",
+            here / "native" / "libdrlink_egress.dylib",
+            Path("/usr/local/lib/drlink/native/libdrlink_egress.so"),
+            Path("/usr/local/lib/drlink/native/libdrlink_egress.dylib"),
+        ))
+        for candidate in candidates:
+            try:
+                library = ctypes.CDLL(str(candidate))
+                relay = library.drlink_relay_bidirectional
+                relay.argtypes = [
+                    ctypes.c_int, ctypes.c_int, ctypes.c_uint64, ctypes.c_uint64,
+                    ctypes.CFUNCTYPE(ctypes.c_bool, ctypes.c_void_p), ctypes.c_void_p,
+                    ctypes.POINTER(ctypes.c_uint64), ctypes.POINTER(ctypes.c_uint64),
+                ]
+                relay.restype = ctypes.c_int
+                _NATIVE_RELAY = relay
+                return relay
+            except (OSError, AttributeError):
+                continue
+    return None
 
 
 def _load_module(name: str, rel: str):
@@ -588,6 +652,90 @@ def relay_bidirectional(
 
     Returns an audit outcome token.
     """
+    native = _native_relay()
+    native_requested = os.environ.get("DRLINK_EGRESS_RUNTIME", "auto").strip().lower() == "rust"
+    if native is not None or native_requested:
+        if native is None:
+            # An explicitly selected native runtime must never silently become
+            # a Python execution after package/load failure.
+            for sock in (client, upstream):
+                try:
+                    sock.close()
+                except OSError:
+                    pass
+            _emit_native_relay_failure(session, cfg)
+            return EG.AUDIT_RELAY_FAILURE
+        client.setblocking(False)
+        upstream.setblocking(False)
+
+        def still_authorized(_context):
+            try:
+                if authorize_fn is not None:
+                    return bool(authorize_fn())
+                if cache is None or session is None:
+                    # The product callers have already made the canonical
+                    # initial decision before entering the transport seam.
+                    return True
+                return session_still_authorized(
+                    cache=cache, session=session,
+                    update_generation=update_generation,
+                )
+            except Exception:
+                return False
+
+        callback_type = native.argtypes[4]
+        callback = callback_type(still_authorized)
+        up_bytes = ctypes.c_uint64(0)
+        down_bytes = ctypes.c_uint64(0)
+        try:
+            code = native(
+                client.fileno(), upstream.fileno(),
+                max(1, int(float(revalidate_interval) * 1000)),
+                max(1, int(float(idle_timeout) * 1000)), callback, None,
+                ctypes.byref(up_bytes), ctypes.byref(down_bytes),
+            )
+        except Exception:
+            code = 4
+        finally:
+            for sock in (client, upstream):
+                try:
+                    sock.close()
+                except OSError:
+                    pass
+        if code == 3:
+            outcome = EG.AUDIT_POLICY_REVOKED
+            if cache is not None and session is not None and cfg is not None:
+                snap = cache.engine.snapshot()
+                cur_gen = int(snap.generation) if snap is not None else -1
+                EG.emit_conn_log(
+                    {
+                        "timestamp": EG.utc_now_iso(),
+                        "connection_id": session.get("connection_id"),
+                        "session_id": session.get("session_id"),
+                        "source_ip": session.get("source_ip"),
+                        "hostname": session.get("hostname"),
+                        "port": session.get("port"),
+                        "protocol": session.get("protocol"),
+                        "method": session.get("method"),
+                        "profile_id": session.get("profile_id"),
+                        "relay_id": session.get("relay_id"),
+                        "decision": EG.DECISION_DENY,
+                        "reason": EG.REASON_POLICY_REVOKED,
+                        "outcome": outcome,
+                        "policy_generation": cur_gen,
+                    },
+                    cfg=cfg,
+                )
+            return outcome
+        if code == 1:
+            return EG.AUDIT_UPSTREAM_CLOSED
+        if code == 2:
+            return EG.AUDIT_IDLE_TIMEOUT
+        if code == 4:
+            _emit_native_relay_failure(session, cfg)
+            return EG.AUDIT_RELAY_FAILURE
+        return EG.AUDIT_CLIENT_CLOSED
+
     client.setblocking(False)
     upstream.setblocking(False)
     c2u = bytearray()
@@ -745,3 +893,27 @@ def relay_bidirectional(
                 client_open_w = False
     finally:
         _close_all()
+
+
+def _emit_native_relay_failure(session, cfg):
+    if not isinstance(session, dict) or cfg is None:
+        return
+    EG.emit_conn_log(
+        {
+            "timestamp": EG.utc_now_iso(),
+            "connection_id": session.get("connection_id"),
+            "session_id": session.get("session_id"),
+            "source_ip": session.get("source_ip"),
+            "hostname": session.get("hostname"),
+            "port": session.get("port"),
+            "protocol": session.get("protocol"),
+            "method": session.get("method"),
+            "profile_id": session.get("profile_id"),
+            "relay_id": session.get("relay_id"),
+            "decision": EG.DECISION_ALLOW,
+            "reason": EG.REASON_RELAY_RUNTIME_FAILURE,
+            "outcome": EG.AUDIT_RELAY_FAILURE,
+            "policy_generation": session.get("policy_generation"),
+        },
+        cfg=cfg,
+    )

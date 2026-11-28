@@ -24,6 +24,7 @@ exit 0
 CTL
 chmod +x "$FRP_SYSTEMCTL_BIN"
 backup="$(frp_client_upgrade_backup_tools)"
+[[ -d "$backup/files" ]]
 grep -qx 'frpc present enabled active' "$backup/linux-systemd.state"
 cmp "$backup/legacy-frpc.service" "$FRP_CLIENT_TEST_ROOT/etc/systemd/system/frpc.service"
 rm "$FRP_CLIENT_TEST_ROOT/etc/systemd/system/frpc.service"

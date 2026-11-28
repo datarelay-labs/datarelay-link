@@ -220,17 +220,24 @@ class ParkedSlotTests(unittest.TestCase):
             threading.Thread(target=lambda: results.append(_get(port)), daemon=True)
             for _ in range(6)
         ]
-        for t in threads:
-            t.start()
-        deadline = time.monotonic() + 3.0
-        while len(srv.parked_results) < 6 and time.monotonic() < deadline:
-            time.sleep(0.02)
-        # Six requests are parked at once although only two slots exist.
-        self.assertEqual(len(srv.parked_results), 6)
-        self.assertTrue(all(srv.parked_results))
-        srv.gate.set()
-        for t in threads:
-            t.join(5.0)
+        # The accept-time gate intentionally rejects bursts exceeding active
+        # capacity before a handler parks. Admit each request only after the
+        # previous request has parked; all six must remain held concurrently.
+        # This tests parking, not a race against the separate overload gate.
+        try:
+            for index, t in enumerate(threads, 1):
+                t.start()
+                deadline = time.monotonic() + 3.0
+                while len(srv.parked_results) < index and time.monotonic() < deadline:
+                    time.sleep(0.005)
+                self.assertEqual(len(srv.parked_results), index)
+                self.assertTrue(srv.parked_results[-1])
+            self.assertEqual(srv._parked, 6)
+        finally:
+            srv.gate.set()
+            for t in threads:
+                if t.ident is not None:
+                    t.join(5.0)
         self.assertEqual(results, [b"ok"] * 6)
 
     def test_slot_is_taken_again_before_the_caller_continues(self):

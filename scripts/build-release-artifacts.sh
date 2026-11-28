@@ -18,6 +18,8 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
+python3 ./scripts/verify-native-runtime-assets.py
+
 SOURCE_COMMIT="${SBOM_SOURCE_COMMIT:-$(git rev-parse HEAD)}"
 export SBOM_EXPECTED_COMMIT="$SOURCE_COMMIT"
 

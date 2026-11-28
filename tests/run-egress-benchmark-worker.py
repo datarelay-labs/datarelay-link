@@ -37,14 +37,21 @@ def build_client_hello(sni: str) -> bytes:
     return b"\x16\x03\x01" + len(handshake).to_bytes(2, "big") + handshake
 
 
+# This is a disposable local application-layer receipt, not a TLS response.
+# A CONNECT benchmark only passes after the origin itself has read every byte.
+TRANSFER_ACK = b"LPERF_ORIGIN_COMPLETE_v1"
+
 class Origin:
-    def __init__(self):
+    def __init__(self, expected_tls_bytes: int):
+        self.expected_tls_bytes = expected_tls_bytes
+        self.acknowledged_transfers = 0
         self._sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self._sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         self._sock.bind(("127.0.0.1", 0))
         self._sock.listen(256)
         self.port = self._sock.getsockname()[1]
         self._stop = threading.Event()
+        self._bytes_lock = threading.Lock()
         self.bytes = 0
         threading.Thread(target=self._serve, daemon=True).start()
 
@@ -60,19 +67,55 @@ class Origin:
             threading.Thread(target=self._handle, args=(conn,), daemon=True).start()
 
     def _handle(self, conn: socket.socket):
+        """Acknowledge CONNECT only after exact upstream byte receipt."""
         try:
-            conn.settimeout(5)
+            conn.settimeout(10)
+            header_buf = bytearray()
+            http_remaining = None
+            tls_received = 0
+            is_tls = None
             while True:
                 data = conn.recv(65536)
                 if not data:
                     break
-                self.bytes += len(data)
-                # Echo a tiny TLS-looking ack so clients don't hang forever.
-                try:
-                    conn.sendall(b"\x16\x03\x03\x00\x01\x00")
-                except OSError:
+                with self._bytes_lock:
+                    self.bytes += len(data)
+                if is_tls is None:
+                    # First byte is sufficient, even when TCP fragments a record.
+                    is_tls = data[:1] == b"\x16"
+                if is_tls:
+                    tls_received += len(data)
+                    if tls_received == self.expected_tls_bytes:
+                        conn.sendall(TRANSFER_ACK)
+                        with self._bytes_lock:
+                            self.acknowledged_transfers += 1
+                        break
+                    if tls_received > self.expected_tls_bytes:
+                        break
+                    continue
+                if http_remaining is not None:
+                    http_remaining -= len(data)
+                else:
+                    if len(header_buf) + len(data) > 65536:
+                        break  # Header cap; never buffer unbounded request bodies.
+                    header_buf.extend(data)
+                    if b"\r\n\r\n" not in header_buf:
+                        continue
+                    header, initial = bytes(header_buf).split(b"\r\n\r\n", 1)
+                    length = 0
+                    for field in header.split(b"\r\n")[1:]:
+                        if field.lower().startswith(b"content-length:"):
+                            length = int(field.split(b":", 1)[1].strip())
+                    http_remaining = length - len(initial)
+                    header_buf.clear()
+                if http_remaining is not None and http_remaining <= 0:
+                    body = b"hello-egress"
+                    conn.sendall(
+                        b"HTTP/1.1 200 OK\r\nContent-Length: %d\r\nConnection: close\r\n\r\n"
+                        % len(body) + body
+                    )
                     break
-        except Exception:
+        except (OSError, ValueError):
             pass
         finally:
             try:
@@ -106,13 +149,18 @@ def main() -> int:
     concurrency = int(os.environ.get("DRLINK_EGRESS_BENCH_CONCURRENCY", "100"))
     hold_ms = int(os.environ.get("DRLINK_EGRESS_BENCH_HOLD_MS", "100"))
     churn = int(os.environ.get("DRLINK_EGRESS_BENCH_CHURN", "0"))
+    transfer_kib = int(os.environ.get("DRLINK_EGRESS_BENCH_TRANSFER_KIB", "0"))
+    protocol = os.environ.get("DRLINK_EGRESS_BENCH_PROTOCOL", "connect")
+    negative_during_load = os.environ.get("DRLINK_EGRESS_BENCH_NEGATIVE") == "1"
+    if protocol not in ("connect", "http"):
+        raise SystemExit("INVALID_EGRESS_BENCH_PROTOCOL")
 
     tmp = tempfile.TemporaryDirectory()
     root = Path(tmp.name)
     os.environ["FRP_DEPLOY_TEST_ROOT"] = str(root)
     libdir = root / "usr/local/lib/drlink"
     libdir.mkdir(parents=True)
-    for name in ("frp_egress_control.py", "frp_public_suffix.py", "frp_bounded_server.py"):
+    for name in ("frp_egress_control.py", "frp_public_suffix.py", "frp_bounded_server.py", "frp_policy_fingerprint.py"):
         (libdir / name).write_text((ROOT / "lib" / name).read_text(encoding="utf-8"), encoding="utf-8")
     data_dst = libdir / "data"
     data_dst.mkdir(parents=True)
@@ -127,6 +175,7 @@ def main() -> int:
         pid, _ = EG.create_profile(state, "bench", enabled=False)
         EG.add_source(state, pid, "127.0.0.1/32")
         EG.add_destination(state, pid, "allowed.test", 443, protocol="https")
+        EG.add_destination(state, pid, "allowed.test", 80, protocol="http")
         EG.set_profile_enabled(state, pid, True)
         return pid
 
@@ -140,9 +189,34 @@ def main() -> int:
     cfg_path = root / "etc/drlink/config.json"
     cfg_path.parent.mkdir(parents=True)
     cfg_path.write_text(json.dumps(cfg, indent=2) + "\n", encoding="utf-8")
-    (root / "var/log/drlink").mkdir(parents=True)
+    (root / "var/log/drlink/egress").mkdir(parents=True, exist_ok=True)
 
-    origin = Origin()
+    # Both a gateway profile and a compiled Internet Access rule are required.
+    from drlink_control_plane import ControlPlane
+    import drlink_v24 as v24
+
+    plane = ControlPlane(str(root))
+    try:
+        v24.set_network_object(plane, "proxy-src", type="ip", value="127.0.0.1", oneshot=True)
+        v24.set_network_object(plane, "allowed-host", type="fqdn", value="allowed.test", oneshot=True)
+        v24.set_service_object(plane, "https", type="tcp", port=443, oneshot=True)
+        v24.set_service_object(plane, "http", type="tcp", port=80, oneshot=True)
+        v24.set_access_rule(
+            plane, "internet", "allow-https", mode="whitelist", source="proxy-src",
+            destination="allowed-host", service="https", enabled=True, oneshot=True,
+        )
+        v24.set_access_rule(
+            plane, "internet", "allow-http", mode="whitelist", source="proxy-src",
+            destination="allowed-host", service="http", enabled=True, oneshot=True,
+        )
+        plane.compile_runtime()
+    finally:
+        plane.close()
+
+    hello = build_client_hello("allowed.test")
+    if os.environ.get("DRLINK_EGRESS_BENCH_INVALID_TLS_PREFACE") == "1":
+        hello = b"NOT_A_TLS_CLIENTHELLO"
+    origin = Origin(expected_tls_bytes=len(hello) + transfer_kib * 1024)
     gw_path = ROOT / "server" / "frp-egress-gateway.py"
     spec = importlib.util.spec_from_file_location("frp_egress_gateway_bench", gw_path)
     GW = importlib.util.module_from_spec(spec)
@@ -153,7 +227,11 @@ def main() -> int:
             return ["1.2.3.4"]
         raise OSError("nxdomain")
 
+    forbidden_origin_attempts = []
     def connect(ip: str, port: int, hostname: str, timeout: float):
+        if hostname != "allowed.test":
+            forbidden_origin_attempts.append(hostname)
+            raise OSError("Unauthorized upstream connect attempted")
         return socket.create_connection(("127.0.0.1", origin.port), timeout=timeout)
 
     cache = GW.PolicyCache(cfg_path)
@@ -170,75 +248,163 @@ def main() -> int:
     threading.Thread(target=server.serve_forever, daemon=True).start()
     time.sleep(0.1)
 
-    hello = build_client_hello("allowed.test")
     latencies_ms: list[float] = []
+    setup_latencies_ms: list[float] = []
     failures = 0
+    denied_correctly = False
     lock = threading.Lock()
+    def fd_count() -> int:
+        try:
+            return len(os.listdir("/proc/self/fd"))
+        except OSError:
+            return 0
+
+    fd_before = fd_count()
+    fd_peak = fd_before
+    surge = threading.Barrier(concurrency + 1) if negative_during_load else None
+
+    def one_denied():
+        nonlocal denied_correctly
+        try:
+            if surge:
+                surge.wait(timeout=10)
+            with socket.create_connection(("127.0.0.1", proxy_port), timeout=10) as sock:
+                sock.settimeout(10)
+                if protocol == "http":
+                    sock.sendall(b"GET http://denied.test/x HTTP/1.1\r\nHost: denied.test\r\n\r\n")
+                else:
+                    sock.sendall(b"CONNECT denied.test:443 HTTP/1.1\r\nHost: denied.test:443\r\n\r\n")
+                response = sock.recv(4096)
+                denied_correctly = response.startswith(b"HTTP/1.1 403")
+        except (OSError, threading.BrokenBarrierError):
+            denied_correctly = False
 
     def one_connect(_i: int) -> None:
-        nonlocal failures
+        nonlocal failures, fd_peak
         t0 = time.perf_counter()
         try:
-            sock = socket.create_connection(("127.0.0.1", proxy_port), timeout=10)
-            sock.settimeout(10)
-            sock.sendall(
-                b"CONNECT allowed.test:443 HTTP/1.1\r\nHost: allowed.test:443\r\n\r\n" + hello
-            )
-            first = sock.recv(4096)
-            if not first.startswith(b"HTTP/1.1 200"):
+            if surge:
+                surge.wait(timeout=10)
+            with socket.create_connection(("127.0.0.1", proxy_port), timeout=10) as sock:
+                sock.settimeout(10)
+                observed_fds = fd_count()
                 with lock:
-                    failures += 1
-                sock.close()
-                return
-            elapsed = (time.perf_counter() - t0) * 1000.0
-            with lock:
-                latencies_ms.append(elapsed)
-            time.sleep(hold_ms / 1000.0)
-            sock.close()
+                    fd_peak = max(fd_peak, observed_fds)
+                if protocol == "http":
+                    body_length = transfer_kib * 1024
+                    method = b"POST" if body_length else b"GET"
+                    sock.sendall(
+                        method + b" http://allowed.test/path HTTP/1.1\r\nHost: allowed.test\r\n"
+                        + (b"Content-Length: %d\r\n" % body_length if body_length else b"")
+                        + b"Connection: close\r\n\r\n"
+                    )
+                    if body_length:
+                        data = b"x" * 16384
+                        while body_length:
+                            count = min(body_length, len(data))
+                            sock.sendall(data[:count])
+                            body_length -= count
+                    first = sock.recv(4096)
+                    accepted = first.startswith(b"HTTP/1.1 200") and b"hello-egress" in first
+                else:
+                    sock.sendall(
+                        b"CONNECT allowed.test:443 HTTP/1.1\r\nHost: allowed.test:443\r\n\r\n"
+                    )
+                    first = sock.recv(4096)
+                    accepted = first.startswith(b"HTTP/1.1 200")
+                    if accepted:
+                        setup_ms = (time.perf_counter() - t0) * 1000.0
+                        with lock:
+                            setup_latencies_ms.append(setup_ms)
+                        sock.sendall(hello)  # SNI is checked after CONNECT 200.
+                        remaining = transfer_kib * 1024
+                        data = b"x" * 16384
+                        while remaining:
+                            count = min(remaining, len(data))
+                            sock.sendall(data[:count])
+                            remaining -= count
+                        if hold_ms:
+                            time.sleep(hold_ms / 1000.0)
+                        receipt = bytearray()
+                        while len(receipt) < len(TRANSFER_ACK):
+                            part = sock.recv(len(TRANSFER_ACK) - len(receipt))
+                            if not part:
+                                break
+                            receipt.extend(part)
+                        accepted = bytes(receipt) == TRANSFER_ACK
+                if not accepted:
+                    with lock:
+                        failures += 1
+                    return
+                elapsed = (time.perf_counter() - t0) * 1000.0
+                with lock:
+                    latencies_ms.append(elapsed)
         except Exception:
             with lock:
                 failures += 1
 
+    cpu_start = resource.getrusage(resource.RUSAGE_SELF)
     t_wall0 = time.perf_counter()
-    with ThreadPoolExecutor(max_workers=concurrency) as pool:
+    with ThreadPoolExecutor(max_workers=concurrency + int(negative_during_load)) as pool:
         futs = [pool.submit(one_connect, i) for i in range(concurrency)]
+        if negative_during_load:
+            futs.append(pool.submit(one_denied))
         for fut in as_completed(futs):
             fut.result()
     wall = time.perf_counter() - t_wall0
+    fd_after = fd_count()
+    cpu_end = resource.getrusage(resource.RUSAGE_SELF)
+    user_cpu = cpu_end.ru_utime - cpu_start.ru_utime
+    sys_cpu = cpu_end.ru_stime - cpu_start.ru_stime
 
-    # Optional churn sample
+    # Optional bounded connection churn. Finish every spawned request before
+    # collecting the audit ledger; never report partial thread counters.
     churn_ok = 0
     churn_fail = 0
     if churn > 0:
-        duration = 2.0
-        deadline = time.time() + duration
+        deadline = time.monotonic() + 2.0
         interval = 1.0 / float(churn)
+        next_t = time.monotonic()
+        spawned = []
 
         def churn_one():
             nonlocal churn_ok, churn_fail
+            ok = False
             try:
-                sock = socket.create_connection(("127.0.0.1", proxy_port), timeout=5)
-                sock.settimeout(5)
-                sock.sendall(
-                    b"CONNECT allowed.test:443 HTTP/1.1\r\nHost: allowed.test:443\r\n\r\n" + hello
-                )
-                first = sock.recv(4096)
-                sock.close()
-                if first.startswith(b"HTTP/1.1 200"):
+                with socket.create_connection(("127.0.0.1", proxy_port), timeout=5) as sock:
+                    sock.settimeout(5)
+                    if protocol == "http":
+                        sock.sendall(
+                            b"GET http://allowed.test/churn HTTP/1.1\r\nHost: allowed.test\r\nConnection: close\r\n\r\n"
+                        )
+                    else:
+                        sock.sendall(
+                            b"CONNECT allowed.test:443 HTTP/1.1\r\nHost: allowed.test:443\r\n\r\n"
+                        )
+                    response = sock.recv(4096)
+                    ok = response.startswith(b"HTTP/1.1 200")
+                    if ok and protocol == "connect":
+                        sock.sendall(hello)
+                        time.sleep(0.02)
+            except OSError:
+                pass
+            with lock:
+                if ok:
                     churn_ok += 1
                 else:
                     churn_fail += 1
-            except Exception:
-                churn_fail += 1
 
-        next_t = time.time()
-        while time.time() < deadline:
-            threading.Thread(target=churn_one, daemon=True).start()
+        while time.monotonic() < deadline:
+            thread = threading.Thread(target=churn_one, daemon=True)
+            thread.start()
+            spawned.append(thread)
             next_t += interval
-            sleep_for = next_t - time.time()
-            if sleep_for > 0:
-                time.sleep(sleep_for)
-        time.sleep(0.5)
+            delay = next_t - time.monotonic()
+            if delay > 0:
+                time.sleep(delay)
+        for thread in spawned:
+            thread.join(timeout=6)
+
 
     rss = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024.0
     total = len(latencies_ms) + failures
@@ -247,21 +413,66 @@ def main() -> int:
 
     print("MAX_STABLE_CONCURRENT=%d" % concurrency)
     print("THROUGHPUT_MBPS=%.3f" % (throughput * 8.0))
-    print("CPU_PERCENT=n/a")
+    print("CPU_PERCENT=%.2f" % (100 * (user_cpu + sys_cpu) / wall if wall else 0))
+    print("CPU_USER_S=%.5f" % user_cpu)
+    print("CPU_SYS_S=%.5f" % sys_cpu)
+    print("CPU_SCOPE=combined_local_gateway_origin_and_clients")
+    print("TRANSFER_KIB_PER_CONNECTION=%d" % transfer_kib)
+    print("BENCH_PROTOCOL=%s" % protocol)
+    print("ORIGIN_RECEIVED_BYTES=%d" % origin.bytes)
+    print("ORIGIN_ACKNOWLEDGED_TRANSFERS=%d" % origin.acknowledged_transfers)
     print("RSS_MB=%.1f" % rss)
     print("CONNECT_P50_MS=%.2f" % percentile(latencies_ms, 50))
     print("CONNECT_P95_MS=%.2f" % percentile(latencies_ms, 95))
     print("CONNECT_P99_MS=%.2f" % percentile(latencies_ms, 99))
+    print("MEASUREMENT_SCOPE=%s" % ("connect_establish_plus_payload" if protocol == "connect" else "http_full_response"))
+    if protocol == "connect":
+        print("CONNECT_SETUP_P50_MS=%.2f" % percentile(setup_latencies_ms, 50))
+        print("CONNECT_SETUP_P95_MS=%.2f" % percentile(setup_latencies_ms, 95))
+        print("CONNECT_SETUP_P99_MS=%.2f" % percentile(setup_latencies_ms, 99))
+    else:
+        print("CONNECT_SETUP_P50_MS=n/a")
+        print("CONNECT_SETUP_P95_MS=n/a")
+        print("CONNECT_SETUP_P99_MS=n/a")
+    print("FD_BEFORE=%d" % fd_before)
+    print("FD_PEAK=%d" % fd_peak)
+    print("FD_AFTER=%d" % fd_after)
     print("DNS_P95_MS=n/a")
     print("TCP_CONNECT_P95_MS=n/a")
     print("FAILURE_RATE=%.4f" % failure_rate)
-    print("AUDIT_DROP_COUNT=0")
+    # Distinct connection IDs allow actual audit-loss assessment. Read this
+    # temporary file after all concurrent requests have finished, not a claim
+    # about external / production audit transports.
+    audit_file = root / "var/log/drlink/egress/connections.jsonl"
+    audit_ids = set()
+    audit_denied_receipts = 0
+    audit_parse_errors = 0
+    if audit_file.exists():
+        for line in audit_file.read_text(encoding="utf-8").splitlines():
+            try:
+                event = json.loads(line)
+                if event.get("connection_id"):
+                    audit_ids.add(event["connection_id"])
+                if event.get("hostname") == "denied.test" and event.get("decision") == EG.DECISION_DENY:
+                    audit_denied_receipts += 1
+            except (ValueError, KeyError, TypeError):
+                audit_parse_errors += 1
+    expected_audit = concurrency + churn_ok + churn_fail + int(negative_during_load)
+    audit_drop_count = max(0, expected_audit - len(audit_ids))
+    print("AUDIT_EXPECTED_CONNECTIONS=%d" % expected_audit)
+    print("AUDIT_UNIQUE_CONNECTIONS=%d" % len(audit_ids))
+    print("AUDIT_PARSE_ERRORS=%d" % audit_parse_errors)
+    print("AUDIT_DROP_COUNT=%d" % audit_drop_count)
+    if negative_during_load:
+        print("NEGATIVE_DURING_LOAD_DENIED=%d" % int(denied_correctly))
+        print("NEGATIVE_UPSTREAM_ATTEMPTS=%d" % len(forbidden_origin_attempts))
+        print("NEGATIVE_AUDIT_RECEIPTS=%d" % audit_denied_receipts)
     if churn > 0:
         print("CHURN_TARGET_PER_SEC=%d" % churn)
         print("CHURN_OK=%d" % churn_ok)
         print("CHURN_FAIL=%d" % churn_fail)
     print(
-        "NOTES=local userspace gateway; DNS/connect stubbed; not a production capacity claim"
+        "NOTES=local userspace gateway; DNS/connect stubbed; no production/network capacity claim"
     )
 
     try:
@@ -271,7 +482,9 @@ def main() -> int:
     origin.stop()
     tmp.cleanup()
     os.environ.pop("FRP_DEPLOY_TEST_ROOT", None)
-    return 0 if failure_rate < 0.05 and latencies_ms else 1
+    negative_ok = (not negative_during_load or
+                   (denied_correctly and not forbidden_origin_attempts and audit_denied_receipts == 1))
+    return 0 if failure_rate < 0.05 and latencies_ms and audit_drop_count == 0 and audit_parse_errors == 0 and negative_ok else 1
 
 
 if __name__ == "__main__":

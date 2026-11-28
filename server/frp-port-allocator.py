@@ -2015,7 +2015,13 @@ def services_match_authorized(requested, authorized):
 
 
 class Allocator:
+    # Each request exclusively owns its plane, including during a held claim.
+    # Only idle, fully checked planes are retained.
+    AI_JOB_PLANE_IDLE_MAX = 32
+
     def __init__(self, config_path, *, initial_cfg=None):
+        self._ai_job_planes = []
+        self._ai_job_planes_lock = threading.Lock()
         self.config_path = config_path
         self._cfg_mtime_ns = None
         self._entry_rate_lock = threading.Lock()

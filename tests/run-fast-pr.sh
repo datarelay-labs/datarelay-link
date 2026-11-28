@@ -12,6 +12,35 @@ git ls-files -z '*.sh' | xargs -0 -r -n 1 bash -n --
 echo "=== Python compile ==="
 git ls-files '*.py' -z | xargs -0 -r python3 -m py_compile
 
+echo "=== pinned Rust runtime regression ==="
+cargo +1.75.0 test --locked --manifest-path native/drlink-egress/Cargo.toml
+cargo +1.75.0 build --release --locked --manifest-path native/drlink-egress/Cargo.toml
+cargo +1.75.0 test --locked --manifest-path native/drlink-mcp-runtime/Cargo.toml
+cargo +1.75.0 build --release --locked --manifest-path native/drlink-mcp-runtime/Cargo.toml
+python3 scripts/verify-native-runtime-assets.py
+python3 tests/test-native-runtime-package-selection.py
+DRLINK_EGRESS_RUNTIME=rust \
+DRLINK_EGRESS_NATIVE_LIBRARY="$ROOT/native/drlink-egress/target/release/libdrlink_egress.so" \
+python3 tests/test-egress-rust-relay.py
+DRLINK_MCP_RUNTIME=rust \
+DRLINK_MCP_NATIVE_LIBRARY="$ROOT/native/drlink-mcp-runtime/target/release/libdrlink_mcp_runtime.so" \
+python3 tests/test-mcp-rust-runtime.py
+DRLINK_MCP_RUNTIME=rust \
+DRLINK_MCP_NATIVE_LIBRARY="$ROOT/native/drlink-mcp-runtime/target/release/libdrlink_mcp_runtime.so" \
+python3 tests/test-mcp-bridge-workers.py
+DRLINK_MCP_RUNTIME=rust \
+DRLINK_MCP_NATIVE_LIBRARY="$ROOT/native/drlink-mcp-runtime/target/release/libdrlink_mcp_runtime.so" \
+python3 tests/test-mcp-bridge-call-budget.py
+DRLINK_MCP_RUNTIME=rust \
+DRLINK_MCP_NATIVE_LIBRARY="$ROOT/native/drlink-mcp-runtime/target/release/libdrlink_mcp_runtime.so" \
+python3 tests/test-mcp-server-full-control.py
+DRLINK_MCP_RUNTIME=rust \
+DRLINK_MCP_NATIVE_LIBRARY="$ROOT/native/drlink-mcp-runtime/target/release/libdrlink_mcp_runtime.so" \
+python3 tests/test-mcp-server-local-executor.py
+DRLINK_MCP_RUNTIME=rust \
+DRLINK_MCP_NATIVE_LIBRARY="$ROOT/native/drlink-mcp-runtime/target/release/libdrlink_mcp_runtime.so" \
+python3 tests/test-ai-access-mcp-e2e.py
+
 echo "=== human E2E finding → fast regression links (supporting only) ==="
 python3 tests/test_persona_findings.py
 python3 tools/persona_findings.py
@@ -154,6 +183,8 @@ python3 tests/test-held-claim-wake.py
 python3 tests/test-agent-held-claim.py
 python3 tests/test-mcp-bridge-held-claim.py
 python3 tests/test-mcp-bridge-workers.py
+python3 tests/test-lperf-bridge-workers.py
+python3 tests/test-lperf-egress-benchmark.py
 python3 tests/test-ai-access-eval-equivalence.py
 python3 tests/test-ai-jobs-schema-once.py
 python3 tests/test-mcp-agent-dispatch-latency.py

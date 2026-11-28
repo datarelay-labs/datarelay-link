@@ -1,0 +1,13 @@
+[package]
+name = "drlink-egress-native"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[lib]
+name = "drlink_egress"
+path = "src/lib.rs"
+crate-type = ["cdylib"]
+
+[dependencies]
+libc = "=0.2.191"

@@ -1465,7 +1465,7 @@ def _handle_client_inner(gw: GatewayState, request: socket.socket, client_addres
             _state, _err, cfg, _snap = gw.cache.snapshot()
             outcome = _relay_bidirectional(request, upstream, gw=gw, session=session, cfg=cfg)
             # POLICY_REVOKED already emitted a correlated deny record inside relay.
-            if outcome != EG.AUDIT_POLICY_REVOKED and cfg is not None:
+            if outcome not in (EG.AUDIT_POLICY_REVOKED, EG.AUDIT_RELAY_FAILURE) and cfg is not None:
                 EG.emit_conn_log(
                     {
                         "timestamp": EG.utc_now_iso(),
@@ -1669,6 +1669,10 @@ class ThreadedTCPServer(socketserver.ThreadingTCPServer):
         self.gw = gw
         # Bound worker creation itself (not only handler-body acquire).
         self.max_concurrent = int(getattr(gw, "max_concurrent", DEFAULT_MAX_CONCURRENT) or DEFAULT_MAX_CONCURRENT)
+        # TCPServer activates/listens in its constructor, so the default backlog
+        # of 5 must be replaced before super().__init__. Keep it aligned with
+        # the bounded handler capacity while capping the kernel queue itself.
+        self.request_queue_size = min(512, max(5, self.max_concurrent))
         self.request_timeout = float(CLIENT_HEADER_TIMEOUT)
         self._slot_sem = threading.BoundedSemaphore(self.max_concurrent)
         super().__init__(server_address, None)

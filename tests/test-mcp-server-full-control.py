@@ -310,6 +310,19 @@ class FullControlRuntimeTests(unittest.TestCase):
                 except ProcessLookupError:
                     pass
 
+    def test_final_native_drain_failure_is_incomplete_and_visible(self):
+        with patch.object(self.runtime, "native_process_io", True), \
+                patch.object(full, "drain_process", side_effect=[9, 1]), \
+                patch.object(full, "free_process_watch") as free_watch:
+            result = self.completed(self.run_command([
+                sys.executable, "-c", "import time; time.sleep(30)",
+            ], wait_ms=0, timeout_seconds=5))
+
+        self.assertFalse(result["output_complete"])
+        self.assertEqual(result["error"], "child process lifecycle did not complete")
+        self.assertIsNotNone(result["exit_status"])
+        free_watch.assert_called_once()
+
     def test_partial_input_preserves_utf8_character_boundaries(self):
         import hashlib
         data = ("가🙂" * 8000).encode("utf-8")

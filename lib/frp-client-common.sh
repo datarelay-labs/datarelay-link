@@ -5648,6 +5648,7 @@ frp_client_install_management_files() {
       echo "ERROR: missing ${source}/lib/${f}" >&2
       return 1
     }
+    mkdir -p "${libdir}/$(dirname -- "${f}")"
     install -m 0644 "${source}/lib/${f}" "${libdir}/${f}"
   done < <(PYTHONPATH="${source}/lib${PYTHONPATH:+:$PYTHONPATH}" python3 -c \
     'from drlink_agent_payload import agent_lib_files; print("\n".join(agent_lib_files()))')
@@ -5966,21 +5967,25 @@ frp_client_upgrade_validate_staged() {
 }
 
 frp_client_upgrade_backup_tools() {
-  local stamp dest live rel mode src base
+  local stamp dest live rel mode src backup_file
   stamp="$(date -u +%Y%m%dT%H%M%SZ)"
   dest="$(frp_client_upgrade_backup_root)/${stamp}"
   mkdir -p "$dest"
   chmod 700 "$(frp_client_upgrade_backup_root)" 2>/dev/null || true
   chmod 700 "$dest"
+  # An all-absent inventory is still a current-format snapshot. Preserve the
+  # layout marker so restore does not mistake it for a legacy basename dump.
+  mkdir -p "${dest}/files"
   while IFS=: read -r rel mode src; do
     [[ -n "$rel" ]] || continue
     live="$(frp_client_path "/${rel}")"
-    base="$(basename "$rel")"
+    backup_file="${dest}/files/${rel}"
     if [[ -f "$live" ]]; then
-      install -m "$mode" "$live" "${dest}/${base}"
-      printf 'present %s\n' "$base" >>"${dest}/manifest"
+      mkdir -p "$(dirname "$backup_file")"
+      install -m "$mode" "$live" "$backup_file"
+      printf 'present %s\n' "$rel" >>"${dest}/manifest"
     else
-      printf 'absent %s\n' "$base" >>"${dest}/manifest"
+      printf 'absent %s\n' "$rel" >>"${dest}/manifest"
     fi
   done < <(frp_client_upgrade_destinations)
   live="$(frp_client_version_file)"
@@ -6012,13 +6017,65 @@ PY
   printf '%s' "$dest"
 }
 
+frp_client_upgrade_validate_legacy_snapshot() {
+  local backup="$1" inventory
+  inventory="$(frp_client_upgrade_destinations)" || return 1
+  python3 - "$backup" "$inventory" <<'PY'
+import sys
+from pathlib import Path, PurePosixPath
+
+root = Path(sys.argv[1])
+current = {line.split(":", 1)[0] for line in sys.argv[2].splitlines() if line}
+manifest = root / "manifest"
+if not manifest.is_file():
+    raise SystemExit("ERROR: legacy snapshot manifest is missing")
+seen = {}
+listed = set()
+for raw in manifest.read_text(encoding="utf-8").splitlines():
+    if not raw:
+        continue
+    try:
+        state, rel = raw.split(" ", 1)
+    except ValueError:
+        raise SystemExit("ERROR: legacy snapshot manifest entry is malformed")
+    if state not in {"present", "absent"} or not rel:
+        raise SystemExit("ERROR: legacy snapshot manifest entry is malformed")
+    path = PurePosixPath(rel)
+    if path.is_absolute() or ".." in path.parts:
+        raise SystemExit("ERROR: legacy snapshot path is unsafe")
+    if rel in listed:
+        raise SystemExit("ERROR: legacy snapshot repeats a manifest path")
+    listed.add(rel)
+    if rel == "version":
+        if state == "present" and not (root / "version").is_file():
+            raise SystemExit("ERROR: legacy snapshot version file is missing")
+        continue
+    if state != "present":
+        continue
+    if rel not in current:
+        raise SystemExit("ERROR: legacy snapshot contains an unmanaged path")
+    name = path.name
+    if name in seen and seen[name] != rel:
+        raise SystemExit("ERROR: legacy snapshot has ambiguous duplicate basenames")
+    seen[name] = rel
+    if not (root / name).is_file():
+        raise SystemExit("ERROR: legacy snapshot file is missing: " + name)
+PY
+}
+
 frp_client_upgrade_restore_tools() {
-  local backup="$1" live rel mode src base
+  local backup="$1" live rel mode src backup_file
   [[ -d "$backup" ]] || return 1
   # Tools backups always write a manifest. FRP binary backups must never be
   # treated as management-tool snapshots (they would delete live tools).
   if [[ ! -f "${backup}/manifest" ]]; then
     echo "ERROR: snapshot is not a management-tools backup (missing manifest)." >&2
+    return 1
+  fi
+  # Older helpers stored files by basename. Preflight every recorded present
+  # path and reject duplicate basename mappings before any live-file mutation.
+  if [[ ! -d "${backup}/files" ]] && ! frp_client_upgrade_validate_legacy_snapshot "$backup"; then
+    echo "ERROR: legacy Agent snapshot cannot be mapped safely; installed files were not changed." >&2
     return 1
   fi
   if [[ "${FRP_CLIENT_UPGRADE_HOOK_ROLLBACK_FAIL:-}" == "1" ]]; then
@@ -6028,11 +6085,24 @@ frp_client_upgrade_restore_tools() {
   while IFS=: read -r rel mode src; do
     [[ -n "$rel" ]] || continue
     live="$(frp_client_path "/${rel}")"
-    base="$(basename "$rel")"
-    if [[ -f "${backup}/${base}" ]]; then
-      install -m "$mode" "${backup}/${base}" "$live"
+    if [[ -d "${backup}/files" ]]; then
+      backup_file="${backup}/files/${rel}"
+      if [[ -f "$backup_file" ]]; then
+        mkdir -p "$(dirname "$live")"
+        install -m "$mode" "$backup_file" "$live"
+      else
+        rm -f "$live"
+      fi
     else
-      rm -f "$live"
+      backup_file="${backup}/${rel##*/}"
+      local state
+      state="$(awk -v r="$rel" '$2==r {print $1; exit}' "${backup}/manifest")"
+      if [[ "$state" == present && -f "$backup_file" ]]; then
+        mkdir -p "$(dirname "$live")"
+        install -m "$mode" "$backup_file" "$live"
+      else
+        rm -f "$live"
+      fi
     fi
   done < <(frp_client_upgrade_destinations)
   live="$(frp_client_version_file)"
@@ -6057,19 +6127,26 @@ frp_client_upgrade_restore_tools() {
 }
 
 frp_client_upgrade_verify_restored() {
-  local backup="$1" live rel mode src base state
+  local backup="$1" live rel mode src state backup_file
   [[ -f "${backup}/manifest" ]] || return 1
+  if [[ ! -d "${backup}/files" ]] && ! frp_client_upgrade_validate_legacy_snapshot "$backup"; then
+    return 1
+  fi
   while IFS=: read -r rel mode src; do
     [[ -n "$rel" ]] || continue
     live="$(frp_client_path "/${rel}")"
-    base="$(basename "$rel")"
-    state="$(awk -v b="$base" '$2==b {print $1; exit}' "${backup}/manifest")"
+    state="$(awk -v r="$rel" '$2==r {print $1; exit}' "${backup}/manifest")"
+    if [[ -d "${backup}/files" ]]; then
+      backup_file="${backup}/files/${rel}"
+    else
+      backup_file="${backup}/${rel##*/}"
+    fi
     case "$state" in
       present)
-        [[ -f "$live" && "$(frp_client_digest "$live")" == "$(frp_client_digest "${backup}/${base}")" ]] \
+        [[ -f "$live" && "$(frp_client_digest "$live")" == "$(frp_client_digest "$backup_file")" ]] \
           || return 1
         ;;
-      absent)
+      absent|"")
         [[ ! -e "$live" ]] || return 1
         ;;
       *)

@@ -58,21 +58,57 @@ class ConnLogFailureVisible(unittest.TestCase):
         egress.mkdir(parents=True)
         log_path = egress / "connections.jsonl"
         log_path.write_text("", encoding="utf-8")
-        os.chmod(log_dir, 0)
-        buf = io.StringIO()
-        with redirect_stderr(buf):
-            EG.emit_conn_log(
-                {
-                    "decision": "ALLOW",
-                    "hostname": "allowed.test",
-                    "port": 443,
-                    "source_ip": "127.0.0.1",
-                    "reason": "rule",
-                },
-                path=log_path,
-            )
-        os.chmod(log_dir, 0o755)
-        text = buf.getvalue()
+        event = {
+            "decision": "ALLOW",
+            "hostname": "allowed.test",
+            "port": 443,
+            "source_ip": "127.0.0.1",
+            "reason": "rule",
+        }
+        # root can bypass mode 000 (CAP_DAC_OVERRIDE). Exercise the same real
+        # denied filesystem access in a disposable nonprivileged subprocess
+        # when the full suite itself runs as root.
+        if os.geteuid() == 0:
+            import json
+            import pwd
+
+            account = pwd.getpwnam("nobody")
+            os.chmod(tmp.name, 0o755)
+            # The parent, not the file or leaf, must be the denial boundary.
+            os.chmod(egress, 0o777)
+            os.chmod(log_path, 0o666)
+            module = Path(tmp.name) / "frp_egress_control.py"
+            shutil.copyfile(ROOT / "lib/frp_egress_control.py", module)
+            os.chmod(module, 0o644)
+            os.chmod(log_dir, 0)
+
+            def drop_privileges():
+                os.setgroups([])
+                os.setgid(account.pw_gid)
+                os.setuid(account.pw_uid)
+
+            try:
+                result = subprocess.run(
+                    [sys.executable, "-B", "-c",
+                     "import json, sys, frp_egress_control as eg; "
+                     "eg.emit_conn_log(json.loads(sys.argv[1]), path=sys.argv[2])",
+                     json.dumps(event), str(log_path)],
+                    cwd=tmp.name, preexec_fn=drop_privileges,
+                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                    check=True,
+                )
+                text = result.stderr
+            finally:
+                os.chmod(log_dir, 0o755)
+        else:
+            os.chmod(log_dir, 0)
+            buf = io.StringIO()
+            try:
+                with redirect_stderr(buf):
+                    EG.emit_conn_log(event, path=log_path)
+                text = buf.getvalue()
+            finally:
+                os.chmod(log_dir, 0o755)
         self.assertIn("connection audit unavailable", text)
         self.assertIn(str(log_path), text)
         self.assertEqual(log_path.stat().st_size, 0)

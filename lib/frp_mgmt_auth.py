@@ -10,7 +10,10 @@ still supports Amazon Linux 2 (OpenSSL 1.0.2), where Ed25519 is unavailable.
 ECDSA P-256 is a standard, non-custom primitive and the same OpenSSL CLI works
 from OpenSSL 1.0.2 through 3.x, matching the existing OpenSSL dependency.
 
-This module does not implement original cryptography. It shells out to OpenSSL.
+This module does not implement original cryptography. OpenSSL CLI remains the
+portable implementation. Where the existing optional cryptography dependency
+is available, management signing and verification use its in-process ECDSA backend with identical
+P-256/SHA-256/DER wire semantics.
 
 Canonical signed object (mgmt schema 1)
 ---------------------------------------
@@ -51,11 +54,25 @@ import json
 import os
 import re
 import secrets
+import stat
 import subprocess
 import sys
 import tempfile
 import time
 from pathlib import Path
+from functools import lru_cache
+
+try:
+    from cryptography.exceptions import InvalidSignature as _NativeInvalidSignature
+    from cryptography.hazmat.backends import default_backend as _native_default_backend
+    from cryptography.hazmat.primitives import hashes as _NATIVE_HASHES
+    from cryptography.hazmat.primitives.asymmetric import ec as _NATIVE_EC
+    from cryptography.hazmat.primitives.serialization import load_pem_public_key as _native_load_public_key
+    from cryptography.hazmat.primitives.serialization import load_pem_private_key as _native_load_private_key
+except ImportError:
+    # Older/minimal Linux, macOS and Agent installations keep the CLI path.
+    _NATIVE_EC = None
+
 
 MGMT_ALG = 'ecdsa-p256-sha256'
 MGMT_SIGN_SCHEMA = 1
@@ -435,6 +452,63 @@ def sign_message(key_path, message):
             pass
 
 
+def management_request_signer(key_path):
+    """Validate the current private key and return a request-local signer.
+
+    No private key material, signing result, or file validation is cached.
+    Native signing checks permissions on the same opened regular file whose
+    PEM is parsed, and uses P-256/SHA-256/DER exactly like the portable CLI.
+    """
+    if _NATIVE_EC is None:
+        validate_private_key(key_path)
+        return lambda message: sign_message(key_path, message)
+
+    # A single descriptor binds permissions and contents. Nonblocking open
+    # avoids hanging on a path replaced with a FIFO before fstat.
+    fd = os.open(str(key_path), os.O_RDONLY | getattr(os, "O_NONBLOCK", 0))
+    with os.fdopen(fd, "rb") as stream:
+        info = os.fstat(stream.fileno())
+        if not stat.S_ISREG(info.st_mode):
+            raise ValueError("management identity is not a regular file")
+        if info.st_mode & 0o077:
+            raise ValueError("management identity key permissions are too open (expected 0600)")
+        key = _native_load_private_key(
+            stream.read(), password=None, backend=_native_default_backend())
+    if (not isinstance(key, _NATIVE_EC.EllipticCurvePrivateKey)
+            or not isinstance(key.curve, _NATIVE_EC.SECP256R1)):
+        raise ValueError("management private key must be ECDSA P-256")
+
+    def sign(message):
+        if isinstance(message, str):
+            message = message.encode("utf-8")
+        sig = key.sign(message, _NATIVE_EC.ECDSA(_NATIVE_HASHES.SHA256()))
+        if not sig:
+            raise RuntimeError("empty signature")
+        return base64.b64encode(sig).decode("ascii")
+
+    return sign
+
+
+@lru_cache(maxsize=256)
+def _validated_verification_public_key(pem):
+    """Cache only bounded, immutable, successfully validated public key bytes.
+
+    Never cache signature/authentication results, identity status, nonce state,
+    or private key material. A replaced key uses a different cache key; invalid
+    keys are not cached. ECDSA still verifies every message below.
+    """
+    return canonicalize_pubkey_pem(pem)
+
+
+@lru_cache(maxsize=256)
+def _native_verification_key(canonical_pem):
+    key = _native_load_public_key(canonical_pem.encode("utf-8"), backend=_native_default_backend())
+    if (not isinstance(key, _NATIVE_EC.EllipticCurvePublicKey)
+            or not isinstance(key.curve, _NATIVE_EC.SECP256R1)):
+        raise ValueError("management public key must be ECDSA P-256")
+    return key
+
+
 def verify_signature(pub_pem, message, signature_b64):
     if isinstance(message, str):
         message = message.encode('utf-8')
@@ -447,7 +521,18 @@ def verify_signature(pub_pem, message, signature_b64):
         raise ValueError('malformed signature') from exc
     if not sig:
         raise ValueError('malformed signature')
-    canon = canonicalize_pubkey_pem(pub_pem)
+    text = str(pub_pem or '').replace('\r\n', '\n').strip() + '\n'
+    if len(text) > MAX_PUBKEY_PEM_LEN:
+        raise ValueError('public key is too large')
+    canon = _validated_verification_public_key(text)
+    if _NATIVE_EC is not None:
+        key = _native_verification_key(canon)
+        try:
+            key.verify(sig, message, _NATIVE_EC.ECDSA(_NATIVE_HASHES.SHA256()))
+            return True
+        except (_NativeInvalidSignature, ValueError):
+            # Do not retry a cryptographically rejected request via another backend.
+            return False
     fd_pub, tmp_pub = tempfile.mkstemp(prefix='frp-pub.', suffix='.pem')
     os.close(fd_pub)
     fd_sig, tmp_sig = tempfile.mkstemp(prefix='frp-sig.', suffix='.bin')

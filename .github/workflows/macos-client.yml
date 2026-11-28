@@ -6,11 +6,57 @@ on:
     tags:
       - 'v*'
   pull_request:
+  workflow_dispatch:
 
 permissions:
   contents: read
 
 jobs:
+  linux-native:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            runner: ubuntu-24.04
+          - target: aarch64-unknown-linux-gnu
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          fetch-depth: 0
+      - name: Install pinned Rust runtime toolchain and target
+        run: |
+          rustup toolchain install 1.75.0 --profile minimal --no-self-update
+          rustup target add --toolchain 1.75.0 "${{ matrix.target }}"
+      - name: Test and build target-bound runtime assets
+        env:
+          DRLINK_NATIVE_TARGET: ${{ matrix.target }}
+          DRLINK_NATIVE_LINKER: cc
+          DRLINK_NATIVE_STRIP: strip
+        run: |
+          cargo +1.75.0 test --locked --manifest-path native/drlink-egress/Cargo.toml
+          cargo +1.75.0 build --release --locked --manifest-path native/drlink-egress/Cargo.toml
+          cargo +1.75.0 test --locked --manifest-path native/drlink-mcp-runtime/Cargo.toml
+          cargo +1.75.0 build --release --locked --manifest-path native/drlink-mcp-runtime/Cargo.toml
+          scripts/build-native-runtime-assets.sh
+          python3 scripts/verify-native-runtime-assets.py --target "${{ matrix.target }}"
+          python3 tests/test-native-runtime-package-selection.py
+          DRLINK_EGRESS_RUNTIME=rust \
+            DRLINK_EGRESS_NATIVE_LIBRARY="$PWD/lib/native/${{ matrix.target }}/libdrlink_egress.so" \
+            python3 tests/test-egress-rust-relay.py
+          DRLINK_MCP_RUNTIME=rust \
+            DRLINK_MCP_NATIVE_LIBRARY="$PWD/lib/native/${{ matrix.target }}/libdrlink_mcp_runtime.so" \
+            python3 tests/test-mcp-rust-runtime.py
+      - name: Upload Linux native runtime package
+        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08
+        with:
+          name: native-runtimes-${{ matrix.target }}
+          path: lib/native/${{ matrix.target }}/
+          if-no-files-found: error
+          retention-days: 14
+
   portable:
     runs-on: ubuntu-latest
     steps:
@@ -28,8 +74,40 @@ jobs:
     runs-on: macos-15
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          fetch-depth: 0
+      - name: Install pinned Rust runtime toolchain
+        run: rustup toolchain install 1.75.0 --profile minimal --no-self-update
+      - name: Build target-bound Rust runtime package
+        run: scripts/build-native-runtime-assets.sh
+      - name: Verify target-bound runtime package discovery
+        run: |
+          python3 scripts/verify-native-runtime-assets.py --target aarch64-apple-darwin
+          python3 tests/test-native-runtime-package-selection.py
+      - name: Build and exercise native MCP process lifecycle
+        run: |
+          cargo +1.75.0 test --locked --manifest-path native/drlink-mcp-runtime/Cargo.toml
+          cargo +1.75.0 build --release --locked --manifest-path native/drlink-mcp-runtime/Cargo.toml
+          export DRLINK_MCP_RUNTIME=rust
+          export DRLINK_MCP_NATIVE_LIBRARY="$PWD/lib/native/aarch64-apple-darwin/libdrlink_mcp_runtime.dylib"
+          python3 tests/test-mcp-rust-runtime.py
+          DRLINK_EGRESS_RUNTIME=rust \
+            DRLINK_EGRESS_NATIVE_LIBRARY="$PWD/lib/native/aarch64-apple-darwin/libdrlink_egress.dylib" \
+            python3 tests/test-egress-rust-relay.py
+      - name: Upload pinned native runtime package
+        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08
+        with:
+          name: native-runtimes-aarch64-apple-darwin
+          path: lib/native/aarch64-apple-darwin/
+          if-no-files-found: error
+          retention-days: 14
       - name: Verify client port
         run: |
+          # The native package built and exercised above is bound to this
+          # checkout's HEAD. The committed dist closure is bound to the
+          # previously committed source snapshot; restore only the tracked
+          # package files before checking that deterministic closure.
+          git restore --worktree --source=HEAD -- lib/native/aarch64-apple-darwin/
           test "$(uname -m)" = arm64
           for test in tests/test-macos-*.sh; do
             /bin/bash "$test"

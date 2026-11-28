@@ -7,6 +7,7 @@ or any file/command primitive. No arbitrary shell or sudo is exposed.
 from __future__ import annotations
 
 import json
+import importlib.util
 import os
 import grp
 from pathlib import Path
@@ -17,6 +18,25 @@ import signal
 import stat
 import subprocess
 import sys
+
+
+def _load_isolated_capture_process():
+    # The non-root worker is launched with Python -I, which intentionally
+    # omits script and environment paths. Load only the trusted sibling file
+    # by its absolute installed path instead of broadening module search paths.
+    runtime_path = Path(__file__).resolve().with_name("drlink_mcp_runtime.py")
+    spec = importlib.util.spec_from_file_location("drlink_mcp_runtime", runtime_path)
+    if spec is None or spec.loader is None:
+        raise ImportError("trusted MCP runtime adapter is unavailable")
+    runtime = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(runtime)
+    return runtime.capture_process
+
+
+if sys.flags.isolated:
+    capture_process = _load_isolated_capture_process()
+else:
+    from drlink_mcp_runtime import capture_process
 
 MAX_BYTES = 1024 * 1024
 MAX_OUTPUT = 65536
@@ -376,12 +396,24 @@ def execute_as_unprivileged_user(request: dict) -> dict:
         extra_groups=[], close_fds=True, start_new_session=True,
     )
     wait_limit = 125 if request.get("action") == "run_dev_test" else MAX_TIMEOUT + 3
-    try:
-        out, _ = proc.communicate(json.dumps(request).encode("utf-8"), timeout=wait_limit)
-    except subprocess.TimeoutExpired:
-        os.killpg(proc.pid, signal.SIGKILL)
-        proc.communicate()
-        raise ExecutorDenied("Server-local worker timed out")
+    native = capture_process(
+        proc, input_data=json.dumps(request).encode("utf-8"),
+        timeout_seconds=wait_limit, stdout_limit=MAX_BYTES * 2,
+        stderr_limit=0,
+    )
+    if native is not None:
+        out = native["stdout"]
+        if native["timed_out"]:
+            raise ExecutorDenied("Server-local worker timed out")
+        if native["stdout_truncated"]:
+            raise ExecutorDenied("Oversized Server-local worker response")
+    else:
+        try:
+            out, _ = proc.communicate(json.dumps(request).encode("utf-8"), timeout=wait_limit)
+        except subprocess.TimeoutExpired:
+            os.killpg(proc.pid, signal.SIGKILL)
+            proc.communicate()
+            raise ExecutorDenied("Server-local worker timed out")
     if proc.returncode:
         raise ExecutorDenied("Server-local worker could not complete the request")
     if len(out) > MAX_BYTES * 2:

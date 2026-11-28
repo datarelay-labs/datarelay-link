@@ -234,6 +234,154 @@ Fixed TCP through the same authority
 
 기술 능력명: **Controlled Egress**. 일반 CLI/resource 이름: **Internet Access**.
 
+현재 소유자 결정에 따라 Rust를 제한된 native runtime의 장기 구현 언어로 선택했습니다.
+완료된 Python/Rust 측정은 과거 참고 자료이며 성능 비교는 구현 조건이 아닙니다. R1은
+Python이 승인하고 연결한 뒤 양방향 TCP relay를 Rust로 처리하고, 주기적인 정책 재검증과
+Python rollback 권한은 Python에 둡니다. MCP R2는 Rust가 ready 상태의 Python 소유 listener에서
+연결을 accept하고 dispatch admission, 1 MiB 결과
+보존 창/64 KiB cursor page, 64 KiB 요청 본문 읽기와 응답 쓰기 및 짧은 쓰기 재시도를
+처리하며, Python DB watcher가 보내는 job wakeup을 Rust 조건 변수로 기다립니다. CLI,
+OAuth/AI Identity, AI Access 정책, SQLite, durable job, nonce, audit,
+HTTP/TLS와 실제 socket 소유권은 Python에 유지됩니다. 자동 모드는 설치된 native library가
+있을 때 Rust를 선택합니다. Linux x86_64/ARM64 Agent/Server와 Apple Silicon macOS Agent bundle에는
+두 Rust shared library가 target별 native 디렉터리에 포함되며, `runtime-build.json`에 Rust 버전, source HEAD,
+Cargo.lock 및 library hash를 기록합니다. Agent runtime lineage manifest와 Server project-file
+manifest가 install, update, rollback에서 해당 파일을 관리합니다. Linux ARM64 package는 native runner에서
+build, runtime 선택 및 adapter 테스트를 통과했습니다. 명시적인 Rust 선택은 library 부재 시 fail-closed입니다.
+구형 basename 평면 스냅샷은 manifest 경로와 저장 파일의 유일성을 먼저 검증한 경우에만 복구합니다.
+중복되거나 안전하게 연결할 수 없는 경로는 live 파일 변경 전에 거부합니다. Rust 패키지 CI는 새로 빌드한
+target 하나의 provenance를 확인하고, release 검증은 세 지원 target 전체를 확인합니다.
+2026-11-27 exact candidate에서는 Linux x86_64/ARM64 native matrix, Apple Silicon native MCP lifecycle 및 client-port 검증이 통과했습니다.
+`DRLINK_MCP_WORKERS=auto`는 cgroup 메모리 한도를 읽을 수 없거나 값이 잘못된 경우 worker 하나만 선택하며,
+controller가 비활성화된 cgroup v2 최상위의 `memory.max` 부재만 예외로 처리합니다.
+Apple Silicon에서 이미 종료된 자식의 process group 신호가 `EPERM`을 반환하는 경합은 자식 reaping 후 group 부재를 확인한 경우에만 허용하며,
+접근할 수 없는 살아 있는 group은 계속 fail-closed 처리합니다. 수정 후 MCP runtime 21/21, worker selection 13/13,
+Server full-control 25/25 및 local executor 9/9 테스트가 통과했고, Apple Silicon CI 재실행은 진행 중입니다.
+handoff 이후 세션을 Python relay로 재실행하지 않으며, 새 연결은 `DRLINK_EGRESS_RUNTIME=python`으로 기존 Python rollback 경로를
+선택할 수 있습니다. 각 방향의 relay queue는 256 KiB로 제한하며, peer hangup 뒤에도
+수신 EOF까지 대기 데이터를 전달하고 backpressure 중 유휴 descriptor를 poll에서 제외합니다.
+용량이 찬 relay buffer에 대한 zero-length `recv`를 EOF로 오인하지 않도록 양방향 처리를
+수정했으며, 1 MiB 요청 half-close와 tail 보존 회귀 테스트가 통과했습니다.
+Rust MCP helper는 dispatch admission, 1 MiB 결과 보존 창/64 KiB cursor page, 64 KiB 제한
+inbound request body 읽기와 response 쓰기, bounded job wakeup 대기를 제공합니다. HTTP/TLS
+stream, JSON parsing, 권한 판단, SQLite 조회와 결과 소비, bind, socket/TLS 및 요청 처리는
+계속 Python이 담당합니다. Rust accept는 bounded runtime helper이며 연결 수명 주기와 TLS
+소유권은 Python에 있습니다. R3 stdout/stderr drain은
+Linux/macOS Agent 및 Server 경로에 연결됐습니다. Linux 회귀와 Apple Silicon workflow
+45958802619의 stateful kqueue lifecycle 검증이 통과했습니다. retry drain 사이에 exit event를
+유지하며, 정상 EOF 뒤 불필요한 process group signal을 보내지 않습니다. 실제 정리가
+필요한 경로의 권한 거부는 계속 오류로 처리합니다. Linux x86_64/ARM64 Agent 및 Server와
+Apple Silicon macOS Agent 패키지에 target별 Rust library가 포함됩니다. Linux 두 target은
+native runner의 build, provenance, runtime 선택, egress/MCP adapter 테스트를 통과했고,
+Apple Silicon은 runtime 발견, process lifecycle, client-port 및 artifact 검증을 통과했습니다.
+정확한 artifact HEAD `b4e9fd2f`의 `tests/run-fast-pr.sh`는 `FAST_PR=PASS`이고,
+해당 PR CI와 Codex 검토에서는 major finding이 없었습니다. MCP rollback은 `DRLINK_MCP_RUNTIME=python`이며, `auto`는 library가 없으면 Python으로
+돌아가고 명시적 `rust` 선택은 library 부재 시 서비스 초기화를 fail-closed 합니다.
+R3에서는 Python이 시작한 Linux/macOS Agent 및 Server executor 자식 프로세스의
+stdout/stderr pipe를 Rust가 poll하고 읽습니다. macOS는 timeout/retry drain 호출 사이에 유지되는 kqueue process-exit watcher로
+종료를 관찰하고, Linux는 waitid를 사용합니다. Apple Silicon 재검증에서 정상 EOF와 descendant-held-pipe retry가 통과했습니다. process 시작,
+timeout 선택, process-group 종료, wait/reap 권한은 Python에 유지됩니다.
+또한 MCP job 출력은 Rust가 기존 1 MiB 보존 창과 64 KiB cursor 페이지를 제공하고,
+Python이 job 소유권과 cursor 검증, 응답 생성을 계속 담당합니다. Linux x86_64/ARM64 Agent 및
+Server와 Apple Silicon macOS Agent의 native library는 target별 설치 bundle, provenance record,
+Agent lineage manifest 및 Server update/rollback manifest에 포함됩니다. 실제 사용자 E2E와
+설치 서비스 load/soak qualification은 별도로 남아 있습니다.
+
+Rust process I/O의 최종 EOF drain이 실패하면 Agent capture는 stream을 닫고 자식을 reap한 뒤
+오류를 반환합니다. Server full-control도 해당 job을 `output_complete=false`와 제한된
+lifecycle 오류가 있는 완료 영수증으로 노출하며 성공적인 출력으로 표시하지 않습니다.
+stdin writer가 없거나 최종 drain이 시간 초과해도 Python이 소유한 process watcher를 해제합니다.
+계정, timeout, process-group 종료, wait/reap 권한은 계속 Python에 있습니다.
+Python이 자식을 시작한 뒤 명시적 Rust 런타임 library 로드가 실패하는 경우에도
+소유 프로세스 그룹을 종료하고 자식을 reap하며 stdout/stderr와 watcher를 정리한 후
+오류를 반환합니다. 이 경우에도 계정 및 프로세스 수명 주기 권한은 Python에 남습니다.
+Apple Silicon exact-head 재검증에서 leader 종료 직후 첫 8 KiB만 읽고 status 9를
+반환해 정상 자식의 나머지 buffered 출력이 EOF까지 처리되지 않는 결함을 찾았습니다.
+Rust helper는 즉시 읽을 수 있는 양쪽 pipe 데이터를 EOF까지 계속 drain하고, 데이터가
+없는데 pipe가 열린 경우에만 descendant-held 상태 9를 반환하도록 수정했습니다. 기존
+210 KiB 양방향 출력 회귀와 Apple Silicon process lifecycle, client-port 및 pinned FRP
+검증이 exact source `be9b8f3` workflow `46062751724`에서 통과했습니다. 새 native package와
+full local gate 검증은 아래 `7a4b886` exact artifact qualification에서 통과했습니다.
+
+2026-11-27 exact artifact `7a4b886`에서 target별 MCP Rust library provenance와
+bundle closure 검증, 전체 `tests/run-fast-pr.sh`, PR lint/governance/adoption/
+enforcement/portable macOS/Linux x86_64/ARM64 CI가 통과했습니다. 별도 workflow
+`46065150269`의 Apple Silicon process lifecycle, client-port 및 pinned FRP도
+통과했고, exact-head Codex review에서 major issue가 없었습니다.
+
+동일 artifact HEAD의 Rust-selected shared-plane soak은 3,600초 동안 54개 wave를
+완료했습니다. 각 wave에서 30개 synthetic host에 MCP job 90/90건, 거부 3건,
+CONNECT ACK 20/20건, policy 403 한 건, audit ID 21개가 확인됐고,
+unauthorized job/upstream connect는 0건, fixture FD는 계속 38개였습니다.
+54개 receipt set 모두 통과했고 MCP p95는 262–426 ms로 전 샘플이 preferred
+500 ms 미만이었습니다. Bridge PSS는 127–166 MiB, worker peak RSS는 31–39 MiB였습니다.
+완료 결과는 `PASS_LAB WAVES 54 ELAPSED_S 3600.0 REQUESTED_S 3600`이며 raw log는
+`/tmp/lperf-shared-plane-7a4b886-soak-3600.log`입니다. 종료 후 사용 가능 RAM은
+27.7 GiB, cgroup CPU throttling은 0이었습니다. 첫 vmstat sample에만 swap I/O가
+있었고 다음 두 sample에는 없었습니다. 이는 local synthetic lab qualification이며
+실제 설치 서비스 또는 사용자 E2E를 대체하지 않습니다.
+
+현재 host inventory에는 `final-e2e-rocky9-pass2` 한 대만 있으며
+`connectivity=disconnected`, `ai_executor=not_ready`입니다. 따라서 Surface
+Reconciliation 및 Direct/AI-assisted Full User E2E는 NOT_RUN 상태입니다. 실제
+production, merge, release 또는 permission/auth 변경은 수행하지 않았습니다.
+
+### 2026-11-28 Rust workstream closeout exception
+
+Issue #302의 최신 owner decision 및 PR #304 comment `7231534607`에 따라
+현재 Rust workstream qualification에서는 사용할 수 없는 `final-e2e-rocky9-pass2`를
+제외합니다. 따라서 Surface Reconciliation 및 실제 Direct/AI-assisted Full User E2E는
+NOT_RUN/BLOCKED로 유지하며, 구현 테스트나 synthetic lab 결과를 실제 사용자 E2E PASS로
+표시하지 않습니다. 이 예외는 이 Rust workstream의 구현/local qualification closeout에만
+적용되고, 전역 E2E, 보안 또는 release 요구사항을 변경하거나 면제하지 않습니다.
+
+R1-R3 구현, target package provenance/install/update/rollback, exact-candidate full local
+regression, native platform CI, independent review 및 3,600초 lab soak evidence는 완료했습니다.
+soak은 runtime artifact `7a4b886`에서 실행됐으며 이후 `fe409c2`와 `5c281ed`는 문서 및
+source-bound artifact 갱신만 포함합니다. PR #304는 별도 merge 권한 전까지 OPEN/DRAFT로
+유지하고, real-user E2E 및 release qualification은 별도로 deferred 상태입니다.
+이전 Agent helper의 flat snapshot은 manifest 경로가 파일 basename 하나에 유일하게 대응할 때만
+복구합니다. 새 native 파일은 Python fallback을 복구하도록 제거합니다. 중복 basename이나
+모호한 경로는 설치 파일을 변경하기 전에 거부합니다.
+exact candidate의 native package selector/provenance 6/6, Agent payload lineage/install/upgrade,
+macOS rollback, Server project update/rollback 전체 회귀가 통과했습니다.
+현재 `final-e2e-rocky9-pass2`는 연결이 끊겼고 AI executor가 준비되지 않아 실제 사용자 E2E는 실행하지 않았습니다.
+동일한 Rust 혼합 부하에서 MCP p95 409/494ms는 기존 500ms 목표를 통과했지만, 562/569/592ms는
+#302의 550ms 최대 허용치도 넘었습니다. 3,600초 soak은 p95 초과로 첫 번째 또는 두 번째 wave에서
+중단됐으며 PASS로 기록하지 않습니다. workload, 보안 거부, 감사 영수증, 자원 한도는 바꾸지 않았습니다.
+
+`dbac330`의 격리된 Rust 혼합 부하 재측정에서는 다른 로컬 테스트가 실행되지 않았고,
+10개 CPU가 온라인이며 시스템 CPU 유휴율은 91% 초과, Bridge 서비스 cgroup CPU throttling은 없었고,
+최근 시스템 CPU/메모리/I/O 압력은 거의 0이었습니다. 동일 workload는 MCP job 90/90 완료,
+비인가 호출 3건 거부, Egress ACK 20/20, audit ID 21개, 비인가 job/upstream 0건,
+fixture FD 38개를 기록했습니다. MCP p95 543ms는 선호 목표 500ms를 넘었지만 승인된
+최대치 550ms 이내입니다. 이전 3,600초 실행은 기존 500ms 검사에서 첫 wave 후 중단되어
+soak PASS가 아닙니다. 혼합 부하 runner는 500ms 선호 목표와 550ms 허용 상한을 각각 표시하고
+상한을 검사하며, 독립 MCP scale 검사는 기존 500ms 기준을 유지합니다. 진단된 병목 및
+합리적으로 가능한 안전한 튜닝의 근거가 아직 충분하지 않아 조건부 600ms 기준은 채택하지 않았습니다.
+후속 source의 단일 wave 확인 결과 p95는 466ms와 453ms였고,
+job 90/90, 거부 3건, ACK 20/20, audit ID 21개, 비인가 job/upstream 0건,
+fixture FD 38개가 유지됐습니다. 두 번째 검사는 `ResourceWarning`을 오류로 처리했고,
+Agent/Server 자식 프로세스 stream을 teardown에서 닫은 뒤 통과했습니다. 이는 단일 wave 검사이며
+550ms 상한을 적용한 새 3,600초 실행은 아직 필요합니다.
+`172e988` exact artifact의 3,600초 실행은 동일 workload와 500/550ms 목표로
+진행했지만 368.8초, wave 6에서 MCP p95 592ms(각 round 647/542/496ms)로 중단됐습니다.
+queue/run/total p95는 119/297/361ms였고 job 90건 완료 및 거부 3건이 확인됐습니다.
+latency assertion이 먼저 발생해 해당 wave의 Egress/audit receipt 집계는 출력되지 않았으므로
+그 wave의 receipt PASS를 주장하지 않습니다. 별도 진단 wave에서는 client p95 620ms,
+연결된 audit duration p95 473ms, 저장된 job total p95 371ms, round p95 528/640/457ms,
+거부 3건 및 비인가 job 0건을 기록했습니다. 저장 job 구간 밖에서 변동이 있었지만 안전한 runtime
+튜닝 원인은 아직 확인되지 않았습니다. soak 후 시스템 가용 RAM은 26GiB, service cgroup CPU
+throttling은 없었으며 첫 `vmstat` sample의 swap/I/O burst 뒤 후속 sample은 유휴 상태였습니다.
+따라서 조건부 600ms 상한은 적용하지 않았습니다. runner는 이후 latency 실패 시에도 Egress/audit
+receipt를 확인하고 출력한 뒤 실패를 다시 올리도록 보완했습니다.
+receipt 보존 진단은 MCP p95 621ms(round 654/527/441ms), audit duration p95 458ms,
+job total p95 296ms로 재현됐습니다. 이 wave는 job 90/90, 거부 3건, Egress ACK 20/20,
+policy 403 1건, audit ID 21개, 비인가 job/upstream 0건, FD 38개를 출력하고 검증했습니다.
+wave 후 가용 RAM은 26GiB, cgroup CPU throttling은 없었지만 CPU PSI avg10 1.43%,
+cgroup I/O pressure avg10 0.07%, 세 번째 `vmstat` sample CPU 사용량 11%였습니다.
+환경 contention을 완전히 배제하지 못했으므로 조건부 600ms 기준 요건을 충족하지 않습니다.
+
 ### AI Access / MCP
 
 MCP Bridge는 v2.4.0 **target**에 포함되며, stable release 전에 qualification이 필요합니다. 이미 출시된 stable 기능으로 설명하지 마십시오.

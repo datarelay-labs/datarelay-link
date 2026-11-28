@@ -32,6 +32,14 @@ EOF
   esac
 done
 
+# An explicitly empty test root is a harness configuration error, not consent
+# to fall back to the installed host. Reject it before any host mutation.
+if [[ ${FRP_UNINSTALL_TEST_ROOT+x} == x && -z "${FRP_UNINSTALL_TEST_ROOT:-}" ]]; then
+  echo "ERROR: empty uninstall test root" >&2
+  echo "FAILURE_CLASS=PATH_DELETION_REFUSED" >&2
+  exit 2
+fi
+
 if [[ ${EUID} -ne 0 && -z "${FRP_UNINSTALL_TEST_ROOT:-}" ]]; then
   echo 'Run as root' >&2
   exit 1

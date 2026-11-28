@@ -80,6 +80,137 @@ class MgmtIdentityFirstGenAtomicity(unittest.TestCase):
             sorted(p.name for p in self.dir.iterdir()), [], "temp files left behind"
         )
 
+    def test_repeated_signature_verification_parses_public_key_once_but_verifies_every_message(self):
+        from unittest import mock
+
+        MGMT.generate_keypair(self.key, self.pub)
+        pem = self.pub.read_text(encoding="utf-8")
+        sig = MGMT.sign_message(self.key, "first")
+        second = MGMT.sign_message(self.key, "second")
+        other_key = self.dir / "other.key"
+        other_pub = self.dir / "other.pub"
+        MGMT.generate_keypair(other_key, other_pub)
+        other_pem = other_pub.read_text(encoding="utf-8")
+        with mock.patch.object(MGMT, "_NATIVE_EC", None), \
+             mock.patch.object(MGMT, "canonicalize_pubkey_pem",
+                               wraps=MGMT.canonicalize_pubkey_pem) as parse, \
+             mock.patch.object(MGMT.subprocess, "run",
+                               wraps=MGMT.subprocess.run) as openssl:
+            self.assertTrue(MGMT.verify_signature(pem, "first", sig))
+            self.assertTrue(MGMT.verify_signature(pem, "second", second))
+            self.assertFalse(MGMT.verify_signature(pem, "second", sig))
+            self.assertFalse(MGMT.verify_signature(other_pem, "first", sig))
+            self.assertTrue(MGMT.verify_signature(pem, "first", sig))
+            self.assertEqual(parse.call_count, 2,
+                             "only exact validated public key material may be reused")
+            verifies = [c for c in openssl.call_args_list
+                        if "-verify" in c.args[0]]
+            self.assertEqual(len(verifies), 5,
+                             "ECDSA signature must be verified on every request")
+
+    def test_native_verification_matches_openssl_without_per_request_subprocess(self):
+        import base64
+        from unittest import mock
+        try:
+            from cryptography.hazmat.backends import default_backend
+            from cryptography.hazmat.primitives import hashes, serialization
+            from cryptography.hazmat.primitives.asymmetric import ec
+        except ImportError:
+            self.skipTest("optional cryptography package unavailable")
+
+        MGMT.generate_keypair(self.key, self.pub)
+        pem = self.pub.read_text(encoding="utf-8")
+        cli_signature = MGMT.sign_message(self.key, "first")
+        native_key = serialization.load_pem_private_key(
+            self.key.read_bytes(), password=None, backend=default_backend())
+        native_signature = base64.b64encode(
+            native_key.sign(b"second", ec.ECDSA(hashes.SHA256()))).decode("ascii")
+        other_key = self.dir / "other.key"
+        other_pub = self.dir / "other.pub"
+        MGMT.generate_keypair(other_key, other_pub)
+        wrong_pem = other_pub.read_text(encoding="utf-8")
+        cases = [(pem, "first", cli_signature, True),
+                 (pem, "second", native_signature, True),
+                 (pem, "tampered", cli_signature, False),
+                 (wrong_pem, "first", cli_signature, False),
+                 (pem, "first", base64.b64encode(b"bad DER").decode(), False)]
+        with mock.patch.object(MGMT.subprocess, "run", wraps=MGMT.subprocess.run) as openssl:
+            for public, message, signature, expected in cases:
+                self.assertEqual(MGMT.verify_signature(public, message, signature), expected)
+            verifies = [c for c in openssl.call_args_list if "-verify" in c.args[0]]
+            self.assertEqual(len(verifies), 0,
+                             "native backend must not spawn a verifier for every request")
+        # The identical DER wire signatures must also be accepted/rejected by
+        # the existing OpenSSL CLI implementation on a portable Agent/Server.
+        with mock.patch.object(MGMT, "_NATIVE_EC", None):
+            for public, message, signature, expected in cases:
+                self.assertEqual(MGMT.verify_signature(public, message, signature), expected)
+
+    def test_management_signer_revalidates_permissions_and_rotated_key_each_request(self):
+        from unittest import mock
+        if getattr(MGMT, "_NATIVE_EC", None) is None:
+            self.skipTest("optional cryptography package unavailable")
+
+        MGMT.generate_keypair(self.key, self.pub)
+        original_pem = self.pub.read_text(encoding="utf-8")
+        first = MGMT.management_request_signer(self.key)("first")
+        self.assertTrue(MGMT.verify_signature(original_pem, "first", first))
+        self.key.chmod(0o644)
+        with self.assertRaises(ValueError):
+            MGMT.management_request_signer(self.key)
+        self.key.chmod(0o600)
+
+        rotated_key = self.dir / "rotated.key"
+        rotated_pub = self.dir / "rotated.pub"
+        MGMT.generate_keypair(rotated_key, rotated_pub)
+        os.replace(rotated_key, self.key)
+        second = MGMT.management_request_signer(self.key)("second")
+        self.assertFalse(MGMT.verify_signature(original_pem, "second", second))
+        self.assertTrue(MGMT.verify_signature(rotated_pub.read_text(), "second", second))
+        # Portable fallback keeps the same permission validation and wire format.
+        with mock.patch.object(MGMT, "_NATIVE_EC", None):
+            portable = MGMT.management_request_signer(self.key)("portable")
+            self.assertTrue(MGMT.verify_signature(rotated_pub.read_text(), "portable", portable))
+            self.key.chmod(0o644)
+            with self.assertRaises(ValueError):
+                MGMT.management_request_signer(self.key)
+        self.key.chmod(0o600)
+        p384 = self.dir / "p384-sign.key"
+        MGMT._run_openssl(["ecparam", "-name", "secp384r1", "-genkey",
+                          "-noout", "-out", str(p384)])
+        p384.chmod(0o600)
+        with self.assertRaises(ValueError):
+            MGMT.management_request_signer(p384)
+        malformed = self.dir / "malformed.key"
+        malformed.write_text("not a private key")
+        malformed.chmod(0o600)
+        with self.assertRaises(ValueError):
+            MGMT.management_request_signer(malformed)
+        with self.assertRaises((OSError, ValueError)):
+            MGMT.management_request_signer(self.dir / "missing.key")
+
+    def test_verification_cache_rejects_invalid_and_non_p256_keys(self):
+        from unittest import mock
+
+        MGMT.generate_keypair(self.key, self.pub)
+        sig = MGMT.sign_message(self.key, "message")
+        p384 = self.dir / "p384.key"
+        MGMT._run_openssl(["ecparam", "-name", "secp384r1", "-genkey",
+                          "-noout", "-out", str(p384)])
+        wrong_curve = MGMT._run_openssl(["ec", "-in", str(p384), "-pubout"]).decode()
+        with mock.patch.object(MGMT, "canonicalize_pubkey_pem",
+                               wraps=MGMT.canonicalize_pubkey_pem) as parse:
+            for _ in range(2):
+                with self.assertRaises(ValueError):
+                    MGMT.verify_signature(wrong_curve, "message", sig)
+                with self.assertRaises(ValueError):
+                    MGMT.verify_signature("not a key", "message", sig)
+                with self.assertRaises(ValueError):
+                    MGMT.verify_signature("x" * (MGMT.MAX_PUBKEY_PEM_LEN + 1),
+                                          "message", sig)
+            self.assertEqual(parse.call_count, 4, "invalid keys must never be cached")
+        self.assertLessEqual(MGMT._validated_verification_public_key.cache_info().maxsize, 256)
+
     def test_failure_during_keygen_leaves_no_placeholder(self):
         MGMT._run_openssl = _FailAtCall(self._orig_openssl, 1)
         with self.assertRaises(RuntimeError):

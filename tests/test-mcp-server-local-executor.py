@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import json
 import shutil
 import subprocess
 from types import SimpleNamespace
@@ -18,6 +19,7 @@ sys.path.insert(0, str(ROOT / "lib"))
 from drlink_mcp_server_executor import (
     ExecutorDenied, _allowed_roots, execute_as_unprivileged_user, worker_dispatch,
 )
+import drlink_mcp_server_executor as executor
 
 
 class ServerLocalWorkerTests(unittest.TestCase):
@@ -153,6 +155,19 @@ class ServerLocalWorkerTests(unittest.TestCase):
         with patch.dict(os.environ, {"DRLINK_MCP_SERVER_ALLOWED_ROOTS": ""}):
             with self.assertRaises(ExecutorDenied):
                 _allowed_roots()
+
+    def test_isolated_worker_loads_only_the_trusted_sibling_runtime_adapter(self):
+        worker = Path(executor.__file__).resolve()
+        proc = subprocess.run(
+            [sys.executable, "-I", str(worker), "--worker"],
+            input=b'{"action":"shell"}', cwd="/",
+            env={"PATH": "/usr/bin:/bin", "LANG": "C.UTF-8", "HOME": "/nonexistent"},
+            capture_output=True, timeout=5,
+        )
+        self.assertEqual(proc.returncode, 0, proc.stderr.decode("utf-8", "replace"))
+        response = json.loads(proc.stdout)
+        self.assertEqual(response.get("result"), "DENY")
+        self.assertEqual(response.get("error"), "Unsupported Server-local operation")
 
     def test_release_manifest_includes_worker(self):
         manifest = (ROOT / "lib" / "server-project-files.manifest").read_text()

@@ -109,6 +109,33 @@ parse request
 → connect only to the authorized candidate set (no re-resolve)
 ```
 
+The selected Rust migration is limited to the post-authorization bidirectional
+TCP relay. Python remains authoritative for request parsing, identity, policy,
+DNS/SSRF validation, exact-IP connection setup, session generation and audit.
+The Rust relay receives only the already-authorized client/upstream sockets and
+calls back into Python for periodic reauthorization. In automatic mode, an
+unavailable native library selects the existing Python relay before socket
+handoff. Explicit Rust selection fails closed when the library is unavailable.
+Control callback failure or policy revocation closes the active stream. A
+session is never replayed through the Python relay after native handoff. The
+scoped `DRLINK_EGRESS_RUNTIME=python` setting selects the known Python rollback
+path before a new session starts; it does not weaken authorization.
+
+The Linux x86_64 and ARM64 Agent and Server bundles ship the pinned Rust
+egress library under their target-specific `native/` directories; the Apple
+Silicon Agent bundle ships the macOS library under
+`native/aarch64-apple-darwin/`. Each build record
+includes the source HEAD, Rust 1.75.0, linker, Cargo.lock digests, and library
+digests. Runtime discovery is target-specific; `auto` selects Rust when the
+packaged asset loads and keeps the Python relay available for rollback. Linux
+ARM64 packaged egress remains under qualification.
+
+Each direction uses a fixed 256 KiB queue with 64 KiB read chunks. The relay
+continues reading after a socket hangup until `recv` reaches EOF, so queued
+payload drains before half-close propagation. A descriptor with no remaining
+read or write work is excluded from `poll`, preventing a persistent hangup from
+spinning while the opposite direction is backpressured.
+
 A CIDR/IP destination rule may authorize a hostname when a validated resolved
 address falls inside that selector. Authorization of one candidate never widens
 authorization to other candidates outside the allowed IP/CIDR scope.

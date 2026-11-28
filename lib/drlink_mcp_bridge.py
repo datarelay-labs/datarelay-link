@@ -23,19 +23,22 @@ import os
 import re
 import shutil
 import signal
+import socket
 import sqlite3
 import tempfile
 import threading
 import time
 import traceback
+from pathlib import Path
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from socketserver import ThreadingMixIn
 from typing import Any, Optional
 from urllib.parse import parse_qs, urlencode, urlparse, urlsplit
 
 from drlink_ai_agent import AgentLoop, execute_local
-from drlink_db_watch import get_watcher
+from drlink_db_watch import DbChangeWatcher, get_watcher
 from drlink_mcp_server_executor import ExecutorDenied, execute_as_unprivileged_user
+from drlink_mcp_runtime import DispatchBudget, read_mcp_request_body, write_mcp_response
 from drlink_control_db import ControlPlaneError, resolve_root
 from drlink_control_plane import (
     clamp_claim_wait_ms,
@@ -691,9 +694,9 @@ class MCPBridge:
         self._shared_rate: Optional[SharedRateLimiter] = None
         # AUD-21 D5: per-process call budget for endpoint (Agent queue) dispatches.
         self.dispatch_budget = _dispatch_budget_from_env()
-        self.inflight = 0
+        self._dispatch_admission = DispatchBudget(self.dispatch_budget)
         self.busy_refused = 0
-        self._budget_lock = threading.Lock()
+        self._busy_lock = threading.Lock()
 
     @contextlib.contextmanager
     def _dispatch_slot(self, tool: str):
@@ -703,16 +706,11 @@ class MCPBridge:
         intent row and the enqueue, so it leaves no audit row and no job; it is only
         counted and logged (first refusal, then every 100th; never with arguments).
         """
-        with self._budget_lock:
-            if self.inflight >= self.dispatch_budget:
+        if not self._dispatch_admission.try_acquire():
+            with self._busy_lock:
                 self.busy_refused += 1
                 refused = self.busy_refused
-                inflight = self.inflight
-                refuse = True
-            else:
-                self.inflight += 1
-                refuse = False
-        if refuse:
+            inflight = self._dispatch_admission.inflight
             if refused == 1 or refused % _BUSY_LOG_EVERY == 0:
                 LOG.warning("mcp dispatch busy: refused=%d budget=%d inflight=%d tool=%s",
                             refused, self.dispatch_budget, inflight, tool)
@@ -720,8 +718,7 @@ class MCPBridge:
         try:
             yield
         finally:
-            with self._budget_lock:
-                self.inflight -= 1
+            self._dispatch_admission.release()
 
     def warm_up(self) -> None:
         """Build lazily created state once, so the first real calls do not pay for it."""
@@ -1611,7 +1608,14 @@ class MCPBridge:
         watcher = get_watcher(self.plane.db_file)
         # Wake only for THIS job reaching a terminal status, not for every
         # commit in the Control DB (a herd of waits made 30 calls take seconds).
-        sub = watcher.subscribe("job", job_id)
+        if isinstance(watcher, DbChangeWatcher):
+            sub = watcher.subscribe(
+                "job", job_id, native_signal_factory=self._dispatch_admission.new_signal,
+            )
+        else:
+            # Keep the public watcher seam compatible with lightweight observers
+            # that implement the original two-argument subscribe contract.
+            sub = watcher.subscribe("job", job_id)
         try:
             while time.monotonic() < deadline:
                 # Clear the signal BEFORE looking, so a completion that commits
@@ -1695,6 +1699,23 @@ class ThreadingHTTPServer(ThreadingMixIn, HTTPServer):
     request_queue_size = 128
     allow_reuse_address = True
 
+    def get_request(self):
+        native_accept = getattr(self, "_drlink_native_accept", None)
+        if native_accept is None:
+            return super().get_request()
+        fd = native_accept(self.socket.fileno())
+        if fd is None:
+            return super().get_request()
+        request = socket.socket(fileno=fd)
+        try:
+            client_address = request.getpeername()
+            if self.timeout is not None:
+                request.settimeout(self.timeout)
+            return request, client_address
+        except BaseException:
+            request.close()
+            raise
+
 
 def make_handler(bridge: MCPBridge):
     def _scoped(method):
@@ -1733,7 +1754,7 @@ def make_handler(bridge: MCPBridge):
                 self.send_header(k, v)
             self.end_headers()
             if raw:
-                self.wfile.write(raw)
+                write_mcp_response(self.wfile, raw)
 
         def _public_cors(self):
             # Public metadata may be read cross-origin; credentials are never included.
@@ -1993,7 +2014,7 @@ def make_handler(bridge: MCPBridge):
             if length > 2_000_000:
                 self._send(413, _jsonrpc_error(None, -32700, "payload too large"))
                 return
-            raw = self.rfile.read(length) if length else b"{}"
+            raw = read_mcp_request_body(self.rfile, length) if length else b"{}"
             if parsed.path in ("/oauth/register", "/register"):
                 if self._rate_limited("register", limit=20, window_s=60):
                     self._send(429, {"error": "rate_limited"})
@@ -2159,6 +2180,196 @@ def _clamp_workers(value) -> int:
     return max(1, min(count, MAX_WORKERS))
 
 
+def _worker_memory_limit_bytes() -> int:
+    """Conservative memory ceiling of this process, not the cgroup mount root.
+
+    Resolve /proc/self/cgroup membership through /proc/self/mountinfo, accounting
+    for bind-mounted subtrees and nested parent limits on cgroup v2 and v1.
+    Missing membership/mount evidence fails closed for opt-in auto tuning.
+    """
+    try:
+        memory_kib = next(
+            int(line.split()[1])
+            for line in Path("/proc/meminfo").read_text().splitlines()
+            if line.startswith("MemTotal:")
+        )
+        host_limit = memory_kib * 1024
+        memberships = {}
+        for line in Path("/proc/self/cgroup").read_text().splitlines():
+            hierarchy, controllers, path = line.split(":", 2)
+            if not path.startswith("/") or any(x in (".", "..") for x in path.split("/")):
+                continue
+            if hierarchy == "0" and not controllers:
+                memberships["cgroup2"] = path
+            if "memory" in controllers.split(","):
+                memberships["cgroup"] = path
+        if not memberships:
+            return 0
+        mounts = Path("/proc/self/mountinfo").read_text().splitlines()
+    except (OSError, ValueError, IndexError, StopIteration):
+        return 0
+
+    def unescape(value):
+        return re.sub(r"\\([0-7]{3})", lambda match: chr(int(match.group(1), 8)), value)
+
+    limits = [host_limit]
+    resolved = False
+    for line in mounts:
+        if " - " not in line:
+            continue
+        pre, post = line.split(" - ", 1)
+        fields, options = pre.split(), post.split()
+        if len(fields) < 5 or len(options) < 3:
+            continue
+        fs_type = options[0]
+        if fs_type not in memberships:
+            continue
+        if fs_type == "cgroup" and "memory" not in options[2].split(","):
+            continue
+        mount_root = unescape(fields[3])
+        mount_point = unescape(fields[4])
+        member = memberships[fs_type]
+        root_parts = tuple(part for part in mount_root.split("/") if part)
+        member_parts = tuple(part for part in member.split("/") if part)
+        if any(part in (".", "..") for part in root_parts) or member_parts[:len(root_parts)] != root_parts:
+            continue
+        base = Path(mount_point)
+        current = base.joinpath(*member_parts[len(root_parts):])
+        name = "memory.max" if fs_type == "cgroup2" else "memory.limit_in_bytes"
+        resolved = True
+        while True:
+            try:
+                value = (current / name).read_text().strip()
+                if value == "max":
+                    pass
+                elif value.isdecimal() and int(value) > 0:
+                    limits.append(int(value))
+                else:
+                    return 0
+            except FileNotFoundError:
+                # The true cgroup v2 hierarchy root may omit memory.max when
+                # the memory controller is not enabled. Missing files on a
+                # service cgroup, bind-mounted subtree, or cgroup v1 mount
+                # leave the effective memory ceiling unknown.
+                if not (fs_type == "cgroup2" and current == base and mount_root == "/"):
+                    return 0
+            except OSError:
+                return 0
+            if current == base:
+                break
+            current = current.parent
+    return min(limits) if resolved else 0
+
+
+def _worker_effective_cpus() -> int:
+    """Conservative effective CPU count from affinity and inherited cgroup quota.
+
+    v2 cpu.max and v1 cpu.cfs_quota_us/period_us are read at each visible
+    ancestor of THIS process's cgroup. Missing/invalid resource facts return
+    one CPU; an explicit worker count always overrides automatic selection.
+    """
+    try:
+        affinity = len(os.sched_getaffinity(0)) if hasattr(os, "sched_getaffinity") else (os.cpu_count() or 1)
+        affinity = max(1, int(affinity))
+        memberships = {}
+        for line in Path("/proc/self/cgroup").read_text().splitlines():
+            hierarchy, controllers, membership = line.split(":", 2)
+            if any(x in (".", "..") for x in membership.split("/")) or not membership.startswith("/"):
+                continue
+            if hierarchy == "0" and not controllers:
+                memberships["cgroup2"] = membership
+            if "cpu" in controllers.split(","):
+                memberships["cgroup"] = membership
+        if not memberships:
+            return 1
+        mounts = Path("/proc/self/mountinfo").read_text().splitlines()
+    except (OSError, ValueError, IndexError):
+        return 1
+
+    def unescape(value):
+        return re.sub(r"\\([0-7]{3})", lambda m: chr(int(m.group(1), 8)), value)
+
+    quota_cores = []
+    observed = False
+    for line in mounts:
+        if " - " not in line:
+            continue
+        pre, post = line.split(" - ", 1)
+        fields, options = pre.split(), post.split()
+        if len(fields) < 5 or len(options) < 3:
+            continue
+        fs_type = options[0]
+        if fs_type not in memberships:
+            continue
+        if fs_type == "cgroup" and "cpu" not in options[2].split(","):
+            continue
+        mount_root = unescape(fields[3])
+        member = memberships[fs_type]
+        root_parts = tuple(x for x in mount_root.split("/") if x)
+        member_parts = tuple(x for x in member.split("/") if x)
+        if any(x in (".", "..") for x in root_parts) or member_parts[:len(root_parts)] != root_parts:
+            continue
+        base = Path(unescape(fields[4]))
+        current = base.joinpath(*member_parts[len(root_parts):])
+        observed = True
+        while True:
+            try:
+                if fs_type == "cgroup2":
+                    record = (current / "cpu.max").read_text().split()
+                    if len(record) != 2:
+                        raise ValueError("invalid cpu.max")
+                    raw_quota, raw_period = record
+                else:
+                    raw_quota = (current / "cpu.cfs_quota_us").read_text().strip()
+                    raw_period = (current / "cpu.cfs_period_us").read_text().strip()
+                if raw_quota not in ("max", "-1"):
+                    quota, period = int(raw_quota), int(raw_period)
+                    if quota <= 0 or period <= 0:
+                        return 1
+                    quota_cores.append(max(1, quota // period))
+            except FileNotFoundError:
+                # Cgroup v2 has no cpu.max at the TRUE hierarchy root.
+                # A bind-mounted subtree root is still a non-root cgroup,
+                # where a missing file must fail closed. Only ignore ENOENT
+                # for a root-mounted v2 hierarchy; never ignore EACCES.
+                if not (fs_type == "cgroup2" and current == base and mount_root == "/"):
+                    return 1
+            except (OSError, ValueError):
+                # Unreadable or malformed non-root quota cannot be proven safe.
+                return 1
+            if current == base:
+                break
+            current = current.parent
+    if not observed:
+        return 1
+    return max(1, min([affinity] + quota_cores))
+
+
+def _worker_count(value) -> int:
+    """Bounded opt-in tuning; legacy default remains exactly one worker.
+
+    LPERF measured 100 synthetic Agents and 30 calls on a 10-logical-CPU lab:
+    6 workers reduced p95 but had a borderline 503ms run; repeated 8-worker
+    runs left margin without changing policy. Auto is *opt-in* and
+    deliberately chooses one worker when CPU/memory resources are unknown.
+    """
+    if isinstance(value, str) and value.strip().lower() == "auto":
+        try:
+            cpus = _worker_effective_cpus()
+        except (OSError, ValueError):
+            cpus = 1
+        memory_bytes = _worker_memory_limit_bytes()
+        if memory_bytes < 2 * 1024 ** 3:
+            return 1
+        # On the measured 10-core lab, 8 worker processes left more p95
+        # margin than 6 under concurrent ALLOW and DENY bursts; keep a
+        # higher memory floor and leave the operator's explicit setting alone.
+        if cpus >= 10 and memory_bytes >= 4 * 1024 ** 3:
+            return min(MAX_WORKERS, 8)
+        return min(MAX_WORKERS, 6 if cpus >= 8 else (2 if cpus >= 4 else 1))
+    return _clamp_workers(value)
+
+
 def _run_worker(host, port, root, index, count, rundir) -> None:
     signal.signal(signal.SIGTERM, signal.SIG_DFL)
     signal.signal(signal.SIGINT, signal.SIG_DFL)
@@ -2169,7 +2380,9 @@ def _run_worker(host, port, root, index, count, rundir) -> None:
     bridge.worker_count = count
     bridge._shared_rate = SharedRateLimiter(os.path.join(rundir, "rate.sqlite"))
     bridge.warm_up()
-    _ReusePortServer((host, int(port)), make_handler(bridge)).serve_forever()
+    httpd = _ReusePortServer((host, int(port)), make_handler(bridge))
+    httpd._drlink_native_accept = bridge._dispatch_admission.accept
+    httpd.serve_forever()
 
 
 def _run_full_control(path) -> None:
@@ -2263,7 +2476,7 @@ def _supervise(host, port, root, count) -> None:
 
 
 def serve(host=DEFAULT_LISTEN, port=DEFAULT_PORT, root=None, workers=None):
-    count = _clamp_workers(os.environ.get("DRLINK_MCP_WORKERS", "1") if workers is None else workers)
+    count = _worker_count(os.environ.get("DRLINK_MCP_WORKERS", "1") if workers is None else workers)
     if count > 1:
         _supervise(host, int(port), root, count)
         return
@@ -2272,6 +2485,7 @@ def serve(host=DEFAULT_LISTEN, port=DEFAULT_PORT, root=None, workers=None):
     bridge.listen_host = host
     bridge.listen_port = int(port)
     httpd = ThreadingHTTPServer((host, int(port)), make_handler(bridge))
+    httpd._drlink_native_accept = bridge._dispatch_admission.accept
     httpd.serve_forever()
 
 
@@ -2283,9 +2497,9 @@ def main(argv=None):
     parser.add_argument("--port", type=int, default=int(os.environ.get("DRLINK_MCP_PORT", DEFAULT_PORT)))
     parser.add_argument(
         "--workers",
-        type=int,
-        default=_clamp_workers(os.environ.get("DRLINK_MCP_WORKERS", "1")),
-        help="Bridge worker processes sharing the port (1 = a single process, the default)",
+        type=str,
+        default=os.environ.get("DRLINK_MCP_WORKERS", "1"),
+        help="Bridge worker processes (1..32 or opt-in auto; default 1)",
     )
     args = parser.parse_args(argv)
     serve(args.listen, args.port, workers=args.workers)

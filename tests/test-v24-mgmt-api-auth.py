@@ -70,6 +70,120 @@ def _signed_headers(key, machine_id, body, op, method, path, ts=None, nonce=None
     }, ts, nonce, signature
 
 
+class AllocatorAiClaimAdmissionTests(unittest.TestCase):
+    """Allocator AI admission shares its nonce transaction with the registry lock."""
+
+    def setUp(self):
+        import importlib.util
+
+        spec = importlib.util.spec_from_file_location(
+            "allocator_job_pool_test", ROOT / "server/frp-port-allocator.py")
+        self.mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(self.mod)
+        self.tmp = tempfile.TemporaryDirectory(prefix="allocator-job-pool-")
+        root = Path(self.tmp.name)
+        self.cfg = {
+            "control_plane_root": str(root),
+            "registry_file": str(root / "registry.json"),
+            "enrollments_dir": str(root / "enrollments"),
+            "token_file": str(root / "test-token"),
+        }
+        path = root / "config.json"
+        path.write_text(json.dumps(self.cfg))
+        self.allocator = self.mod.Allocator(str(path))
+        self.seed = ControlPlane(str(root))
+        self.seed.upsert_client(MACHINE_A, label="agent-a")
+
+    def tearDown(self):
+        for plane, _identity, _cookie in getattr(self.allocator, "_ai_job_planes", []):
+            plane.close()
+        self.seed.close()
+        self.tmp.cleanup()
+
+    def test_ai_claim_authentication_and_nonce_commit_share_registry_lock(self):
+        from unittest import mock
+        key, pub, mac = _write_identity(Path(self.tmp.name) / "agent", MACHINE_A, "agent-a")
+        state = self.mod.empty_registry()
+        state["clients"][MACHINE_A] = {
+            "hostname": "agent-a", "services": {}, "mgmt_status": "enrolled",
+            "mgmt_pubkey": pub, "mgmt_mac_key": mac,
+        }
+        self.mod.atomic_write_json(self.cfg["registry_file"], state)
+        body = b'{"limit":1}'
+        path = "/v1/ai-jobs/claim"
+        headers, _, nonce, _ = _signed_headers(
+            key, MACHINE_A, body, MGMT.MGMT_OP_AI_JOB_CLAIM, "POST", path)
+        verifier = mgmt.AllocatorMgmtVerifier(self.allocator)
+        with mock.patch.object(self.allocator, "registry_lock",
+                               wraps=self.allocator.registry_lock) as lock:
+            code, payload = mgmt.handle_allocator_http(
+                self.seed, "POST", path, headers, body, verifier=verifier)
+            self.assertEqual(code, 200, payload)
+            self.assertEqual(lock.call_count, 1, "AI admission must acquire registry lock once")
+        self.assertEqual(self.allocator.check_nonce(MACHINE_A, nonce, int(time.time())),
+                         "replayed request")
+        code, payload = mgmt.handle_allocator_http(
+            self.seed, "POST", path, headers, body, verifier=verifier)
+        self.assertEqual(code, 403, payload)
+        self.assertEqual(payload.get("error_class"), "REPLAY_REJECTED")
+
+        # A registry identity without a trusted Managed Host must not consume
+        # its nonce or run a job, even if its signature is valid.
+        self.seed.conn.execute("UPDATE clients SET trust_status='untrusted' WHERE id=?", (MACHINE_A,))
+        headers, _, rejected_nonce, _ = _signed_headers(
+            key, MACHINE_A, body, MGMT.MGMT_OP_AI_JOB_CLAIM, "POST", path)
+        code, payload = mgmt.handle_allocator_http(
+            self.seed, "POST", path, headers, body, verifier=verifier)
+        self.assertEqual(code, 403, payload)
+        self.assertIsNone(self.allocator.check_nonce(MACHINE_A, rejected_nonce, int(time.time())))
+
+    def test_parallel_ai_claim_replay_and_failed_nonce_write_fail_closed(self):
+        from concurrent.futures import ThreadPoolExecutor
+        from threading import Barrier
+        from unittest import mock
+
+        key, pub, mac = _write_identity(Path(self.tmp.name) / "agent", MACHINE_A, "agent-a")
+        state = self.mod.empty_registry()
+        state["clients"][MACHINE_A] = {
+            "hostname": "agent-a", "services": {}, "mgmt_status": "enrolled",
+            "mgmt_pubkey": pub, "mgmt_mac_key": mac,
+        }
+        self.mod.atomic_write_json(self.cfg["registry_file"], state)
+        path, body = "/v1/ai-jobs/claim", b'{"limit":1}'
+        headers, _, nonce, _ = _signed_headers(
+            key, MACHINE_A, body, MGMT.MGMT_OP_AI_JOB_CLAIM, "POST", path)
+        verifier = mgmt.AllocatorMgmtVerifier(self.allocator)
+        with mock.patch.object(self.allocator, "save_nonces", side_effect=OSError("injected fsync failure")), \
+             mock.patch.object(mgmt, "server_claim_ai_jobs", wraps=mgmt.server_claim_ai_jobs) as claim:
+            code, payload = mgmt.handle_allocator_http(
+                self.seed, "POST", path, headers, body, verifier=verifier)
+            self.assertEqual(code, 500, payload)
+            claim.assert_not_called()
+        self.assertIsNone(self.allocator.check_nonce(MACHINE_A, nonce, int(time.time())))
+
+        # The merged allocator opens a request-local plane through this factory;
+        # it no longer exposes the retired Allocator.ai_job_plane() pool API.
+        ready = Barrier(2)
+        connection_ids = []
+
+        def request():
+            plane = self.mod._open_control_plane(self.allocator.cfg)
+            self.assertIsNotNone(plane)
+            connection_ids.append(id(plane.conn))
+            try:
+                ready.wait(timeout=10)
+                return mgmt.handle_allocator_http(
+                    plane, "POST", path, headers, body, verifier=verifier)
+            finally:
+                plane.close()
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            outcomes = list(pool.map(lambda _: request(), range(2)))
+        self.assertEqual(len(set(connection_ids)), 2)
+        self.assertEqual(sorted(code for code, _ in outcomes), [200, 403])
+        denied = next(payload for code, payload in outcomes if code == 403)
+        self.assertEqual(denied.get("error_class"), "REPLAY_REJECTED")
+
 class MgmtApiAuthTests(unittest.TestCase):
     def setUp(self):
         self.server_tmp = tempfile.mkdtemp(prefix="drlink-mgmt-auth-srv-")
@@ -110,6 +224,61 @@ class MgmtApiAuthTests(unittest.TestCase):
             "DRLINK_MGMT_INSECURE",
         ):
             os.environ.pop(k, None)
+
+    def test_native_management_signing_has_no_per_request_openssl_subprocess(self):
+        from unittest import mock
+        if getattr(MGMT, "_NATIVE_EC", None) is None:
+            self.skipTest("optional cryptography package unavailable")
+        path = "/v1/ai-jobs/claim"
+        body = b'{"limit":1}'
+        with mock.patch.object(MGMT.subprocess, "run", wraps=MGMT.subprocess.run) as proc:
+            headers = mgmt._sign_request_headers("POST", self.base + path, body,
+                                                root=self.agent_tmp)
+            self.assertEqual(proc.call_count, 0,
+                             "native management signing must not spawn OpenSSL")
+        # Wire compatibility with the legacy portable verifier is mandatory.
+        with mock.patch.object(MGMT, "_NATIVE_EC", None):
+            error, _, _ = MGMT.verify_signed_mgmt_request(
+                self.pub_a, MACHINE_A, headers, body, op=MGMT.MGMT_OP_AI_JOB_CLAIM,
+                method="POST", path=path)
+            self.assertIsNone(error)
+            error, _, _ = MGMT.verify_signed_mgmt_request(
+                self.pub_a, MACHINE_A, headers, b'{"limit":2}',
+                op=MGMT.MGMT_OP_AI_JOB_CLAIM, method="POST", path=path)
+            self.assertIsNotNone(error)
+
+    def test_concurrent_signed_lifecycle_requests_use_distinct_db_connections(self):
+        from concurrent.futures import ThreadPoolExecutor
+        from threading import Barrier
+        from unittest import mock
+
+        entered = Barrier(2)
+        connection_ids = []
+        original = mgmt.handle_allocator_http
+
+        def observed(plane, *args, **kwargs):
+            connection_ids.append(id(plane.conn))
+            entered.wait(timeout=5)
+            return original(plane, *args, **kwargs)
+
+        with mock.patch.object(mgmt, "handle_allocator_http", side_effect=observed):
+            with ThreadPoolExecutor(max_workers=2) as pool:
+                futures = [
+                    pool.submit(mgmt.report_agent_lifecycle_on_server,
+                                root=self.agent_tmp, state="connected")
+                    for _ in range(2)
+                ]
+                results = []
+                errors = []
+                for future in futures:
+                    try:
+                        results.append(future.result(timeout=12))
+                    except Exception as exc:
+                        errors.append(type(exc).__name__)
+        self.assertEqual(len(set(connection_ids)), 2,
+                         "concurrent HTTP handlers must not share one SQLite connection")
+        self.assertFalse(errors, errors)
+        self.assertEqual(len(results), 2)
 
     def _snapshot(self):
         hosts = list(self.server.conn.execute("SELECT id FROM clients"))
