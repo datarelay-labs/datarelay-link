@@ -332,7 +332,7 @@ _OBSOLETE_POINTERS = {
 }
 
 
-def reject_obsolete_surface(tokens):
+def reject_obsolete_surface(tokens, role=None):
     """Return an error result when tokens are obsolete current-surface grammar."""
     if not tokens:
         return None
@@ -351,7 +351,7 @@ def reject_obsolete_surface(tokens):
         "show", "set", "unset", "test", "system", "menu",
     ):
         # Nested command help must reject the same retired paths as execution.
-        rejected = reject_obsolete_surface(raw[1:])
+        rejected = reject_obsolete_surface(raw[1:], role)
         if rejected is not None:
             return rejected
     # Reject retired nested forms before help or legacy system fallthrough
@@ -463,6 +463,9 @@ def reject_obsolete_surface(tokens):
             "unset": "Use unset managed-host <HOST> instead.",
             "test": "Inspect hosts with show managed-host <HOST>; use test remote-access, internet-access, or ai-access for authorization.",
         }
+        if role is not None and _role_parts(role) == (True, False):
+            guidance = dict.fromkeys(guidance,
+                "On this Agent Host, use show agent or show remote-services. Manage enrolled hosts on the DRLink Server.")
         return {
             "status": "error",
             "exit_code": 2,
@@ -493,6 +496,9 @@ def reject_obsolete_surface(tokens):
         }
     if len(raw) >= 2 and raw[1] in ("service", "services"):
         if verb in ("show", "set", "unset", "add", "remove", "enable", "disable"):
+            if role is not None and _role_parts(role) == (False, True):
+                return {"status": "error", "exit_code": 2,
+                        "message": "This service command is obsolete. On the DRLink Server, use show managed-services to inspect published Remote Services, or show service-objects to inspect reusable Service Objects. Create or edit Remote Services on their Agent Host."}
             return {
                 "status": "error",
                 "exit_code": 2,
@@ -840,7 +846,7 @@ def missing_client_help(usage_lines, names=None, tip="Press Tab after \"show cli
 
 def help_text(tokens, role):
     tokens = [t for t in tokens if t and t != "help"]
-    rejected = reject_obsolete_surface(["help"] + tokens)
+    rejected = reject_obsolete_surface(["help"] + tokens, role)
     if rejected is not None:
         return "Unknown help topic: %s\n\n%s\n" % (" ".join(tokens), rejected["message"])
     client, server = _role_parts(role)
@@ -848,10 +854,10 @@ def help_text(tokens, role):
         return _root_help(role)
     verb = tokens[0]
     if verb == "legacy":
-        rejected = reject_obsolete_surface(["help", "legacy"])
+        rejected = reject_obsolete_surface(["help", "legacy"], role)
         return rejected["message"] if rejected else "help legacy removed"
     if verb in _RETIRED_HELP_TOPICS:
-        rejected = reject_obsolete_surface(["help", verb])
+        rejected = reject_obsolete_surface(["help", verb], role)
         return "Unknown help topic: %s\n\n%s\n" % (
             verb,
             rejected["message"] if rejected else "Use help commands.",
@@ -910,6 +916,11 @@ def _catalog_help_topic(tokens, role):
     """Catalog-driven 'help <topic>' for canonical resources and commands."""
     if not tokens:
         return None
+    if _role_parts(role)[1] and tokens[:2] == ["set", "enrollment"] and len(tokens) == 3:
+        if tokens[2] == "zero-touch":
+            return "Zero-Touch Enrollment\n=====================\nUsage: set enrollment zero-touch\nCreate a one-time Agent installation command. Default lifetime: 1 hour. Maximum: 24 hours.\n"
+        if tokens[2] == "manual":
+            return "Manual Enrollment\n=================\nUsage: set enrollment manual\nIssue an Enrollment Code for interactive Agent installation. Maximum lifetime: 30 days.\n"
     root = canonical_root(tokens[0])
     probe = [root] + list(tokens[1:])
     cmd = CATALOG.find(probe)
@@ -1259,6 +1270,8 @@ def _catalog_context_help(tokens, role, names=None, clients=None):
             return _fmt_available([(tok, "") for tok in nxt])
         return None
 
+    if probe[:2] == ["set", "enrollment"] and len(probe) == 3 and probe[2] in ("zero-touch","manual"):
+        return _catalog_help_topic(probe, role)
     if tuple(probe) == ("system", "diagnostics") and client and not server:
         role_cmd = dict(cmd)
         role_cmd["args"] = [dict(arg) for arg in cmd.get("args", [])]
@@ -1349,7 +1362,7 @@ def context_help(tokens, role, names=None, clients=None):
     """Enter-submitted '?' help. Tab must never call this."""
     client, server = _role_parts(role)
     tokens = [t for t in (tokens or []) if t != "?"]
-    rejected = reject_obsolete_surface(tokens)
+    rejected = reject_obsolete_surface(tokens, role)
     if rejected is not None:
         return rejected["message"]
     if not tokens:
@@ -1995,6 +2008,8 @@ def _ownership_error_message(path, need):
     """Actionable wrong-role error using the canonical CLI helpers when available."""
     resource = path[1] if len(path) > 1 else (path[0] if path else "that command")
     need_s = str(need or "").strip().lower()
+    if tuple(path) == ("system", "status") and need_s == "server":
+        return "ERROR: system status is the detailed DRLink Server view. On this Agent Host, run show status or show agent."
     agent_resource = resource in ("remote-service", "remote-services") or need_s in (
         "client",
         "agent",
@@ -2053,6 +2068,7 @@ def _ownership_error_message(path, need):
         "ai-identities": "AI Identities",
         "enrollment": "Enrollment",
         "enrollments": "Enrollments",
+        "mcp-server": "MCP Server",
     }
     label = labels.get(resource, str(resource).replace("-", " ").title())
     if v24 is not None:
@@ -2097,6 +2113,11 @@ def _canonical_result(tokens, role, names=None):
             "command": " ".join(path) if path else " ".join(work[:2]),
             "message": _ownership_error_message(path, cmd["roles"]),
         }
+    if work[:2] == ["set", "enrollment"] and len(work) >= 3:
+        if work[2] not in ("zero-touch", "manual", "bulk") or len(work) != 3:
+            return None, incomplete("Invalid Enrollment mode or arguments.",
+                ["set enrollment zero-touch", "set enrollment manual", "set enrollment bulk"],
+                ["zero-touch", "manual", "bulk"])
     # Documented enrollment modes rewrite before strict positional checks
     # (set enrollment has tail=flags and would otherwise reject zero-touch/manual).
     if (
@@ -2133,7 +2154,7 @@ def match(tokens, role, names=None, clients=None):
         return {"status": "unknown", "command": tokens[0]}
     if tokens[-1] == "?":
         raw_focus = [str(t) for t in tokens[:-1]]
-        rejected = reject_obsolete_surface(raw_focus)
+        rejected = reject_obsolete_surface(raw_focus, role)
         if rejected is not None:
             return rejected
         rejected = _public_input_option_error(raw_focus)
@@ -2181,7 +2202,7 @@ def match(tokens, role, names=None, clients=None):
                 and not _catalog_next_path_tokens(focus, role)):
             return {"status": "error", "exit_code": 2,
                     "message": "Unknown system operation.\nUse: system ?\nSee: help system"}
-        rejected = reject_obsolete_surface(focus)
+        rejected = reject_obsolete_surface(focus, role)
         if rejected is not None:
             return rejected
         message = context_help(focus, role, names=names, clients=clients)
@@ -2199,12 +2220,22 @@ def match(tokens, role, names=None, clients=None):
     # Keep pre-resolve tokens so to_internal can preserve create vs edit-info
     # (both alias to set acl) and similar distinct safety semantics.
     raw_tokens = [str(t) for t in tokens]
-    rejected = reject_obsolete_surface(raw_tokens)
+    client, server = _role_parts(role)
+    guesses = {
+        ("show", "hosts"): "show managed-hosts" if server else "show agent",
+        ("show", "host"): "show managed-host <HOST>" if server else "show agent",
+        ("show", "policy"): "show remote-access / show internet-access / show ai-access" if server else "show status (access policies are managed on the DRLink Server)",
+        ("show", "policies"): "show remote-access / show internet-access / show ai-access" if server else "show status (access policies are managed on the DRLink Server)",
+        ("system", "config"): "help configuration",
+    }
+    if tuple(raw_tokens[:2]) in guesses:
+        return {"status":"error","exit_code":2,"message":"Unknown command.\nUse: "+guesses[tuple(raw_tokens[:2])]}
+    rejected = reject_obsolete_surface(raw_tokens, role)
     if rejected is not None:
         return rejected
     # Hidden resource-first compatibility → canonical action-first tokens.
     tokens = CATALOG.resolve_tokens(tokens, role=role)
-    rejected = reject_obsolete_surface(tokens)
+    rejected = reject_obsolete_surface(tokens, role)
     if rejected is not None:
         return rejected
     # Catalog-declared private machine flags remain callable; undeclared
@@ -4125,7 +4156,7 @@ def completion_candidates(
         tokens = tokenize(line)
     except ParseError:
         return []
-    if reject_obsolete_surface(tokens) is not None:
+    if reject_obsolete_surface(tokens, role) is not None:
         return []
     if _public_input_option_error(tokens) is not None:
         return []

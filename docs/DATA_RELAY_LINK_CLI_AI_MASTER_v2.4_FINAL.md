@@ -2566,6 +2566,10 @@ Bare `unset managed-host <HOST>` remains the reference-safe Managed Host retirem
 
 ---
 
+The guided Server menu exposes Managed Host Groups and all Managed Services under Managed Hosts; Configuration Test/Diff/Apply/Export, Revisions/Rollback and Certificates under System. Agent lifecycle includes Autostart Show/Enable/Disable and Synchronize Remote Services. All leaves invoke canonical commands and preserve their existing approval contracts.
+
+Internet Access policy readiness is distinct from live Proxy endpoint readiness. Unknown supervisor state is not an enabled or disabled Autostart result. Cancellation of a policy reset returns nonzero on every plane. The documented machine options for diagnostics, support-bundle output and Managed Host Group description are listed in the CLI Reference; enrollment remains guided.
+
 ## 49.4 Test
 
 ```text

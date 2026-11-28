@@ -1106,6 +1106,12 @@ frpctl_nav_dispatch_command() {
     "system export configuration")
       prompt="Output file path (? help, 0 or empty cancels): "
       ;;
+    "set managed-host-group"|"show managed-host-group"|"unset managed-host-group")
+      prompt="Managed Host Group name or ID (? help, 0 or empty cancels): "
+      ;;
+    "system revision"|"system rollback")
+      prompt="Revision ID (? help, 0 or empty cancels): "
+      ;;
   esac
   if [[ -n "$prompt" ]]; then
     path="$(frpctl_read_text "$prompt" "")" || return 1
@@ -1346,6 +1352,54 @@ frpctl_nav_workflow() {
         3|'') return 0 ;;
         *) echo "ERROR: select 1-3 (? for help, 0 to go back)" >&2; return 1 ;;
       esac
+      ;;
+    manage_host_group_membership)
+      frpctl_dispatch show managed-hosts || return $?
+      id="$(frpctl_nav_prompt_id "Managed Host name or ID (? help, 0 cancels): " true)" || return 1
+      [[ -n "$id" ]] || return 0
+      frpctl_dispatch show managed-host-groups || return $?
+      value="$(frpctl_nav_prompt_id "Managed Host Group (? help, 0 cancels): " true)" || return 1
+      [[ -n "$value" ]] || return 0
+      echo "1) Add membership"
+      echo "2) Remove membership"
+      echo "3) Back"
+      path="$(frpctl_read_menu 3 Back "Select: " "3")" || return 1
+      case "$path" in
+        1) frpctl_dispatch set managed-host "$id" group "$value" ;;
+        2) frpctl_dispatch unset managed-host "$id" group "$value" ;;
+      esac
+      ;;
+    edit_host_group)
+      frpctl_dispatch show managed-host-groups || return $?
+      id="$(frpctl_nav_prompt_id "Managed Host Group (? help, 0 cancels): " true)" || return 1
+      [[ -n "$id" ]] || return 0
+      frpctl_dispatch show managed-host-group "$id" || return $?
+      echo "1) Change name"
+      echo "2) Change description"
+      echo "3) Back"
+      path="$(frpctl_read_menu 3 Back "Select: " "3")" || return 1
+      case "$path" in
+        1) profile=name ;;
+        2) profile=description ;;
+        *) return 0 ;;
+      esac
+      value="$(frpctl_nav_prompt_id "New value (? help, 0 cancels): " true)" || return 1
+      [[ -n "$value" ]] || return 0
+      frpctl_dispatch set managed-host-group "$id" "$profile" "$value"
+      ;;
+    diff_revisions)
+      id="$(frpctl_nav_prompt_id "First revision ID (? help, 0 cancels): " true)" || return 1
+      [[ -n "$id" ]] || return 0
+      value="$(frpctl_nav_prompt_id "Second revision ID (? help, 0 cancels): " true)" || return 1
+      [[ -n "$value" ]] || return 0
+      frpctl_dispatch system diff "$id" "$value"
+      ;;
+    import_mcp_certificate)
+      path="$(frpctl_nav_prompt_id "Certificate file path (? help, 0 cancels): " true)" || return 1
+      [[ -n "$path" ]] || return 0
+      value="$(frpctl_nav_prompt_id "Private key file path (? help, 0 cancels): " true)" || return 1
+      [[ -n "$value" ]] || return 0
+      frpctl_dispatch system certificate import "$path" "$value"
       ;;
     create_group)
       id="$(frpctl_nav_prompt_id "Group name: ")" || return 1

@@ -112,6 +112,36 @@ class DiscoveryTests(unittest.TestCase):
 
 
 class WorkflowGrammarTests(unittest.TestCase):
+    def test_audit_recovery_and_enrollment_mode_help(self):
+        for role, tokens, expected in (
+            ("server", ["set","enrollment","bogus"], "zero-touch"),
+            ("server", ["show","services"], "show managed-services"),
+            ("client", ["show","clients"], "show agent"),
+            ("client", ["system","status"], "show status"),
+            ("server", ["show","hosts"], "show managed-hosts"),
+        ):
+            result=GRAMMAR.match(tokens,role)
+            self.assertNotEqual(result.get("status"),"ok")
+            self.assertIn(expected,result.get("message",""))
+        for mode,expected,forbidden in (("zero-touch","24 hours","30 days"),("manual","30 days","24 hours")):
+            result=GRAMMAR.match(["set","enrollment",mode,"?"],"server")
+            self.assertEqual(result["status"],"ok")
+            self.assertIn(expected,result["message"])
+            self.assertNotIn(forbidden,result["message"])
+
+    def test_audit_menu_paths_are_discoverable(self):
+        tree=CATALOG.NAVIGATION_TREE
+        for key, target in (
+            ("server.hosts","server.hosts.groups"),
+            ("server.hosts","show managed-services"),
+            ("server.system","server.system.configuration"),
+            ("server.system","server.system.revisions"),
+            ("server.system","server.system.certificates"),
+            ("client.agent","client.agent.autostart"),
+            ("client.agent","system synchronize"),
+        ):
+            self.assertIn(target,[row[4] for row in tree[key]])
+
     def test_w3_group_mapping(self):
         r = GRAMMAR.match(["set", "managed-host-group", "production"], "server")
         self.assertEqual(r.get("status"), "ok")

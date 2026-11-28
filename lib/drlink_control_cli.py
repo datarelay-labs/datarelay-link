@@ -1633,6 +1633,9 @@ def main(argv=None):
         # has already closed the pipe.
         sys.stdout.flush()
         return rc or 0
+    except ControlPlaneError as exc:
+        sys.stderr.write("ERROR: %s\nRun: sudo drlink system diagnostics\n" % exc)
+        return 1
     except BrokenPipeError:
         # A consumer such as `head` may close stdout before a long read-only
         # listing is complete. Treat that as normal pipeline termination and

@@ -189,7 +189,7 @@ def _access_rule_activation_result(plane: ControlPlane, resource: str, name: str
             % (resource, name, reason)
         )
         return 1
-    sys.stdout.write("%s rule set: %s\n" % (resource, name))
+    sys.stdout.write("%s Rule set: %s\n" % (_policy_resource_label(resource).replace(" policy", ""), name))
     return 0
 
 
@@ -1110,12 +1110,14 @@ def _show_policy(plane: ControlPlane, family: str, rest: list[str]) -> int:
             import json
             from pathlib import Path
             from frp_egress_control import listen_bind
+            endpoint_configured = False
             try:
                 cfg = json.loads((Path(plane.root or '/') / 'etc/drlink/config.json').read_text())
                 bind_host, proxy_port = listen_bind(cfg)
                 proxy_host = (_scfg.resolve_public_endpoint_host(cfg, root=plane.root)
                               if bind_host in ('0.0.0.0', '::', '*') and _scfg else bind_host)
                 if proxy_host:
+                    endpoint_configured = True
                     if ':' in proxy_host and not proxy_host.startswith('['):
                         proxy_host = '[%s]' % proxy_host
                     sys.stdout.write('Proxy endpoint: http://%s:%s\n' % (proxy_host, proxy_port))
@@ -1126,7 +1128,12 @@ def _show_policy(plane: ControlPlane, family: str, rest: list[str]) -> int:
             readiness, recovery = v24.restricted_policy_readiness(
                 family, pol["mode"], pol["enforcement"]
             )
-            sys.stdout.write("Readiness   : %s\n" % readiness)
+            sys.stdout.write("Policy readiness : %s\n" % readiness)
+            sys.stdout.write("Runtime readiness: %s\n" % (
+                "NOT TESTED (endpoint configured; connectivity not verified)" if endpoint_configured
+                else "UNAVAILABLE (no usable proxy endpoint)"))
+            if not endpoint_configured:
+                sys.stdout.write("Run: sudo drlink system diagnostics\n")
             if recovery:
                 sys.stdout.write("Recovery    : %s\n" % recovery)
         sys.stdout.write("\nRules:\n")
@@ -1419,7 +1426,7 @@ def handle_set(plane: ControlPlane, rest: list[str]) -> Optional[int]:
         if result.get("operation") == "no_change":
             sys.stdout.write("NO CHANGE: Network Object %s already has the requested value.\n" % name)
         else:
-            sys.stdout.write("Network Object %s: %s\n" % (result["operation"], name))
+            sys.stdout.write("Network Object %s: %s\n" % ({"create":"created","update":"updated"}.get(result["operation"],result["operation"]), name))
         return 0
     if res == "network-group":
         _require_server(plane, "Network Groups")
@@ -1669,7 +1676,7 @@ def handle_set(plane: ControlPlane, rest: list[str]) -> Optional[int]:
         )
         if isinstance(result, dict) and result.get("cancelled"):
             return 1
-        sys.stdout.write("AI Access rule set: %s\n" % name)
+        sys.stdout.write("AI Access Rule set: %s\n" % name)
         return 0
     if res == "mcp-server":
         _require_server(plane, "MCP Server Settings")
@@ -1737,7 +1744,7 @@ def handle_unset(plane: ControlPlane, rest: list[str]) -> Optional[int]:
             sys.stdout.write("Reset ALL AI Access Rules; AI Identities and permission objects are retained. To delete a single Rule, use unset ai-access <RULE>.\n")
         result = _run(v24.reset_access_policy, plane, res)
         if isinstance(result, dict) and result.get("cancelled"):
-            return 0 if res == "ai-access" else 1
+            return 1
         sys.stdout.write("%s policy reset.\nEffective access: %s\n" % (res, "DENY" if res in ("internet-access", "ai-access") else "ALLOW"))
         return 0
     if res == "network-object":
@@ -1829,7 +1836,7 @@ def handle_unset(plane: ControlPlane, rest: list[str]) -> Optional[int]:
         result = _run(v24.unset_ai_access_rule, plane, rest[1])
         if isinstance(result, dict) and result.get("cancelled"):
             return 1
-        sys.stdout.write("AI Access rule deleted: %s\n" % rest[1])
+        sys.stdout.write("AI Access Rule deleted: %s\n" % rest[1])
         return 0
     if res == "ai-identity":
         _require_server(plane, "AI Identities")
@@ -1866,7 +1873,12 @@ def handle_unset(plane: ControlPlane, rest: list[str]) -> Optional[int]:
             raise ControlPlaneError("Usage: unset remote-service <NAME>")
         from drlink_control_cli import _confirm_from_stdin, _stdin_is_interactive
 
-        name = rest[1]
+        name = v24.validate_public_name(rest[1], "Remote Service name")
+        if not plane.conn.execute(
+            "SELECT 1 FROM agent_remote_services WHERE name = ? COLLATE NOCASE", (name,)
+        ).fetchone():
+            raise ControlPlaneError(v24.cli_error("Remote Service '%s' was not found." % name,
+                next_step="Run: show remote-services"))
         if not _stdin_is_interactive():
             sys.stderr.write(
                 "ERROR: unset remote-service requires interactive confirmation.\n"

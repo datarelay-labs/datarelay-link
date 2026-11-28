@@ -103,7 +103,9 @@ Data Relay Link — DRLink Server
 │   ├── List Managed Hosts
 │   ├── Connect New Host
 │   ├── Manage Host
-│   └── Enrollments
+│   ├── Enrollments
+│   ├── Managed Host Groups
+│   └── Managed Services (all published Remote Services)
 │
 ├── 2. Network Objects
 │   ├── Network Objects
@@ -137,6 +139,14 @@ Data Relay Link — DRLink Server
 │
 ├── 7. System
 │   ├── Server Settings
+│   ├── Configuration (Test / Diff / Apply / Export)
+│   ├── Revisions / Rollback
+│   ├── Backup & Restore
+│   ├── Updates
+│   ├── Diagnostics
+│   ├── Audit Log
+│   ├── Version Information
+│   ├── Uninstall Data Relay Link
 │   └── Certificates
 ├── 8. Help
 └── 9. Exit
@@ -157,7 +167,8 @@ Data Relay Link — Agent Host
 │   ├── Pause
 │   ├── Resume
 │   ├── Restart
-│   └── Autostart
+│   ├── Autostart (Show / Enable / Disable)
+│   └── Synchronize Remote Services
 │
 ├── 3. Configuration
 │   ├── Test

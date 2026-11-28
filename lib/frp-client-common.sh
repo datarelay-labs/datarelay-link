@@ -5415,11 +5415,20 @@ frp_client_autostart_cmd() {
   local mode="${1:-status}"
   case "$mode" in
     status|'')
-      if frp_client_autostart_enabled; then
-        echo "Autostart : enabled"
+      local en
+      if [[ "${FRP_SKIP_SYSTEMD:-}" == "1" || -n "${FRP_CLIENT_TEST_ROOT:-}" ]]; then
+        en="${FRP_CLIENT_TEST_AUTOSTART:-unknown}"
+      elif frp_is_darwin; then
+        en="$(launchctl print-disabled system 2>/dev/null |
+          awk -v label="${FRP_MACOS_LAUNCHD_LABEL}" 'index($0, "\"" label "\"") {if ($0 ~ /=>[[:space:]]*true/) print "disabled"; else if ($0 ~ /=>[[:space:]]*false/) print "enabled"; exit}')"
       else
-        echo "Autostart : disabled"
+        en="$(systemctl is-enabled drlink-client 2>/dev/null || true)"
       fi
+      case "$en" in
+        enabled|alias|static|indirect) echo "Autostart : enabled" ;;
+        disabled|masked|masked-runtime) echo "Autostart : disabled" ;;
+        *) echo "Autostart : unavailable (supervisor state not verified)" ;;
+      esac
       echo "Supervisor: $(frp_client_supervisor_name)"
       return 0
       ;;

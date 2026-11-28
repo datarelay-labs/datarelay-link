@@ -3836,6 +3836,11 @@ def _resolve_network_selector(plane_db, token: str, *, plane: str, field: str):
                     "Use an IP, CIDR, or FQDN Network Object as the destination.\n\n"
                     "No changes were applied." % ref["name"]
                 )
+            if plane == "internet" and field == "destination" and ref["type"] in ("host", "network"):
+                raise ControlPlaneError(cli_error(
+                    "Network Object '%s' is not a public Internet Access destination." % ref["name"],
+                    expected="A public IP/CIDR or FQDN Network Object.",
+                    next_step="Run: show network-object %s" % ref["name"]))
             raise ControlPlaneError(
                 cli_error(
                     "Object type is not valid for %s Access %s."
@@ -9102,7 +9107,7 @@ def format_show_status(role: str, plane_db=None) -> str:
             lines.extend(
                 [
                     "No access policies are currently configured.",
-                    "Remote Access compatibility default: ALLOW for explicitly published services.",
+                    "Remote Access default policy: ALLOW for explicitly published services.",
                     "Internet Access default: DENY ALL.",
                     "AI Access default: DENY ALL after authentication.",
                     "",
@@ -9185,6 +9190,14 @@ def format_show_agent(root: Optional[str] = None) -> str:
                 autostart = (proc.stdout or "").strip()
     except Exception:
         pass
+    if os.environ.get("FRP_SKIP_SYSTEMD") == "1" or os.environ.get("FRP_CLIENT_TEST_ROOT"):
+        autostart = os.environ.get("FRP_CLIENT_TEST_AUTOSTART", "unknown")
+    if autostart in ("enabled", "alias", "static", "indirect"):
+        autostart = "enabled"
+    elif autostart in ("disabled", "masked", "masked-runtime"):
+        autostart = "disabled"
+    else:
+        autostart = "unavailable (supervisor state not verified)"
     server = ""
     for path in _agent_state_file_candidates(
         "etc/frp/client-state.json", "client-state.json", root

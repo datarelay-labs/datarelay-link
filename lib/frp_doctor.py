@@ -3867,16 +3867,16 @@ def check_mcp_tls(report, paths):
                                 'Unknown': NOT_TESTED}.get(native['readiness'], NOT_TESTED)
                     report.add('mcp_native_executor', severity,
                                native['readiness'] + ' — ' + native['reason'], '',
-                               'Review local execution configuration; AI Access alone does not activate an executor.', 'security')
+                               'Run sudo drlink system diagnostics without a scope to verify installation and Bridge health; review set mcp-server for optional Server execution.', 'security')
             finally:
                 plane.close()
     except Exception as exc:
         report.add(
             'mcp_tls_doctor',
-            INFO,
-            'MCP TLS doctor checks unavailable',
+            NOT_TESTED,
+            'MCP TLS diagnostics unavailable',
             redact(str(exc)),
-            '',
+            'Run sudo drlink system diagnostics without a scope to inspect installation and control-plane health.',
             'security',
         )
 
@@ -4003,7 +4003,7 @@ def render_human(report, quiet=False, verbose=False):
                 if verbose and item.get('detail'):
                     for dline in str(item['detail']).splitlines():
                         lines.append(' %s %s' % (' ' * label_width, dline))
-                if item['status'] in (FAIL, WARN) and item.get('recommendation') and not quiet:
+                if item['status'] in (FAIL, WARN, NOT_TESTED) and item.get('recommendation') and not quiet:
                     rec = item['recommendation'].splitlines()[0]
                     lines.append(' %s next: %s' % (' ' * label_width, rec))
             lines.append('')
@@ -4126,21 +4126,24 @@ def run_doctor(root, facts, fmt='human', quiet=False, verbose=False, skip_networ
     check_pending(report, paths)
     check_backups_and_locks(report, paths, report.role)
 
-    try:
-        if report.role in ('server', 'dual', 'partial_server'):
-            check_server(report, paths, facts, skip_network)
-        if report.role in ('client', 'dual', 'partial_client'):
-            check_client(report, paths, facts, skip_network)
-        check_mcp_tls(report, paths)
-    except Exception as exc:
-        report.fatal = str(exc)
-        report.add(
-            'doctor_internal', FAIL,
-            'doctor internal error',
-            redact(traceback.format_exc() if verbose else str(exc)),
-            '',
-            'host',
-        )
+    checks = []
+    if report.role in ('server', 'dual', 'partial_server'):
+        checks.append(('Server', lambda: check_server(report, paths, facts, skip_network)))
+    if report.role in ('client', 'dual', 'partial_client'):
+        checks.append(('Agent', lambda: check_client(report, paths, facts, skip_network)))
+    checks.append(('MCP', lambda: check_mcp_tls(report, paths)))
+    for label, check in checks:
+        try:
+            check()
+        except Exception as exc:
+            report.fatal = str(exc)
+            report.add(
+                'doctor_internal', FAIL,
+                '%s diagnostics could not complete' % label,
+                redact(traceback.format_exc() if verbose else str(exc)),
+                'Run sudo drlink system diagnostics without a scope. Inspect missing installation/configuration components before repair; preserve existing identity and state.',
+                'host',
+            )
 
     scope = str(scope or '').strip()
     if scope:

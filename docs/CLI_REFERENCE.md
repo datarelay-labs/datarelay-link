@@ -338,6 +338,13 @@ For `server:self`, the test reports configured policy separately from each nativ
 
 ## 8. Server system commands
 
+The Server guided System menu includes Configuration (Test / Diff / Apply / Export), Revisions / Rollback, Backup & Restore, Certificates, Updates, Diagnostics and Audit Log. Under Managed Hosts, use Managed Host Groups to create, inspect, edit, manage membership or delete groups, and Managed Services to inspect all published Remote Services. On the Agent Host, Agent → Autostart offers Show / Enable / Disable; Synchronize Remote Services uses the existing local Agent command.
+
+For Internet Access, Policy readiness describes configuration enforcement only. Runtime readiness separately reports unavailable endpoints or connectivity not tested. Use `system diagnostics` to investigate runtime readiness.
+
+**Documented automation options:** `system diagnostics --json`, `--verbose`, `--quiet`; `system support-bundle --output <PATH>`; `set managed-host-group <GROUP> --description <TEXT>`. These explicitly supported options do not grant additional authority or bypass confirmations. Enrollment remains guided without GNU options. Declining policy reset returns nonzero for all three policy families.
+
+
 ```text
 system status
 system version
