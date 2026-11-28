@@ -60,6 +60,7 @@ class Account:
     gid: int
     home: str
     roots: tuple[str, ...]
+    default_directory: str | None = None
 
     def launch_options(self) -> dict:
         if os.geteuid() == 0:
@@ -76,21 +77,130 @@ class Account:
                 "LANG": "C.UTF-8", "SHELL": "/bin/sh", "GIT_TERMINAL_PROMPT": "0"}
 
 
-def configured_account() -> Account:
+def execution_profile_status(settings: dict | None) -> dict:
+    """Non-mutating readiness projection. No account/path values are returned."""
+    names = {"self": "SELF_ENABLED", "local": "LOCAL_EXEC_ENABLED",
+             "full": "FULL_CONTROL_ENABLED", "admin": "ADMIN_ENABLED"}
+    status = {key: (None if settings is None else settings.get("DRLINK_MCP_SERVER_" + suffix) == "1")
+              for key, suffix in names.items()}
+    def result(readiness, reason):
+        return dict(status, readiness=readiness, reason=reason)
+    if settings is None:
+        return result("Unknown", "Running Bridge environment not verified")
+    if not status["self"]:
+        return result("Disabled", "Server-self is disabled")
+    if not status["local"]:
+        return result("Disabled", "Server-local executor is disabled")
+    raw = settings.get("DRLINK_MCP_SERVER_ALLOWED_ROOTS", "")
+    try:
+        entries = _profile_accounts(settings)
+    except FullControlDenied:
+        return result("Not ready", "Execution account or allowed roots missing or invalid")
+    if not raw:
+        return result("Not ready", "Execution account or allowed roots missing")
+    for name, spec in entries.items():
+        try:
+            account = pwd.getpwnam(name)
+        except KeyError:
+            return result("Not ready", "Configured execution account does not exist")
+        if spec["uid"] is not None and spec["uid"] != account.pw_uid:
+            return result("Not ready", "Configured execution account UID changed")
+        if account.pw_uid == 0 and (not status["full"] or not status["admin"]):
+            return result("Not ready", "Administrative account requires explicit local opt-in")
+    reader = settings.get("DRLINK_MCP_SERVER_READ_USER")
+    if reader and (reader not in entries or pwd.getpwnam(reader).pw_uid == 0):
+        return result("Not ready", "Invalid read-only execution account")
+    try:
+        if any(not p or not Path(p).is_absolute() or not Path(p).is_dir() for p in raw.split(os.pathsep)):
+            return result("Not ready", "Configured root is missing or invalid")
+    except OSError:
+        return result("Not ready", "Configured root cannot be verified")
+    if status["full"]:
+        try:
+            accounts = eligible_accounts(settings)
+            if set(accounts) != set(entries):
+                return result("Not ready", "An approved execution account or its local roots is unavailable")
+            for account in accounts.values():
+                allowed_cwd(default_cwd(account), ["/**"], account)
+            legacy_execution_rule_ids(settings)
+        except (FullControlDenied, OSError, ValueError, RuntimeError):
+            return result("Not ready", "Configured default directory or legacy grant snapshot is invalid")
+    return result("Configured", "Execution profile configured; effective AI Access and live operation must be verified")
+
+
+def _profile_accounts(settings) -> dict:
+    """Local, operator-selected accounts. Explicit maps pin the actual UID."""
+    raw = settings.get("DRLINK_MCP_SERVER_EXEC_ACCOUNTS")
+    if raw is None:
+        name = settings.get("DRLINK_MCP_SERVER_EXEC_USER", "")
+        if not name:
+            raise FullControlDenied("Native execution account is not configured")
+        return {name: {"uid": None, "cwd": settings.get("DRLINK_MCP_SERVER_DEFAULT_CWD") or None}}
+    try:
+        entries = json.loads(raw)
+    except (ValueError, TypeError):
+        raise FullControlDenied("Invalid local execution account profile") from None
+    if not isinstance(entries, dict) or not entries or len(entries) > 128:
+        raise FullControlDenied("Invalid local execution account profile")
+    for name, entry in entries.items():
+        if (not isinstance(name, str) or not name or not isinstance(entry, dict)
+                or not {"uid"} <= set(entry) <= {"uid", "cwd", "roots"}
+                or type(entry["uid"]) is not int or entry["uid"] < 0
+                or ("cwd" in entry and (not isinstance(entry["cwd"], str)
+                                        or not Path(entry["cwd"]).is_absolute()))
+                or ("roots" in entry and (not isinstance(entry["roots"], list)
+                    or not entry["roots"] or any(not isinstance(root, str) or not Path(root).is_absolute()
+                                                  for root in entry["roots"])))):
+            raise FullControlDenied("Invalid local execution account entry")
+    return entries
+
+
+def legacy_execution_account(settings=None) -> str | None:
+    settings = os.environ if settings is None else settings
+    if "DRLINK_MCP_SERVER_EXEC_ACCOUNTS" in settings:
+        name = settings.get("DRLINK_MCP_SERVER_LEGACY_ACCOUNT")
+        return name if name and name in _profile_accounts(settings) else None
+    return settings.get("DRLINK_MCP_SERVER_EXEC_USER") or None
+
+
+def legacy_execution_rule_ids(settings=None) -> dict[str, str] | None:
+    """Frozen legacy grants; None means the unchanged singleton runtime."""
+    settings = os.environ if settings is None else settings
+    if "DRLINK_MCP_SERVER_EXEC_ACCOUNTS" not in settings:
+        return None
+    try:
+        ids = json.loads(settings.get("DRLINK_MCP_SERVER_LEGACY_RULE_IDS", "{}") or "{}")
+        if (not isinstance(ids, dict) or len(ids) > 256 or
+                any(not isinstance(key, str) or not key or not isinstance(value, str)
+                    or (value and (len(value) != 64 or any(c not in "0123456789abcdef" for c in value)))
+                    for key, value in ids.items())):
+            raise ValueError("invalid legacy rule snapshot")
+        return ids
+    except (ValueError, TypeError):
+        raise FullControlDenied("Invalid migrated execution rule scope") from None
+
+
+def configured_account(name: str | None = None, *, settings=None) -> Account:
+    settings = os.environ if settings is None else settings
     required = ("DRLINK_MCP_SERVER_SELF_ENABLED", "DRLINK_MCP_SERVER_LOCAL_EXEC_ENABLED",
                 "DRLINK_MCP_SERVER_FULL_CONTROL_ENABLED")
-    if any(os.environ.get(name) != "1" for name in required):
+    if any(settings.get(key) != "1" for key in required):
         raise FullControlDenied("Native full-control profile is not enabled")
-    name = os.environ.get("DRLINK_MCP_SERVER_EXEC_USER", "")
-    if not name:
-        raise FullControlDenied("Native execution account is not configured")
+    entries = _profile_accounts(settings)
+    if name is None and "DRLINK_MCP_SERVER_EXEC_ACCOUNTS" not in settings:
+        name = legacy_execution_account(settings)
+    if name is None or name not in entries:
+        raise FullControlDenied("Execution account not locally approved")
+    spec = entries[name]
     try:
         entry = pwd.getpwnam(name)
     except KeyError:
         raise FullControlDenied("Configured execution account does not exist") from None
-    if entry.pw_uid == 0 and os.environ.get("DRLINK_MCP_SERVER_ADMIN_ENABLED") != "1":
+    if spec["uid"] is not None and spec["uid"] != entry.pw_uid:
+        raise FullControlDenied("Configured execution account UID changed")
+    if entry.pw_uid == 0 and settings.get("DRLINK_MCP_SERVER_ADMIN_ENABLED") != "1":
         raise FullControlDenied("Administrative account requires explicit local operator opt-in")
-    raw = os.environ.get("DRLINK_MCP_SERVER_ALLOWED_ROOTS", "")
+    raw = settings.get("DRLINK_MCP_SERVER_ALLOWED_ROOTS", "")
     if not raw:
         raise FullControlDenied("Native allowed roots are not configured")
     roots = []
@@ -99,10 +209,47 @@ def configured_account() -> Account:
         if not text or not path.is_absolute() or not path.is_dir():
             raise FullControlDenied("Configured root must be an existing absolute directory")
         roots.append(str(path.resolve(strict=True)))
+    if "roots" in spec:
+        selected_roots = []
+        for value in spec["roots"]:
+            path = Path(value)
+            if not path.is_dir():
+                raise FullControlDenied("Configured account root is unavailable")
+            canonical = str(path.resolve(strict=True))
+            if not any(root == "/" or canonical == root or canonical.startswith(root + "/") for root in roots):
+                raise FullControlDenied("Account root is outside local execution ceiling")
+            selected_roots.append(canonical)
+        roots = selected_roots
     account = Account(entry.pw_name, entry.pw_uid, entry.pw_gid,
-                      entry.pw_dir, tuple(roots))
+                      entry.pw_dir, tuple(roots), spec.get("cwd"))
     account.launch_options()
     return account
+
+
+def eligible_accounts(settings=None) -> dict[str, Account]:
+    """Only locally configured, currently resolvable and launchable accounts."""
+    settings = os.environ if settings is None else settings
+    result = {}
+    for name in _profile_accounts(settings):
+        try:
+            result[name] = configured_account(name, settings=settings)
+        except (FullControlDenied, OSError):
+            continue
+    return result
+
+
+def reader_execution_account(accounts: dict[str, Account], settings=None) -> str | None:
+    settings = os.environ if settings is None else settings
+    reader = settings.get("DRLINK_MCP_SERVER_READ_USER")
+    if not reader and "DRLINK_MCP_SERVER_EXEC_ACCOUNTS" not in settings:
+        reader = settings.get("DRLINK_MCP_SERVER_EXEC_USER")
+    if reader in accounts and accounts[reader].uid != 0:
+        return reader
+    return None
+
+
+def default_cwd(account: Account) -> str:
+    return account.default_directory or account.home
 
 
 def allowed_path(path: str, patterns: list[str], account: Account) -> str:
@@ -182,6 +329,8 @@ class Job:
     cwd: str
     fingerprint: str
     process: subprocess.Popen
+    grant_rule: str | None = None
+    revoked: bool = False
     started: float = field(default_factory=time.monotonic)
     finished: float | None = None
     timed_out: bool = False
@@ -232,20 +381,123 @@ class FullControlRuntime:
     The Bridge rechecks AI Access before *each* start/read/stdin/stop request.
     Jobs never accept an OS uid, account, capability or policy from the caller.
     """
-    def __init__(self):
+    def __init__(self, *, policy_root: str | None = None):
         self.jobs: dict[str, Job] = {}
         self.lock = threading.Lock()
+        # Direct library fixtures have no policy database; all Bridge runtimes
+        # supply one, including the separate multi-worker executor process.
+        self.policy_root = policy_root
+        self._monitor_stop = threading.Event()
+        self._monitor_thread = None
+
+    def _policy_plane(self):
+        from drlink_control_plane import ControlPlane
+        return ControlPlane(self.policy_root, read_only=True)
+
+    @staticmethod
+    def _current_grant(plane, owner, account, cwd, grant_rule):
+        import drlink_v24 as v24
+        if not grant_rule or configured_account(account.name) != account:
+            return None
+        principal = plane.conn.execute("SELECT name FROM ai_principals WHERE id=?", (owner,)).fetchone()
+        if principal is None:
+            return None
+        def validate(_name, patterns, value):
+            try:
+                return allowed_cwd(value, patterns, account) == cwd
+            except (FullControlDenied, OSError, ValueError, TypeError):
+                return False
+        result = v24.resolve_ai_execution_grant(
+            plane, identity=principal["name"], principal_id=owner,
+            destination=v24.SERVER_SELF_TARGET, capability="exec",
+            local_accounts=[account.name], run_as=account.name, operand=cwd,
+            legacy_account=legacy_execution_account(), legacy_rule_ids=legacy_execution_rule_ids(),
+            rule_id=grant_rule, validate_operand=validate)
+        return result if result["action"] == "ALLOW" else None
+
+    def _check_grant(self, owner, account, cwd, grant_rule, patterns=None):
+        if self.policy_root is None:
+            return True
+        try:
+            plane = self._policy_plane()
+            try:
+                grant = self._current_grant(plane, owner, account, cwd, grant_rule)
+                return bool(grant and (patterns is None or grant["patterns"] == patterns))
+            finally:
+                plane.close()
+        except Exception:
+            return False
+
+    def _monitor_grants(self):
+        # One read-only connection per sweep, only while tracked jobs are active.
+        # No public request is required to terminate a revoked process group.
+        while not self._monitor_stop.wait(0.5):
+            with self.lock:
+                jobs = [job for job in self.jobs.values() if not job.revoked and not job.done.is_set()]
+            if not jobs:
+                continue
+            denied = []
+            try:
+                plane = self._policy_plane()
+                try:
+                    for job in jobs:
+                        try:
+                            if not self._current_grant(plane, job.owner, job.account, job.cwd, job.grant_rule):
+                                denied.append(job)
+                        except Exception:
+                            denied.append(job)
+                finally:
+                    plane.close()
+            except Exception:
+                denied = jobs
+            for job in denied:
+                try:
+                    self.revoke(job.owner, job.identifier)
+                except FullControlDenied:
+                    pass
+
+    def _ensure_monitor(self):
+        if self.policy_root is not None and self._monitor_thread is None:
+            self._monitor_thread = threading.Thread(target=self._monitor_grants,
+                name="drlink-native-job-grants", daemon=True)
+            self._monitor_thread.start()
 
     def context(self, owner: str, identifier: str) -> str:
         return self._owned(owner, identifier).cwd
 
-    def _owned(self, owner: str, identifier: str) -> Job:
-        account = configured_account()
+    def grant_context(self, owner: str, identifier: str) -> dict:
+        job = self._owned(owner, identifier)
+        return {"cwd": job.cwd, "account": job.account.name, "uid": job.account.uid,
+                "rule_id": job.grant_rule}
+
+    def revoke(self, owner: str, identifier: str) -> None:
+        # Internal-only cancellation, never a public authorization bypass.
         with self.lock:
             job = self.jobs.get(identifier)
-            if job is None or not owner or job.owner != owner or job.account != account:
+            if job is None or not owner or job.owner != owner:
+                raise FullControlDenied("Job unavailable to this identity")
+            job.revoked = True
+        if not job.done.is_set():
+            _terminate(job)
+
+    def _owned(self, owner: str, identifier: str) -> Job:
+        with self.lock:
+            job = self.jobs.get(identifier)
+            if job is None or not owner or job.owner != owner:
                 raise FullControlDenied("Job unavailable to this identity or execution profile")
-            return job
+            if job.revoked:
+                raise FullControlDenied("AI Access: job grant revoked")
+        try:
+            account = configured_account(job.account.name)
+            if job.account != account:
+                raise FullControlDenied("Job execution profile changed")
+        except (FullControlDenied, OSError):
+            self.revoke(owner, identifier)
+            raise FullControlDenied("Job unavailable to this identity or execution profile") from None
+        if not self._check_grant(job.owner, job.account, job.cwd, job.grant_rule):
+            self.revoke(owner, identifier)
+            raise FullControlDenied("AI Access: job grant revoked")
+        return job
 
     def _finish(self, job: Job, timeout: int, readers: list[threading.Thread]) -> None:
         timer = threading.Timer(timeout, _terminate, args=(job,), kwargs={"timeout": True})
@@ -275,11 +527,12 @@ class FullControlRuntime:
             job.finished = time.monotonic()
             job.done.set()
 
-    def start(self, owner: str, args: dict, patterns: list[str], *, git: bool = False) -> dict:
-        account = configured_account()
+    def start(self, owner: str, args: dict, patterns: list[str], *, git: bool = False,
+              account_name: str | None = None, grant_rule: str | None = None) -> dict:
+        account = configured_account(account_name)
         if not owner:
             raise FullControlDenied("Authenticated AI identity is required")
-        cwd = allowed_cwd(args.get("cwd") or account.home, patterns, account)
+        cwd = allowed_cwd(args["cwd"] if "cwd" in args else default_cwd(account), patterns, account)
         argv = args.get("argv")
         command = args.get("command")
         if command is not None:
@@ -297,6 +550,8 @@ class FullControlRuntime:
             raise FullControlDenied("A positive process timeout is required")
         wait_ms = _integer(args.get("wait_ms"), 1000, 5000)
         environment = account.environment()
+        if not self._check_grant(owner, account, cwd, grant_rule, patterns):
+            raise FullControlDenied("AI Access: execution grant changed before launch")
         with self.lock:
             now = time.monotonic()
             expired = [key for key, value in self.jobs.items()
@@ -321,8 +576,10 @@ class FullControlRuntime:
             os.set_blocking(proc.stdin.fileno(), False)
             identifier = "sj_" + secrets.token_hex(16)
             job = Job(identifier, owner, account, cwd,
-                      hashlib.sha256(json.dumps(argv).encode()).hexdigest()[:16], proc)
+                      hashlib.sha256(json.dumps(argv).encode()).hexdigest()[:16], proc,
+                      grant_rule=grant_rule)
             self.jobs[identifier] = job
+            self._ensure_monitor()
         readers = [threading.Thread(target=_drain, args=(proc.stdout, job.stdout, job.readers_stop), daemon=True),
                    threading.Thread(target=_drain, args=(proc.stderr, job.stderr, job.readers_stop), daemon=True)]
         for thread in readers:
@@ -344,6 +601,8 @@ class FullControlRuntime:
         outpos = _integer(stdout_cursor, 0, 2 ** 63 - 1)
         errpos = _integer(stderr_cursor, 0, 2 ** 63 - 1)
         job.done.wait(_integer(wait_ms, 0, 5000) / 1000)
+        if job.revoked:
+            raise FullControlDenied("AI Access: job grant revoked")
         return {"job_id": job.identifier, "state": "completed" if job.done.is_set() else "running",
                 "exit_status": job.process.returncode, "timed_out": job.timed_out,
                 "output_complete": job.done.is_set() and job.output_complete,
@@ -383,6 +642,9 @@ class FullControlRuntime:
         return self._snapshot(job, wait_ms=1000)
 
     def close(self) -> None:
+        self._monitor_stop.set()
+        if self._monitor_thread is not None:
+            self._monitor_thread.join(timeout=2)
         with self.lock:
             jobs = list(self.jobs.values())
         for job in jobs:
@@ -391,9 +653,10 @@ class FullControlRuntime:
             job.done.wait(3)
 
 
-def execute_file_action(action: str, arguments: dict, patterns: list[str]) -> dict:
+def execute_file_action(action: str, arguments: dict, patterns: list[str],
+                        *, account_name: str | None = None) -> dict:
     """Reuse the Agent operation implementation in the selected OS-account child."""
-    account = configured_account()
+    account = configured_account(account_name)
     if action not in FILE_ACTIONS:
         raise FullControlDenied("Unknown Native file/process action")
     if not isinstance(arguments, dict):
@@ -458,7 +721,7 @@ if __name__ == "__main__":
 # Access for every call; the runtime still checks job ownership itself. Same methods, same
 # arguments, same FullControlDenied.
 
-_REMOTE_METHODS = frozenset({"context", "start", "poll", "send", "stop"})
+_REMOTE_METHODS = frozenset({"context", "grant_context", "revoke", "start", "poll", "send", "stop"})
 _IPC_MAX_BYTES = 4 * 1024 * 1024
 
 
@@ -563,8 +826,16 @@ class RemoteFullControlRuntime:
     def context(self, owner: str, identifier: str) -> str:
         return self._call("context", owner, identifier)
 
-    def start(self, owner: str, args: dict, patterns: list, *, git: bool = False) -> dict:
-        return self._call("start", owner, args, patterns, git=git)
+    def grant_context(self, owner: str, identifier: str) -> dict:
+        return self._call("grant_context", owner, identifier)
+
+    def revoke(self, owner: str, identifier: str) -> None:
+        self._call("revoke", owner, identifier)
+
+    def start(self, owner: str, args: dict, patterns: list, *, git: bool = False,
+              account_name: str | None = None, grant_rule: str | None = None) -> dict:
+        return self._call("start", owner, args, patterns, git=git,
+                          account_name=account_name, grant_rule=grant_rule)
 
     def poll(self, owner: str, identifier: str, *, stdout_cursor: int = 0,
              stderr_cursor: int = 0, wait_ms: int = 0) -> dict:

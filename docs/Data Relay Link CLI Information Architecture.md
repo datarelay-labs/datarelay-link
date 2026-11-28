@@ -103,7 +103,9 @@ Data Relay Link — DRLink Server
 │   ├── List Managed Hosts
 │   ├── Connect New Host
 │   ├── Manage Host
-│   └── Enrollments
+│   ├── Enrollments
+│   ├── Managed Host Groups
+│   └── Managed Services (all published Remote Services)
 │
 ├── 2. Network Objects
 │   ├── Network Objects
@@ -122,17 +124,29 @@ Data Relay Link — DRLink Server
 │   └── Test / Explain
 │
 ├── 6. AI Access
-│   ├── AI MCP Setup
+│   ├── MCP Server Settings
+│   ├── AI Identities
+│   ├── Connect or manage AI Identity
 │   ├── Access Rules
+│   ├── Create or edit Access Rule
+│   ├── Permission Objects / Groups
+│   │   ├── Permission Objects
+│   │   └── Permission Groups
+│   ├── Enable Enforcement
+│   ├── Disable Enforcement
 │   ├── Access Log
-│   ├── Test / Explain
-│   └── Advanced Permissions
-│       ├── Permission Objects
-│       └── Permission Groups
+│   └── Test / Explain
 │
 ├── 7. System
 │   ├── Server Settings
-│   │   └── MCP Server Settings
+│   ├── Configuration (Test / Diff / Apply / Export)
+│   ├── Revisions / Rollback
+│   ├── Backup & Restore
+│   ├── Updates
+│   ├── Diagnostics
+│   ├── Audit Log
+│   ├── Version Information
+│   ├── Uninstall Data Relay Link
 │   └── Certificates
 ├── 8. Help
 └── 9. Exit
@@ -153,7 +167,8 @@ Data Relay Link — Agent Host
 │   ├── Pause
 │   ├── Resume
 │   ├── Restart
-│   └── Autostart
+│   ├── Autostart (Show / Enable / Disable)
+│   └── Synchronize Remote Services
 │
 ├── 3. Configuration
 │   ├── Test
@@ -192,7 +207,7 @@ Diagnostics, support-bundle human output, menus, help, and errors use the same
 | Service Group | Flat reusable collection of Service Objects |
 | Permission Object | Reusable AI permission set |
 | Permission Group | Reusable collection of Permission Objects |
-| AI MCP Setup | User-facing MCP Server, MCP Bridge and AI service connection setup |
+| MCP Server Settings | Public endpoint/TLS, local Server execution, diagnostics |
 | AI Identity | Authenticated security resource; not a setup menu label |
 | Remote Service | Agent-owned connectivity object with a DRLink endpoint |
 | Relay Host | Current Agent Host when forwarding to another destination |
@@ -321,13 +336,13 @@ set service-object legacy-db type fixed-tcp port 1521
 
 When a Remote Service uses it, DRLink allocates an endpoint from the separate Fixed TCP endpoint pool. The operator does not choose the external listen port.
 
-## 12. AI MCP Setup UX
+## 12. MCP Server Settings UX
 
-The canonical guided menu selector is `set ai-mcp` (AI MCP Setup), with help text `Set up and manage AI MCP connections`. It covers MCP Server, MCP Bridge and AI service connection setup; AI Access continues to control authorization. AI Identity denotes the authenticated security resource, not the guided menu. Existing action-first identity commands retain their grammar:
+The canonical setup command is `set mcp-server` (MCP Server Settings): Configure MCP Server connectivity and execution. Authentication is managed by `set ai-identity`; authorization is managed by `set ai-access`.
 
-### AI MCP Setup and AI Access workflow
+### MCP Server Settings and AI Access workflow
 
-The single workflow specification is [AI_ACCESS_MCP.md](AI_ACCESS_MCP.md). Managed Hosts owns enrollment; AI MCP Setup manages infrastructure and connections; AI Identity retains verified authentication and credential lifecycle; AI Access Rules own Source → Destination → Permission authorization; System owns shared MCP settings and certificates. AI MCP Setup checks readiness and uses that same settings flow only when necessary, then optionally opens the separate Access Rule wizard. No automatic privilege grant from OAuth or first connection; explicitly reviewed Owner scope is optional. Basic permissions use built-in profiles; custom Objects/Groups are advanced. AI Access mode is fixed WHITELIST, not an operator input. Preserve existing state and all fail-closed controls. No duplicate public command/menu paths. These are target requirements, not installed-product evidence.
+The single normative workflow is [AI_ACCESS_MCP.md](AI_ACCESS_MCP.md). Managed Hosts owns enrollment; `set mcp-server` owns the unified endpoint, TLS and local execution setup; `set ai-identity` owns verified connection and credential lifecycle; AI Access Rules own Source, Destination, Permission and direct-file paths; only This Server Rules include allowed execution accounts and a default. Managed Hosts keep existing Agent execution with centrally managed AI Access and no additional Agent configuration. System owns shared infrastructure and the local Server execution safety ceiling, not a second independent user-facing account wizard. After OAuth, guide the operator into one reviewed Access Rule flow; skipping it leaves DENY. Built-in permissions need no custom Objects/Groups. AI Access is fixed WHITELIST. Normal requests describe work, not OS accounts: MCP discovers effective accounts and defaults; AI selects an explicitly granted account only when needed. Preserve existing state, public command compatibility and fail-closed enforcement. These are target requirements pending exact-candidate implementation and E2E.
 
 
 ```text
@@ -402,7 +417,7 @@ BUNDLE_ATOMICITY=CURRENT_CLI_CONTEXT
 Regression tests must protect:
 
 - role-aware Server/Agent roots;
-- canonical nouns and help/menu discovery: `ai-mcp` / `AI MCP Setup` / `Set up and manage AI MCP connections` must agree with the CLI/AI Master; reject retired setup-menu wording in help, menus, completion, guidance and current docs; preserve action-first AI Identity resource syntax and security behavior;
+- canonical nouns and help/menu discovery: `mcp-server` / `MCP Server Settings`, `ai-identity`, and `ai-access` must agree with the CLI/AI Master. No obsolete setup terms in current docs or discovery, no duplicate guided TLS/identity paths, and retired commands must point to the canonical workflow. Preserve authentication and authorization behavior.
 - Guided Create/Edit and Cancel atomicity;
 - plane-specific policy semantics: Remote BLACKLIST/WHITELIST; Internet/AI WHITELIST-only;
 - policy disable/enable/reset;

@@ -966,9 +966,6 @@ def _set(plane: ControlPlane, rest, client_sel):
         _run(plane._mutate, "set enrollment %s" % kind, "create enrollment", write)
         sys.stdout.write("Enrollment created. Secret is not redisplayed.\n")
         return 0
-    if rest[:2] == ["server", "mcp"]:
-        v24cli._require_server(plane, "MCP Server settings")
-        return _set_mcp_tls(plane, rest[2:])
     raise SystemExit("Unknown set resource.")
 
 
@@ -983,8 +980,7 @@ def _guide_mcp_server(plane: ControlPlane, *, io=None) -> int:
         view = mcp_tls.status_view(plane, plane.root)
         state = mcp_tls.load_state(plane)
         emit(mcp_tls.format_status(view))
-        if (view.get("frontend_available") and view.get("cloud_compatible")
-                and view.get("certificate") in (mcp_tls.STATUS_VALID, mcp_tls.STATUS_RENEWAL_DUE)
+        if (view.get("frontend_available") and view.get("certificate") in (mcp_tls.STATUS_VALID, mcp_tls.STATUS_RENEWAL_DUE)
                 and view.get("url", "").startswith("https://")):
             emit("Existing certificate retained. Check actual connectivity with system diagnostics mcp.\n")
             return 0
@@ -1032,16 +1028,14 @@ def _guide_mcp_server(plane: ControlPlane, *, io=None) -> int:
 
 
 def _set_mcp_tls(plane: ControlPlane, rest):
-    if not rest and _stdin_is_interactive():
-        return _guide_mcp_server(plane)
     if not rest:
         raise SystemExit(
-            "Missing MCP Server setting.\n\n"
+            "Missing MCP Server setting. Use set mcp-server for guided setup.\n\n"
             "Usage:\n"
-            "  set server mcp hostname <fqdn>\n"
-            "  set server mcp mode auto-acme|user-certificate|private-ca\n"
-            "  set server mcp contact-email <email>\n"
-            "  set server mcp acme-environment staging|production\n\n"
+            "  set mcp-server hostname <fqdn>\n"
+            "  set mcp-server mode auto-acme|user-certificate|private-ca\n"
+            "  set mcp-server contact-email <email>\n"
+            "  set mcp-server acme-environment staging|production\n\n"
             "Default public-cloud mode is AUTO_ACME.\n"
             "PRIVATE_CA is for internal/test clients that trust the DRLink CA;\n"
             "it is not the default ChatGPT/Claude cloud connector path.\n"
@@ -1049,14 +1043,14 @@ def _set_mcp_tls(plane: ControlPlane, rest):
         )
     prop = rest[0]
     if len(rest) != 2:
-        raise SystemExit("Usage: set server mcp <SETTING> <VALUE>")
+        raise SystemExit("Usage: set mcp-server <SETTING> <VALUE>")
     try:
         mcp_tls.require_public_frontend(plane.root)
         if prop == "hostname":
-            _need(rest, 2, "set server mcp hostname <fqdn>")
+            _need(rest, 2, "set mcp-server hostname <fqdn>")
             state = mcp_tls.configure_intent(plane, hostname=rest[1])
         elif prop == "mode":
-            _need(rest, 2, "set server mcp mode auto-acme|user-certificate|private-ca")
+            _need(rest, 2, "set mcp-server mode auto-acme|user-certificate|private-ca")
             state = mcp_tls.configure_intent(plane, mode=rest[1])
             if state.get("mode") == mcp_tls.MODE_PRIVATE_CA:
                 sys.stdout.write(
@@ -1064,13 +1058,13 @@ def _set_mcp_tls(plane: ControlPlane, rest):
                     "Cloud-hosted Remote MCP clients that do not trust this CA may reject it.\n"
                 )
         elif prop in ("contact-email", "email"):
-            _need(rest, 2, "set server mcp contact-email <email>")
+            _need(rest, 2, "set mcp-server contact-email <email>")
             state = mcp_tls.configure_intent(plane, contact_email=rest[1])
         elif prop in ("acme-environment", "acme-env"):
-            _need(rest, 2, "set server mcp acme-environment staging|production")
+            _need(rest, 2, "set mcp-server acme-environment staging|production")
             state = mcp_tls.configure_intent(plane, acme_environment=rest[1])
         elif prop in ("acme-directory", "acme-directory-url"):
-            _need(rest, 2, "set server mcp acme-directory <url>")
+            _need(rest, 2, "set mcp-server acme-directory <url>")
             state = mcp_tls.configure_intent(plane, acme_directory_url=rest[1])
         else:
             raise SystemExit("Unknown MCP Server setting: %s" % prop)
@@ -1175,16 +1169,15 @@ def _unset(plane: ControlPlane, rest, client_sel):
     if res == "enrollment":
         plane.conn.execute("DELETE FROM enrollments WHERE id = ?", (rest[1],))
         return 0
-    if rest[:2] == ["server", "mcp"]:
+    if rest[0] == "mcp-server":
         v24cli._require_server(plane, "MCP Server settings")
-        rest = rest[1:]
         if len(rest) > 2 or (len(rest) == 2 and rest[1] != "purge"):
-            raise SystemExit("Usage:\n  unset server mcp\n  unset server mcp purge")
+            raise SystemExit("Usage:\n  unset mcp-server\n  unset mcp-server purge")
         purge = len(rest) == 2
         if purge:
             if not _stdin_is_interactive():
                 sys.stderr.write(
-                    "ERROR: unset server mcp purge requires interactive confirmation.\n"
+                    "ERROR: unset mcp-server purge requires interactive confirmation.\n"
                     "This removes DRLink-owned MCP TLS certificate and ACME account material.\n"
                     "Run interactively and answer y.\n"
                     "No changes were applied.\n"
@@ -1204,7 +1197,7 @@ def _unset(plane: ControlPlane, rest, client_sel):
         if purge:
             sys.stdout.write("DRLink-owned certificate and ACME account material removed.\n")
         else:
-            sys.stdout.write("Certificate files retained (use unset server mcp purge to remove secrets).\n")
+            sys.stdout.write("Certificate files retained (use unset mcp-server purge to remove secrets).\n")
         return 0
     raise SystemExit("Unknown unset resource.")
 
@@ -1526,7 +1519,7 @@ def _system_certificate(plane: ControlPlane, rest):
             state = mcp_tls.load_state(plane)
             host = state.get("hostname") or ""
             if not host:
-                raise SystemExit("Configure hostname first: set server mcp hostname <fqdn>")
+                raise SystemExit("Configure hostname first: set mcp-server hostname <fqdn>")
             require_public = (state.get("mode") or mcp_tls.DEFAULT_PUBLIC_CLOUD_TLS_MODE) == mcp_tls.MODE_AUTO_ACME
             result = mcp_tls.preflight_hostname(host, require_public_dns=require_public)
             sys.stdout.write(json.dumps(result, indent=2) + "\n")
@@ -1640,6 +1633,9 @@ def main(argv=None):
         # has already closed the pipe.
         sys.stdout.flush()
         return rc or 0
+    except ControlPlaneError as exc:
+        sys.stderr.write("ERROR: %s\nRun: sudo drlink system diagnostics\n" % exc)
+        return 1
     except BrokenPipeError:
         # A consumer such as `head` may close stdout before a long read-only
         # listing is complete. Treat that as normal pipeline termination and

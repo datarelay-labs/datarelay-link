@@ -149,7 +149,7 @@ class NavigationSemantics(unittest.TestCase):
         self.assertIn("Exit", top)
         self.assertNotIn("Back/Cancel", top)
         sub = catalog.navigation_invalid_message("server.system", "zzz")
-        self.assertIn("1-10", sub)
+        self.assertIn("1-%d" % len(catalog.NAVIGATION_TREE["server.system"]), sub)
         self.assertIn("0", sub)
         self.assertNotIn("Back/Cancel", sub)
 

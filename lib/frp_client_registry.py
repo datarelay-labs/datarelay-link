@@ -484,14 +484,14 @@ def resolve_client_or_exit(state, query):
         return resolve_client(state, query)
     except ClientLookupError as exc:
         if exc.matches:
-            sys.stderr.write('ERROR: multiple clients matched.\n\n')
-            sys.stderr.write(format_candidate_table(exc.matches))
-            sys.stderr.write('\nUse a longer CLIENT ID prefix.\n')
+            sys.stderr.write('ERROR: multiple Managed Hosts matched.\n\n')
+            sys.stderr.write(format_candidate_table(exc.matches).replace('CLIENT ID', 'HOST ID', 1))
+            sys.stderr.write('\nUse a longer Host ID prefix.\n')
         elif str(exc) == 'client not found':
             shown = sanitize_display(query, 128)
-            sys.stderr.write('ERROR: client not found: %s\n' % shown)
-            sys.stderr.write('\nUse a CLIENT ID, unique label, or unique hostname.\n')
-            sys.stderr.write('Run:\n  show clients\n\nor:\n  show client ?\n')
+            sys.stderr.write('ERROR: Managed Host not found: %s\n' % shown)
+            sys.stderr.write('\nUse a Host ID, unique label, or unique hostname.\n')
+            sys.stderr.write('Run:\n  show managed-hosts\n\nor:\n  show managed-host ?\n')
         else:
             sys.stderr.write('ERROR: %s\n' % exc)
         raise SystemExit(1)

@@ -355,7 +355,7 @@ function Import-FrpWindowsModules {
     }
     foreach ($mod in @(
             'FrpPaths.ps1', 'FrpLock.ps1', 'FrpCrypto.ps1', 'FrpTls.ps1', 'FrpState.ps1', 'FrpDraft.ps1',
-            'FrpConfig.ps1', 'FrpProcess.ps1', 'FrpShim.ps1', 'FrpAutostart.ps1', 'FrpBootstrap.ps1', 'FrpV24.ps1', 'FrpInteractive.ps1'
+            'FrpConfig.ps1', 'FrpProcess.ps1', 'FrpShim.ps1', 'FrpAutostart.ps1', 'FrpBootstrap.ps1', 'FrpV24.ps1', 'FrpAiExecutor.ps1', 'FrpInteractive.ps1'
         )) {
         . (Join-Path $libDir $mod)
     }
@@ -583,14 +583,55 @@ function Install-FrpProjectManagementFiles {
             Copy-Item -LiteralPath $_.FullName -Destination (Join-Path $destLib $_.Name) -Force
         }
     }
-    # Keep the bare `drlink` command resolvable after a tools refresh.
-    try { Install-FrpCommandShim -Quiet | Out-Null } catch { }
     # Preserve identity/ports: do not rewrite client-state or frpc.toml.
     $manifestSource = Join-Path (Split-Path -Parent $SrcRoot) 'release-manifest.json'
     if (Test-Path -LiteralPath $manifestSource) {
         Copy-Item -LiteralPath $manifestSource -Destination (Join-Path (Get-FrpWindowsRoot) 'release-manifest.json') -Force
     }
     Write-FrpInstalledVersion -SourceRoot $SrcRoot
+    Protect-FrpExecutionTree
+}
+
+function New-FrpProjectUpdateSnapshot {
+    param([Parameter(Mandatory=$true)][string]$SrcRoot)
+    $paths = [System.Collections.Generic.List[string]]::new()
+    foreach ($name in @('FrpClient.ps1','FrpLifecycleWorker.ps1','frp-client.cmd','drlink.cmd','frp-autostart.cmd')) {
+        if (Test-Path -LiteralPath (Join-Path $SrcRoot ('tools/' + $name))) {
+            $paths.Add((Join-Path (Get-FrpToolsDir) $name))
+        }
+    }
+    $sourceLib = Join-Path $SrcRoot 'lib'
+    foreach ($file in @(Get-ChildItem -LiteralPath $sourceLib -Filter '*.ps1' -File -ErrorAction Stop)) {
+        $paths.Add((Join-Path (Get-FrpLibDir) $file.Name))
+    }
+    foreach ($name in @('release-manifest.json','source-provenance.json','version')) {
+        $paths.Add((Join-Path (Get-FrpWindowsRoot) $name))
+    }
+    $backup = New-FrpBackupRoot -Prefix 'product-update'
+    $entries = @()
+    $i = 0
+    foreach ($path in $paths) {
+        $existed = Test-Path -LiteralPath $path -PathType Leaf
+        if ((Test-Path -LiteralPath $path) -and -not $existed) { throw 'ERROR: product update target is not a file' }
+        $copy = Join-Path $backup ([string]$i)
+        if ($existed) { Copy-FrpProtectedFile -Source $path -Destination $copy | Out-Null }
+        $entries += [pscustomobject]@{Path=$path;Backup=$copy;Existed=$existed;Sha=$(if ($existed) { Get-FrpSha256HexOfFile -Path $path } else { '' })}
+        $i++
+    }
+    return [pscustomobject]@{Root=$backup;Entries=$entries}
+}
+
+function Restore-FrpProjectUpdateSnapshot {
+    param($Snapshot)
+    foreach ($entry in $Snapshot.Entries) {
+        if ($entry.Existed) {
+            if ((Get-FrpSha256HexOfFile -Path $entry.Backup) -cne $entry.Sha) { throw 'ERROR: product rollback backup digest mismatch' }
+            Copy-Item -LiteralPath $entry.Backup -Destination $entry.Path -Force -ErrorAction Stop
+            if ((Get-FrpSha256HexOfFile -Path $entry.Path) -cne $entry.Sha) { throw 'ERROR: product rollback digest mismatch' }
+        } elseif (Test-Path -LiteralPath $entry.Path -PathType Leaf) {
+            Remove-Item -LiteralPath $entry.Path -Force -ErrorAction Stop
+        }
+    }
 }
 
 function Test-FrpIsInstalledProductTree {
@@ -605,9 +646,9 @@ function Test-FrpIsInstalledProductTree {
 }
 
 function Resolve-FrpProjectSourceRoot {
-    # Production installed clients do not ship a downloadable project artifact
-    # pipeline in historical pre-v2.4 installs. Only an explicit source tree (or a distinct repo
-    # checkout) may refresh management files; never copy the installed tree onto itself.
+    # Optional reviewed source tree (or a distinct developer checkout). The
+    # installed CLI otherwise fetches the qualified Server artifact; never
+    # copy the installed tree onto itself.
     if ($env:FRP_WINDOWS_PROJECT_SRC) {
         if (-not (Test-Path -LiteralPath $env:FRP_WINDOWS_PROJECT_SRC)) {
             return $null
@@ -643,10 +684,10 @@ function Write-FrpProjectUpdateCheck {
     param([string]$InstalledProject)
     Write-Host 'Data Relay Link project:'
     Write-Host ("  installed : {0}" -f $InstalledProject)
-    Write-Host '  apply path : set FRP_WINDOWS_PROJECT_SRC to the windows/ directory of a verified immutable repository package, then run drlink system update product'
+    Write-Host '  apply path : drlink system update product (qualified Server artifact); optional reviewed source: FRP_WINDOWS_PROJECT_SRC to the windows/ directory of a verified immutable repository package'
     Write-Host '  prerequisite: verify source identity, channel and checksums; keep the source package outside the installed product tree'
     Write-Host '  guide      : docs/UPGRADE.md#windows-product-update-from-verified-source'
-    Write-Host '  note       : no automatic project artifact download in this release; do not uninstall or re-enroll for a software update'
+    Write-Host '  note       : download and verify the qualified Server artifact; do not uninstall or re-enroll for a software update'
 }
 
 function Write-FrpEngineUpdateCheck {
@@ -664,10 +705,14 @@ function Invoke-FrpClientUpdate {
     if (-not $mode) { $mode = 'engine' }
 
     $installedProject = Get-FrpProjectVersion
-    $engineUrl = $DownloadUrl
-    if (-not $engineUrl) { $engineUrl = Get-FrpWindowsAmd64Url }
-    $engineSha = $ExpectedSha256
-    if (-not $engineSha) { $engineSha = Get-FrpWindowsAmd64Sha256 }
+    # Product update uses its own qualified artifact; engine lookup must
+    # never block a project-only update/check.
+    if ($mode -ne 'project') {
+        $engineUrl = $DownloadUrl
+        if (-not $engineUrl) { $engineUrl = Get-FrpWindowsAmd64Url }
+        $engineSha = $ExpectedSha256
+        if (-not $engineSha) { $engineSha = Get-FrpWindowsAmd64Sha256 }
+    }
 
     # Distinct -Check semantics:
     #   update --check           -> both-check (project + engine)
@@ -682,12 +727,23 @@ function Invoke-FrpClientUpdate {
     }
 
     if ($mode -eq 'project') {
+        $src = Resolve-FrpProjectSourceRoot
+        if (-not $src -and -not $env:FRP_WINDOWS_PROJECT_SRC -and (Test-FrpIsEnrolled)) {
+            try {
+                Invoke-FrpQualifiedWindowsProductUpdate -CheckOnly:$CheckOnly
+                return 0
+            } catch {
+                Write-Host ("ERROR: product update failed: {0}" -f $_.Exception.Message)
+                Write-Host 'Do not uninstall or re-enroll the Agent Host. See docs/UPGRADE.md.'
+                Write-Host 'FAILURE_CLASS=INTEGRITY_FAILED'
+                return 1
+            }
+        }
         if ($CheckOnly) {
             Write-FrpProjectUpdateCheck -InstalledProject $installedProject
             Write-Host 'Identity, ports, services, CA trust, and management state are preserved.'
             return 0
         }
-        $src = Resolve-FrpProjectSourceRoot
         if (-not $src) {
             Write-Host 'ERROR: no separate Windows product source package is available for this update.'
             Write-Host 'No update changes were applied. Do not uninstall or re-enroll the Agent Host to repair this software update.'
@@ -698,7 +754,23 @@ function Invoke-FrpClientUpdate {
             return 1
         }
         if (-not (Enter-FrpClientLock)) { return 1 }
+        $snapshot = $null
+        $lifecycleTouched = $false
+        $lifecycleWasPresent = $false
         try {
+            $beforeStatus = Get-FrpClientStatus
+            $lifecycleWasPresent = $beforeStatus.LifecycleEnabled
+            if ($lifecycleWasPresent -and -not (Test-FrpLifecycleTaskHealthy)) {
+                throw 'ERROR: existing lifecycle task ownership could not be verified; no update applied'
+            }
+            if ($env:FRP_WINDOWS_BOOTSTRAP_PATH) {
+                $existingState = Read-FrpClientState
+                Confirm-FrpWindowsSourceProvenance -AllocatorUrl ([string]$existingState.allocator_url) -VerifyOnly
+            }
+            # Secure executable paths before reading/copying existing files or
+            # persisting provenance. Do not undo this hardening on rollback.
+            Protect-FrpExecutionTree
+            $snapshot = New-FrpProjectUpdateSnapshot -SrcRoot $src
             if ($env:FRP_WINDOWS_BOOTSTRAP_PATH) {
                 # Prior-stable bridge: verify the complete outer bootstrap
                 # against the existing Server/CA before updating management
@@ -707,13 +779,31 @@ function Invoke-FrpClientUpdate {
                 Confirm-FrpWindowsSourceProvenance -AllocatorUrl ([string]$existingState.allocator_url)
             }
             Install-FrpProjectManagementFiles -SrcRoot $src
-            if (Test-FrpIsEnrolled) { Install-FrpLifecycleTask | Out-Null }
+            if ((Test-FrpIsEnrolled) -and $beforeStatus.RuntimeIntent -ne 'paused') {
+                $lifecycleTouched = $true
+                Install-FrpLifecycleTask | Out-Null
+            }
+            # PATH repair is nonfatal and only happens after the update transaction.
+            try { Install-FrpCommandShim -Quiet | Out-Null } catch { }
             Write-Host ("Project update complete from {0}" -f $src)
             Write-Host 'Identity, ports, services, and CA trust were preserved.'
             Write-Host 'Restart this PowerShell session (or re-run drlink) to load updated CLI modules.'
             return 0
         } catch {
             Write-Host ("ERROR: project update failed: {0}" -f $_.Exception.Message)
+            if ($null -ne $snapshot) {
+                try {
+                    if ($lifecycleTouched) { Uninstall-FrpLifecycleTask | Out-Null }
+                    Restore-FrpProjectUpdateSnapshot -Snapshot $snapshot
+                    Protect-FrpExecutionTree
+                    if ($lifecycleTouched -and $lifecycleWasPresent) { Install-FrpLifecycleTask | Out-Null }
+                    Write-Host 'Product rollback restored prior management software and provenance.'
+                } catch {
+                    Write-Host 'ERROR: product rollback incomplete. Preserve backup and recover before retrying.'
+                    Write-Host ("Backup: {0}" -f $snapshot.Root)
+                    Write-Host 'RECOVERY_REQUIRED=YES'
+                }
+            }
             return 1
         } finally {
             Exit-FrpClientLock
@@ -730,6 +820,7 @@ function Invoke-FrpClientUpdate {
     if (-not (Enter-FrpClientLock)) { return 1 }
     try {
     Initialize-FrpDirectories
+    Protect-FrpExecutionTree
     # The snapshot includes frpc.toml, which carries the plaintext FRP token,
     # so the backup directory and every copy get the product-enforced ACL.
     $backupRoot = New-FrpBackupRoot -Prefix 'update'
@@ -783,6 +874,7 @@ function Invoke-FrpClientUpdate {
                 }
                 Copy-Item -LiteralPath $bak -Destination $dest -Force
             }
+            Protect-FrpExecutionTree
             if ($wasRunning) {
                 Start-FrpClient | Out-Null
             }
@@ -928,13 +1020,18 @@ function Get-FrpClientDoctorReport {
         [void]$lines.Add(("MISS {0}" -f (Get-FrpFrpcPath)))
         $issues++
     }
-    $enrolledNow = Test-FrpIsEnrolled
+    $st = Get-FrpClientStatus
+    $enrolledNow = $st.Enrolled
     $logPath = Get-FrpLogPath
     if (Test-Path -LiteralPath $logPath) {
         [void]$lines.Add(("OK  {0}" -f $logPath))
     } else {
-        [void]$lines.Add(("MISS {0} (runtime log)" -f $logPath))
-        if ($enrolledNow) { $issues++ }
+        if (-not $st.RelayRequired -or $st.RuntimeIntent -eq 'paused') {
+            [void]$lines.Add('SKIP runtime log: no active relay required')
+        } else {
+            [void]$lines.Add(("MISS {0} (runtime log)" -f $logPath))
+            if ($enrolledNow) { $issues++ }
+        }
     }
     $shim = Get-FrpCommandShimStatus
     if ($shim.ResolvesToProduct) {
@@ -946,7 +1043,21 @@ function Get-FrpClientDoctorReport {
         [void]$lines.Add(("MISS drlink is not on the system PATH; run it as {0}" -f $shim.ShimPath))
         if ($enrolledNow) { $issues++ }
     }
-    $st = Get-FrpClientStatus
+    [void]$lines.Add(("Agent runtime     : {0}" -f $st.RuntimeLevel))
+    [void]$lines.Add(("Runtime detail    : {0}" -f $st.RuntimeState))
+    [void]$lines.Add(("Autostart         : {0}" -f $(if ($st.AutostartEnabled) { 'enabled' } else { 'disabled' })))
+    [void]$lines.Add(("Lifecycle task    : {0}" -f $(if ($st.LifecycleEnabled) { 'enabled' } else { 'disabled' })))
+    if ($st.RuntimeLevel -eq 'Critical') { $issues++ }
+    if (Test-FrpIsWindowsHost) {
+        if (Test-FrpExecutionTreeAcl) {
+            [void]$lines.Add('Execution ACL     : PASS')
+        } else {
+            [void]$lines.Add('Execution ACL     : FAIL (verified product repair required)')
+            $issues++
+        }
+    }
+    [void]$lines.Add(('AI executor       : {0}' -f (Get-FrpAiExecutorStatusText)))
+    [void]$lines.Add(('Worker receipt    : {0}' -f (Get-FrpWorkerStatusText)))
     [void]$lines.Add(("Running: {0} pid={1}" -f $st.Running, $st.Pid))
     if ($issues -gt 0) {
         [void]$lines.Add(("Doctor found {0} issue(s)" -f $issues))
@@ -1352,10 +1463,16 @@ switch ($Command) {
         $st = Get-FrpClientStatus
         Write-Host ("enrolled={0}" -f $st.Enrolled)
         Write-Host ("running={0}" -f $st.Running)
-        Write-Host ("Runtime       : {0}" -f $st.RuntimeState)
-        Write-Host ("Runtime intent: {0}" -f $st.RuntimeIntent)
-        Write-Host ("Autostart     : {0}" -f $(if ($st.AutostartEnabled) { 'enabled' } else { 'disabled' }))
-        Write-Host ("Lifecycle task: {0}" -f $(if ($st.LifecycleEnabled) { 'enabled' } else { 'disabled' }))
+        Write-Host 'Role: Agent Host'
+        Write-Host ("Server connection : {0}" -f $(if ($st.Server) { $st.Server } else { 'not configured' }))
+        Write-Host ("Hostname          : {0}" -f $(if ($st.Hostname) { $st.Hostname } else { '-' }))
+        Write-Host ("Machine ID        : {0}" -f $(if ($st.MachineId) { $st.MachineId } else { '-' }))
+        Write-Host ("Agent runtime     : {0}" -f $st.RuntimeLevel)
+        Write-Host ("Runtime detail    : {0}" -f $st.RuntimeState)
+        Write-Host ("Runtime intent    : {0}" -f $st.RuntimeIntent)
+        Write-Host ("Autostart         : {0}" -f $(if ($st.AutostartEnabled) { 'enabled' } else { 'disabled' }))
+        Write-Host ("Lifecycle task    : {0}" -f $(if ($st.LifecycleEnabled) { 'enabled' } else { 'disabled' }))
+        Write-Host ('AI executor       : {0}' -f (Get-FrpAiExecutorStatusText))
         if ($null -ne $st.Pid) { Write-Host ("pid={0}" -f $st.Pid) }
         if ($st.Server) { Write-Host ("server={0}" -f $st.Server) }
         if ($st.Transport) { Write-Host ("transport={0}" -f $st.Transport) }
@@ -1366,22 +1483,49 @@ switch ($Command) {
         $verPath = Join-Path (Get-FrpWindowsRoot) 'version'
         $values = @{}
         if (Test-Path -LiteralPath $verPath) {
-            Get-Content -LiteralPath $verPath -ErrorAction SilentlyContinue | ForEach-Object { Write-Host $_ }
             foreach ($line in Get-Content -LiteralPath $verPath) {
-                if ($line -match '^([^=]+)=(.*)$') { $values[$Matches[1]] = $Matches[2] }
+                if ($line -match '^([^=]+)=(.*)$') { $values[$Matches[1]] = $Matches[2].Trim() }
             }
-        } else {
-            Write-Host 'Data Relay Link Windows Agent Host'
         }
-        foreach ($pair in @(@('Role','ROLE'), @('Release Channel','RELEASE_CHANNEL'),
-                @('Source HEAD','SOURCE_HEAD'), @('Content Source HEAD','CONTENT_SOURCE_HEAD'))) {
-            $value = [string]$values[$pair[1]]
-            if (-not $value) { $value = 'UNKNOWN' }
-            Write-Host ('{0}: {1}' -f $pair[0], $value)
+        $project = [string]$values['PROJECT_VERSION']
+        $channel = [string]$values['RELEASE_CHANNEL']
+        $head = [string]$values['SOURCE_HEAD']
+        $content = [string]$values['CONTENT_SOURCE_HEAD']
+        $engine = [string]$values['FRP_VERSION']
+        if ($project -notmatch '^\d+\.\d+\.\d+$') { $project = 'unknown' }
+        if ($channel -notin @('stable','preview','development')) { $channel = 'unknown' }
+        if ($head -notmatch '^[0-9a-f]{40}$') { $head = 'UNKNOWN' }
+        if ($content -notmatch '^[0-9a-f]{40}$') { $content = 'UNKNOWN' }
+        if ($engine -notmatch '^\d+\.\d+\.\d+$') { $engine = 'unknown' }
+        $ref = ''
+        try {
+            $manifestPath = Join-Path (Get-FrpWindowsRoot) 'release-manifest.json'
+            $manifest = Get-Content -LiteralPath $manifestPath -Raw -ErrorAction Stop | ConvertFrom-Json
+            if ($manifest.channel -ceq $channel -and $manifest.project_version -ceq $project -and $head -ne 'UNKNOWN') {
+                $ref = [string]$manifest.git_ref
+            }
+        } catch { }
+        # As on Linux, a bare version or SHA cannot prove a stable tag.
+        if ($channel -eq 'stable' -and $ref -cne ('v' + $project)) { $channel = 'development' }
+        $display = $project
+        if ($project -ne 'unknown' -and $channel -eq 'development') {
+            $display = "$project-dev"
+            if ($head -ne 'UNKNOWN') { $display += '+g' + $head.Substring(0,7).ToLowerInvariant() }
+        } elseif ($project -ne 'unknown' -and $channel -eq 'preview') {
+            $rcNumber = 1
+            if ($ref -cmatch ('^v' + [regex]::Escape($project) + '-rc\.(\d+)$')) { $rcNumber = $Matches[1] }
+            $display = "$project-rc.$rcNumber"
         }
+        Write-Host ('Data Relay Link: {0}' -f $display)
+        Write-Host ('Channel: {0}' -f $channel)
+        Write-Host ('Source HEAD: {0}' -f $head)
+        Write-Host ('Relay Engine (FRP): {0}' -f $engine)
+        Write-Host 'Role: Agent Host'
+        Write-Host ('Content Source HEAD: {0}' -f $content)
+        if (-not (Test-Path -LiteralPath $verPath)) { Write-Host 'Windows Agent Host version metadata unavailable.' }
         if ([string]$values['SOURCE_HEAD'] -notmatch '^[0-9a-f]{40}$') {
             Write-Host 'Source provenance is not verified. This Agent Host cannot qualify as an exact release candidate.'
-            Write-Host 'Next action: Obtain a verified immutable Windows source package and set FRP_WINDOWS_PROJECT_SRC to its windows/ directory. Run drlink system update product, then run drlink system version again. See docs/UPGRADE.md.'
+            Write-Host 'Next action: Run drlink system update product to fetch and verify the enrolled Server artifact, then run drlink system version again. For explicitly reviewed offline source, use FRP_WINDOWS_PROJECT_SRC. See docs/UPGRADE.md.'
             Write-Host 'Do not rerun Zero-Touch, re-enroll, or edit provenance files. If Source HEAD remains UNKNOWN, keep release qualification on HOLD until source provenance is independently verified.'
         }
         exit 0

@@ -8,6 +8,7 @@ from pathlib import Path
 import pwd
 import shutil
 import stat
+import struct
 import subprocess
 import tempfile
 import unittest
@@ -79,6 +80,28 @@ class LiveNativeServiceUserTraverse(unittest.TestCase):
             env=env, capture_output=True, text=True, timeout=60,
         )
         self.assertEqual(run.returncode, 0, run.stderr[-1600:])
+
+    def test_existing_named_executor_acl_survives_egress_reconciliation(self):
+        self._reconcile()
+        # A separate named UID, not a membership grant in the Egress group.
+        helper = ROOT / "tools/operator-native-mcp-full-control.py"
+        spec = importlib.util.spec_from_file_location("fixture_native_acl", helper)
+        import sys
+        mod = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = mod
+        spec.loader.exec_module(mod)
+        from unittest.mock import patch
+        uid = 34567
+        while uid == pwd.getpwnam("drlink-egress").pw_uid:
+            uid += 1
+        with patch.object(mod, "safe_path"):
+            mod.grant_executor_code_access(self.lib, uid)
+        before = os.getxattr(self.lib, "system.posix_acl_access")
+        self.assertEqual(self.lib.stat().st_mode & 7, 0)
+        self._reconcile()
+        self.assertEqual(os.getxattr(self.lib, "system.posix_acl_access"), before)
+        entries = {(tag, ident): perm for tag, perm, ident in struct.iter_unpack("<HHI", before[4:])}
+        self.assertEqual(entries[(2, uid)] & entries[(16, 0xffffffff)], 5)
 
     def test_service_can_load_installed_scripts_without_world_directory_access(self):
         self._reconcile()

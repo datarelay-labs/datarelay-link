@@ -94,9 +94,9 @@ issue_certificate() {
     return 1
   fi
   systemctl is-active --quiet drlink-frontend.service
-  /usr/local/bin/drlink set server mcp hostname "$DOMAIN"
-  /usr/local/bin/drlink set server mcp mode auto-acme
-  /usr/local/bin/drlink set server mcp acme-environment production
+  /usr/local/bin/drlink set mcp-server hostname "$DOMAIN"
+  /usr/local/bin/drlink set mcp-server mode auto-acme
+  /usr/local/bin/drlink set mcp-server acme-environment production
   /usr/local/bin/drlink system certificate preflight
   echo "LETS_ENCRYPT_HTTP01=START; ensure public TCP/80 can reach the challenge frontend."
   /usr/local/bin/drlink system certificate issue

@@ -384,17 +384,32 @@ function Get-FrpClientStatus {
             if ($saved.intent -is [string] -and $saved.intent -in @('active','paused')) { $intent = $saved.intent }
         }
     } catch { }
+    $noRelay = $false
+    if ($enrolled -and $state -and (Test-FrpObjectHasProperty -Object $state -Name 'services') -and $null -ne $state.services) {
+        try { $noRelay = (Get-FrpEnabledServiceCount -Services $state.services) -eq 0 } catch { }
+    }
     $runtimeState = if ($running) { 'Active' }
         elseif (-not $enrolled) { 'Not enrolled' }
         elseif ($intent -eq 'paused') { 'Paused (intentional)' }
+        elseif ($noRelay) { 'Inactive (no enabled relay services)' }
         elseif ($intent -eq 'active') { 'Stopped (unexpected)' }
         else { 'Stopped (intent unknown)' }
+    $runtimeLevel = if ($running) { 'Healthy' }
+        elseif (-not $enrolled) { 'Unknown' }
+        elseif ($intent -eq 'paused') { 'Paused' }
+        elseif ($noRelay) { 'Healthy' }
+        elseif ($intent -eq 'active') { 'Critical' }
+        else { 'Warning' }
     $autostart = Test-FrpAutostartTaskExists
     $lifecycle = Test-FrpAutostartTaskExists -TaskName (Get-FrpLifecycleTaskName)
     return [pscustomobject]@{
         Running   = $running
         RuntimeIntent = $intent
         RuntimeState = $runtimeState
+        RuntimeLevel = $runtimeLevel
+        RelayRequired = (-not $noRelay)
+        Hostname = $(if ($state) { $state.hostname } else { $null })
+        MachineId = $(if ($state) { $state.machine_id } else { $null })
         AutostartEnabled = $autostart
         LifecycleEnabled = $lifecycle
         Pid       = $pidVal

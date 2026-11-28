@@ -252,7 +252,7 @@ existing authenticated DRLink control path
 Managed Host / private target
 ```
 
-AI Access의 Source는 검증된 **AI Identity**입니다. [AI MCP Setup 사용 가이드](docs/AI_ACCESS_MCP.md)는 Managed Host 등록, AI MCP Setup(인증), 방화벽 방식의 Access Rules(Source, Destination, Permission)를 분리합니다. AI MCP Setup에서 MCP 준비 상태를 확인하며, 기본 권한은 Object를 직접 만들지 않아도 선택할 수 있습니다. 사용자 정의 Object/Group은 고급 기능으로 유지하고 인증 자체는 접근 권한을 부여하지 않습니다. 후보 버전의 동작이며 설치된 릴리즈의 검증 상태는 별도로 확인합니다.
+AI Access의 Source는 검증된 **AI Identity**입니다. [AI 연결 및 권한 가이드](docs/AI_ACCESS_MCP.md)는 Managed Host 등록, MCP Server Settings (`set mcp-server`), AI Identity 연결·인증 (`set ai-identity`), AI Access Rule (`set ai-access`)을 구분합니다. 일반 Rule은 기본 권한 프로필을 선택하고 필요 시 사용자 정의 Object/Group을 사용합니다. 인증 자체는 권한을 부여하지 않으며 Server 실행은 로컬 OS 계정의 명시적 승인이 필요합니다. 설치된 릴리즈 검증은 별도입니다.
 
 ## ConfigurationBundle / AI-assisted configuration
 

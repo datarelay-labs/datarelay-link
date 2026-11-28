@@ -1310,7 +1310,7 @@ Lane C  direct SSH/HTTP/HTTPS/Custom TCP publication + real traffic
 Lane D  Relay Host and Fixed TCP lifecycle
 Lane E  Remote Access policy lifecycle + real allow/deny traffic
 Lane F  Internet Access application use cases
-Lane G  AI MCP Setup / Permission / AI Access / MCP
+Lane G  MCP Server Settings / Permission / AI Access / MCP
 Lane H  ConfigurationBundle / Export -> AI -> Reapply
 Lane I  backup/revision/audit/recovery on isolated state
 Lane J  Agent lifecycle/update/reconnect on spare hosts
@@ -1724,12 +1724,12 @@ Verify:
 
 ## U-007 — AI/MCP authorized and denied use — MANDATORY for v2.4.0
 
-Server discovers `ai-mcp` / `AI MCP Setup` with the description `Set up and manage AI MCP connections`, configures MCP and creates/binds the AI Identity using the supported authentication workflow, then configures permissions and AI Access.
+Server discovers `mcp-server` / MCP Server Settings, configures endpoint/TLS and local Server execution when needed, connects and verifies an AI Identity via `set ai-identity`, then configures permissions and AI Access. Verify that the setup wizard does not duplicate authentication or create a policy.
 
 Representative CLI:
 
 ~~~text
-set ai-mcp
+set mcp-server
 set ai-identity <IDENTITY>
 set permission-object read-only permissions host-info,process-read,file-read
 set ai-access ai-read source <IDENTITY> destination <DESTINATION> permission read-only enabled
@@ -1833,7 +1833,10 @@ Real E2E must include, where supported:
 - exec timeout;
 - bounded output;
 - process cleanup;
-- OS account/sudo boundary;
+- native Server account-selection boundary: root-only, default normal user, multiple additional users plus root; actual UID/GID, HOME, groups, Git ownership and file CRUD/transfer under selected account;
+- native Server natural-language task without account/path instructions: fresh chat discovers default/account options, edits and tests as project owner, performs explicitly authorized system action as root, and returns to owner; no automatic root retry;
+- native Server absent cwd selects validated default, explicit bad cwd/path/account returns actionable DENY; read-only cannot execute shell; overlapping grants do not combine, conflicting defaults fail closed; identity/target root isolation and tracked-job revocation;
+- local configuration/upgrade retains old effective accounts and paths, never silently grants root; validate Server-self with actual calls; Managed Host enrollment and central AI Access must work without local AI execution configuration or account binding; unsupported account overrides are denied;
 - policy change affects the next invocation;
 - a running command/session follows the documented existing-session semantics.
 
@@ -2332,7 +2335,7 @@ test internet-access source <SOURCE> destination <DESTINATION> service <SERVICE>
 
 Exercise real traffic plus the applicable failure/recovery cases in section 10. Internet Access is WHITELIST-only: prove direct Managed Host source-address match can ALLOW an approved flow, NAT/source mismatch fails closed to DENY, No Policy is DENY, BLACKLIST configuration is rejected, and Enforcement DISABLED preserves Mode/Rules while producing DENY ALL.
 
-## A-006 — AI MCP Setup, permissions, AI Access, MCP TLS, OAuth approval, and logs — MANDATORY for v2.4.0
+## A-006 — MCP Server Settings, permissions, AI Access, MCP TLS, OAuth approval, and logs — MANDATORY for v2.4.0
 
 ~~~text
 system certificate status
@@ -2350,12 +2353,12 @@ show ai-access-log identity <IDENTITY>
 show ai-access-log destination <DESTINATION>
 show ai-access-log permission <PERMISSION>
 
-set server mcp
-set server mcp hostname <FQDN>
-set server mcp mode <auto-acme|user-certificate>
-set server mcp contact-email <EMAIL>
-set server mcp acme-environment <production|staging>
-set server mcp acme-directory <URL>
+
+set mcp-server hostname <FQDN>
+set mcp-server mode <auto-acme|user-certificate>
+set mcp-server contact-email <EMAIL>
+set mcp-server acme-environment <production|staging>
+set mcp-server acme-directory <URL>
 set ai-identity <IDENTITY>
 set permission-object <PERMISSION>
 set permission-group <GROUP>
@@ -2364,8 +2367,8 @@ set ai-access <RULE>
 set ai-access enabled
 set ai-access disabled
 
-unset server mcp
-unset server mcp purge
+unset mcp-server
+unset mcp-server purge
 unset ai-identity <IDENTITY>
 unset permission-object <PERMISSION>
 unset permission-group <GROUP>
@@ -2381,7 +2384,7 @@ set ai-identity <IDENTITY> approve <PENDING-ID>
 set ai-identity <IDENTITY> deny <PENDING-ID>
 ~~~
 
-Verify authentication and authorization states are represented separately, reference-aware deletion works, and AI Access enforcement toggles have the documented functional effect. Run a clean beginner AI MCP Setup flow with no TLS/no Identity, then a second AI with ready TLS, no-policy denial, a reviewed rule with built-in permission, selected-only versus explicit dynamic trusted-host scope, independent enrollment of a new host, explicit native server:self scope if enabled, and OAuth/credential failure recovery. Confirm retired grammar is rejected and absent from help/completion/menu; retain the existing security-negative and exact-candidate gates.
+Verify authentication and authorization states are represented separately, reference-aware deletion works, and AI Access enforcement toggles have the documented functional effect. Run a clean beginner MCP Server Settings → AI Identity → AI Access flow with no TLS/no Identity, then a second AI with ready TLS, no-policy denial, a reviewed rule with built-in permission, selected-only versus explicit dynamic trusted-host scope, independent enrollment of a new host, explicit native server:self scope if enabled, and OAuth/credential failure recovery. Verify one reviewed native Server account selection flow (default user, multiple additional users, explicit administrator or root-only), cancellation/rollback, incompatible/offline targets and future group members with unchanged central policy, configured versus live diagnostics, CLI/Bundle and existing Web parity. A real new AI chat must complete a natural-language development/administration mission without account or cwd instructions. Confirm retired singleton account wizard requirements and grammar are not reintroduced; retain security negatives and exact-candidate gates.
 
 ## A-007 — Reference protection — MANDATORY
 
@@ -2604,23 +2607,19 @@ Expected:
 
 ## A-018 — Public hostname/bootstrap/installer configuration lifecycle — MANDATORY
 
-Using only public Server CLI, exercise set/change/clear behavior for every current published-host and installer setting:
+Using only public Server CLI, exercise set/change/clear behavior for both hostname settings:
 
 ~~~text
 set server public-hostname <FQDN>
 set server bootstrap-hostname <FQDN>
-set server installer-url <URL>
-set server windows-installer-url <URL>
 
 unset server public-hostname
 unset server bootstrap-hostname
-unset server installer-url
-unset server windows-installer-url
 ~~~
 
-Exercise only the canonical `set server ...` forms; standalone installer-URL aliases are not part of the v2.4 public surface.
+Exercise explicit Bootstrap hostname, inherited public hostname, and neither hostname (allocator HTTPS authority). Installer URLs are automatically derived from qualified Server-local artifacts; legacy overrides cannot influence issuance or rendering.
 
-Before the first mutation, capture the current values of all four settings. The scenario may exercise clear/unset behavior, but **cleanup is part of PASS**: before leaving A-018, restore every setting to its exact pre-scenario value (including an originally configured `bootstrap_hostname` and installer URLs) and re-read the resulting onboarding output. A scenario that leaves the Server in its temporary cleared/test value is FAIL because it contaminates later Zero-Touch and provenance tests.
+Before the first mutation, capture the current values of both hostname settings. The scenario may exercise clear/unset behavior, but **cleanup is part of PASS**: before leaving A-018, restore every setting to its exact pre-scenario value (including an originally configured `bootstrap_hostname`) and re-read the resulting onboarding output. A scenario that leaves the Server in its temporary cleared/test value is FAIL because it contaminates later Zero-Touch and provenance tests.
 
 After each relevant change, regenerate or inspect:
 
@@ -3613,13 +3612,11 @@ set enrollment bulk
 
 set server public-hostname <value>
 set server bootstrap-hostname <value>
-set server installer-url <value>
-set server windows-installer-url <value>
-set server mcp hostname <FQDN>
-set server mcp mode <MODE>
-set server mcp contact-email <EMAIL>
-set server mcp acme-environment <ENVIRONMENT>
-set server mcp acme-directory <URL>
+set mcp-server hostname <FQDN>
+set mcp-server mode <MODE>
+set mcp-server contact-email <EMAIL>
+set mcp-server acme-environment <ENVIRONMENT>
+set mcp-server acme-directory <URL>
 
 set managed-host-group <GROUP>
 set managed-host <HOST> group <GROUP>
@@ -3657,10 +3654,8 @@ unset managed-host-group <GROUP>
 unset enrollment <ENROLLMENT>
 unset server public-hostname
 unset server bootstrap-hostname
-unset server installer-url
-unset server windows-installer-url
-unset server mcp
-unset server mcp purge
+unset mcp-server
+unset mcp-server purge
 
 unset network-object <OBJECT>
 unset network-group <GROUP>

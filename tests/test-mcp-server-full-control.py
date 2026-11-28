@@ -35,6 +35,7 @@ class FullControlRuntimeTests(unittest.TestCase):
             "DRLINK_MCP_SERVER_FULL_CONTROL_ENABLED": "1",
             "DRLINK_MCP_SERVER_EXEC_USER": self.account.pw_name,
             "DRLINK_MCP_SERVER_ALLOWED_ROOTS": str(self.root),
+            "DRLINK_MCP_SERVER_DEFAULT_CWD": str(self.root),
             "DRLINK_MCP_SERVER_ADMIN_ENABLED": "1" if os.geteuid() == 0 else "0",
             "DRLINK_TEST_DO_NOT_INHERIT": "fixture-not-a-real-secret",
         })
@@ -62,6 +63,19 @@ class FullControlRuntimeTests(unittest.TestCase):
             result = self.runtime.poll(self.owner, result["job_id"], wait_ms=100)
         self.assertEqual(result["state"], "completed", result)
         return result
+
+    def test_profile_diagnostics_distinguishes_gates_from_authorization(self):
+        unknown = full.execution_profile_status(None)
+        self.assertEqual(unknown["readiness"], "Unknown")
+        disabled = full.execution_profile_status({"DRLINK_MCP_SERVER_SELF_ENABLED":"1"})
+        self.assertEqual(disabled["reason"], "Server-local executor is disabled")
+        missing = full.execution_profile_status({"DRLINK_MCP_SERVER_SELF_ENABLED":"1", "DRLINK_MCP_SERVER_LOCAL_EXEC_ENABLED":"1"})
+        self.assertEqual(missing["readiness"], "Not ready")
+        configured = full.execution_profile_status(dict(os.environ))
+        self.assertEqual(configured["readiness"], "Configured")
+        self.assertNotIn(str(self.root), json.dumps(configured))
+        with patch.dict(os.environ, {"DRLINK_MCP_SERVER_EXEC_USER":"root", "DRLINK_MCP_SERVER_ADMIN_ENABLED":"0"}):
+            self.assertEqual(full.execution_profile_status(dict(os.environ))["readiness"], "Not ready")
 
     def test_default_gate_and_account_are_required(self):
         for flag in ("DRLINK_MCP_SERVER_SELF_ENABLED", "DRLINK_MCP_SERVER_LOCAL_EXEC_ENABLED",
@@ -154,9 +168,11 @@ class FullControlRuntimeTests(unittest.TestCase):
         with patch.dict(os.environ, {"DRLINK_MCP_SERVER_FULL_CONTROL_ENABLED": "0"}):
             with self.assertRaises(full.FullControlDenied):
                 self.runtime.poll(self.owner, job_id)
-        stopped = self.runtime.stop(self.owner, job_id)
-        self.assertEqual(stopped["state"], "completed", stopped)
-        self.assertNotEqual(stopped["exit_status"], 0)
+        with self.assertRaises(full.FullControlDenied):
+            self.runtime.stop(self.owner, job_id)
+        job = self.runtime.jobs[job_id]
+        self.assertTrue(job.done.wait(3))
+        self.assertNotEqual(job.process.returncode, 0)
 
     def test_timeout_terminates_job(self):
         result = self.run_command([sys.executable, "-c", "import time; time.sleep(10)"],
@@ -298,8 +314,8 @@ class FullControlRuntimeTests(unittest.TestCase):
                 # process is gone; any readable live process still fails.
                 text = None
             if text is not None:
-                self.assertEqual(text.split(") ", 1)[1][0], "Z",
-                                 "child still runs after its job completed")
+                self.assertIn(text.split(") ", 1)[1][0], ("Z", "X", "x"),
+                              "child still runs after its job completed")
             with patch.object(full.os, "killpg", wraps=full.os.killpg) as kill:
                 self.runtime.stop(self.owner, result["job_id"])
                 kill.assert_not_called()
@@ -422,6 +438,7 @@ class FullControlBridgeAuthorizationTests(unittest.TestCase):
         self.principal = {"name": "native-full-fixture", "id": "fixture-identity"}
         self.plane.set_ai_principal(self.principal["name"], enabled=True)
         self.cli("set", "ai-identity", self.principal["name"], "rotate")
+        self.principal = dict(self.plane.get_principal(self.principal["name"]))
 
     def tearDown(self):
         self.bridge.close()

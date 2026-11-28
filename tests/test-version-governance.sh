@@ -154,9 +154,46 @@ macos = Path(".github/workflows/macos-client.yml").read_text(encoding="utf-8")
 if "  apple-silicon:\n    if: github.event_name != 'pull_request' || github.base_ref == 'feature/v2.4.0-final-product-closure' || (github.base_ref == 'main' && startsWith(github.head_ref, 'qualification/'))\n" not in macos:
     raise SystemExit("macOS Apple Silicon qualification must be gated off ordinary PRs")
 windows = Path(".github/workflows/windows-client.yml").read_text(encoding="utf-8")
+# Native Windows qualification is scoped to source-impacting PRs, not
+# regenerated bundle metadata (which changes on unrelated source commits).
 for job in ("windows-powershell51", "windows-pwsh7"):
-    if f"  {job}:\n    if: github.event_name != 'pull_request' || github.base_ref == 'feature/v2.4.0-final-product-closure' || (github.base_ref == 'main' && startsWith(github.head_ref, 'qualification/'))\n" not in windows:
-        raise SystemExit(f"{job} qualification must be gated off ordinary PRs")
+    if f"  {job}:\n    needs: windows-impact\n    if: needs.windows-impact.outputs.required == 'true'\n" not in windows:
+        raise SystemExit(f"{job} must depend on the affected-source qualification gate")
+# Exercise the actual workflow shell against synthetic merge commits rather
+# than only checking an expression. Keep the test entirely in a temp repo.
+import os
+import subprocess
+import tempfile
+import textwrap
+scope = windows.split("      - id: scope\n", 1)[1].split("\n  windows-powershell51:", 1)[0]
+script = textwrap.dedent(scope.split("        run: |\n", 1)[1])
+with tempfile.TemporaryDirectory() as tmp:
+    env = dict(os.environ, GIT_AUTHOR_NAME="test", GIT_AUTHOR_EMAIL="test@example.invalid",
+               GIT_COMMITTER_NAME="test", GIT_COMMITTER_EMAIL="test@example.invalid")
+    def git(*args):
+        return subprocess.check_output(["git", *args], cwd=tmp, env=env, stderr=subprocess.STDOUT, text=True).strip()
+    git("init", "-b", "main")
+    git("commit", "--allow-empty", "-m", "base")
+    base = git("rev-parse", "HEAD")
+    def gate(event="pull_request", target="main", source="fix/example"):
+        output = Path(tmp, "gate-output")
+        output.write_text("")
+        subprocess.run(["bash", "-c", script], cwd=tmp, check=True,
+                       env=dict(env, EVENT_NAME=event, BASE_REF=target, HEAD_REF=source, GITHUB_OUTPUT=str(output)))
+        return output.read_text().strip()
+    for index, changed in enumerate(("docs/example.md", "dist/bootstrap-client.ps1", "windows/example.ps1", "tests/windows/example.ps1", "scripts/build-bundles.py", ".github/workflows/windows-client.yml", "VERSION")):
+        git("checkout", "-B", "main", base)
+        git("checkout", "-b", f"case-{index}")
+        path = Path(tmp, changed); path.parent.mkdir(parents=True, exist_ok=True); path.write_text("fixture")
+        git("add", changed); git("commit", "-m", "change")
+        git("checkout", "main"); git("merge", "--no-ff", "--no-edit", f"case-{index}")
+        expected = "false" if index < 2 else "true"
+        assert gate() == "required=" + expected, changed
+        assert gate(source="qualification/example") == "required=true"
+        assert gate(target="feature/v2.4.0-final-product-closure") == "required=true"
+        assert gate(event="push") == "required=true"
+    git("checkout", "--detach", base)
+    assert gate() == "required=true", "ambiguous history must fail safe"
 if "  linux-pwsh-cross:\n" not in windows:
     raise SystemExit("Linux pwsh cross-language PR feedback must remain available")
 

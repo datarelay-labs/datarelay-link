@@ -47,7 +47,7 @@ drlink_online_install() (
     "third_party/frp/v0.71.0/binaries/frp_0.71.0_windows_amd64.zip|9e5062e3e5cf07e67144a3a4acf175ef6a2486f3605dd6cf288bae34ab39819f|13933256"
   )
   echo "Data Relay Link Server online installation: $(uname -m), $ref"
-  fetch 'dist/bootstrap-server-core.tar' '2286069d690cb05d449c77b63ff50c32fc0d8f9249b059a8e08ca92c8a2a86f8' '13404160' "$work/core.tar"
+  fetch 'dist/bootstrap-server-core.tar' '47ad02a08b595cdd60f4260426e4099e68c8020b8e26006c3babef627c919839' '13793280' "$work/core.tar"
   mkdir "$work/core"
   tar -xf "$work/core.tar" -C "$work/core" || fail 'Core extraction failed.'
   # Native FRP first. The other three archives are required by the existing
@@ -75,11 +75,11 @@ drlink_online_install() (
     done
     cat "$work/core/part-$index"
   } >"$bundle" || fail 'Installer reconstruction failed.'
-  printf '%s  %s\n' 'f6c93054b59d182d3418447c5bf2814d642f8d9f8a2658e3e0053ba25d68bbc5' "$bundle" | sha256sum --check --status ||
+  printf '%s  %s\n' '464ce08d33f0bcb50f5a1649211d6d0c364afb49085525efdf2475965b56ca62' "$bundle" | sha256sum --check --status ||
     fail 'Reconstructed installer differs from the qualified offline bundle.'
   echo 'Installer verified. Starting installation...'
   export FRP_EXPECTED_SOURCE_REF="$ref"
-  export FRP_BUNDLE_SHA256='f6c93054b59d182d3418447c5bf2814d642f8d9f8a2658e3e0053ba25d68bbc5'
+  export FRP_BUNDLE_SHA256='464ce08d33f0bcb50f5a1649211d6d0c364afb49085525efdf2475965b56ca62'
   bash "$bundle" "$@"
 )
 drlink_online_install "$@"

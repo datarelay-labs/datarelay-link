@@ -150,8 +150,8 @@ def oauth_pending_approval_page(pending_id: str, command: str, continue_path: st
         "<title>Approve MCP connection in DRLink CLI</title></head><body>"
         "<h1>Approve MCP connection in DRLink CLI</h1>"
         "<p>Pending request ID:</p><pre>%s</pre>"
-        "<p>Copy this ID. On the DRLink Server, run sudo drlink set ai-mcp (AI MCP Setup), "
-        "select Connect or manage AI service, and paste it into the Pending request ID prompt. "
+        "<p>Copy this ID. On the DRLink Server, run sudo drlink set ai-identity, "
+        "select or name the Identity and paste it into the Pending request ID prompt. "
         "Review the request and approve it.</p>"
         "<p>Alternatively, use the following operator command (replace the Identity placeholder if shown):</p>"
         "<pre>%s</pre>"
@@ -167,7 +167,7 @@ TOOL_DEFS = (
     (
         "get_server",
         "Get Local DRLink Server",
-        "Discover this DRLink Server only when Server-self MCP is enabled and host-info is explicitly authorized",
+        "Discover this DRLink Server and, if authorized, the configured execution account and default cwd; query before working",
         {},
         {"readOnlyHint": True, "destructiveHint": False, "openWorldHint": False, "idempotentHint": True},
     ),
@@ -200,12 +200,12 @@ TOOL_DEFS = (
         "Requires current command-exec AI Access and an approved initial cwd. "
         "Full-control commands have the account's OS authority; cwd is not a sandbox.",
         {"type": "object", "properties": {
-            "cwd": {"type": "string", "description": "Absolute initial working directory"},
+            "cwd": {"type": "string", "minLength": 1, "description": "Absolute initial working directory; omit to use the approved default reported by get_server"},
             "argv": {"type": "array", "items": {"type": "string"}, "minItems": 1,
                      "description": "Argument vector beginning with git"},
             "timeout_seconds": {"type": "integer", "minimum": 1, "maximum": 86400, "default": 3600},
             "wait_ms": {"type": "integer", "minimum": 0, "maximum": 5000, "default": 1000},
-        }, "required": ["cwd", "argv"], "additionalProperties": False},
+        }, "required": ["argv"], "additionalProperties": False},
         {"readOnlyHint": False, "destructiveHint": True, "openWorldHint": True, "idempotentHint": False},
     ),
     (
@@ -216,11 +216,11 @@ TOOL_DEFS = (
         "AI Access for the initial cwd; cwd is not a filesystem sandbox. Returns job_id, "
         "state and bounded output; use server_job_poll/input/stop for running jobs.",
         {"type": "object", "properties": {
-            "cwd": {"type": "string", "description": "Absolute initial working directory"},
+            "cwd": {"type": "string", "minLength": 1, "description": "Absolute initial working directory; omit to use the approved default reported by get_server"},
             "argv": {"type": "array", "items": {"type": "string"}, "minItems": 1},
             "timeout_seconds": {"type": "integer", "minimum": 1, "maximum": 86400, "default": 3600},
             "wait_ms": {"type": "integer", "minimum": 0, "maximum": 5000, "default": 1000},
-        }, "required": ["cwd", "argv"], "additionalProperties": False},
+        }, "required": ["argv"], "additionalProperties": False},
         {"readOnlyHint": False, "destructiveHint": True, "openWorldHint": True, "idempotentHint": False},
     ),
     (
@@ -231,11 +231,11 @@ TOOL_DEFS = (
         "commands within that account's OS permissions. Root requires a separate local operator "
         "opt-in. Initial cwd is not a filesystem sandbox. Returns job_id and bounded output.",
         {"type": "object", "properties": {
-            "cwd": {"type": "string", "description": "Absolute initial working directory"},
+            "cwd": {"type": "string", "minLength": 1, "description": "Absolute initial working directory; omit to use the approved default reported by get_server"},
             "command": {"type": "string", "minLength": 1},
             "timeout_seconds": {"type": "integer", "minimum": 1, "maximum": 86400, "default": 3600},
             "wait_ms": {"type": "integer", "minimum": 0, "maximum": 5000, "default": 1000},
-        }, "required": ["cwd", "command"], "additionalProperties": False},
+        }, "required": ["command"], "additionalProperties": False},
         {"readOnlyHint": False, "destructiveHint": True, "openWorldHint": True, "idempotentHint": False},
     ),
     (
@@ -280,14 +280,14 @@ TOOL_DEFS = (
     (
         "list_hosts",
         "List Managed Hosts",
-        "List Managed Hosts this identity may target",
+        "List Managed Hosts this identity may target; use the exact returned name or client_id as endpoint",
         {},
         {"readOnlyHint": True, "destructiveHint": False, "openWorldHint": False, "idempotentHint": True},
     ),
     (
         "get_host",
         "Get Managed Host",
-        "Get one Managed Host",
+        "Get one Managed Host by exact returned name or full Client ID (not a prefix)",
         {"endpoint": "string"},
         {"readOnlyHint": True, "destructiveHint": False, "openWorldHint": False, "idempotentHint": True},
     ),
@@ -355,6 +355,8 @@ def _input_schema(props: dict) -> dict:
     schema_props = {key: ({"type": "array", "items": {"type": "string"}}
                           if kind == "array" else {"type": kind})
                     for key, kind in props.items()}
+    if "endpoint" in schema_props:
+        schema_props["endpoint"]["description"] = "Exact name or full client_id returned by list_hosts; no ID prefixes. server:self is separately authorized."
     schema = {"type": "object", "properties": schema_props}
     if props:
         schema["required"] = list(props)
@@ -367,6 +369,14 @@ SERVER_ARGUMENT_SCHEMAS = {
     entry[0]: dict(_input_schema(entry[3]), additionalProperties=False)
     for entry in TOOL_DEFS if entry[0] in SERVER_TOOLS
 }
+_NATIVE_ACCOUNT_TOOLS = frozenset({"server_run", "server_exec", "server_git",
+                                   "server_read_file", "server_write_file", "server_delete_file"})
+_ACCOUNT_ALIASES = frozenset({"exec", "read_file", "write_file", "delete_file",
+                               "upload_file", "download_file", "list_processes"})
+_RUN_AS_SCHEMA = {"type": "string", "minLength": 1,
+                  "description": "Optional approved OS account. Omit for the rule default; use get_server to discover authorized accounts. Never retry as root just because a command failed."}
+for _name in _NATIVE_ACCOUNT_TOOLS:
+    SERVER_ARGUMENT_SCHEMAS[_name]["properties"]["run_as"] = dict(_RUN_AS_SCHEMA)
 
 
 def _server_argument_error(name: str, arguments: dict) -> Optional[str]:
@@ -542,6 +552,9 @@ def _structured_result(data, *, text: Optional[str] = None, is_error: bool = Fal
 def _tool_descriptor(name: str, title: str, desc: str, props: dict, annotations: dict) -> dict:
     input_schema = (json.loads(json.dumps(SERVER_ARGUMENT_SCHEMAS[name]))
                     if name in SERVER_ARGUMENT_SCHEMAS else _input_schema(props))
+    if name in _ACCOUNT_ALIASES:
+        input_schema["properties"]["run_as"] = dict(_RUN_AS_SCHEMA, description=
+            _RUN_AS_SCHEMA["description"] + " Currently supported for server:self only.")
     return {
         "name": name,
         "title": title,
@@ -745,7 +758,7 @@ class MCPBridge:
                     remote = self._remote_full = full.RemoteFullControlRuntime(path)
                 return remote
             if not hasattr(self, "_native_full"):
-                self._native_full = full.FullControlRuntime()
+                self._native_full = full.FullControlRuntime(policy_root=self.root)
             return self._native_full
 
     def _native_public_url(self) -> Optional[str]:
@@ -1272,27 +1285,60 @@ class MCPBridge:
             argument_error = _server_argument_error(name, arguments)
             if argument_error:
                 raise full.FullControlDenied(argument_error)
-            account = full.configured_account()
             owner = str(principal["id"] or "")
             runtime = self._full_control_runtime(full)
             operation = aliases.get(name, name)
+            accounts = full.eligible_accounts()
+            requested = arguments.get("run_as")
+            if "run_as" in arguments and (not isinstance(requested, str) or not requested):
+                raise full.FullControlDenied("Invalid execution account")
+            grant_rule = None
+            job_context = None
             if name in job_tools:
-                operand = runtime.context(owner, str(arguments.get("job_id") or ""))
+                if "run_as" in arguments:
+                    raise full.FullControlDenied("Job account cannot be overridden")
+                job_context = runtime.grant_context(owner, str(arguments.get("job_id") or ""))
+                operand = job_context["cwd"]
+                requested = job_context["account"]
+                grant_rule = job_context["rule_id"]
                 capability = "exec"
             elif name in command_tools:
-                operand = str(arguments.get("cwd") or
-                              os.environ.get("DRLINK_MCP_SERVER_DEFAULT_CWD") or account.home)
+                operand = arguments["cwd"] if "cwd" in arguments else None
                 capability = "exec"
             elif operation in full.FILE_ACTIONS:
                 operand = str(arguments.get("path") or "")
                 capability = operation
             else:
                 raise full.FullControlDenied("Unsupported full-control operation")
-            decision = self._authorize(principal, target, capability, operand or None)
+            def validate_operand(account_name, patterns, value):
+                try:
+                    account = accounts[account_name]
+                    if capability == "exec":
+                        full.allowed_cwd(value if value is not None else full.default_cwd(account),
+                                         patterns, account)
+                    elif capability in full.FILE_ACTIONS and capability != "list_processes":
+                        full.allowed_path(value, patterns, account)
+                    return True
+                except (full.FullControlDenied, OSError, ValueError, TypeError, KeyError):
+                    return False
+
+            decision = v24.resolve_ai_execution_grant(
+                self.plane, identity=principal["name"], principal_id=str(principal["id"]),
+                destination=target, capability=capability, operand=operand, run_as=requested, local_accounts=accounts,
+                legacy_account=full.legacy_execution_account(), legacy_rule_ids=full.legacy_execution_rule_ids(), rule_id=grant_rule,
+                validate_operand=validate_operand, reader_account=full.reader_execution_account(accounts))
             if decision["action"] != "ALLOW":
-                raise full.FullControlDenied("AI Access implicit DENY")
-            patterns = list(decision.get("patterns") or [])
+                if job_context is not None:
+                    runtime.revoke(owner, arguments["job_id"])
+                choices = decision.get("accounts") or []
+                hint = ("; choose an authorized run_as: " + ", ".join(choices)
+                        if decision["reason_code"] == "AMBIGUOUS_DEFAULT" and choices else
+                        "; check get_server execution_context and the reviewed AI Access Rule")
+                raise full.FullControlDenied("AI Access: " + decision["reason_code"] + hint)
+            account = accounts[decision["account"]]
+            patterns = list(decision["patterns"])
             if capability == "exec":
+                operand = operand if operand is not None else full.default_cwd(account)
                 # Initial working directory authorization is not a sandbox for
                 # a general shell. Full-control grants the selected account's
                 # real OS authority; both fact and user are explicit in tools.
@@ -1300,7 +1346,9 @@ class MCPBridge:
                 if name in command_tools:
                     options = dict(arguments)
                     options["cwd"] = canonical_cwd
-                    payload = runtime.start(owner, options, patterns, git=name == "server_git")
+                    options.pop("run_as", None)
+                    payload = runtime.start(owner, options, patterns, git=name == "server_git",
+                                            account_name=account.name, grant_rule=decision["winner"]["id"])
                 elif name == "server_job_poll":
                     payload = runtime.poll(owner, arguments["job_id"],
                                            stdout_cursor=arguments.get("stdout_cursor", 0),
@@ -1312,25 +1360,75 @@ class MCPBridge:
                 else:
                     payload = runtime.stop(owner, arguments["job_id"])
             else:
-                payload = full.execute_file_action(operation, dict(arguments), patterns)
+                options = dict(arguments)
+                options.pop("run_as", None)
+                payload = full.execute_file_action(operation, options, patterns, account_name=account.name)
             result = "ALLOW"
         except (full.FullControlDenied, OSError, ValueError, TypeError, KeyError,
                 ControlPlaneError) as exc:
             failure = str(exc)
+        audit_operand = operand or ""
+        if decision and decision.get("account"):
+            selected = accounts[decision["account"]]
+            audit_operand = "account=%s uid=%s %s" % (selected.name, selected.uid, audit_operand)
         self.plane.record_ai_activity(
             principal=principal["name"], endpoint=target, capability=name, result=result,
-            rule=self._rule_name(decision), operand=operand or None,
+            rule=self._rule_name(decision), operand=audit_operand or None,
             duration_ms=int((time.monotonic() - started) * 1000),
         )
         if result != "ALLOW":
             return _text_result("DENY: " + failure, is_error=True)
         return _structured_result(payload)
 
+    def _native_execution_context(self, principal, target: str) -> dict:
+        """Expose only accounts with a complete command grant, not all local users."""
+        import drlink_mcp_full_control as full
+        denied = {"state": "not_authorized_or_unavailable", "command_authorized":False,
+                  "note":"Command discovery only. File/process permissions are evaluated separately.",
+                  "os_access_verified":False}
+        try:
+            accounts = full.eligible_accounts()
+            def validate(account_name, patterns, value):
+                try:
+                    full.allowed_cwd(full.default_cwd(accounts[account_name]), patterns, accounts[account_name])
+                    return True
+                except (full.FullControlDenied, OSError, ValueError, KeyError):
+                    return False
+            def resolve(requested=None):
+                return v24.resolve_ai_execution_grant(
+                    self.plane, identity=principal["name"], principal_id=str(principal["id"]),
+                    destination=target, capability="exec", run_as=requested, local_accounts=accounts, legacy_account=full.legacy_execution_account(), legacy_rule_ids=full.legacy_execution_rule_ids(),
+                    validate_operand=validate)
+            choices = []
+            for name, account in accounts.items():
+                grant = resolve(name)
+                if grant["action"] == "ALLOW":
+                    choices.append({"account": name, "uid": account.uid, "home": account.home,
+                                    "default_cwd": full.allowed_cwd(full.default_cwd(account), grant["patterns"], account),
+                                    "administrative": account.uid == 0,
+                                    "command_rule_paths":grant["patterns"],
+                                    "local_roots":list(account.roots)})
+            default = resolve()
+            if default["action"] != "ALLOW":
+                if choices:
+                    return {"state": default["reason_code"], "accounts": choices,
+                            "command_authorized": True, "os_access_verified": False}
+                return denied
+            account = accounts[default["account"]]
+            return {"state": "configured", "default_account": account.name, "uid": account.uid,
+                    "default_cwd": full.allowed_cwd(full.default_cwd(account), default["patterns"], account),
+                    "administrative": account.uid == 0, "accounts": choices,
+                    "command_authorized": True, "os_access_verified": False}
+        except (full.FullControlDenied, OSError, ValueError, TypeError, KeyError, ControlPlaneError):
+            return denied
+
     def _call_server_self(self, principal, name: str, arguments: dict) -> dict:
         """Server-target policy is independent of enrolled Managed Host identity."""
         if (os.environ.get("DRLINK_MCP_SERVER_FULL_CONTROL_ENABLED") == "1"
                 and name not in ("get_server", "get_system_info")):
             return self._call_server_full(principal, name, arguments)
+        if "run_as" in arguments:
+            return _text_result("DENY: execution account selection is unavailable on the restricted Server executor", is_error=True)
         target = v24.SERVER_SELF_TARGET
         start = time.monotonic()
         local_actions = {
@@ -1360,12 +1458,15 @@ class MCPBridge:
                     if name == "get_server":
                         payload = {"target": target, "type": "server",
                                    "status": "available", "nodename": uname.nodename}
+                        payload["execution_context"] = self._native_execution_context(principal, target)
                     else:
                         payload = {"sysname": uname.sysname, "nodename": uname.nodename,
                                    "release": uname.release, "machine": uname.machine}
                     result = "ALLOW"
                 elif os.environ.get("DRLINK_MCP_SERVER_LOCAL_EXEC_ENABLED") != "1":
                     reason = "Server-local executor is disabled"
+                elif name in ("server_git", "server_run") and not operand:
+                    reason = "Restricted Server executor requires an explicit approved cwd"
                 elif name in ("server_git", "server_run") and not path_allowed(
                     os.path.join(operand, ".drlink-mcp-git-scope"
                                  if name == "server_git" else ".drlink-mcp-dev-command-scope"),
@@ -1390,7 +1491,8 @@ class MCPBridge:
                     except (ExecutorDenied, OSError, ValueError, TypeError):
                         reason = "Server-local executor denied or could not complete operation"
             else:
-                reason = "AI Access implicit DENY"
+                reason = ("AI Access path scope denied" if decision.get("path_ok") is False and decision.get("matched_rules")
+                          else "AI Access implicit DENY")
         self.plane.record_ai_activity(
             principal=principal["name"],
             endpoint=target,
@@ -1454,11 +1556,38 @@ class MCPBridge:
         endpoint = str(arguments.get("endpoint") or arguments.get("host") or "")
         if endpoint == v24.SERVER_SELF_TARGET:
             return self._call_server_self(principal, name, arguments)
+        if "run_as" in arguments or "cwd" in arguments:
+            return _text_result("DENY: run_as and cwd selection are supported for server:self only; Managed Hosts use existing Agent execution", is_error=True)
         if not endpoint:
             raise ControlPlaneError("endpoint is required")
         operand = arguments.get("path") or arguments.get("command") or arguments.get("operand")
         start = time.monotonic()
+        # list_hosts exposes the immutable Client ID as well as the endpoint
+        # name. Resolve an exact ID to exactly one Managed Host before the
+        # existing canonical policy evaluation. Never use a prefix, name
+        # collision or this alias to confer Server-self access.
+        requested_endpoint = endpoint
+        id_rows = self.plane.conn.execute(
+            "SELECT o.id, o.name, e.client_id FROM managed_endpoints e "
+            "JOIN objects o ON o.id=e.object_id WHERE e.client_id=? "
+            "AND o.type='managed_endpoint' AND o.origin='managed'", (endpoint,)
+        ).fetchall()
+        resolved_id = None
+        if id_rows:
+            named = self.plane.get_object(endpoint)
+            if (len(id_rows) != 1 or id_rows[0]["name"] == v24.SERVER_SELF_TARGET
+                    or (named is not None and named["id"] != id_rows[0]["id"])):
+                self.plane.record_ai_activity(principal=principal["name"], endpoint=requested_endpoint,
+                    capability=name, result="DENY", operand=operand)
+                return _text_result("DENY\nReason: ambiguous endpoint selector", is_error=True)
+            resolved_id = id_rows[0]["id"]
+            endpoint = id_rows[0]["name"]
         decision = self._authorize(principal, endpoint, name, operand)
+        if resolved_id is not None and (decision.get("endpoint_row") is None
+                or decision["endpoint_row"]["id"] != resolved_id):
+            self.plane.record_ai_activity(principal=principal["name"], endpoint=requested_endpoint,
+                capability=name, result="DENY", operand=operand)
+            return _text_result("DENY\nReason: endpoint changed during authorization", is_error=True)
         if decision["action"] != "ALLOW":
             self.plane.record_ai_activity(
                 principal=principal["name"],
@@ -1492,7 +1621,8 @@ class MCPBridge:
             )
             return _text_result("Authorization: ALLOW\nDelivery: endpoint unavailable (orphaned)", is_error=True)
         client = self.plane.client_for_endpoint(ep["id"])
-        if client is None or not self.plane.client_effectively_connected(client):
+        if (client is None or (resolved_id is not None and client["id"] != requested_endpoint)
+                or not self.plane.client_effectively_connected(client)):
             self.plane.record_ai_activity(
                 principal=principal["name"],
                 endpoint=endpoint,
@@ -2172,12 +2302,12 @@ def _run_worker(host, port, root, index, count, rundir) -> None:
     _ReusePortServer((host, int(port)), make_handler(bridge)).serve_forever()
 
 
-def _run_full_control(path) -> None:
+def _run_full_control(path, root) -> None:
     signal.signal(signal.SIGTERM, signal.SIG_DFL)
     signal.signal(signal.SIGINT, signal.SIG_DFL)
     import drlink_mcp_full_control as full
 
-    full.serve_full_control(path)
+    full.serve_full_control(path, runtime=full.FullControlRuntime(policy_root=root))
     threading.Event().wait()
 
 
@@ -2202,7 +2332,7 @@ def _supervise(host, port, root, count) -> None:
             code = 0
             try:
                 if slot == "full-control":
-                    _run_full_control(full_control_path)
+                    _run_full_control(full_control_path, resolved_root)
                 else:
                     _run_worker(host, port, resolved_root, int(slot), count, rundir)
             except BaseException:

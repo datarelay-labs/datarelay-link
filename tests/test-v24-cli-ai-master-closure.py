@@ -65,37 +65,60 @@ class WizardCancelAtomicty(unittest.TestCase):
     def _rev(self):
         return self.plane.current_revision()
 
-    def test_ai_mcp_setup_routes_and_cancel_preserve_identity_policy(self):
+    def test_mcp_server_setup_separates_identity_policy(self):
         import frp_cli_catalog as catalog
         import frp_ctl_grammar as grammar
         rev = self._rev()
         menu = catalog.render_navigation_menu("server.ai")
-        self.assertIn("AI MCP Setup", menu)
-        self.assertIn("Set up and manage AI MCP connections", menu)
-        self.assertEqual(catalog.navigation_entries("server.ai")[0][-1], "set ai-mcp")
-        self.assertIn("ai-mcp", grammar.completion_candidates("set ", "server", [], {}, []))
-        self.assertNotIn("ai-mcp", grammar.completion_candidates("set ", "client", [], {}, []))
-        self.assertEqual(grammar.match(["set", "ai-mcp"], role="server")["status"], "ok")
-        self.assertNotEqual(grammar.match(["set", "ai-mcp", "extra"], role="server")["status"], "ok")
-        for answers in (["0"], ["3", "0"], ["4"]):
-            scripted = ScriptedIO(answers)
-            set_wizard_io(scripted)
-            with redirect_stdout(io.StringIO()):
-                self.assertEqual(cli.dispatch(["set", "ai-mcp"], root=self.tmp, plane=self.plane), 0)
-            self.assertIn("AI MCP Setup", "".join(scripted.out))
-            self.assertEqual(self._rev(), rev)
-        set_wizard_io(ScriptedIO(["1"]))
-        with mock.patch.object(cli, "_guide_mcp_server", return_value=0) as guide:
-            self.assertEqual(cli.dispatch(["set", "ai-mcp"], root=self.tmp, plane=self.plane), 0)
-            guide.assert_called_once()
+        self.assertIn("MCP Server Settings", menu)
+        self.assertIn("Configure MCP Server connectivity and execution", menu)
+        self.assertIn("Connect or manage AI Identity", menu)
+        self.assertEqual(catalog.navigation_entries("server.ai")[0][-1], "set mcp-server")
+        self.assertNotIn("MCP Server Settings", catalog.render_navigation_menu("server.system.settings"))
+        completions = grammar.completion_candidates("set ", "server", [], {}, [])
+        self.assertIn("mcp-server", completions)
+        self.assertNotIn("ai-mcp", completions)
+        self.assertNotIn("mcp-server", grammar.completion_candidates("set ", "client", [], {}, []))
+        self.assertEqual(grammar.match(["set", "mcp-server"], role="server")["status"], "ok")
+        for tokens in (["set", "ai-mcp"], ["set", "server", "mcp"], ["set", "mcp-server", "extra"]):
+            self.assertNotEqual(grammar.match(tokens, role="server")["status"], "ok")
+        self.assertNotEqual(grammar.match(["set", "server", "mcp", "hostname", "mcp.example.com"], role="server")["status"], "ok")
+        self.assertEqual(grammar.match(["set", "mcp-server", "hostname", "mcp.example.com"], role="server")["status"], "ok")
+        scripted = ScriptedIO(["0"])
+        set_wizard_io(scripted)
+        with redirect_stdout(io.StringIO()):
+            self.assertEqual(cli.dispatch(["set", "mcp-server"], root=self.tmp, plane=self.plane), 0)
+        rendered = "".join(scripted.out)
+        for label in ("MCP Server Settings", "Configure endpoint, TLS and Server execution", "Diagnostics"):
+            self.assertIn(label, rendered)
+        for label in ("2) Server execution", "Connect or manage AI service", "List AI connections", "MCP Bridge settings"):
+            self.assertNotIn(label, rendered)
         self.assertEqual(self._rev(), rev)
-        for answer in ("n", "y"):
-            set_wizard_io(ScriptedIO(["2", answer]))
-            with mock.patch.object(self.plane, "diagnostics_mcp", return_value="MCP diagnostic\n") as diagnostic, mock.patch.object(cli, "_guide_mcp_server", return_value=0) as guide, redirect_stdout(io.StringIO()):
-                self.assertEqual(cli.dispatch(["set", "ai-mcp"], root=self.tmp, plane=self.plane), 0)
-                diagnostic.assert_called_once()
-                self.assertEqual(guide.call_count, int(answer == "y"))
-            self.assertEqual(self._rev(), rev)
+        ready = {"frontend_available": True, "cloud_compatible": True,
+                 "certificate": "VALID", "url": "https://mcp.example.test/mcp"}
+        import drlink_mcp_tls as tls
+        ready["certificate"] = tls.STATUS_VALID
+        for configured, answers, calls in ((False, ["1", "n"], 0), (False, ["1", "y"], 1), (True, ["1", "n"], 0), (True, ["1", "y"], 1)):
+            set_wizard_io(ScriptedIO(answers))
+            with mock.patch.object(cli, "_guide_mcp_server", return_value=0) as guide, \
+                 mock.patch.object(tls, "status_view", return_value=ready), \
+                 mock.patch.object(self.plane, "native_mcp_runtime_status", return_value={"readiness":"Configured" if configured else "Disabled","reason":"fixture","full":configured}), \
+                 mock.patch("drlink_v24_wizard._configure_mcp_local_execution", return_value=0) as execution:
+                self.assertEqual(cli.dispatch(["set", "mcp-server"], root=self.tmp, plane=self.plane), 0)
+                guide.assert_called_once()
+                self.assertEqual(execution.call_count, calls)
+        set_wizard_io(ScriptedIO(["1"]))
+        with mock.patch.object(cli, "_guide_mcp_server", return_value=0), \
+             mock.patch.object(tls, "status_view", return_value={}), \
+             mock.patch("drlink_v24_wizard._configure_mcp_local_execution") as execution:
+            self.assertEqual(cli.dispatch(["set", "mcp-server"], root=self.tmp, plane=self.plane), 0)
+            execution.assert_not_called()
+        set_wizard_io(ScriptedIO(["2"]))
+        with mock.patch.object(self.plane, "diagnostics_mcp", return_value="MCP diagnostic\n") as diagnostic, mock.patch.object(cli, "_guide_mcp_server") as guide, redirect_stdout(io.StringIO()):
+            self.assertEqual(cli.dispatch(["set", "mcp-server"], root=self.tmp, plane=self.plane), 0)
+            diagnostic.assert_called_once()
+            guide.assert_not_called()
+        self.assertEqual(self._rev(), rev)
 
     def test_create_wizard_cancel_no_mutation(self):
         rev = self._rev()

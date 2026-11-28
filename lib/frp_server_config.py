@@ -11,10 +11,9 @@ public_hostname is an optional DNS alias for published-service access and may
 also be selected as public_url_host. It must never become the default FRP
 control destination or PKI identity by itself.
 
-bootstrap_hostname is an optional explicit hostname for a publicly trusted
-Zero-Touch edge. When unset, short-URL mode is disabled and Zero-Touch falls
-back to the pinned-CA zt1 installer path. public_url_host/public_hostname are
-never assumed to terminate publicly trusted HTTPS on port 443.
+bootstrap_hostname is an optional Zero-Touch HTTPS authority override.
+When absent, inherit public_hostname; if neither is set, use the allocator
+HTTPS authority. A hostname alone does not prove route or TLS readiness.
 """
 from __future__ import annotations
 
@@ -219,7 +218,7 @@ def public_hostname(cfg):
 
 
 def bootstrap_hostname(cfg):
-    """Optional Zero-Touch public TLS bootstrap hostname (advanced override)."""
+    """Explicit Zero-Touch HTTPS hostname override."""
     if not isinstance(cfg, dict):
         return ''
     try:
@@ -272,10 +271,24 @@ def public_url_host(cfg):
 def short_url_hostname(cfg):
     """Optional entry hostname override; not evidence of TLS peer trust.
 
-    When absent, the issuer selects the configured allocator HTTPS authority.
-    This accessor intentionally returns only the explicit override.
+    When absent, inherit the public hostname before allocator HTTPS authority.
     """
-    return bootstrap_hostname(cfg)
+    return bootstrap_hostname(cfg) or public_hostname(cfg)
+
+
+def bootstrap_authority(cfg):
+    """Explicit edge hostname, inherited public DNS + allocator port, or allocator authority."""
+    allocator = urlparse(_strip(cfg.get('allocator_public_url')))
+    if allocator.scheme != 'https' or not allocator.netloc or allocator.username or allocator.password or allocator.query or allocator.fragment:
+        raise ValueError('valid HTTPS allocator public URL is required')
+    explicit = _strip(cfg.get('bootstrap_hostname'))
+    if explicit:
+        return validate_public_hostname(explicit, required=True)
+    inherited = _strip(cfg.get('public_hostname'))
+    if inherited:
+        host = validate_public_hostname(inherited, required=True)
+        return '%s:%s' % (host, allocator.port) if allocator.port not in (None, 443) else host
+    return allocator.netloc
 
 
 def access_host(cfg):

@@ -250,6 +250,7 @@ Server inspection examples:
 
 ```text
 show managed-hosts
+show managed-services
 show managed-host ubuntu-prod
 show managed-host ubuntu-prod agent
 show managed-host ubuntu-prod addresses
@@ -757,11 +758,11 @@ Review each referencing Rule with `set ai-access <RULE>` to select a replacement
 
 ---
 
-# 13. AI MCP Setup
+# 13. MCP Server Settings
 
-### AI MCP Setup and AI Access workflow
+### MCP Server Settings and AI Access workflow
 
-The single workflow specification is [AI_ACCESS_MCP.md](AI_ACCESS_MCP.md). Managed Hosts owns enrollment; AI MCP Setup manages infrastructure and connections; AI Identity retains verified authentication and credential lifecycle; AI Access Rules own Source → Destination → Permission authorization; System owns shared MCP settings and certificates. AI MCP Setup checks readiness and uses that same settings flow only when necessary, then optionally opens the separate Access Rule wizard. No automatic privilege grant from OAuth or first connection; explicitly reviewed Owner scope is optional. Basic permissions use built-in profiles; custom Objects/Groups are advanced. AI Access mode is fixed WHITELIST, not an operator input. Preserve existing state and all fail-closed controls. No duplicate public command/menu paths. These are target requirements, not installed-product evidence.
+The single normative workflow is [AI_ACCESS_MCP.md](AI_ACCESS_MCP.md). Managed Hosts owns enrollment; `set mcp-server` owns the unified endpoint, TLS and local execution setup; `set ai-identity` owns verified connection and credential lifecycle; AI Access Rules own Source, Destination, Permission and direct-file paths; only This Server Rules include allowed execution accounts and a default. Managed Hosts keep existing Agent execution with centrally managed AI Access and no additional Agent configuration. System owns shared infrastructure and the local Server execution safety ceiling, not a second independent user-facing account wizard. After OAuth, guide the operator into one reviewed Access Rule flow; skipping it leaves DENY. Built-in permissions need no custom Objects/Groups. AI Access is fixed WHITELIST. Normal requests describe work, not OS accounts: MCP discovers effective accounts and defaults; AI selects an explicitly granted account only when needed. Preserve existing state, public command compatibility and fail-closed enforcement. These are target requirements pending exact-candidate implementation and E2E.
 
 
 AI Access uses an authenticated AI Identity as its source.
@@ -780,37 +781,32 @@ The user does not create trust merely by assigning a display name.
 
 ---
 
-## 13.1 AI MCP Setup
+## 13.1 MCP Server Settings and AI Identities
 
-The normal Server CLI path is:
+On the Server, configure endpoint/TLS and optional local Server execution once:
 
 ```text
+set mcp-server
+
+MCP Server Settings
+1) Configure endpoint, TLS and Server execution
+2) Diagnostics
+0) Cancel
+```
+
+Native Server execution is optional for Managed Host-only AI access. If a This Server Rule needs it, the same local setup is offered inline before Rule creation. Existing profiles offer additive changes or separately reviewed replacement. A native policy test separates configured policy, complete execution grants and actual live operation verification.
+
+
+The combined setup reuses valid TLS and reviews local execution eligibility after TLS readiness. The operator approves existing eligible accounts, including root only explicitly; preparation of the optional nonprivileged workspace does not grant AI access. The AI Access rule selects the authorized account subset and its default. See the canonical execution-account contract; target multi-account behavior is pending implementation and qualification.
+
+Connect and authenticate each AI independently:
+
+```text
+set ai-identity
 set ai-identity <NAME>
 ```
 
-or the canonical guided menu flow:
-
-```text
-AI Access
-→ AI MCP Setup
-→ Connect or manage AI service
-```
-
-The guided menu selector is `ai-mcp` with help text `Set up and manage AI MCP connections`. It is the user-facing entry for MCP Server, MCP Bridge and AI service connections. AI Access remains the separate authorization function. AI Identity is the authenticated security resource, not the setup menu name; action-first identity and credential commands retain their existing syntax and semantics.
-
-Typical guided flow:
-
-```text
-AI MCP Setup
-============
-
-Name:
-claude
-
-Type:
-1) Interactive AI
-2) Automation / Custom AI
-```
+The guided menu is AI Access → Connect or manage AI Identity. Select ChatGPT, Claude, Other remote MCP client, or supported Automation. Review the actual pending request and complete the verified OAuth exchange. After verification, the optional Access Rule wizard preselects the verified Identity. No permission is granted by authentication.
 
 Interactive AI:
 
@@ -1139,10 +1135,14 @@ Internet Access destination selectors reject a Managed Host and reject any Group
 ```text
 name
 source      → AI Identity
-destination → Network Object / Network Group
+destination → server:self / trusted Managed Host / supported group selector
 permission  → Permission Object / Permission Group
+execution   → allowed existing accounts + one default (account-bearing operations)
+paths       → direct-file scopes
 enabled / disabled
 ```
+
+One reviewed wizard selects the default OS user, additional users and explicit root where appropriate. Read-only has no general shell. The normative workflow, runtime selection and migration are defined in [AI_ACCESS_MCP.md §4.1](AI_ACCESS_MCP.md#41-canonical-execution-account-contract).
 
 ---
 
@@ -2474,8 +2474,6 @@ set enrollment bulk
 
 set server public-hostname <FQDN>
 set server bootstrap-hostname <FQDN>
-set server installer-url <URL>
-set server windows-installer-url <URL>
 
 set managed-host-group <GROUP>
 set managed-host <HOST> group <GROUP>
@@ -2494,7 +2492,7 @@ set internet-access <RULE>
 set internet-access enabled
 set internet-access disabled
 
-set ai-mcp
+set mcp-server
 set ai-identity <IDENTITY>
 set ai-identity <IDENTITY> approve <PENDING-ID>
 set ai-identity <IDENTITY> deny <PENDING-ID>
@@ -2511,15 +2509,15 @@ set ai-access <RULE>
 set ai-access enabled
 set ai-access disabled
 
-set server mcp
-set server mcp hostname <FQDN>
-set server mcp mode <auto-acme|user-certificate>
-set server mcp contact-email <EMAIL>
-set server mcp acme-environment <production|staging>
-set server mcp acme-directory <URL>
+
+set mcp-server hostname <FQDN>
+set mcp-server mode <auto-acme|user-certificate>
+set mcp-server contact-email <EMAIL>
+set mcp-server acme-environment <production|staging>
+set mcp-server acme-directory <URL>
 ```
 
-Human invocation enters Guided Create/Edit unless a complete one-shot form is supplied. Server settings remain action-first under `set server ...` / `unset server ...`; the guided placement is System → Server Settings.
+Human invocation enters Guided Create/Edit unless a complete one-shot form is supplied. Bootstrap hostname inherits public hostname and retains the allocator HTTPS port unless explicitly configured; if both are unset, use the allocator HTTPS authority. Installer sources are automatic qualified Server-local artifacts. Server settings remain action-first under `set server ...` / `unset server ...`; the guided placement for ordinary Server settings is System → Server Settings. MCP Server Settings has its single guided entry under AI Access; explicit TLS intent is also under `set mcp-server <SETTING> <VALUE>`.
 
 A **Managed Host Group** is an inventory grouping for registered Managed Hosts and is not a **Network Group**. Network Groups are policy selectors built from Network Objects. Managed Host Group membership changes do not retire a host, alter Remote Services, reallocate public ports, or mutate Network Group policy state.
 
@@ -2535,8 +2533,6 @@ unset enrollment <ENROLLMENT>
 
 unset server public-hostname
 unset server bootstrap-hostname
-unset server installer-url
-unset server windows-installer-url
 
 unset network-object <OBJECT>
 unset network-group <GROUP>
@@ -2558,17 +2554,21 @@ unset permission-group <GROUP>
 unset ai-access <RULE>
 unset ai-access policy
 
-unset server mcp
-unset server mcp purge
+unset mcp-server
+unset mcp-server purge
 ```
 
-`unset server mcp` clears TLS intent and removes the active public MCP route while retaining DRLink-owned certificate and ACME account material. Active MCP/OAuth connections may be interrupted; the explicit command approves this change without an additional confirmation prompt. Check `system certificate status` and `system diagnostics mcp` afterward. `unset server mcp purge` removes that retained material only after interactive y/N confirmation; non-interactive use fails closed.
+`unset mcp-server` clears TLS intent and removes the active public MCP route while retaining DRLink-owned certificate and ACME account material. Active MCP/OAuth connections may be interrupted; the explicit command approves this change without an additional confirmation prompt. Check `system certificate status` and `system diagnostics mcp` afterward. `unset mcp-server purge` removes that retained material only after interactive y/N confirmation; non-interactive use fails closed.
 
 `unset enrollment <ENROLLMENT>`, `unset network-object`, `unset network-group`, `unset service-object`, `unset service-group`, `unset permission-object`, `unset permission-group`, and `unset ai-identity` are destructive lifecycle operations and require explicit `y/N` confirmation after existence/reference validation. Default is No and cancellation applies no change. These are normal `y_n` flows rather than TTY-only flows, so controlled automation may provide `y`/`yes` on stdin; there is no public hidden environment-variable or `--yes` bypass for these commands. Policy Rule deletion uses effect-aware `conditional_y_n`: confirmation is required when the calculated change broadens or materially narrows access, while full `unset <plane>-access policy` reset always requires explicit confirmation.
 
 Bare `unset managed-host <HOST>` remains the reference-safe Managed Host retirement operation with explicit y/N confirmation. `unset managed-host <HOST> group <GROUP>` removes only inventory membership; the explicit command approves this metadata edit without an additional prompt. `unset managed-host-group <GROUP>` requires interactive y/N confirmation and does not expose a public `--yes` bypass.
 
 ---
+
+The guided Server menu exposes Managed Host Groups and all Managed Services under Managed Hosts; Configuration Test/Diff/Apply/Export, Revisions/Rollback and Certificates under System. Agent lifecycle includes Autostart Show/Enable/Disable and Synchronize Remote Services. All leaves invoke canonical commands and preserve their existing approval contracts.
+
+Internet Access policy readiness is distinct from live Proxy endpoint readiness. Unknown supervisor state is not an enabled or disabled Autostart result. Cancellation of a policy reset returns nonzero on every plane. The documented machine options for diagnostics, support-bundle output and Managed Host Group description are listed in the CLI Reference; enrollment remains guided.
 
 ## 49.4 Test
 
@@ -2630,7 +2630,7 @@ state.
 `system status` is the detailed Server read-only status and settings view. It includes current public/bootstrap hostnames and Linux/macOS/Windows Agent installer sources, with explicit automatic/default fallback text. `show status` remains the role-aware summary.
 
 
-`system certificate status` is the single public MCP TLS/certificate status surface. Configure TLS intent with `set server mcp ...`; there is no separate MCP TLS status read command.
+`system certificate status` is the single public MCP TLS/certificate status surface. Configure TLS intent with `set mcp-server ...`; there is no separate MCP TLS status read command.
 
 ---
 
@@ -2661,17 +2661,21 @@ Data Relay Link — DRLink Server
 │   └── Test / Explain
 │
 ├── 6. AI Access
-│   ├── AI MCP Setup
+│   ├── MCP Server Settings
+│   ├── AI Identities
+│   ├── Connect or manage AI Identity
 │   ├── Access Rules
+│   ├── Create or edit Access Rule
+│   ├── Permission Objects / Groups
+│   │   ├── Permission Objects
+│   │   └── Permission Groups
+│   ├── Enable Enforcement
+│   ├── Disable Enforcement
 │   ├── Access Log
-│   ├── Test / Explain
-│   └── Advanced Permissions
-│       ├── Permission Objects
-│       └── Permission Groups
+│   └── Test / Explain
 │
 ├── 7. System
 │   ├── Server Settings
-│   │   └── MCP Server Settings
 │   └── Certificates
 ├── 8. Help
 └── 9. Exit
@@ -4460,67 +4464,11 @@ A destination Network Group is likewise rejected if it contains any Managed Host
 
 ---
 
-# 88. Scenario — AI MCP Setup and AI Access
+# 88. Scenario — MCP Server Settings and AI Access
 
-Server:
+Use `set mcp-server` for endpoint/TLS and local execution readiness, then `set ai-identity` for verified authentication; reuse ready TLS. Open `set ai-access claude-prod` with Source preselected. Choose existing target, Full management, default project owner, additional OS accounts and explicitly approved root as needed; review direct-file paths and effective target-local execution. No mode prompt (WHITELIST only), no mandatory custom Permission Object or second account wizard.
 
-```text
-set ai-identity claude
-```
-
-Interactive authentication completes:
-
-```text
-AI Identity : claude
-Status      : VERIFIED
-```
-
-Create Permission Object:
-
-```text
-set permission-object read-only
-```
-
-Permissions:
-
-```text
-host-info
-process-read
-file-read
-```
-
-Create first AI Access Rule:
-
-```text
-set ai-access claude-prod
-```
-
-Choose:
-
-```text
-Whitelist
-```
-
-Rule:
-
-```text
-Source      : claude
-Destination : production-servers
-Permission  : read-only
-Enabled     : Yes
-```
-
-Effective:
-
-```text
-authenticated claude + matching destination/permission
-→ ALLOW
-
-unmatched AI Access request
-→ DENY
-```
-
-Unauthenticated access is not made valid by policy mode.
+From a fresh AI chat, ask to modify the project, run tests and perform the authorized deployment without specifying account names. Discover execution context; use the default/project owner for development and explicitly allowed root for required system operations. Verify actual UID, ownership, Git and job receipts. Deny unapproved accounts, ambiguous defaults and unmatched requests. For a read-only rule, verify reads and diagnostics with no shell or writes. See the canonical AI Access workflow.
 
 ---
 
@@ -5202,12 +5150,13 @@ A v2.4 CLI implementation is conformant only if the following can all be demonst
 - Cross-pool Service edit is rejected.
 - Server can inspect Remote Service state read-only.
 
-## AI MCP Setup / AI Access
+## MCP Server Settings / AI Access
 
 - Interactive and automation authentication can bind an AI Identity.
 - Policy evaluation occurs only after identity authentication.
 - AI Access is WHITELIST-only and deny-by-default; authentication alone never grants a capability.
-- Policy disable does not remove authentication.
+- Policy disable is DENY ALL for AI operations; authentication remains separate.
+- Default and additional execution accounts, explicit root, direct-file scope and local readiness are reviewed once; AI discovers effective context and does not require account instructions for normal tasks.
 - AI Access Log supports identity/destination/permission filtering.
 
 ## AI CLI

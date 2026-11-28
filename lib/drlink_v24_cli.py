@@ -189,7 +189,7 @@ def _access_rule_activation_result(plane: ControlPlane, resource: str, name: str
             % (resource, name, reason)
         )
         return 1
-    sys.stdout.write("%s rule set: %s\n" % (resource, name))
+    sys.stdout.write("%s Rule set: %s\n" % (_policy_resource_label(resource).replace(" policy", ""), name))
     return 0
 
 
@@ -660,6 +660,50 @@ def handle_show(plane: ControlPlane, rest: list[str]) -> Optional[int]:
         ):
             sys.stdout.write("  %s\n" % m["name"])
         return 0
+    if res == "managed-services":
+        _require_server(plane, "Managed Services")
+        if len(rest) != 1:
+            raise ControlPlaneError("Usage: show managed-services")
+        # Use the same authoritative publications and status calculation as
+        # the per-host view. Include disabled/reserved mappings, not releases.
+        rows = plane.conn.execute(
+            "SELECT s.*, c.label AS host_label, c.hostname AS host_name, "
+            "m.status AS service_status, m.pending_allocation, m.runtime_verified "
+            "FROM published_services s JOIN clients c ON c.id=s.client_id "
+            "LEFT JOIN remote_service_meta m ON m.service_id=s.id "
+            "WHERE s.released=0 ORDER BY s.public_port IS NULL, s.public_port, "
+            "COALESCE(c.label,c.hostname,c.id), s.name, s.id"
+        ).fetchall()
+        if not rows:
+            sys.stdout.write("No Managed Services configured.\n")
+            return 0
+        try:
+            host = _public_endpoint_host(plane)
+        except _scfg.ConfigError:
+            host = "unconfigured"
+        def endpoint(address, port):
+            address = str(address or "-")
+            if ":" in address and not address.startswith("["):
+                address = "[" + address + "]"
+            return "%s:%s" % (address, port) if port is not None else "-"
+        columns = ("PUBLIC ENDPOINT", "MANAGED HOST", "SERVICE", "TARGET", "STATUS")
+        table = []
+        clients = {}
+        for row in rows:
+            cid = row["client_id"]
+            if cid not in clients:
+                clients[cid] = plane.conn.execute("SELECT * FROM clients WHERE id=?", (cid,)).fetchone()
+            public = "Pending allocation" if row["pending_allocation"] or row["public_port"] is None else endpoint(host, row["public_port"])
+            status = v24.inventory_remote_service_status(
+                plane, clients[cid], enabled=bool(row["enabled"]),
+                stored_status=row["service_status"] or "", runtime_verified=bool(row["runtime_verified"]),
+            )
+            table.append((public, row["host_label"] or row["host_name"] or cid[:8], row["name"], endpoint(row["target_host"], row["target_port"]), status))
+        widths = [max(len(str(value[i])) for value in [columns] + table) for i in range(len(columns))]
+        for line in [columns] + table:
+            sys.stdout.write("  ".join(str(value).ljust(widths[i]) for i, value in enumerate(line)).rstrip() + "\n")
+        sys.stdout.write("\nTotal: %d Managed Services\n" % len(table))
+        return 0
     if res in ("managed-hosts",):
         _require_server(plane, "Managed Hosts")
         rows = plane.conn.execute(
@@ -881,15 +925,7 @@ def handle_show(plane: ControlPlane, rest: list[str]) -> Optional[int]:
             p["credential_status"] or "UNBOUND"
         )
         sys.stdout.write("AI Identity : %s\nStatus      : %s\nEnabled     : %s\n" % (p["name"], status, "YES" if p["enabled"] else "NO"))
-        sys.stdout.write("AI Access Rules (configured for this Identity; runtime authorization is evaluated per call):\n")
-        rows = plane.conn.execute(
-            "SELECT name FROM ai_policy_rules WHERE source_identity_id=? ORDER BY name", (p["id"],)
-        ).fetchall()
-        if not rows:
-            sys.stdout.write("  No rules configured. Effective access: DENY.\n")
-        for row in rows:
-            sys.stdout.write("\n")
-            _show_ai_policy(plane, ["ai-access", row["name"]])
+        _show_identity_access(plane, p)
         return 0
     if res == "remote-access":
         _require_server(plane, "Remote Access policy")
@@ -1074,12 +1110,14 @@ def _show_policy(plane: ControlPlane, family: str, rest: list[str]) -> int:
             import json
             from pathlib import Path
             from frp_egress_control import listen_bind
+            endpoint_configured = False
             try:
                 cfg = json.loads((Path(plane.root or '/') / 'etc/drlink/config.json').read_text())
                 bind_host, proxy_port = listen_bind(cfg)
                 proxy_host = (_scfg.resolve_public_endpoint_host(cfg, root=plane.root)
                               if bind_host in ('0.0.0.0', '::', '*') and _scfg else bind_host)
                 if proxy_host:
+                    endpoint_configured = True
                     if ':' in proxy_host and not proxy_host.startswith('['):
                         proxy_host = '[%s]' % proxy_host
                     sys.stdout.write('Proxy endpoint: http://%s:%s\n' % (proxy_host, proxy_port))
@@ -1090,7 +1128,12 @@ def _show_policy(plane: ControlPlane, family: str, rest: list[str]) -> int:
             readiness, recovery = v24.restricted_policy_readiness(
                 family, pol["mode"], pol["enforcement"]
             )
-            sys.stdout.write("Readiness   : %s\n" % readiness)
+            sys.stdout.write("Policy readiness : %s\n" % readiness)
+            sys.stdout.write("Runtime readiness: %s\n" % (
+                "NOT TESTED (endpoint configured; connectivity not verified)" if endpoint_configured
+                else "UNAVAILABLE (no usable proxy endpoint)"))
+            if not endpoint_configured:
+                sys.stdout.write("Run: sudo drlink system diagnostics\n")
             if recovery:
                 sys.stdout.write("Recovery    : %s\n" % recovery)
         sys.stdout.write("\nRules:\n")
@@ -1175,6 +1218,32 @@ def _show_ai_policy(plane: ControlPlane, rest: list[str]) -> int:
     principal = plane.conn.execute(
         "SELECT name FROM ai_principals WHERE id = ?", (row["source_identity_id"],)
     ).fetchone()
+    dest_label, perm_label = _ai_rule_labels(plane, row)
+    lines = [
+        "AI Access Rule: %s" % row["name"],
+        "Source      : %s" % (principal["name"] if principal else "-"),
+        "Destination : %s" % dest_label,
+        "Permission  : %s" % perm_label,
+        "Paths       : %s"
+        % (
+            ", ".join(v24.list_ai_policy_path_scopes(plane, row["name"]))
+            or "-"
+        ),
+        "Enabled     : %s" % ("YES" if row["enabled"] else "NO"),
+    ]
+    binding = v24.ai_rule_execution(row)
+    if binding:
+        lines.append("Accounts    : %s" % ", ".join(binding["accounts"]))
+        lines.append("Default account: %s" % binding["default"])
+        lines.append("Execution eligibility: target-local approval required")
+    if pol.get("mode"):
+        lines.append("Mode        : %s" % str(pol["mode"]).upper())
+        lines.append("Enforcement : %s" % str(pol.get("enforcement") or "-").upper())
+    sys.stdout.write("\n".join(lines) + "\n")
+    return 0
+
+
+def _ai_rule_labels(plane, row) -> tuple[str, str]:
     dest_label = "-"
     if row["destination_ref_kind"] == "object" and row["destination_ref_id"]:
         dest = plane.conn.execute(
@@ -1205,23 +1274,49 @@ def _show_ai_policy(plane: ControlPlane, rest: list[str]) -> int:
             "SELECT name FROM permission_groups WHERE id = ?", (row["permission_ref_id"],)
         ).fetchone()
         perm_label = perm["name"] if perm else "-"
-    lines = [
-        "AI Access Rule: %s" % row["name"],
-        "Source      : %s" % (principal["name"] if principal else "-"),
-        "Destination : %s" % dest_label,
-        "Permission  : %s" % perm_label,
-        "Paths       : %s"
-        % (
-            ", ".join(v24.list_ai_policy_path_scopes(plane, row["name"]))
-            or "-"
-        ),
-        "Enabled     : %s" % ("YES" if row["enabled"] else "NO"),
-    ]
-    if pol.get("mode"):
-        lines.append("Mode        : %s" % str(pol["mode"]).upper())
-        lines.append("Enforcement : %s" % str(pol.get("enforcement") or "-").upper())
-    sys.stdout.write("\n".join(lines) + "\n")
-    return 0
+    return dest_label, perm_label
+
+
+def _show_identity_access(plane, principal) -> None:
+    """Describe configured grants and policy-matched hosts; never claim OS access."""
+    policy = v24.get_access_policy(plane, "ai")
+    identity_verified = bool(principal["enabled"]) and str(principal["credential_status"] or "").lower() in ("verified", "active")
+    rows = list(plane.conn.execute(
+        "SELECT * FROM ai_policy_rules WHERE source_identity_id=? ORDER BY name COLLATE NOCASE",
+        (principal["id"],),
+    ))
+    hosts = [r["name"] for r in plane.conn.execute(
+        "SELECT o.name FROM objects o JOIN managed_endpoints e ON e.object_id=o.id "
+        "JOIN clients c ON c.id=e.client_id WHERE o.type='managed_endpoint' AND o.origin='managed' "
+        "AND o.status='active' AND c.trust_status='trusted' "
+        "AND lower(c.status) NOT IN ('retired','removed','deleted') ORDER BY o.name COLLATE NOCASE"
+    )]
+    sys.stdout.write("\nAI Access Rules: %s\nPolicy enforcement: %s\n" % (
+        len(rows), str(policy.get("enforcement") or "-").upper()))
+    authorized = set()
+    for row in rows:
+        destination, permission = _ai_rule_labels(plane, row)
+        paths = v24.list_ai_policy_path_scopes(plane, row["name"])
+        capabilities = v24._ai_rule_permissions(plane, row)
+        active = (identity_verified and bool(row["enabled"]) and bool(capabilities)
+                  and v24.effective_policy_result(policy["mode"], policy["enforcement"], True, plane="ai") == "ALLOW")
+        matched_hosts = []
+        if active and (capabilities - v24.FILE_PERMISSIONS or paths):
+            matched_hosts = [host for host in hosts if v24._ref_name_match(
+                plane, row["destination_ref_kind"], row["destination_ref_id"], host)]
+            authorized.update(matched_hosts)
+        sys.stdout.write("  Rule: %s (%s)\n" % (row["name"], "enabled" if row["enabled"] else "disabled"))
+        sys.stdout.write("    Destination: %s\n    Permission: %s\n    Capabilities: %s\n    Paths: %s\n" % (
+            destination, permission, ", ".join(sorted(capabilities)) or "-", ", ".join(paths) or "-"))
+        sys.stdout.write("    Policy-matched current trusted Managed Hosts: %s\n" % (", ".join(matched_hosts) or "none"))
+        if row["destination_ref_kind"] == "server":
+            sys.stdout.write("    Server-self rule: %s (separate runtime controls apply)\n" % ("enabled by policy" if active else "not enabled by policy"))
+        if not active:
+            sys.stdout.write("    Effective policy: DENY (inactive Identity, Rule, permission or enforcement)\n")
+    sys.stdout.write("Policy-matched current trusted Managed Hosts: %d\n" % len(authorized))
+    sys.stdout.write("Unmatched access: DENY. File operations require matching canonical paths; OS permissions and host connectivity still apply.\n")
+    if not rows:
+        sys.stdout.write("No AI Access Rules configured for this Identity.\n")
 
 
 def _show_ai_log(plane: ControlPlane, args: list[str]) -> int:
@@ -1331,7 +1426,7 @@ def handle_set(plane: ControlPlane, rest: list[str]) -> Optional[int]:
         if result.get("operation") == "no_change":
             sys.stdout.write("NO CHANGE: Network Object %s already has the requested value.\n" % name)
         else:
-            sys.stdout.write("Network Object %s: %s\n" % (result["operation"], name))
+            sys.stdout.write("Network Object %s: %s\n" % ({"create":"created","update":"updated"}.get(result["operation"],result["operation"]), name))
         return 0
     if res == "network-group":
         _require_server(plane, "Network Groups")
@@ -1547,9 +1642,9 @@ def handle_set(plane: ControlPlane, rest: list[str]) -> Optional[int]:
             return run_wizard(plane, "ai-access", name)
         kv = v24.parse_kv_tokens(
             extra,
-            allowed={"source", "destination", "permission", "paths", "enabled"},
+            allowed={"source", "destination", "permission", "paths", "accounts", "default-account", "enabled"},
             resource="AI Access",
-            allowed_hint="source, destination, permission, paths, enabled|disabled",
+            allowed_hint="source, destination, permission, paths, accounts, default-account, enabled|disabled",
         )
         enabled = None
         if "enabled" in kv:
@@ -1559,6 +1654,14 @@ def handle_set(plane: ControlPlane, rest: list[str]) -> Optional[int]:
         paths = None
         if "paths" in kv:
             paths = v24.parse_ai_paths_field(kv.get("paths"))
+        execution = None
+        if "accounts" in kv or "default-account" in kv:
+            if "accounts" not in kv or "default-account" not in kv:
+                raise ControlPlaneError("Supply accounts and default-account together. No changes were applied.")
+            execution = v24.normalize_ai_execution_binding({
+                "default": kv["default-account"],
+                "accounts": kv["accounts"].split(","),
+            })
         result = _run(
             v24.set_ai_access_rule,
             plane,
@@ -1567,19 +1670,21 @@ def handle_set(plane: ControlPlane, rest: list[str]) -> Optional[int]:
             destination=kv.get("destination"),
             permission=kv.get("permission"),
             paths=paths,
+            execution=execution,
             enabled=enabled,
             oneshot=True,
         )
         if isinstance(result, dict) and result.get("cancelled"):
             return 1
-        sys.stdout.write("AI Access rule set: %s\n" % name)
+        sys.stdout.write("AI Access Rule set: %s\n" % name)
         return 0
-    if res == "ai-mcp":
-        _require_server(plane, "AI MCP Setup")
+    if res == "mcp-server":
+        _require_server(plane, "MCP Server Settings")
         if len(rest) != 1:
-            raise ControlPlaneError("Usage: set ai-mcp")
-        from drlink_v24_wizard import run_ai_mcp_setup
-        return run_ai_mcp_setup(plane)
+            from drlink_control_cli import _set_mcp_tls
+            return _set_mcp_tls(plane, rest[1:])
+        from drlink_v24_wizard import run_mcp_server_setup
+        return run_mcp_server_setup(plane)
     if res == "ai-identity":
         _require_server(plane, "AI Identities")
         from drlink_v24_wizard import run_wizard
@@ -1639,7 +1744,7 @@ def handle_unset(plane: ControlPlane, rest: list[str]) -> Optional[int]:
             sys.stdout.write("Reset ALL AI Access Rules; AI Identities and permission objects are retained. To delete a single Rule, use unset ai-access <RULE>.\n")
         result = _run(v24.reset_access_policy, plane, res)
         if isinstance(result, dict) and result.get("cancelled"):
-            return 0 if res == "ai-access" else 1
+            return 1
         sys.stdout.write("%s policy reset.\nEffective access: %s\n" % (res, "DENY" if res in ("internet-access", "ai-access") else "ALLOW"))
         return 0
     if res == "network-object":
@@ -1731,7 +1836,7 @@ def handle_unset(plane: ControlPlane, rest: list[str]) -> Optional[int]:
         result = _run(v24.unset_ai_access_rule, plane, rest[1])
         if isinstance(result, dict) and result.get("cancelled"):
             return 1
-        sys.stdout.write("AI Access rule deleted: %s\n" % rest[1])
+        sys.stdout.write("AI Access Rule deleted: %s\n" % rest[1])
         return 0
     if res == "ai-identity":
         _require_server(plane, "AI Identities")
@@ -1768,7 +1873,12 @@ def handle_unset(plane: ControlPlane, rest: list[str]) -> Optional[int]:
             raise ControlPlaneError("Usage: unset remote-service <NAME>")
         from drlink_control_cli import _confirm_from_stdin, _stdin_is_interactive
 
-        name = rest[1]
+        name = v24.validate_public_name(rest[1], "Remote Service name")
+        if not plane.conn.execute(
+            "SELECT 1 FROM agent_remote_services WHERE name = ? COLLATE NOCASE", (name,)
+        ).fetchone():
+            raise ControlPlaneError(v24.cli_error("Remote Service '%s' was not found." % name,
+                next_step="Run: show remote-services"))
         if not _stdin_is_interactive():
             sys.stderr.write(
                 "ERROR: unset remote-service requires interactive confirmation.\n"
@@ -1884,6 +1994,17 @@ def handle_test(plane: ControlPlane, rest: list[str]) -> Optional[int]:
         }
         if "path" in kv:
             selectors["path"] = kv["path"]
-        sys.stdout.write(v24.format_policy_test("ai", evaluation, selectors))
+        rendered = v24.format_policy_test("ai", evaluation, selectors)
+        native = kv["destination"] == v24.SERVER_SELF_TARGET
+        if native:
+            rendered = rendered.replace("Readiness   :", "Policy readiness:").replace("Effective Result:", "Policy Result:")
+        sys.stdout.write(rendered)
+        if native:
+            sys.stdout.write("Configured execution grants (policy + local account + path):\n")
+            for grant in plane.native_mcp_grant_test(kv["source"],kv["permission"],kv.get("path")):
+                sys.stdout.write("  %s: %s (%s)%s\n" % (grant["permission"],grant["result"],grant["reason"],
+                                 " account="+grant["account"] if grant.get("account") else ""))
+            sys.stdout.write("Live OS execution: NOT TESTED (configured policy is not proof of successful execution).\n")
+            sys.stdout.write("Use system diagnostics mcp and an authenticated MCP operation to verify actual execution.\n")
         return 0
     return None

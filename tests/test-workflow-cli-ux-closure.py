@@ -107,13 +107,60 @@ class DiscoveryTests(unittest.TestCase):
         for prop in (
             "public-hostname",
             "bootstrap-hostname",
-            "installer-url",
-            "windows-installer-url",
         ):
             self.assertIn(prop, text)
 
 
 class WorkflowGrammarTests(unittest.TestCase):
+    def test_audit_recovery_and_enrollment_mode_help(self):
+        for role, tokens, expected in (
+            ("server", ["set","enrollment","bogus"], "zero-touch"),
+            ("server", ["show","services"], "show managed-services"),
+            ("client", ["show","clients"], "show agent"),
+            ("client", ["system","status"], "show status"),
+            ("server", ["show","hosts"], "show managed-hosts"),
+        ):
+            result=GRAMMAR.match(tokens,role)
+            self.assertNotEqual(result.get("status"),"ok")
+            self.assertIn(expected,result.get("message",""))
+        for mode,expected,forbidden in (("zero-touch","24 hours","30 days"),("manual","30 days","24 hours")):
+            result=GRAMMAR.match(["set","enrollment",mode,"?"],"server")
+            self.assertEqual(result["status"],"ok")
+            self.assertIn(expected,result["message"])
+            self.assertNotIn(forbidden,result["message"])
+
+    def test_documented_automation_options_are_visible_only_on_supported_commands(self):
+        for path, options in (
+            (["system","diagnostics"], ("--json","--verbose","--quiet")),
+            (["system","support-bundle"], ("--output",)),
+            (["set","managed-host-group"], ("--description",)),
+        ):
+            result=GRAMMAR.match(path+["?"],"server")
+            self.assertEqual(result["status"],"ok")
+            self.assertIn("Automation options:",result["message"])
+            for option in options:self.assertIn(option,result["message"])
+        result=GRAMMAR.match(["set","enrollment","?"],"server")
+        for option in ("--ttl","--yes","--count","--one-line"):
+            self.assertNotIn(option,result["message"])
+
+    def test_audit_menu_paths_are_discoverable(self):
+        tree=CATALOG.NAVIGATION_TREE
+        for key, target in (
+            ("server.hosts","server.hosts.groups"),
+            ("server.hosts","show managed-services"),
+            ("server.system","server.system.configuration"),
+            ("server.system","server.system.revisions"),
+            ("server.system","server.system.certificates"),
+            ("client.agent","client.agent.autostart"),
+            ("client.agent","system synchronize"),
+            ("both.system","client.agent.autostart"),
+            ("both.system","server.system.configuration"),
+            ("both.system","server.system.revisions"),
+            ("both.system","server.system.certificates"),
+            ("both.system","system synchronize"),
+        ):
+            self.assertIn(target,[row[4] for row in tree[key]])
+
     def test_w3_group_mapping(self):
         r = GRAMMAR.match(["set", "managed-host-group", "production"], "server")
         self.assertEqual(r.get("status"), "ok")
@@ -198,26 +245,17 @@ class CreateClientWorkflowTests(unittest.TestCase):
         self.assertNotIn("delete enrollment", lines)
 
     def test_w10_installer_preflight_404(self):
-        class FakeHTTPError(Exception):
-            def __init__(self):
-                self.code = 404
-
-        with mock.patch("urllib.request.urlopen", side_effect=FakeHTTPError()):
-            # Force import path used inside helper.
-            import urllib.error
-
-            err = urllib.error.HTTPError(
-                "https://example.test/missing", 404, "Not Found", hdrs=None, fp=None
-            )
-            with mock.patch("urllib.request.urlopen", side_effect=err):
-                with self.assertRaises(SystemExit) as caught:
-                    CREATE.preflight_installer_url(
-                        "https://example.test/missing", label="Client installer"
-                    )
-        msg = str(caught.exception)
+        import urllib.error
+        err = urllib.error.HTTPError("https://example.test/missing", 404, "Not Found", hdrs=None, fp=None)
+        with mock.patch("urllib.request.build_opener") as build:
+            build.return_value.open.side_effect = err
+            stderr = io.StringIO()
+            with contextlib.redirect_stderr(stderr), self.assertRaises(SystemExit):
+                CREATE.preflight_installer_url("https://example.test/missing", label="Client installer")
+        msg = stderr.getvalue()
         self.assertIn("404", msg)
-        self.assertIn("No enrollment ticket was created", msg)
-        self.assertIn("set server installer-url", msg)
+        self.assertIn("no enrollment ticket was issued", msg)
+        self.assertNotIn("set server installer-url", msg)
 
     def test_exact_sha_installer_resolve(self):
         alloc = "https://203.0.113.10:6099/enroll"

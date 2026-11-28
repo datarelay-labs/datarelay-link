@@ -881,7 +881,10 @@ def windows_renderer_inputs_from_cfg(cfg):
     if not isinstance(cfg, dict) or ZT is None or PKI is None:
         return None
     allocator = str(cfg.get('allocator_public_url') or '').strip()
-    installer = str(cfg.get('windows_client_installer_url') or '').strip()
+    try:
+        installer = QA.agent_installer_url(allocator, 'windows') if QA else ''
+    except Exception:
+        return None
     ca_path = str(cfg.get('tls_ca_cert') or '').strip()
     if not allocator.lower().startswith('https://') or not installer.lower().startswith('https://'):
         return None
@@ -1563,7 +1566,7 @@ def cfg_public_hostname(cfg):
 
 
 def cfg_bootstrap_hostname(cfg):
-    value = cfg.get('bootstrap_hostname')
+    value = cfg.get('bootstrap_hostname') or cfg.get('public_hostname')
     if value is None:
         return ''
     return str(value).strip().lower()
@@ -2053,9 +2056,9 @@ class Allocator:
     def reload_cfg_if_changed(self):
         """Refresh in-memory config when config.json changes on disk.
 
-        frpctl set / installer-url tools update disk without restarting the
+        hostname tools update disk without restarting the
         allocator. Short-URL scripts and advertised endpoints must see the
-        latest bootstrap_hostname / client_installer_url without a restart.
+        latest hostname and allocator settings without a restart.
         """
         mtime_ns = self._config_mtime_ns()
         if mtime_ns is None or mtime_ns == self._cfg_mtime_ns:
@@ -2674,23 +2677,12 @@ class Allocator:
     def _render_bootstrap_script(self, platform, credential, *, entry_locator=None):
         self.reload_cfg_if_changed()
         allocator = str(self.cfg.get('allocator_public_url') or '').strip()
-        if platform == 'windows':
-            installer = str(
-                self.cfg.get('windows_client_installer_url') or ''
-            ).strip()
-        else:
-            installer = str(self.cfg.get('client_installer_url') or '').strip()
-        if not installer and QA is not None and allocator.lower().startswith('https://'):
-            # The CLI issues Zero-Touch tickets against the Server-local
-            # qualified installer URL derived from allocator_public_url when
-            # no installer URL is configured. Serve stage 1 against the same
-            # derivation, otherwise a ticket the CLI accepted yields HTTP 503.
-            try:
-                installer = str(QA.agent_installer_url(allocator, platform) or '').strip()
-            except Exception:
-                installer = ''
-            if QA.is_forbidden_public_installer_url(installer):
-                installer = ''
+        try:
+            installer = QA.agent_installer_url(allocator, platform) if QA else ''
+        except Exception:
+            return None
+        if not installer or QA.is_forbidden_public_installer_url(installer):
+            return None
         ca_path = str(self.cfg.get('tls_ca_cert') or '').strip()
         if not allocator.lower().startswith('https://'):
             return None

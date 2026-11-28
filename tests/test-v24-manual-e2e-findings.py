@@ -138,7 +138,7 @@ class ShowAgentTests(unittest.TestCase):
         cases = (
             ('{"com.datarelay.drlink.frpc" => false}', "enabled"),
             ('{"com.datarelay.drlink.frpc" => true}', "disabled"),
-            ('{"com.unrelated.service" => false}', "unknown"),
+            ('{"com.unrelated.service" => false}', "unavailable (supervisor state not verified)"),
         )
         for raw, expected in cases:
             with self.subTest(expected=expected), \

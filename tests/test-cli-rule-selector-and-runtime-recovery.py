@@ -48,12 +48,12 @@ class RuleSelectorAndRuntimeRecovery(unittest.TestCase):
                    'value', '198.51.100.242']
         rc, created, err = self.dispatch(command)
         self.assertEqual(rc, 0, err)
-        self.assertIn('Network Object create:', created)
+        self.assertIn('Network Object created:', created)
         first_revision = self.plane.current_revision()
         rc, repeated, err = self.dispatch(command)
         self.assertEqual(rc, 0, err)
         self.assertIn('NO CHANGE', repeated)
-        self.assertNotIn('Network Object update:', repeated)
+        self.assertNotIn('Network Object updated:', repeated)
         self.assertEqual(self.plane.current_revision(), first_revision,
                          'identical value must not create an audit/config revision')
         rc, shown, err = self.dispatch(['show', 'network-object', name])

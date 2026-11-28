@@ -81,12 +81,25 @@ def read_only_completion_inventory(role, root=""):
                 if hostname and hostnames[hostname.casefold()] == 1:
                     selectors.append(hostname)
                 result["names"].extend(selectors)
-                result["clients"].append({"id": short, "label": label, "hostname": hostname})
+                result["clients"].append({"id": short, "full_id": mid, "label": label,
+                                          "hostname": hostname, "selectors": selectors})
                 names = [str(row["name"]) for row in service_rows if row["client_id"] == mid]
                 for selector in selectors + [mid]:
                     result["services"][selector] = names
-            result["groups"] = [str(row["name"]) for row in conn.execute(
-                "SELECT name FROM client_groups ORDER BY name")]
+            # Public Managed Host Group CRUD and AI group targeting use the
+            # atomic registry, not the historical SQLite client_groups table.
+            from frp_client_registry import load_server_registry, validate_group_invariants, sorted_groups
+            try:
+                _, _, state = load_server_registry(root)
+                if state.get("schema_version") != 2 or not isinstance(state.get("clients"), dict):
+                    raise ValueError("invalid Managed Host Group registry")
+                validate_group_invariants(state)
+                result["groups"] = [value for gid, group in sorted_groups(state)
+                                    for value in (group["name"], gid)]
+            except (OSError, ValueError, TypeError, KeyError, AttributeError):
+                # The group registry is a separate authority. Its failure
+                # must not invalidate successful SQLite host completion.
+                result["group_inventory_warning"] = True
             # Names only: completion never reads credentials or writes authority.
             result["inventory"] = {
                 kind: [str(row["name"]) for row in conn.execute(
@@ -122,6 +135,7 @@ CONTROL_PLANE_SHOW = frozenset(
         "permission-groups",
         "permission-group",
         "managed-hosts",
+        "managed-services",
         "managed-host",
         "remote-access",
         "internet-access",
@@ -318,7 +332,7 @@ _OBSOLETE_POINTERS = {
 }
 
 
-def reject_obsolete_surface(tokens):
+def reject_obsolete_surface(tokens, role=None):
     """Return an error result when tokens are obsolete current-surface grammar."""
     if not tokens:
         return None
@@ -337,7 +351,7 @@ def reject_obsolete_surface(tokens):
         "show", "set", "unset", "test", "system", "menu",
     ):
         # Nested command help must reject the same retired paths as execution.
-        rejected = reject_obsolete_surface(raw[1:])
+        rejected = reject_obsolete_surface(raw[1:], role)
         if rejected is not None:
             return rejected
     # Reject retired nested forms before help or legacy system fallthrough
@@ -376,6 +390,12 @@ def reject_obsolete_surface(tokens):
                        "Use unset enrollment <ID> or reference-safe unset managed-host <HOST>.\n"
                        "See: help commands",
         }
+    if focus[:2] == ["set", "ai-mcp"] or focus[:2] == ["help", "ai-mcp"]:
+        return {"status": "error", "exit_code": 2,
+                "message": "Use set mcp-server for endpoint, TLS and Server execution; set ai-identity for AI connection and authentication."}
+    if focus[:3] in (["set", "server", "mcp"], ["unset", "server", "mcp"]):
+        return {"status": "error", "exit_code": 2,
+                "message": "Use set mcp-server or unset mcp-server for MCP settings."}
     if focus[:2] == ["test", "access"]:
         return {
             "status": "error", "exit_code": 2,
@@ -443,6 +463,9 @@ def reject_obsolete_surface(tokens):
             "unset": "Use unset managed-host <HOST> instead.",
             "test": "Inspect hosts with show managed-host <HOST>; use test remote-access, internet-access, or ai-access for authorization.",
         }
+        if role is not None and _role_parts(role) == (True, False):
+            guidance = dict.fromkeys(guidance,
+                "On this Agent Host, use show agent or show remote-services. Manage enrolled hosts on the DRLink Server.")
         return {
             "status": "error",
             "exit_code": 2,
@@ -473,6 +496,9 @@ def reject_obsolete_surface(tokens):
         }
     if len(raw) >= 2 and raw[1] in ("service", "services"):
         if verb in ("show", "set", "unset", "add", "remove", "enable", "disable"):
+            if role is not None and _role_parts(role) == (False, True):
+                return {"status": "error", "exit_code": 2,
+                        "message": "This service command is obsolete. On the DRLink Server, use show managed-services to inspect published Remote Services, or show service-objects to inspect reusable Service Objects. Create or edit Remote Services on their Agent Host."}
             return {
                 "status": "error",
                 "exit_code": 2,
@@ -523,7 +549,7 @@ def reject_obsolete_surface(tokens):
             "exit_code": 2,
             "message": (
                 "Retired MCP TLS resource is not part of the current Data Relay Link grammar.\n"
-                "Use system certificate status or set server mcp / unset server mcp instead."
+                "Use system certificate status or set mcp-server / unset mcp-server instead."
             ),
         }
     if verb in ("show", "set", "unset", "test", "create", "add", "remove", "enable", "disable", "delete", "system") and len(raw) >= 2:
@@ -820,7 +846,7 @@ def missing_client_help(usage_lines, names=None, tip="Press Tab after \"show cli
 
 def help_text(tokens, role):
     tokens = [t for t in tokens if t and t != "help"]
-    rejected = reject_obsolete_surface(["help"] + tokens)
+    rejected = reject_obsolete_surface(["help"] + tokens, role)
     if rejected is not None:
         return "Unknown help topic: %s\n\n%s\n" % (" ".join(tokens), rejected["message"])
     client, server = _role_parts(role)
@@ -828,10 +854,10 @@ def help_text(tokens, role):
         return _root_help(role)
     verb = tokens[0]
     if verb == "legacy":
-        rejected = reject_obsolete_surface(["help", "legacy"])
+        rejected = reject_obsolete_surface(["help", "legacy"], role)
         return rejected["message"] if rejected else "help legacy removed"
     if verb in _RETIRED_HELP_TOPICS:
-        rejected = reject_obsolete_surface(["help", verb])
+        rejected = reject_obsolete_surface(["help", verb], role)
         return "Unknown help topic: %s\n\n%s\n" % (
             verb,
             rejected["message"] if rejected else "Use help commands.",
@@ -890,11 +916,18 @@ def _catalog_help_topic(tokens, role):
     """Catalog-driven 'help <topic>' for canonical resources and commands."""
     if not tokens:
         return None
+    if _role_parts(role)[1] and tokens[:2] == ["set", "enrollment"] and len(tokens) == 3:
+        if tokens[2] == "zero-touch":
+            return "Zero-Touch Enrollment\n=====================\nUsage: set enrollment zero-touch\nCreate a one-time Agent installation command. Default lifetime: 1 hour. Maximum: 24 hours.\n"
+        if tokens[2] == "manual":
+            return "Manual Enrollment\n=================\nUsage: set enrollment manual\nIssue an Enrollment Code for interactive Agent installation. Maximum lifetime: 30 days.\n"
     root = canonical_root(tokens[0])
     probe = [root] + list(tokens[1:])
     cmd = CATALOG.find(probe)
     if cmd is not None and len(cmd["path"]) == len(probe):
-        return CATALOG.command_help(cmd)
+        if not CATALOG.role_allows(cmd["roles"], role):
+            return "Unknown help topic: %s\n\n%s\n" % (" ".join(probe), _ownership_error_message(probe, cmd["roles"]))
+        return _role_command_help(cmd, role)
     # Help may name a documented positional enum (for example
     # `help set enrollment zero-touch`). Resolve the longest command prefix
     # and accept only values advertised by that command's argument metadata.
@@ -908,12 +941,14 @@ def _catalog_help_topic(tokens, role):
             continue
         valid = True
         for value, arg in zip(trailing, args):
-            choices = arg.get("complete")
+            choices = _role_argument_completion(parent, arg, role)
             if isinstance(choices, (list, tuple)) and value not in choices:
                 valid = False
                 break
         if valid:
-            return CATALOG.command_help(parent)
+            return _role_command_help(parent, role)
+        if tuple(parent["path"]) == ("system", "diagnostics") and trailing[0] in ("mcp", "control-plane") and not _role_parts(role)[1]:
+            return "Unknown help topic: %s\n\n%s\n" % (" ".join(probe), _ownership_error_message(probe, "server"))
     if len(probe) == 1 and CATALOG.canonical_actions(root):
         text = CATALOG.resource_help(root, role)
         if text is not None:
@@ -1239,13 +1274,10 @@ def _catalog_context_help(tokens, role, names=None, clients=None):
             return _fmt_available([(tok, "") for tok in nxt])
         return None
 
+    if probe[:2] == ["set", "enrollment"] and len(probe) == 3 and probe[2] in ("zero-touch","manual"):
+        return _catalog_help_topic(probe, role)
     if tuple(probe) == ("system", "diagnostics") and client and not server:
-        role_cmd = dict(cmd)
-        role_cmd["args"] = [dict(arg) for arg in cmd.get("args", [])]
-        if role_cmd["args"]:
-            role_cmd["args"][0]["complete"] = ["runtime"]
-        role_cmd["examples"] = ["system diagnostics", "system diagnostics runtime"]
-        return CATALOG.command_help(role_cmd)
+        return _role_command_help(cmd, role)
 
     # Named Identity actions have their own risk/approval contract even
     # when the next positional operand has enumerated choices.
@@ -1259,9 +1291,11 @@ def _catalog_context_help(tokens, role, names=None, clients=None):
         ("unset", "remote-access"),
         ("unset", "internet-access"),
         ("unset", "ai-access"),
-        ("unset", "server", "mcp"),
+        ("unset", "mcp-server"),
         ("system", "diff"),
         ("system", "backup"),
+        ("system", "diagnostics"),
+        ("set", "managed-host-group"),
         ("set", "remote-access"),
         ("set", "internet-access"),
         ("set", "ai-access"),
@@ -1316,6 +1350,22 @@ def _catalog_context_help(tokens, role, names=None, clients=None):
     return CATALOG.command_help(cmd)
 
 
+def _role_command_help(cmd, role):
+    """Render the same role-specific argument contract for help and question help."""
+    client, server = _role_parts(role)
+    if tuple(cmd["path"]) == ("system", "diagnostics") and client and not server:
+        cmd = dict(cmd)
+        cmd["args"] = [dict(arg) for arg in cmd.get("args", [])]
+        if cmd["args"]:
+            cmd["args"][0]["complete"] = ["runtime"]
+        if "help_args" in cmd:
+            cmd["help_args"] = [dict(arg) for arg in cmd["help_args"]]
+            if cmd["help_args"]:
+                cmd["help_args"][0]["complete"] = ["runtime"]
+        cmd["examples"] = ["system diagnostics", "system diagnostics runtime"]
+    return CATALOG.command_help(cmd)
+
+
 def _role_argument_completion(cmd, arg, role):
     """Keep shared argument discovery within the installed role's scope."""
     complete = arg["complete"]
@@ -1329,7 +1379,7 @@ def context_help(tokens, role, names=None, clients=None):
     """Enter-submitted '?' help. Tab must never call this."""
     client, server = _role_parts(role)
     tokens = [t for t in (tokens or []) if t != "?"]
-    rejected = reject_obsolete_surface(tokens)
+    rejected = reject_obsolete_surface(tokens, role)
     if rejected is not None:
         return rejected["message"]
     if not tokens:
@@ -1610,9 +1660,7 @@ def context_help(tokens, role, names=None, clients=None):
                 return _fmt_available(
                     [
                         ("public-hostname", "Optional public DNS hostname for published services"),
-                        ("bootstrap-hostname", "Optional Zero-Touch HTTPS entry hostname"),
-                        ("installer-url", "Linux Agent installer URL"),
-                        ("windows-installer-url", "Windows Agent installer URL"),
+                        ("bootstrap-hostname", "Optional Zero-Touch HTTPS entry hostname (inherits public-hostname)"),
                     ]
                 )
             if tokens[2] == "bootstrap-hostname":
@@ -1977,6 +2025,8 @@ def _ownership_error_message(path, need):
     """Actionable wrong-role error using the canonical CLI helpers when available."""
     resource = path[1] if len(path) > 1 else (path[0] if path else "that command")
     need_s = str(need or "").strip().lower()
+    if tuple(path) == ("system", "status") and need_s == "server":
+        return "ERROR: system status is the detailed DRLink Server view. On this Agent Host, run show status or show agent."
     agent_resource = resource in ("remote-service", "remote-services") or need_s in (
         "client",
         "agent",
@@ -2018,6 +2068,7 @@ def _ownership_error_message(path, need):
         "ai-access-log": "AI Access Log",
         "managed-host": "Managed Host",
         "managed-hosts": "Managed Hosts",
+        "managed-services": "Managed Services",
         "network-object": "Network Object",
         "network-objects": "Network Objects",
         "network-group": "Network Group",
@@ -2034,6 +2085,7 @@ def _ownership_error_message(path, need):
         "ai-identities": "AI Identities",
         "enrollment": "Enrollment",
         "enrollments": "Enrollments",
+        "mcp-server": "MCP Server",
     }
     label = labels.get(resource, str(resource).replace("-", " ").title())
     if v24 is not None:
@@ -2078,6 +2130,11 @@ def _canonical_result(tokens, role, names=None):
             "command": " ".join(path) if path else " ".join(work[:2]),
             "message": _ownership_error_message(path, cmd["roles"]),
         }
+    if work[:2] == ["set", "enrollment"] and len(work) >= 3:
+        if work[2] not in ("zero-touch", "manual", "bulk") or len(work) != 3:
+            return None, incomplete("Invalid Enrollment mode or arguments.",
+                ["set enrollment zero-touch", "set enrollment manual", "set enrollment bulk"],
+                ["zero-touch", "manual", "bulk"])
     # Documented enrollment modes rewrite before strict positional checks
     # (set enrollment has tail=flags and would otherwise reject zero-touch/manual).
     if (
@@ -2114,7 +2171,7 @@ def match(tokens, role, names=None, clients=None):
         return {"status": "unknown", "command": tokens[0]}
     if tokens[-1] == "?":
         raw_focus = [str(t) for t in tokens[:-1]]
-        rejected = reject_obsolete_surface(raw_focus)
+        rejected = reject_obsolete_surface(raw_focus, role)
         if rejected is not None:
             return rejected
         rejected = _public_input_option_error(raw_focus)
@@ -2162,7 +2219,7 @@ def match(tokens, role, names=None, clients=None):
                 and not _catalog_next_path_tokens(focus, role)):
             return {"status": "error", "exit_code": 2,
                     "message": "Unknown system operation.\nUse: system ?\nSee: help system"}
-        rejected = reject_obsolete_surface(focus)
+        rejected = reject_obsolete_surface(focus, role)
         if rejected is not None:
             return rejected
         message = context_help(focus, role, names=names, clients=clients)
@@ -2180,12 +2237,22 @@ def match(tokens, role, names=None, clients=None):
     # Keep pre-resolve tokens so to_internal can preserve create vs edit-info
     # (both alias to set acl) and similar distinct safety semantics.
     raw_tokens = [str(t) for t in tokens]
-    rejected = reject_obsolete_surface(raw_tokens)
+    client, server = _role_parts(role)
+    guesses = {
+        ("show", "hosts"): "show managed-hosts" if server else "show agent",
+        ("show", "host"): "show managed-host <HOST>" if server else "show agent",
+        ("show", "policy"): "show remote-access / show internet-access / show ai-access" if server else "show status (access policies are managed on the DRLink Server)",
+        ("show", "policies"): "show remote-access / show internet-access / show ai-access" if server else "show status (access policies are managed on the DRLink Server)",
+        ("system", "config"): "help configuration",
+    }
+    if tuple(raw_tokens[:2]) in guesses:
+        return {"status":"error","exit_code":2,"message":"Unknown command.\nUse: "+guesses[tuple(raw_tokens[:2])]}
+    rejected = reject_obsolete_surface(raw_tokens, role)
     if rejected is not None:
         return rejected
     # Hidden resource-first compatibility → canonical action-first tokens.
     tokens = CATALOG.resolve_tokens(tokens, role=role)
-    rejected = reject_obsolete_surface(tokens)
+    rejected = reject_obsolete_surface(tokens, role)
     if rejected is not None:
         return rejected
     # Catalog-declared private machine flags remain callable; undeclared
@@ -2808,16 +2875,12 @@ def _match_set(tokens, role, names=None):
     if len(tokens) == 1:
         return incomplete("Missing resource.", ["set <resource> ..."], avail, tip="drlink help set")
     resource = tokens[1]
-    if resource == "ai-mcp":
+    if resource == "mcp-server":
         if not server:
-            return {"status": "role", "need": "server", "command": "set ai-mcp"}
-        if len(tokens) != 2:
-            return incomplete("Unexpected argument.", ["set ai-mcp"], [])
-        return _control_plane_ok(tokens)
-    if resource == "server" and tokens[2:3] == ["mcp"]:
-        if not server:
-            return {"status": "role", "need": "server", "command": "set server mcp"}
-        return _control_plane_ok(tokens)
+            return {"status": "role", "need": "server", "command": "set mcp-server"}
+        if len(tokens) == 2 or (len(tokens) == 4 and tokens[2] in ("hostname", "mode", "contact-email", "acme-environment", "acme-directory")):
+            return _control_plane_ok(tokens)
+        return incomplete("Invalid MCP setting.", ["set mcp-server", "set mcp-server <SETTING> <VALUE>"], ["hostname", "mode", "contact-email", "acme-environment", "acme-directory"])
     if resource in CONTROL_PLANE_MUTATE:
         return _control_plane_ok(tokens)
     if resource == "client":
@@ -3097,12 +3160,10 @@ def _match_set(tokens, role, names=None):
     if resource == "server":
         if not server:
             return {"status": "role", "need": "server", "command": "set server"}
-        # Canonical: public-hostname / bootstrap-hostname / installer URLs.
+        # Canonical: public-hostname / bootstrap-hostname.
         server_settings = [
             "public-hostname",
             "bootstrap-hostname",
-            "installer-url",
-            "windows-installer-url",
         ]
         if len(tokens) < 3:
             return incomplete(
@@ -3110,53 +3171,17 @@ def _match_set(tokens, role, names=None):
                 [
                     "set server public-hostname <fqdn>",
                     "set server bootstrap-hostname <fqdn>",
-                    "set server installer-url <URL>",
-                    "set server windows-installer-url <URL>",
                 ],
                 server_settings,
                 tip="drlink help set",
             )
         setting = tokens[2]
-        if setting == "installer-url":
-            if len(tokens) < 4:
-                return incomplete(
-                    "Missing installer URL.",
-                    ["set server installer-url <URL>"],
-                )
-            if len(tokens) > 4:
-                return {
-                    "status": "error",
-                    "message": "Too many arguments. Quote values that contain spaces.",
-                }
-            return {
-                "status": "ok",
-                "action": "set_installer_url",
-                "value": tokens[3],
-            }
-        if setting == "windows-installer-url":
-            if len(tokens) < 4:
-                return incomplete(
-                    "Missing Windows installer URL.",
-                    ["set server windows-installer-url <URL>"],
-                )
-            if len(tokens) > 4:
-                return {
-                    "status": "error",
-                    "message": "Too many arguments. Quote values that contain spaces.",
-                }
-            return {
-                "status": "ok",
-                "action": "set_windows_installer_url",
-                "value": tokens[3],
-            }
         if setting not in ("public-hostname", "bootstrap-hostname"):
             return incomplete(
                 "Unknown server setting.",
                 [
                     "set server public-hostname <fqdn>",
                     "set server bootstrap-hostname <fqdn>",
-                    "set server installer-url <URL>",
-                    "set server windows-installer-url <URL>",
                 ],
                 server_settings,
             )
@@ -3195,9 +3220,11 @@ def _match_unset(tokens, role, names=None):
             avail,
         )
     resource = tokens[1]
-    if resource == "server" and tokens[2:3] == ["mcp"]:
+    if resource == "mcp-server":
         if not server:
-            return {"status": "role", "need": "server", "command": "unset server mcp"}
+            return {"status": "role", "need": "server", "command": "unset mcp-server"}
+        if tokens[2:] not in ([], ["purge"]):
+            return incomplete("Invalid MCP setting.", ["unset mcp-server", "unset mcp-server purge"], ["purge"])
         return _control_plane_ok(tokens)
     if resource in CONTROL_PLANE_MUTATE:
         return _control_plane_ok(tokens)
@@ -3221,8 +3248,6 @@ def _match_unset(tokens, role, names=None):
         settings = [
             "public-hostname",
             "bootstrap-hostname",
-            "installer-url",
-            "windows-installer-url",
         ]
         if len(tokens) < 3:
             return incomplete(
@@ -3230,8 +3255,6 @@ def _match_unset(tokens, role, names=None):
                 [
                     "unset server public-hostname",
                     "unset server bootstrap-hostname",
-                    "unset server installer-url",
-                    "unset server windows-installer-url",
                 ],
                 settings,
                 tip="drlink help unset",
@@ -3243,8 +3266,6 @@ def _match_unset(tokens, role, names=None):
                 [
                     "unset server public-hostname",
                     "unset server bootstrap-hostname",
-                    "unset server installer-url",
-                    "unset server windows-installer-url",
                 ],
                 settings,
             )
@@ -3254,9 +3275,6 @@ def _match_unset(tokens, role, names=None):
             return {"status": "ok", "action": "unset_server_hostname"}
         if setting == "bootstrap-hostname":
             return {"status": "ok", "action": "unset_server_bootstrap_hostname"}
-        if setting == "installer-url":
-            return {"status": "ok", "action": "unset_installer_url"}
-        return {"status": "ok", "action": "unset_windows_installer_url"}
     if resource == "enrollment":
         if len(tokens) < 3:
             return incomplete(
@@ -4155,7 +4173,7 @@ def completion_candidates(
         tokens = tokenize(line)
     except ParseError:
         return []
-    if reject_obsolete_surface(tokens) is not None:
+    if reject_obsolete_surface(tokens, role) is not None:
         return []
     if _public_input_option_error(tokens) is not None:
         return []
@@ -4314,9 +4332,7 @@ def _tab_desc_map(line, role, names=None, clients=None):
         if len(filled) == 2:
             return {
                 "public-hostname": "Optional public DNS hostname for published services",
-                "bootstrap-hostname": "Optional Zero-Touch HTTPS entry hostname",
-                "installer-url": "Linux/macOS Agent installer URL",
-                "windows-installer-url": "Windows Agent installer URL",
+                "bootstrap-hostname": "Optional Zero-Touch HTTPS entry hostname (inherits public-hostname)",
             }, "named"
     if verb == "set" and len(filled) >= 2 and filled[1] == "client":
         if len(filled) == 2:
@@ -4393,20 +4409,49 @@ def format_tab_candidates(line, matches, role, names=None, clients=None):
     matches = [m.rstrip() for m in (matches or []) if m is not None and str(m).strip()]
     if not matches:
         return ""
+    if line.rstrip() == "set ai-access" and line[-1:].isspace():
+        return "\n".join(["<Enter>  Create or configure an AI Access Rule", "<RULE>   Type a new Rule name to create; select an existing Rule to edit"] + [
+            "%s  %s" % (item, {
+                "enabled": "Enable AI Access enforcement",
+                "disabled": "Disable AI Access enforcement (DENY ALL)",
+            }.get(item, "Edit this AI Access Rule")) for item in matches
+        ])
+    if line.rstrip() == "unset ai-access" and line[-1:].isspace():
+        return "\n".join([
+            "%s  %s" % (item, "DANGER: reset ALL AI Access rules and policy" if item == "policy"
+                         else "Delete only this AI Access Rule") for item in matches
+        ])
     descs, style = _tab_desc_map(line, role, names=names, clients=clients)
     if style == "clients":
-        by_id = {}
+        from frp_client_registry import sanitize_display
+        # Aliases remain valid input selectors; display each matched host once.
+        # Use explicit selector ownership when available, so duplicate labels
+        # cannot accidentally select a different host.
+        matched = set(matches)
+        rows = []
+        used = set()
         for item in clients or []:
-            if isinstance(item, dict) and item.get("id"):
-                by_id[str(item["id"])] = item
-        lines = ["%-10s %-10s %s" % ("HOST ID", "LABEL", "HOSTNAME")]
-        for mid in matches:
-            item = by_id.get(mid) or {}
-            lines.append(
-                "%-10s %-10s %s"
-                % (mid, item.get("label") or "-", item.get("hostname") or "-")
-            )
-        return "\n".join(lines)
+            if not isinstance(item, dict) or not item.get("id"):
+                continue
+            aliases = set(item.get("selectors") or [item["id"]])
+            aliases.add(str(item["id"]))
+            full_id = str(item.get("full_id") or item["id"])
+            aliases.add(full_id)
+            if not (aliases & matched) or full_id in used:
+                continue
+            used.add(full_id)
+            rows.append(tuple(sanitize_display(value or "-") for value in
+                              (full_id, item.get("label"), item.get("hostname"))))
+        if not clients:
+            rows = [(sanitize_display(mid), "-", "-") for mid in dict.fromkeys(matches)]
+        if not rows:
+            return ""
+        rows.sort(key=lambda row: (row[1].casefold(), row[2].casefold(), row[0]))
+        id_width = max(10, *(len(row[0]) for row in rows))
+        label_width = max(10, *(len(row[1]) for row in rows))
+        fmt = "%-*s  %-*s  %s"
+        return "\n".join(fmt % (id_width, mid, label_width, label, host)
+                         for mid, label, host in [("HOST ID", "LABEL", "HOSTNAME")] + rows)
     # Progressive disclosure: group large resource lists by product domain.
     groups = CATALOG.group_completion_candidates(matches)
     if groups and style not in ("clients", "fields") and len(matches) >= 6:
@@ -4598,7 +4643,14 @@ def _catalog_candidates(
                 inventory=inventory,
             ).get(complete)
             if pool is not None:
-                hits = _filter(pool, prefix)
+                if complete == CATALOG.C_GROUP:
+                    # Group name resolution is case-insensitive. System groups
+                    # are valid for read-only detail, not membership mutations.
+                    if tuple(cmd["path"]) == ("show", "managed-host-group"):
+                        pool = list(dict.fromkeys(pool + ["all", "ungrouped"]))
+                    hits = [item for item in pool if item.casefold().startswith(prefix.casefold())]
+                else:
+                    hits = _filter(pool, prefix)
         longer = _longer_path_children()
         merged = []
         for item in list(hits) + list(longer or []):

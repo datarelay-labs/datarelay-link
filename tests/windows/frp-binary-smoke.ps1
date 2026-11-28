@@ -17,6 +17,7 @@ Set-Location -LiteralPath $RepoRoot
 . .\windows\lib\FrpState.ps1
 . .\windows\lib\FrpTls.ps1
 . .\windows\lib\FrpBootstrap.ps1
+. .\windows\lib\FrpAiExecutor.ps1
 
 function Get-FrpSmokePython {
     foreach ($cand in @('python', 'python3')) {

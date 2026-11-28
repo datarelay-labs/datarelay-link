@@ -66,7 +66,8 @@ class CliFeatureScenarioRemediation(unittest.TestCase):
                         os.write(master, b"0\n")
                         sent_cancel = True
                     if b"Cancelled." in output and not sent_exit:
-                        os.write(master, b"5\n9\n")
+                        # 0 is the stable Back key even when domain menu leaves change.
+                        os.write(master, b"0\n9\n")
                         sent_exit = True
                 if proc.poll() is not None:
                     break
@@ -400,7 +401,11 @@ frpctl_nav_prompt_id 'Name: '
                             result = grammar.match(form, role)
                             self.assertEqual(result.get("status"), "error", result)
                             self.assertEqual(result.get("exit_code"), 2, result)
-                            self.assertIn("managed-host", result["message"])
+                            if role == "server":
+                                self.assertIn("managed-host", result["message"])
+                            else:
+                                self.assertIn("show agent", result["message"])
+                                self.assertIn("DRLink Server", result["message"])
                     self.assertEqual(grammar.completion_candidates(
                         " ".join(tokens) + " ", role, [], {}, []), [])
 
@@ -1110,6 +1115,50 @@ frpctl_nav_workflow manage_host
         self.assertFalse(rows[("system", "autostart")]["destructive"])
         self.assertEqual(rows[("system", "autostart")]["risk"], "none")
 
+    def test_managed_services_global_port_inventory(self):
+        v24.ensure_v2_schema(self.plane.conn)
+        (Path(self.tmp) / "etc/drlink/config.json").write_text(json.dumps({"role":"server", "public_ip":"203.0.113.10", "public_hostname":"relay.example.test"}))
+        before = self.plane.current_revision()
+        rc, out, err = self._dispatch(["show", "managed-services"])
+        self.assertEqual(rc, 0, err)
+        self.assertIn("No Managed Services", out)
+        self.assertEqual(self.plane.current_revision(), before)
+        self.plane.upsert_client("a" * 32, label="First Host", hostname="first")
+        self.plane.upsert_client("b" * 32, label="Second Host", hostname="second")
+        for cid, name, port, target, local, enabled in [
+            ("a"*32, "HTTPS", 6003, "10.0.0.8", 443, True),
+            ("b"*32, "SSH", 6001, "127.0.0.1", 22, False),
+            ("a"*32, "Released", 6002, "127.0.0.1", 80, True),
+        ]:
+            self.plane.set_published_service(cid, name, target_mode="routed", target_host=target, target_port=local, public_port=port, enabled=enabled)
+        self.plane.conn.execute("UPDATE published_services SET released=1 WHERE name='Released'")
+        self.plane.conn.commit()
+        before = self.plane.current_revision()
+        rc, out, err = self._dispatch(["show", "managed-services"])
+        self.assertEqual(rc, 0, err)
+        self.assertIn("First Host", out)
+        self.assertIn("Second Host", out)
+        self.assertIn("10.0.0.8:443", out)
+        self.assertIn("127.0.0.1:22", out)
+        self.assertIn("DISABLED", out)
+        self.assertIn("DEGRADED", out)
+        self.assertIn("relay.example.test:6001", out)
+        self.assertNotIn("Released", out)
+        self.assertLess(out.index(":6001"), out.index(":6003"))
+        self.assertEqual(self.plane.current_revision(), before)
+        self.assertEqual(grammar.match(["show", "managed-services"], "server")["status"], "ok")
+        self.assertNotEqual(grammar.match(["show", "managed-services"], "client")["status"], "ok")
+        self.assertNotEqual(grammar.match(["show", "managed-services", "extra"], "server")["status"], "ok")
+        self.assertIn("managed-services", grammar.completion_candidates("show managed-s", "server", [], [], []))
+        self.assertNotIn("managed-services", grammar.completion_candidates("show managed-s", "client", [], [], []))
+        self.assertIn("show managed-services", grammar.help_text(["managed-services"], "server"))
+        # Invoke the public shell entrypoint against the same isolated DB.
+        result = subprocess.run(["bash", str(ROOT / "tools/drlink"), "show", "managed-services"], env=dict(os.environ, FRP_CTL_TEST_ROOT=self.tmp, FRP_CTL_BIN_DIR=str(ROOT / "tools")), text=True, capture_output=True, timeout=15)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("relay.example.test:6001", result.stdout)
+        self.assertIn("10.0.0.8:443", result.stdout)
+        self.assertEqual(self.plane.current_revision(), before)
+
     def test_managed_host_remote_services_empty_state_names_agent_next_action(self):
         v24.ensure_v2_schema(self.plane.conn)
         self.plane.upsert_client("c" * 32, label="empty-agent", hostname="empty-agent")
@@ -1287,6 +1336,7 @@ frpctl_nav_workflow manage_host
             "role": "server",
             "public_ip": "203.0.113.10",
             "public_hostname": "access.example.test",
+            "allocator_public_url": "https://203.0.113.10:6099/enroll",
             "bootstrap_hostname": "bootstrap.example.test",
             "client_installer_url": "https://install.example.test/install.sh",
             "windows_client_installer_url": "https://install.example.test/install.ps1",
@@ -1301,8 +1351,10 @@ frpctl_nav_workflow manage_host
         self.assertIn("Server Settings", proc.stdout)
         self.assertIn("access.example.test", proc.stdout)
         self.assertIn("bootstrap.example.test", proc.stdout)
-        self.assertIn("https://install.example.test/install.sh", proc.stdout)
-        self.assertIn("https://install.example.test/install.ps1", proc.stdout)
+        self.assertIn("https://203.0.113.10:6099/artifacts/agent/bootstrap-client.sh", proc.stdout)
+        self.assertNotIn("https://install.example.test/install.sh", proc.stdout)
+        self.assertIn("https://203.0.113.10:6099/artifacts/agent/bootstrap-client.ps1", proc.stdout)
+        self.assertNotIn("https://install.example.test/install.ps1", proc.stdout)
         self.assertEqual(self.plane.current_revision(), before)
         menu = catalog.render_navigation_menu("server.system.settings", title="Server Settings")
         self.assertIn("Show current Server settings", menu)
@@ -1648,7 +1700,7 @@ frpctl_nav_workflow manage_host
             (["unset", "remote-access", "?"], "unset remote-access <RULE>", "policy"),
             (["unset", "internet-access", "?"], "unset internet-access <RULE>", "policy"),
             (["unset", "ai-access", "?"], "unset ai-access <RULE>", "policy"),
-            (["unset", "server", "mcp", "?"], "unset server mcp", "purge"),
+            (["unset", "mcp-server", "?"], "unset mcp-server", "purge"),
             (["system", "diff", "?"], "system diff <REVISION_A> <REVISION_B>", "configuration"),
             (["system", "backup", "?"], "system backup [<path>]", "validate"),
         )
@@ -1659,7 +1711,7 @@ frpctl_nav_workflow manage_host
             self.assertIn(usage, text, (tokens, text))
             self.assertIn(child, text, (tokens, text))
 
-        tls = grammar.match(["unset", "server", "mcp", "?"], role="server")
+        tls = grammar.match(["unset", "mcp-server", "?"], role="server")
         tls_text = tls.get("message") or ""
         self.assertIn("Risk: outage", tls_text)
         self.assertIn("retaining DRLink-owned certificate", tls_text)
@@ -1718,7 +1770,7 @@ frpctl_nav_workflow manage_host
     def test_mcp_tls_purge_metadata_explains_interactive_only_contract(self):
         rows = json.loads((LIB / "frp_cli_final_commands.json").read_text(encoding="utf-8"))
         by_path = {tuple(row["path"]): row for row in rows}
-        purge = by_path[("unset", "server", "mcp", "purge")]
+        purge = by_path[("unset", "mcp-server", "purge")]
         detail = str(purge.get("detail") or "").lower()
         self.assertTrue(purge["destructive"])
         self.assertEqual(purge["risk"], "irreversible")
@@ -1832,6 +1884,11 @@ frpctl_nav_workflow manage_host
         self.assertNotIn("mcp", help_text.lower())
         self.assertNotIn("control-plane", help_text.lower())
 
+        self.assertEqual(grammar.help_text(["system","diagnostics"], "client"), help_text)
+        for scope in ("mcp","control-plane"):
+            direct=grammar.help_text(["system","diagnostics",scope], "client")
+            self.assertTrue(direct.startswith("Unknown help topic:"), direct)
+            self.assertIn("DRLink Server",direct)
         runtime = grammar.match(["system", "diagnostics", "runtime"], "client")
         self.assertEqual(runtime.get("status"), "ok", runtime)
         for scope in ("mcp", "control-plane"):

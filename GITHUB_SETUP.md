@@ -21,12 +21,7 @@ The published prior stable is immutable tag `v2.3.0`. `v2.2.1` is an older publi
 
 The prior stable `v2.3.0` uses its historical CLI contract; use the documentation shipped with that immutable tag when operating a v2.3.0 installation.
 
-Development candidate (replace `<40-char-sha>` with the exact commit):
-
-```bash
-sudo drlink set server installer-url \
-  https://raw.githubusercontent.com/datarelay-labs/datarelay-link/<40-char-sha>/dist/bootstrap-client.sh
-```
+Agent installers are selected automatically from the installed Server’s qualified artifacts.
 
 Server one-liner for the documented stable baseline:
 

@@ -186,6 +186,27 @@ class CancelledRuleAttributeMutation(_Base):
 
 
 class InternetAccessSemanticParity(_Base):
+    def test_unavailable_proxy_is_not_advertised_as_runtime_ready(self):
+        v24.set_network_object(self.plane,"audit-src",type="ip",value="192.0.2.8",oneshot=True)
+        v24.set_network_object(self.plane,"audit-dst",type="ip",value="1.1.1.1",oneshot=True)
+        v24.set_access_rule(self.plane,"internet","audit-policy",mode="whitelist",source="audit-src",
+            destination="audit-dst",service="https",enabled=True,oneshot=True)
+        with mock.patch("frp_egress_control.listen_bind",side_effect=ValueError("not configured")):
+            rc,out,err=self._run("show","internet-access")
+        self.assertEqual(rc,0,err)
+        self.assertIn("Policy readiness : READY",out)
+        self.assertIn("Runtime readiness: UNAVAILABLE",out)
+        self.assertIn("system diagnostics",out)
+
+    def test_nonpublic_destination_error_explains_real_reason(self):
+        v24.set_network_object(self.plane,"audit-src",type="ip",value="192.0.2.8",oneshot=True)
+        v24.set_network_object(self.plane,"audit-dst",type="ip",value="192.0.2.9",oneshot=True)
+        rc,out,err=self._run("set","internet-access","audit-policy","mode","whitelist",
+            "source","audit-src","destination","audit-dst","service","https","enabled")
+        self.assertNotEqual(rc,0)
+        self.assertIn("not a public Internet Access destination",err)
+        self.assertIn("show network-object audit-dst",err)
+
     def test_fqdn_resolution_failure_is_reported_without_allow(self):
         v24.set_network_object(self.plane, "agent-src", type="ip", value="10.10.10.20", oneshot=True)
         v24.set_network_object(self.plane, "audit-fqdn", type="fqdn", value="example.com", oneshot=True)

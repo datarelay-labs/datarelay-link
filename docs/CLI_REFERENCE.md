@@ -53,6 +53,7 @@ Tab completion
 show status
 
 show managed-hosts
+show managed-services
 show managed-host <HOST>
 show managed-host <HOST> agent
 show managed-host <HOST> addresses
@@ -116,8 +117,6 @@ set enrollment bulk
 
 set server public-hostname <FQDN>
 set server bootstrap-hostname <FQDN>
-set server installer-url <URL>
-set server windows-installer-url <URL>
 
 set managed-host-group <GROUP>
 set managed-host <HOST> group <GROUP>
@@ -136,7 +135,7 @@ set internet-access <RULE>
 set internet-access enabled
 set internet-access disabled
 
-set ai-mcp
+set mcp-server
 set ai-identity <IDENTITY>
 set ai-identity <IDENTITY> approve <PENDING-ID>
 set ai-identity <IDENTITY> deny <PENDING-ID>
@@ -153,17 +152,17 @@ set ai-access <RULE>
 set ai-access enabled
 set ai-access disabled
 
-set server mcp
-set server mcp hostname <FQDN>
-set server mcp mode <auto-acme|user-certificate>
-set server mcp contact-email <EMAIL>
-set server mcp acme-environment <production|staging>
-set server mcp acme-directory <URL>
+
+set mcp-server hostname <FQDN>
+set mcp-server mode <auto-acme|user-certificate>
+set mcp-server contact-email <EMAIL>
+set mcp-server acme-environment <production|staging>
+set mcp-server acme-directory <URL>
 ```
 
 **ZT-P0-CONTRACT-20261026 — fixed eight-character entry target (owner revision 2026-11-25).** The customer starts with one OS-native command, one HTTPS authority (FQDN or IP), and one eight-character root-path file locator. Public and private HTTPS use the same target form. No preinstalled DataRelay software, inline configuration, separate enrollment ID, fingerprint, artifact hash, or installer body in the customer command. All subsequent configuration, downloads, verification, installation, recovery and enrollment belong to the multi-stage Bootstrap; their size and count are unrestricted. Issuing the command authorizes one automatic registration by the first valid signed Agent claim. Treat the short locator as a sensitive, expiring bearer capability; it is not the downstream enrollment code. See `docs/ZERO_TOUCH_REGRESSION_CONTROL.md` for exact target templates, the automatic first-claim policy, the explicit initial-transport risk and actual acceptance status. This is a design target, not installed-product qualification.
 
-Bare named `set` enters Guided Create/Edit. A complete one-shot form skips the Wizard. Server settings remain action-first under `set server ...` / `unset server ...`; the guided menu places the same settings under System → Server Settings.
+Bare named `set` enters Guided Create/Edit. A complete one-shot form skips the Wizard. Bootstrap hostname inherits public hostname and retains the allocator HTTPS port unless explicitly configured; if both are unset, use the allocator HTTPS authority. Linux/macOS and Windows installer sources are automatic qualified Server-local artifacts; previous installer URL overrides are ignored. Server settings remain action-first under `set server ...` / `unset server ...`; the guided menu places the same settings under System → Server Settings.
 
 Examples:
 
@@ -214,6 +213,7 @@ set ai-access claude-prod source claude destination production-servers permissio
 set ai-access trusted-hosts source claude destination managed-hosts:trusted permission read-only paths /var/log/** enabled
 set ai-access developers-read source claude destination managed-host-group:developers permission read-only paths /var/log/** enabled
 set ai-access allow-read source automation-ai destination ubuntu-prod permission read-only paths '/var/lib/vendor/**',/opt/app/** enabled
+set ai-access allow-dev source chatgpt destination server:self permission operations paths /** accounts aella,root default-account aella enabled
 ```
 
 File permissions (`file-read` / `file-write` / `file-upload` / `file-download`) use rule-bound `paths` scopes. Omit `paths` on edit to preserve existing scopes; use `paths -` or `paths none` to clear. Missing scopes remain fail-closed at runtime (no unrestricted filesystem default).
@@ -273,8 +273,6 @@ unset enrollment <ENROLLMENT>
 
 unset server public-hostname
 unset server bootstrap-hostname
-unset server installer-url
-unset server windows-installer-url
 
 unset network-object <OBJECT>
 unset network-group <GROUP>
@@ -296,11 +294,11 @@ unset permission-group <GROUP>
 unset ai-access <RULE>
 unset ai-access policy
 
-unset server mcp
-unset server mcp purge
+unset mcp-server
+unset mcp-server purge
 ```
 
-`unset server mcp` clears TLS intent and removes the active public MCP route while retaining DRLink-owned certificate and ACME account material. Active MCP/OAuth connections may be interrupted; the explicit command approves this change without an additional confirmation prompt. Check `system certificate status` and `system diagnostics mcp` afterward. `unset server mcp purge` removes that retained material only after interactive y/N confirmation; non-interactive use fails closed.
+`unset mcp-server` clears TLS intent and removes the active public MCP route while retaining DRLink-owned certificate and ACME account material. Active MCP/OAuth connections may be interrupted; the explicit command approves this change without an additional confirmation prompt. Check `system certificate status` and `system diagnostics mcp` afterward. `unset mcp-server purge` removes that retained material only after interactive y/N confirmation; non-interactive use fails closed.
 
 Referenced Objects/Groups/Identities/Managed Hosts are protected from deletion until references are removed.
 
@@ -322,7 +320,7 @@ For Permission dependencies, inspect `show ai-access` and `show ai-access <RULE>
 
 `unset enrollment <ENROLLMENT>`, `unset network-object`, `unset network-group`, `unset service-object`, `unset service-group`, `unset permission-object`, `unset permission-group`, and `unset ai-identity` are destructive lifecycle operations and require explicit `y/N` confirmation after existence/reference validation. Default is No and cancellation applies no change. Enrollment accepts only the 16-hexadecimal-character ID from `show enrollments`, validates existence and lifecycle state before confirmation, and asks once for revoke or terminal deletion. These are normal `y_n` flows rather than TTY-only flows, so controlled automation may provide `y`/`yes` on stdin; there is no public hidden environment-variable or `--yes` bypass for these commands. Policy Rule deletion uses effect-aware `conditional_y_n`: confirmation is required when the calculated change broadens or materially narrows access, while full `unset <plane>-access policy` reset always requires explicit confirmation.
 
-A **Managed Host Group** is an inventory grouping of registered Managed Hosts. It is distinct from a **Network Group**, which is a reusable policy selector made from Network Objects. Adding or removing Managed Host Group membership does not retire the Managed Host, change Remote Services, reallocate public ports, or create/change a Network Group. The explicit `unset managed-host <HOST> group <GROUP>` command approves that metadata edit without an additional prompt. Bare `unset managed-host <HOST>` remains reference-safe irreversible retirement with explicit y/N confirmation. `unset managed-host-group <GROUP>` requires interactive y/N confirmation; public `--yes` is not supported.
+A **Managed Host Group** is an inventory grouping of registered Managed Hosts. Use `show managed-host-groups` for the group list and counts; `show managed-host-group <GROUP>` shows its actual members (full Host ID, name and hostname), or an explicit empty-group message. Tab completes current group names even when the group has no members. It is distinct from a **Network Group**, which is a reusable policy selector made from Network Objects. Adding or removing Managed Host Group membership does not retire the Managed Host, change Remote Services, reallocate public ports, or create/change a Network Group. The explicit `unset managed-host <HOST> group <GROUP>` command approves that metadata edit without an additional prompt. Bare `unset managed-host <HOST>` remains reference-safe irreversible retirement with explicit y/N confirmation. `unset managed-host-group <GROUP>` requires interactive y/N confirmation; public `--yes` is not supported.
 
 ## 7. Policy test commands
 
@@ -336,9 +334,16 @@ Output includes Mode, Enforcement, selectors, matched Rules, and Effective Resul
 
 When a selector is a Network Group, Service Group, or Permission Group, the public test expands every leaf member (stable sorted order), evaluates each concrete combination with the same atomic/runtime evaluators used for single Objects, and reports member/combination detail. Top-level Effective Result is ALLOW only when every expanded member/combination is ALLOW; mixed outcomes aggregate to DENY. Single Object / Service / Permission Object / atomic permission behavior is unchanged.
 
-For file permissions, omit `path` and `test ai-access` will not claim unconditional ALLOW (runtime requires an in-scope path). Provide `path <PATH>` to evaluate the same fail-closed path-scope contract used by MCP. Permission Groups that include file permissions apply that fail-closed rule per file member before aggregation.
+For `server:self`, the test reports configured policy separately from each native execution grant (account and path) and marks live OS execution NOT TESTED. For command-only permission, an optional path is the initial cwd; when omitted, the approved default cwd is tested. For compound permissions a supplied path is the file operand and commands use the default cwd. For file permissions, omit `path` and `test ai-access` will not claim unconditional ALLOW (runtime requires an in-scope path). Provide `path <PATH>` to evaluate the same fail-closed path-scope contract used by MCP. Permission Groups that include file permissions apply that fail-closed rule per file member before aggregation.
 
 ## 8. Server system commands
+
+The Server guided System menu includes Configuration (Test / Diff / Apply / Export), Revisions / Rollback, Backup & Restore, Certificates, Updates, Diagnostics and Audit Log. Under Managed Hosts, use Managed Host Groups to create, inspect, edit, manage membership or delete groups, and Managed Services to inspect all published Remote Services. On the Agent Host, Agent → Autostart offers Show / Enable / Disable; Synchronize Remote Services uses the existing local Agent command. A dual-role host exposes the same Server System submenus together with Agent status, Autostart and synchronization. Certificate Import accepts the certificate and private key paths and optionally a separate chain file. Managed Host Group deletion shows the immutable Group ID, name and reviewed member count before prompting; a concurrent name or membership change rejects the deletion without applying changes.
+
+For Internet Access, Policy readiness describes configuration enforcement only. Runtime readiness separately reports unavailable endpoints or connectivity not tested. Use `system diagnostics` to investigate runtime readiness.
+
+**Documented automation options:** `system diagnostics --json`, `--verbose`, `--quiet`; `system support-bundle --output <PATH>`; `set managed-host-group <GROUP> --description <TEXT>`. These explicitly supported options do not grant additional authority or bypass confirmations. Enrollment remains guided without GNU options. Declining policy reset returns nonzero for all three policy families.
+
 
 ```text
 system status
@@ -388,7 +393,7 @@ verification. A heartbeat alone never establishes service health.
 `system status` is the detailed Server read-only view. In addition to runtime/control-plane health, it shows the current public hostname, bootstrap hostname, Linux/macOS Agent installer source, and Windows Agent installer source, including their automatic/default fallback semantics. `show status` remains the role-aware summary.
 
 
-`system certificate status` is the single public MCP TLS/certificate status surface. Configure TLS intent with `set server mcp ...`; there is no separate MCP TLS status read command.
+`system certificate status` is the single public MCP TLS/certificate status surface. Configure TLS intent with `set mcp-server ...`; there is no separate MCP TLS status read command.
 
 The explicit `system certificate issue`, `import` or `renew` command authorizes
 activation and required service changes without another confirmation prompt.
@@ -522,13 +527,13 @@ The external endpoint is allocated when an Agent creates a Remote Service using 
 
 An existing Remote Service cannot change in place across standard TCP and Fixed TCP pool classes.
 
-## 13. AI MCP Setup
+## 13. MCP Server Settings
 
-The canonical guided-menu target is `set ai-mcp` (AI MCP Setup): `Set up and manage AI MCP connections`. Use it for MCP Server, MCP Bridge and AI service connection setup. AI Access remains the authorization function. The following existing action-first commands operate on the AI Identity security resource, not the guided menu:
+The canonical setup command is `set mcp-server` (MCP Server Settings): Configure MCP Server connectivity and execution. Authentication is managed by `set ai-identity`; authorization is managed by `set ai-access`.
 
-### AI MCP Setup and AI Access workflow
+### MCP Server Settings and AI Access workflow
 
-The single workflow specification is [AI_ACCESS_MCP.md](AI_ACCESS_MCP.md). Managed Hosts owns enrollment; AI MCP Setup manages infrastructure and connections; AI Identity retains verified authentication and credential lifecycle; AI Access Rules own Source → Destination → Permission authorization; System owns shared MCP settings and certificates. AI MCP Setup checks readiness and uses that same settings flow only when necessary, then optionally opens the separate Access Rule wizard. No automatic privilege grant from OAuth or first connection; explicitly reviewed Owner scope is optional. Basic permissions use built-in profiles; custom Objects/Groups are advanced. AI Access mode is fixed WHITELIST, not an operator input. Preserve existing state and all fail-closed controls. No duplicate public command/menu paths. These are target requirements, not installed-product evidence.
+The single normative workflow is [AI_ACCESS_MCP.md](AI_ACCESS_MCP.md). Managed Hosts owns enrollment; `set mcp-server` owns the unified endpoint, TLS and local execution setup; `set ai-identity` owns verified connection and credential lifecycle; AI Access Rules own Source, Destination, Permission and direct-file paths; only This Server Rules include allowed execution accounts and a default. Managed Hosts keep existing Agent execution with centrally managed AI Access and no additional Agent configuration. System owns shared infrastructure and the local Server execution safety ceiling, not a second independent user-facing account wizard. After OAuth, guide the operator into one reviewed Access Rule flow; skipping it leaves DENY. Built-in permissions need no custom Objects/Groups. AI Access is fixed WHITELIST. Normal requests describe work, not OS accounts: MCP discovers effective accounts and defaults; AI selects an explicitly granted account only when needed. Preserve existing state, public command compatibility and fail-closed enforcement. These are target requirements pending exact-candidate implementation and E2E.
 
 
 ```text

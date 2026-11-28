@@ -300,7 +300,7 @@ class SliceAInternetCommandTests(unittest.TestCase):
         self.assertIn("Internet Access", out)
         self.assertIn("Mode        : No Policy", out)
         self.assertIn("Unmatched   : DENY", out)
-        self.assertIn("Readiness   : FAIL CLOSED (NO POLICY)", out)
+        self.assertIn("Policy readiness : FAIL CLOSED (NO POLICY)", out)
         self.assertNotIn("frp-egress", out + err)
 
     def test_restricted_plane_output_explains_unsupported_and_no_policy_state(self):
@@ -314,7 +314,7 @@ class SliceAInternetCommandTests(unittest.TestCase):
         rc, out, err = self._run(["show", "internet-access"])
         self.assertEqual(rc, 0, err + out)
         self.assertIn("Mode        : BLACKLIST", out)
-        self.assertIn("Readiness   : FAIL CLOSED (UNSUPPORTED MODE)", out)
+        self.assertIn("Policy readiness : FAIL CLOSED (UNSUPPORTED MODE)", out)
         self.assertIn(
             "Recovery    : unset internet-access policy; then configure enabled WHITELIST rule(s).",
             out,

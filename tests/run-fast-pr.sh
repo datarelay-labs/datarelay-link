@@ -141,6 +141,12 @@ python3 tests/test-v24-offline-tombstone-duplicate.py
 echo "=== Native MCP full-control regressions ==="
 python3 tests/test-mcp-server-full-control.py
 python3 tests/test-mcp-server-full-control-public.py
+# Real UID and file ownership test requires two actual OS accounts.
+if [[ "$(id -u)" == 0 ]]; then
+  : # The full public suite above already ran this case.
+else
+  sudo -n "$(command -v python3)" -B tests/test-mcp-server-full-control-public.py NativeFullControlPublicTests.test_real_two_account_uid_file_owner_and_job_grant
+fi
 python3 tests/test-mcp-full-control-rollout.py
 python3 tests/test-mcp-server-self.py
 python3 tests/test-mcp-bridge-internal-error-logging.py

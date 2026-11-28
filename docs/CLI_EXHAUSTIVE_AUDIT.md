@@ -376,15 +376,15 @@ For representative Server and Agent wizards:
 
 Expected: clear recovery, no traceback, no unintended mutation, and return to a usable prompt where appropriate.
 
-### CLI-010 — AI MCP Setup, Permission, and AI Access
+### CLI-010 — MCP Server Settings, Permission, and AI Access
 
 Using namespaced resources:
 
-- discover AI MCP Setup through `ai-mcp` with the description `Set up and manage AI MCP connections`; verify the MCP setup menu/help, completion and current guidance agree with the CLI/AI Master, then create/connect an AI Identity far enough to exercise the selected auth path;
+- discover MCP Server Settings through `mcp-server` with the description `Configure MCP Server connectivity and execution`; verify only Configure endpoint, TLS and Server execution; Diagnostics are present. Connect and authenticate through the separate AI Identity entry; verify no obsolete or duplicate guided setup entry.
 - verify `set ai-identity <IDENTITY>` discovers the single pending approval and credential lifecycle workflow, including approve/deny OAuth and rotate/revoke/authentication where supported; verify retired command paths are neither discoverable nor accepted;
 - verify credential rotate/configure/revoke on a nonexistent AI Identity fails without creating an identity or issuing a credential;
 - do not invent external OAuth approval;
-- create an Access Rule with a built-in permission profile without manually creating Objects; verify custom Permission Object/Group creation under Advanced Permissions;
+- create an Access Rule with a built-in permission profile without manually creating Objects; verify custom Permission Object/Group creation under Permission Objects / Groups;
 - attempt authorization with unverified identity and confirm fail-closed behavior;
 - test AI Access;
 - inspect AI Access log;

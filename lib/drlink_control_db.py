@@ -292,6 +292,7 @@ CREATE TABLE clients (
   last_seen TEXT,
   agent_heartbeat_at TEXT,
   agent_lifecycle_state TEXT NOT NULL DEFAULT 'legacy',
+  ai_executor_platform TEXT NOT NULL DEFAULT 'posix',
   row_version INTEGER NOT NULL DEFAULT 1,
   created_revision INTEGER,
   updated_revision INTEGER,
@@ -1026,6 +1027,8 @@ def ensure_agent_lifecycle_schema(conn: sqlite3.Connection) -> None:
         conn.execute(
             "ALTER TABLE clients ADD COLUMN agent_lifecycle_state TEXT NOT NULL DEFAULT 'legacy'"
         )
+    if "ai_executor_platform" not in cols:
+        conn.execute("ALTER TABLE clients ADD COLUMN ai_executor_platform TEXT NOT NULL DEFAULT 'posix'")
 
 
 def initialize(conn: sqlite3.Connection) -> None:

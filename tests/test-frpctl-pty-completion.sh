@@ -42,6 +42,7 @@ payload = {
     "clients": [{"id": "aabbccdd0011", "hostname": "client-a.example.invalid", "label": "lab-a"}],
     "services": {"aabbccdd0011": ["ssh"]},
     "local_services": [],
+    "groups": ["Office", "Example"],
 }
 env["FRP_CTL_GRAMMAR_PAYLOAD"] = json.dumps(payload)
 
@@ -183,6 +184,18 @@ for resource, partial, completed in (
     if "STUB_FRPCTL" in observed:
         raise SystemExit("named field Tab dispatched a mutation")
 print("PTY_NAMED_CONFIGURATION_FIELDS=PASS")
+
+# A real Readline Tab must resolve both existing group selector positions.
+for prefix in ("show managed-host-group ", "set managed-host aabbccdd0011 group "):
+    os.write(master, b"\x15")
+    read_some(0.1)
+    start = len(buf)
+    os.write(master, (prefix + "Ex").encode() + b"\t")
+    read_some(0.6)
+    observed = buf[start:].decode("utf-8", "replace")
+    if prefix + "Example" not in observed or "STUB_FRPCTL" in observed:
+        raise SystemExit("Managed Host Group Tab failed: " + observed)
+print("PTY_MANAGED_HOST_GROUP_COMPLETION=PASS")
 
 try:
     os.write(master, b"\x04")

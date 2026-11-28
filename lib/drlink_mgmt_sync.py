@@ -1835,6 +1835,10 @@ def server_claim_ai_jobs(plane, auth: MgmtAuthContext, body: dict) -> dict:
     """Claim queued AI jobs for the authenticated Managed Host identity only."""
     machine_id = auth.machine_id
     _require_managed_host(plane, machine_id)
+    platform = (body or {}).get("platform", "posix")
+    if platform not in ("posix", "windows"):
+        raise MgmtSyncError("unsupported AI executor platform")
+    plane.record_ai_executor_platform(machine_id, platform)
     limit = int((body or {}).get("limit") or 4)
     wait_ms = (body or {}).get("wait_ms")
     if wait_ms:

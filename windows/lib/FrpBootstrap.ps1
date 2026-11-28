@@ -32,6 +32,105 @@ function Get-FrpPackagedManifest {
     return (Get-Content -LiteralPath $path -Raw | ConvertFrom-Json)
 }
 
+function Get-FrpQualifiedWindowsUpdateMetadata {
+    param($Manifest, [string]$Checksums, [string]$InstalledChannel)
+    $entry = @($Manifest.artifacts | Where-Object {
+        $_.artifact_type -ceq 'agent-installer' -and $_.platform -ceq 'windows' -and
+        $_.architecture -ceq 'amd64' -and $_.filename -ceq 'bootstrap-client.ps1' -and
+        $_.relative_path -ceq 'agent/bootstrap-client.ps1'
+    })
+    if ($Manifest.qualification_status -cne 'PASS' -or $entry.Count -ne 1 -or
+        [string]$Manifest.source_head -cnotmatch '^[0-9a-f]{40}$' -or
+        $entry[0].source_head -cne $Manifest.source_head -or
+        [string]$entry[0].sha256 -cnotmatch '^[0-9a-f]{64}$' -or
+        $Manifest.channel -cnotin @('development','preview','stable') -or
+        $InstalledChannel -cnotin @('development','preview','stable') -or
+        $Manifest.channel -cne $InstalledChannel -or
+        [string]$Manifest.project_version -notmatch '^[0-9]+\.[0-9]+\.[0-9]+(?:[-+][0-9A-Za-z.+-]+)?$') {
+        throw 'ERROR: Server-qualified Windows product manifest, release channel or immutable source is invalid.'
+    }
+    $digests = @()
+    foreach ($line in ($Checksums -split '\r?\n')) {
+        if ($line -cmatch '^([0-9a-f]{64}) [ *]agent/bootstrap-client\.ps1$') { $digests += $Matches[1] }
+    }
+    if ($digests.Count -ne 1 -or $digests[0] -cne $entry[0].sha256) {
+        throw 'ERROR: Server-qualified Windows product manifest and SHA256SUMS disagree.'
+    }
+    return [pscustomobject]@{
+        SourceHead = [string]$Manifest.source_head
+        Channel = [string]$Manifest.channel
+        ProjectVersion = [string]$Manifest.project_version
+        Sha256 = [string]$entry[0].sha256
+    }
+}
+
+function Invoke-FrpVerifiedWindowsBootstrapUpgrade {
+    param([Parameter(Mandatory=$true)][string]$Path)
+    & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $Path -Upgrade
+    if ($LASTEXITCODE -ne 0) { throw "ERROR: qualified Windows product upgrade failed (exit $LASTEXITCODE)." }
+}
+
+function Invoke-FrpQualifiedWindowsProductUpdate {
+    param([switch]$CheckOnly)
+    if (-not (Test-FrpIsEnrolled)) { throw 'ERROR: automatic product update requires an enrolled Agent.' }
+    $state = Read-FrpClientState
+    $origin = Get-FrpAllocatorOrigin -AllocatorUrl ([string]$state.allocator_url)
+    $installedManifest = Join-Path (Get-FrpWindowsRoot) 'release-manifest.json'
+    $installed = if (Test-Path -LiteralPath $installedManifest) {
+        Get-Content -LiteralPath $installedManifest -Raw | ConvertFrom-Json
+    } else { $null }
+    $channel = [string]$installed.channel
+    $installedVersion = @{}
+    if (Test-Path -LiteralPath (Get-FrpVersionPath)) {
+        foreach ($line in Get-Content -LiteralPath (Get-FrpVersionPath)) {
+            if ($line -match '^([^=]+)=(.*)$') { $installedVersion[$Matches[1]] = $Matches[2] }
+        }
+    }
+    if ($installedVersion['RELEASE_CHANNEL'] -in @('development','preview','stable')) {
+        if ($channel -and $channel -cne $installedVersion['RELEASE_CHANNEL']) {
+            throw 'ERROR: installed Windows product release channel metadata disagrees.'
+        }
+        $channel = [string]$installedVersion['RELEASE_CHANNEL']
+    }
+    $work = Join-Path ([IO.Path]::GetTempPath()) ('drlink-update-' + [guid]::NewGuid().ToString('N'))
+    try {
+        New-FrpProtectedDirectory -Path $work | Out-Null
+        $manifestFile = Join-Path $work 'manifest.json'
+        $sumsFile = Join-Path $work 'SHA256SUMS'
+        $bootstrap = Join-Path $work 'bootstrap-client.ps1'
+        Write-Host 'Downloading qualified update metadata from DRLink Server...'
+        Invoke-FrpHttpsDownload -Url "$origin/artifacts/manifest.json" -DestinationPath $manifestFile
+        Invoke-FrpHttpsDownload -Url "$origin/artifacts/SHA256SUMS" -DestinationPath $sumsFile
+        $manifest = Get-Content -LiteralPath $manifestFile -Raw | ConvertFrom-Json
+        $target = Get-FrpQualifiedWindowsUpdateMetadata -Manifest $manifest -Checksums (Get-Content -LiteralPath $sumsFile -Raw) -InstalledChannel $channel
+        Write-Host ("Data Relay Link: {0} -> {1}" -f (Get-FrpProjectVersion), $target.ProjectVersion)
+        Write-Host ("Channel: {0}" -f $target.Channel)
+        Write-Host ("Source HEAD: {0}" -f $target.SourceHead)
+        Write-Host ("Expected SHA256: {0}" -f $target.Sha256)
+        if ($CheckOnly) {
+            Write-Host 'Check only. No update changes were applied.'
+            return
+        }
+        Invoke-FrpHttpsDownload -Url "$origin/artifacts/agent/bootstrap-client.ps1" -DestinationPath $bootstrap
+        if ((Get-FrpSha256HexOfFile -Path $bootstrap) -cne $target.Sha256) {
+            throw 'ERROR: downloaded Windows product artifact SHA256 mismatch. No update changes were applied.'
+        }
+        Write-Host 'Qualified Windows product artifact verified.'
+        # The existing -Upgrade installer re-verifies the outer bytes with
+        # the enrolled Server, then refreshes software without enrollment.
+        Invoke-FrpVerifiedWindowsBootstrapUpgrade -Path $bootstrap
+        $result = Get-Content -LiteralPath (Get-FrpVersionPath) -Raw
+        if ($result -notmatch ('(?m)^PROJECT_VERSION=' + [regex]::Escape($target.ProjectVersion) + '\r?$') -or
+            $result -notmatch ('(?m)^SOURCE_HEAD=' + [regex]::Escape($target.SourceHead) + '\r?$') -or
+            $result -notmatch ('(?m)^RELEASE_CHANNEL=' + [regex]::Escape($target.Channel) + '\r?$')) {
+            throw 'ERROR: installed Windows product provenance does not match the verified target.'
+        }
+        Write-Host 'Product update complete. Identity, ports, services and CA trust preserved.'
+    } finally {
+        Remove-Item -LiteralPath $work -Recurse -Force -ErrorAction SilentlyContinue
+    }
+}
+
 function Get-FrpPackagedSourceHead {
     param($Manifest)
     foreach ($value in @([string]$Manifest.source_head, [string]$Manifest.git_ref)) {
@@ -263,6 +362,7 @@ function Install-FrpWindowsBinary {
         [string]$ExpectedSha256
     )
     Initialize-FrpDirectories
+    Protect-FrpExecutionTree
     if (-not $DownloadUrl) { $DownloadUrl = Get-FrpWindowsAmd64Url }
     if (-not $ExpectedSha256) { $ExpectedSha256 = Get-FrpWindowsAmd64Sha256 }
     $expected = $ExpectedSha256.Trim().ToLowerInvariant()
@@ -306,6 +406,7 @@ No changes were applied.
             throw 'ERROR: frpc.exe extract failed'
         }
         Write-FrpInstalledVersion -EngineSha256 $expected
+        Protect-FrpExecutionTree
         return $dest
     } finally {
         Remove-Item -LiteralPath $tmpZip -Force -ErrorAction SilentlyContinue
@@ -522,6 +623,8 @@ function Complete-FrpZeroTouchPostEnroll {
     }
 
     Set-FrpInstallStatus -Status 'enrolled_incomplete'
+    Initialize-FrpDirectories
+    Protect-FrpExecutionTree
 
     if ($env:FRP_WINDOWS_FAIL_AFTER_ENROLL -eq '1') {
         throw 'ERROR: simulated failure after enroll (FRP_WINDOWS_FAIL_AFTER_ENROLL=1)'
@@ -573,6 +676,7 @@ function Complete-FrpZeroTouchPostEnroll {
         Copy-Item -LiteralPath $manifestSource -Destination (Join-Path (Get-FrpWindowsRoot) 'release-manifest.json') -Force
     }
     Write-FrpInstalledVersion
+    Protect-FrpExecutionTree
 
     # Documented UX is a bare `drlink ...` from any shell, so the installed
     # tools directory goes on the system PATH. Never fatal: the client is
@@ -1486,6 +1590,7 @@ function Invoke-FrpZeroTouch {
         # pending-enrollment transaction instead of re-redeeming a
         # single-use Bootstrap Ticket.
         Initialize-FrpDirectories
+        Protect-FrpExecutionTree
         $machineId = Get-FrpOrCreateClientId
         if (-not $Hostname) {
             $Hostname = $env:COMPUTERNAME

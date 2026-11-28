@@ -69,13 +69,28 @@ class EntryApproval(unittest.TestCase):
         # installer is served under the same TLS endpoint, with a real digest.
         handler = MOD.make_handler(self.a)
         payload = b'#!/bin/bash\n[[ -n "$FRP_BOOTSTRAP_LOCATOR" && -z "${FRP_BOOTSTRAP_TICKET:-}" ]] || exit 9\nprintf STAGE_VERIFIED\n'
+        from unittest import mock
+        artifact_root = self.env.root / "qualified-artifacts"
+        agent = artifact_root / "agent"
+        agent.mkdir(parents=True)
+        (agent / "bootstrap-client.sh").write_bytes(payload)
+        digest = hashlib.sha256(payload).hexdigest()
+        head = "a" * 40
+        (artifact_root / "manifest.json").write_text(json.dumps(dict(
+            drlink_version="2.4.0", frp_version="0.71.0", source_head=head,
+            immutable_source_ref=head, channel="development", qualification_status="PASS",
+            artifacts=[dict(artifact_type="agent-installer", platform="linux", architecture="any",
+                            relative_path="agent/bootstrap-client.sh", source_head=head, sha256=digest)])))
+        patch = mock.patch.object(MOD.QA, "installed_root", return_value=artifact_root)
+        patch.start()
+        self.addCleanup(patch.stop)
         class FixtureHandler(handler):
             def do_GET(inner):
-                if inner.path == "/fixture/bootstrap-client.sh":
+                if inner.path == "/artifacts/agent/bootstrap-client.sh":
                     return inner._send_bootstrap_headers(200, "text/plain", payload)
-                if inner.path == "/fixture/SHA256SUMS":
+                if inner.path == "/artifacts/SHA256SUMS":
                     return inner._send_bootstrap_headers(200, "text/plain",
-                        hashlib.sha256(payload).hexdigest() + "  bootstrap-client.sh\n")
+                        hashlib.sha256(payload).hexdigest() + "  agent/bootstrap-client.sh\n")
                 return super().do_GET()
         http = ThreadingHTTPServer(("127.0.0.1", 0), FixtureHandler)
         context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
@@ -85,8 +100,8 @@ class EntryApproval(unittest.TestCase):
         origin = "https://" + authority
         cfg = json.loads(self.env.cfg.read_text())
         cfg.update(allocator_public_url=origin + "/enroll",
-                   client_installer_url=origin + "/fixture/bootstrap-client.sh",
-                   windows_client_installer_url=origin + "/fixture/bootstrap-client.ps1",
+                   client_installer_url=origin + "/artifacts/agent/bootstrap-client.sh",
+                   windows_client_installer_url=origin + "/artifacts/agent/bootstrap-client.ps1",
                    tls_ca_cert=str(pki["ca_crt"]), bootstrap_dir=str(self.a.bootstrap_dir))
         self.env.cfg.write_text(json.dumps(cfg))
         self.a.reload_cfg_if_changed()
@@ -146,7 +161,8 @@ class EntryApproval(unittest.TestCase):
         # three platform selections. New public issuance must not expose bt1.
         import re
         for platform, host in (("linux", authority), ("macos", "bootstrap.example.test"), ("windows", authority)):
-            cfg["bootstrap_hostname"] = host
+            cfg["bootstrap_hostname"] = "bootstrap.example.test" if platform == "macos" else ""
+            cfg.pop("public_hostname", None)
             config_path.write_text(json.dumps(cfg))
             result = subprocess.run(["python3", str(ROOT/"tools/frp-create-client"),
                 "--one-line","--platform",platform,"--client-name","fixture-"+platform],
@@ -332,7 +348,7 @@ frp_entry_claim_payload request "$TEST_LOCATOR" machine-a host-a '' "$TEST_CLAIM
             env.pop("FRP_WINDOWS_FORCE_DOTNET_HTTP",None)
 
         ps="""$ErrorActionPreference='Stop'
-foreach($mod in @('FrpPaths.ps1','FrpLock.ps1','FrpCrypto.ps1','FrpTls.ps1','FrpState.ps1','FrpDraft.ps1','FrpConfig.ps1','FrpProcess.ps1','FrpShim.ps1','FrpAutostart.ps1','FrpBootstrap.ps1','FrpV24.ps1')) { . (Join-Path (Get-Location) ('windows/lib/'+$mod)) }
+foreach($mod in @('FrpPaths.ps1','FrpLock.ps1','FrpCrypto.ps1','FrpTls.ps1','FrpState.ps1','FrpDraft.ps1','FrpConfig.ps1','FrpProcess.ps1','FrpShim.ps1','FrpAutostart.ps1','FrpBootstrap.ps1','FrpV24.ps1','FrpAiExecutor.ps1')) { . (Join-Path (Get-Location) ('windows/lib/'+$mod)) }
 Initialize-FrpCryptoTypes
 Initialize-FrpDirectories
 $rc=Invoke-FrpZeroTouch -AllocatorUrl $env:TEST_ALLOCATOR -CaSha256 $env:TEST_CA -BootstrapLocator $env:FRP_BOOTSTRAP_LOCATOR -SkipStart -SkipDownload
@@ -345,9 +361,9 @@ exit $rc
                 proc.wait(timeout=40)
                 log.seek(0); output=log.read()
                 self.assertNotIn("Waiting for the Server operator", output)
+                self.assertEqual(proc.returncode,0,output)
                 machine=(client/"state/client-id").read_text().strip()
                 fp=MOD.MGMT.pubkey_fingerprint((client/"state/client-identity.pub").read_text())
-                self.assertEqual(proc.returncode,0,output)
             finally:
                 if proc.poll() is None:
                     proc.kill();proc.wait()

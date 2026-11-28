@@ -354,6 +354,11 @@ def run_repl(frpctl_bin, payload):
             "WARNING: completion inventory could not be loaded; "
             "Tab candidates may be incomplete. Run: system diagnostics\n"
         )
+    if payload.get("group_inventory_warning"):
+        sys.stderr.write(
+            "WARNING: Managed Host Group inventory unavailable; group Tab candidates "
+            "are omitted. Run: system diagnostics\n"
+        )
     hist = []
     while True:
         try:

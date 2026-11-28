@@ -5529,6 +5529,20 @@ class ControlPlane:
         self.commit_if_autonomous()
         return True
 
+    def record_ai_executor_platform(self, client_id: str, platform: str) -> None:
+        """Signed Agent claim metadata is a path dialect, never a permission grant."""
+        if platform not in ("posix", "windows"):
+            raise ControlPlaneError("unsupported AI executor platform")
+        self.assert_ai_job_claimant(client_id)
+        current = self.conn.execute("SELECT ai_executor_platform FROM clients WHERE id=?", (client_id,)).fetchone()
+        if current is not None and current[0] == platform:
+            return
+        self.conn.execute(
+            "UPDATE clients SET ai_executor_platform=? WHERE id=? AND ai_executor_platform!=?",
+            (platform, client_id, platform),
+        )
+        self.commit_if_autonomous()
+
     def claim_ai_jobs(self, client_id: str, limit: int = 4) -> list[dict]:
         ensure_ai_jobs_safety_schema_once(self.conn)
         self.assert_ai_job_claimant(client_id)
@@ -6637,6 +6651,154 @@ class ControlPlane:
             "remote_ready": bool(routed and public_url != "Not configured" and st.get("mcp_configured")),
         }
 
+    def _native_mcp_runtime_settings(self) -> dict | None:
+        """Read only allowlisted execution settings from the verified running Bridge."""
+        import subprocess
+        if self.root and str(self.root) != "/":
+            return None
+        try:
+            def main_pid():
+                result = subprocess.run(
+                    ["systemctl", "show", "drlink-mcp-bridge.service", "--property=MainPID", "--value"],
+                    check=True, capture_output=True, text=True, timeout=3,
+                )
+                return int(result.stdout.strip())
+            pid = main_pid()
+            if pid > 1:
+                with open("/proc/%d/environ" % pid, "rb") as stream:
+                    data = stream.read(1024 * 1024 + 1)
+                if len(data) <= 1024 * 1024 and main_pid() == pid:
+                    values = {}
+                    allowed = {b"DRLINK_MCP_SERVER_" + suffix for suffix in (
+                        b"SELF_ENABLED", b"LOCAL_EXEC_ENABLED", b"FULL_CONTROL_ENABLED",
+                        b"ADMIN_ENABLED", b"EXEC_USER", b"ALLOWED_ROOTS",
+                        b"EXEC_ACCOUNTS", b"READ_USER", b"DEFAULT_CWD",
+                        b"LEGACY_ACCOUNT", b"LEGACY_RULE_IDS")}
+                    for item in data.split(b"\0"):
+                        key, sep, value = item.partition(b"=")
+                        if sep and key in allowed:
+                            values[key.decode("ascii")] = value.decode("utf-8")
+                    return values
+        except (OSError, ValueError, UnicodeError, subprocess.SubprocessError):
+            pass
+        return None
+
+    def native_mcp_runtime_status(self) -> dict:
+        from drlink_mcp_full_control import execution_profile_status
+        return execution_profile_status(self._native_mcp_runtime_settings())
+
+    def _native_mcp_verified_accounts(self, settings):
+        """Use the executor's own account and cwd validation for operator choices."""
+        import drlink_mcp_full_control as full
+        if full.execution_profile_status(settings)["readiness"] != "Configured":
+            return {}
+        try:
+            return full.eligible_accounts(settings)
+        except (full.FullControlDenied, OSError, ValueError, RuntimeError):
+            return {}
+
+    def native_mcp_configured_profile(self) -> dict:
+        """Operator repair hint only, never an authorization or readiness claim."""
+        import drlink_mcp_full_control as full
+        settings = self._native_mcp_runtime_settings()
+        if not settings:
+            return {}
+        try:
+            entries = full._profile_accounts(settings)
+        except full.FullControlDenied:
+            return {}
+        return {"accounts":sorted(entries),
+                "roots":settings.get("DRLINK_MCP_SERVER_ALLOWED_ROOTS","").split(os.pathsep),
+                "reader":settings.get("DRLINK_MCP_SERVER_READ_USER") or None}
+
+    def native_mcp_local_accounts(self) -> list[str]:
+        return sorted(self._native_mcp_verified_accounts(self._native_mcp_runtime_settings()))
+
+    def native_mcp_reader_account(self) -> str | None:
+        import drlink_mcp_full_control as full
+        settings = self._native_mcp_runtime_settings()
+        accounts = self._native_mcp_verified_accounts(settings)
+        return full.reader_execution_account(accounts, settings) if accounts else None
+
+    def native_mcp_reader_ready(self) -> bool:
+        return self.native_mcp_reader_account() is not None
+
+    def native_mcp_account_details(self) -> list[dict]:
+        import drlink_mcp_full_control as full
+        accounts = self._native_mcp_verified_accounts(self._native_mcp_runtime_settings())
+        return [{"account":name,"uid":account.uid,
+                 "cwd":full.default_cwd(account),"roots":list(account.roots)}
+                for name,account in sorted(accounts.items())]
+
+    def native_mcp_grant_test(self, identity, permission, path=None) -> list[dict]:
+        """Resolve configured complete grants, not a live authenticated OS test."""
+        import drlink_v24 as v24
+        import drlink_mcp_full_control as full
+        settings = self._native_mcp_runtime_settings()
+        atoms = v24.expand_permissions(self, permission) if (
+            v24.get_permission_object(self, permission) or v24.get_permission_group(self, permission)) else {permission}
+        result = []
+        for atom in sorted(atoms):
+            if atom == "host-info":
+                allowed = v24.evaluate_ai_access_v24(self,identity=identity,destination="server:self",permission="host-info")["result"]=="ALLOW"
+                state = ("DENY" if not allowed else "NOT TESTED" if settings is None else
+                    "CONFIGURED" if settings.get("DRLINK_MCP_SERVER_SELF_ENABLED")=="1" else "DENY")
+                result.append({"permission":atom,"result":state,"reason":"Server-self endpoint; live call not tested"})
+                continue
+            if settings is None:
+                result.append({"permission":atom,"result":"NOT TESTED","reason":"Running Bridge configuration not verified"})
+                continue
+            try:
+                accounts = full.eligible_accounts(settings)
+                cap = v24.PERMISSION_TO_CAPS[atom][0]
+                if atom in v24.FILE_PERMISSIONS and not path:
+                    result.append({"permission":atom,"result":"NOT TESTED","reason":"Supply a concrete file path"})
+                    continue
+                # A supplied path denotes a file when testing a compound permission;
+                # test commands against their default cwd, not that file.
+                operand = path if atom in v24.FILE_PERMISSIONS or atom=="command-exec" and atoms=={"command-exec"} else None
+                def validate(name, patterns, value):
+                    try:
+                        account = accounts[name]
+                        if cap == "exec":
+                            full.allowed_cwd(value if value is not None else full.default_cwd(account),patterns,account)
+                        elif cap != "list_processes":
+                            full.allowed_path(value,patterns,account)
+                        return True
+                    except (full.FullControlDenied,OSError,ValueError,TypeError):
+                        return False
+                grant = v24.resolve_ai_execution_grant(self,identity=identity,destination="server:self",
+                    capability=cap,operand=operand,local_accounts=accounts,
+                    legacy_account=full.legacy_execution_account(settings),
+                    legacy_rule_ids=full.legacy_execution_rule_ids(settings),
+                    reader_account=full.reader_execution_account(accounts,settings),validate_operand=validate)
+                result.append({"permission":atom,"result":grant["action"],"reason":grant["reason_code"],
+                               "account":grant.get("account"),"choices":grant.get("accounts",[])})
+            except (full.FullControlDenied, OSError, ValueError, KeyError, TypeError, ControlPlaneError):
+                result.append({"permission":atom,"result":"DENY","reason":"Local execution profile unavailable"})
+        return result
+
+    def _native_mcp_diagnostics(self) -> list[str]:
+        status = self.native_mcp_runtime_status()
+        lines = ["", "Native Server MCP (running Bridge)", "---------------------------------"]
+        for key, label in (("self", "Server-self"), ("local", "Local executor"),
+                           ("full", "Full control"), ("admin", "Admin opt-in")):
+            value = status[key]
+            text = "Unknown (not verified)" if value is None else ("Enabled" if value else "Disabled")
+            lines.append("%-20s: %s" % (label, text))
+        lines.append("Executor readiness  : %s" % status["readiness"])
+        lines.append("Reason              : %s" % status["reason"])
+        for account in self.native_mcp_account_details():
+            lines.append("Account             : %s (UID %s)" % (account["account"], account["uid"]))
+            lines.append("  Default cwd       : " + account["cwd"])
+            lines.append("  Local roots       : " + ", ".join(account["roots"]))
+        if status["readiness"] == "Configured":
+            lines.append("Read-only reader    : " + ("Configured" if self.native_mcp_reader_ready() else "Unavailable (nonprivileged reader required)"))
+        lines.append("Live AI operation   : NOT TESTED by this diagnostic")
+        lines.append("AI Access           : independently evaluated for every call")
+        lines.append("Operator settings   : see docs/SERVER_NATIVE_MCP.md; explicit local opt-in required")
+        return lines
+
     def diagnostics_mcp(self) -> str:
         mcp = self.mcp_endpoint_status()
         lines = ["MCP diagnostics", "===============", ""]
@@ -6682,6 +6844,7 @@ class ControlPlane:
                 )
         except Exception:
             pass
+        lines.extend(self._native_mcp_diagnostics())
         if mcp["backend"] == "Healthy" and not mcp["remote_ready"]:
             lines.append("")
             lines.append("Backend Healthy alone does not imply MCP Remote Access = Healthy.")
@@ -7166,6 +7329,50 @@ def path_allowed(operand: str, patterns: list[str]) -> bool:
             if text == prefix or text.startswith(boundary):
                 return True
         elif text == prefix or fnmatch(text, prefix):
+            return True
+    return False
+
+
+def windows_absolute_path(operand: str) -> Optional[str]:
+    """Conservative lexical Windows drive path dialect, shared with native Agent.
+
+    No relative, UNC, device, alternate stream, encoded, wildcard, trailing
+    dot/space, DOS-device or short-name aliases. Case is intentionally exact
+    except the drive letter; never let case folding widen a scope on NTFS.
+    Filesystem/reparse/link checks are performed on the actual Windows host.
+    """
+    raw = str(operand or "").replace(chr(92), "/")
+    if not re.fullmatch(r"[A-Za-z]:/.*", raw) or len(raw) > 240:
+        return None
+    suffix = raw[3:]
+    if not suffix:
+        return raw[0].upper() + ":/"
+    parts = suffix.split("/")
+    for part in parts:
+        if (not part or part in (".", "..") or part[-1] in ". "
+                or any(ord(c) < 32 or c in '<>:"|?*%~' for c in part)
+                or re.fullmatch(r"(?i:CON|PRN|AUX|NUL|CONIN\$|CONOUT\$|CLOCK\$|COM[0-9¹²³]|LPT[0-9¹²³])", part.split(".", 1)[0].rstrip(" "))):
+            return None
+    return raw[0].upper() + ":/" + "/".join(parts)
+
+
+def windows_path_allowed(operand: str, patterns: list[str]) -> bool:
+    """Evaluate Windows path scopes without interpreting them on the Linux Server."""
+    path = windows_absolute_path(operand)
+    if not path or not patterns:
+        return False
+    for raw in patterns:
+        if raw == "/**":
+            return True
+        patt = str(raw or "").replace(chr(92), "/")
+        tree = patt.endswith("/**")
+        base = patt[:-3] if tree else patt
+        if re.fullmatch(r"[A-Za-z]:", base):
+            base += "/"
+        base = windows_absolute_path(base)
+        if not base:
+            continue
+        if path == base or (tree and path.startswith(base.rstrip("/") + "/")):
             return True
     return False
 

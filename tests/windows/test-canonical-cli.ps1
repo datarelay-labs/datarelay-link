@@ -12,6 +12,14 @@ try {
 $tmpRoot = Join-Path ([System.IO.Path]::GetTempPath()) ('frp-win-canon-' + [guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $tmpRoot -Force | Out-Null
 $env:FRP_WINDOWS_ROOT = $tmpRoot
+# Isolate this fixture from the default task names used by other tests
+# and from any real product installation. The product must refuse to
+# replace a task whose worker belongs to a different installation root.
+$suffix = [guid]::NewGuid().ToString('N')
+$env:FRP_AUTOSTART_TASK_NAME = 'DRLinkCanonicalAuto-' + $suffix
+$env:FRP_LIFECYCLE_TASK_NAME = 'DRLinkCanonicalLife-' + $suffix
+$env:FRP_WINDOWS_FAKE_MACHINE_PATH = Join-Path $tmpRoot 'machine-path-fixture.txt'
+Set-Content -LiteralPath $env:FRP_WINDOWS_FAKE_MACHINE_PATH -Value ''
 try {
     . (Join-Path $script:WindowsLib 'FrpPaths.ps1')
     . (Join-Path $script:WindowsLib 'FrpCrypto.ps1')
@@ -160,6 +168,21 @@ try {
     Write-FrpTestPass 'WINDOWS_UPDATE_PROJECT_CHECK_SEMANTICS'
     Write-FrpTestPass 'WINDOWS_UPDATE_ENGINE_CHECK_SEMANTICS'
 } finally {
+    # Cleanup only the unique fixture tasks, not default product tasks.
+    if ($env:OS -eq 'Windows_NT') {
+        foreach ($task in @($env:FRP_AUTOSTART_TASK_NAME, $env:FRP_LIFECYCLE_TASK_NAME)) {
+            if ($task -and $task.EndsWith($suffix)) {
+                if (Get-Command Get-ScheduledTask -ErrorAction SilentlyContinue) {
+                    $registered = Get-ScheduledTask -TaskName $task -ErrorAction SilentlyContinue
+                    if ($registered) {
+                        Stop-ScheduledTask -InputObject $registered -ErrorAction SilentlyContinue
+                        Unregister-ScheduledTask -InputObject $registered -Confirm:$false -ErrorAction Stop
+                    }
+                }
+            }
+        }
+    }
+    Remove-Item Env:FRP_AUTOSTART_TASK_NAME, Env:FRP_LIFECYCLE_TASK_NAME, Env:FRP_WINDOWS_FAKE_MACHINE_PATH -ErrorAction SilentlyContinue
+    Remove-FrpWindowsTestRoot
     Remove-Item Env:FRP_WINDOWS_ROOT -ErrorAction SilentlyContinue
-    Remove-Item -LiteralPath $tmpRoot -Recurse -Force -ErrorAction SilentlyContinue
 }

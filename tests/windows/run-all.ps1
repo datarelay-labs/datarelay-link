@@ -8,6 +8,7 @@ $passed = 0
 
 $tests = @(
     'test-crypto.ps1',
+    'test-native-ai-executor.ps1',
     'test-legacy-upgrade-root.ps1',
     'test-token-decrypt.ps1',
     'test-canonical-sign.ps1',
@@ -36,6 +37,7 @@ $tests = @(
     'test-update-rollback.ps1',
     'test-pid-ownership.ps1',
     'test-acl-fail-closed.ps1',
+    'test-install-code-acl.ps1',
     'test-multi-service.ps1',
     'test-ca-pinning.ps1',
     'test-uninstall.ps1',
@@ -43,6 +45,7 @@ $tests = @(
     'test-installed-cli-persistence.ps1',
     'test-project-version.ps1',
     'test-source-provenance.ps1',
+    'test-qualified-product-update.ps1',
     'test-support-source-provenance.ps1',
     'test-bundle-stdin-reader.ps1',
     'test-v24-binding-uniqueness.ps1',

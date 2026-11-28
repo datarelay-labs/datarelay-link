@@ -38,6 +38,7 @@ class NativePublicConsent(unittest.TestCase):
         self.source = (ROOT / 'tools/frpctl').read_text()
         self.env = dict(os.environ, TMPDIR=str(self.fixture), FRP_CTL_TEST_INPUT='yes\n',
                         DRLINK_CONFIRM='yes', DRLINK_EXPECTED_REVISION='42')
+        self.env["GROUP_BACKEND"] = str(ROOT / "tools/frp-group-set")
         self.read_helpers = '\n'.join(native_function(self.source, name) for name in (
             'frpctl_input_init', 'frpctl_try_read', 'frpctl_read',
             'frpctl_step_label', 'frpctl_step_help', 'frpctl_read_step', 'frpctl_read_abort'))
@@ -50,6 +51,15 @@ frpctl_find_uninstaller() { printf '%s' '/inert/uninstaller-never-executed'; }
 frpctl_run_uninstaller() { echo STUB_EFFECT_UNINSTALL; }
 frpctl_invoke() {
   if [[ "$1" == frp-enrollments ]]; then printf ACTIVE; return 0; fi
+  if [[ "$1" == frp-group-set ]]; then
+    shift
+    local fixture="$TMPDIR/group-fixture"
+    mkdir -p "$fixture/etc/drlink" "$fixture/var/lib/drlink"
+    printf '{"registry_file":"/var/lib/drlink/registry.json"}' >"$fixture/etc/drlink/config.json"
+    printf '{"schema_version":2,"clients":{},"groups":{}}' >"$fixture/var/lib/drlink/registry.json"
+    FRP_DEPLOY_TEST_ROOT="$fixture" "$GROUP_BACKEND" create fixture >/dev/null || return 1
+    FRP_DEPLOY_TEST_ROOT="$fixture" "$GROUP_BACKEND" "$@" || return $?
+  fi
   echo "STUB_EFFECT_TOOL:$*"
 }
 frpctl_json_get() { python3 -c 'import json,sys; print(json.loads(sys.argv[1]).get(sys.argv[2], ""))' "$1" "$2"; }

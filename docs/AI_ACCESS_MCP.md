@@ -1,26 +1,29 @@
-# Data Relay Link — AI MCP Setup and AI Access
+# Data Relay Link — MCP Server Settings and AI Access
 
-> **Status:** v2.4 candidate workflow; installed-runtime qualification is separate
+> **Status:** owner direction 2026-11-28: centralized Managed Host authorization; native Server multi-account execution. Installed-runtime qualification pending.
 > **Authority:** Public CLI semantics come from the CLI/AI Master; security and transport boundaries come from `SECURITY.md`.
 
 ## 1. Model
 
-### AI MCP Setup and AI Access workflow
+### MCP Server Settings and AI Access workflow
 
 This is the candidate UX contract, not a claim of installed release qualification. This guide is the detailed normative workflow; CLI, menu, help, completion and tests must converge on this contract; any Web UI consuming these functions must follow the same design. Do not retain alternate public spellings, parallel wizards or duplicate menu entry points for retired UX. Preserve persisted identities, policy, certificates and audit history; no permission widening, implicit trust or silent reconfiguration during migration.
 
 - **Managed Hosts**: register/enroll and manage actual hosts. Never add a host through an AI connection screen.
-- **AI MCP Setup**: configure MCP Server, review MCP Bridge settings and diagnostics, connect, verify, inspect, reconnect and disconnect AI clients using the existing AI Identity resource. Authentication alone is not authorization.
-- **AI Access Rules**: select Source (verified AI Identity), Destination (Managed Host-backed Network Object / Network Group, an explicit Managed Host Group, all current and future trusted Managed Hosts, or explicitly selected `server:self` under its separate native execution controls), and Permission (built-in profile or reusable custom Object/Group), with explicit path and execution constraints. The firewall-style policy is separate from inventory and authentication.
-- **AI MCP Setup → MCP Server settings / MCP Bridge settings / diagnostics**: delegates to the same infrastructure and diagnostic commands available under System. The Bridge option displays diagnostics before offering the shared endpoint/TLS settings; an explicitly scoped MCP diagnostic with no successful checks reports `NOT TESTED` (exit 1), not `PASS`. Native execution controls remain separately authorized. The AI service connection detects readiness and offers settings inline when needed, then returns to onboarding. Ready TLS is reused without issuing or reconfiguring a certificate. Direct mode must report the supported single443 prerequisite; no silent deployment-mode switch.
-- **Advanced Permissions**: custom Permission Objects/Groups only when needed; not prerequisites for routine onboarding. Read-only grants host-info, process-read and explicitly scoped file-read. Full management offers all seven capabilities only after explicit review of destination, path and OS execution constraints. No automatic root or unrestricted path grant by selecting a label.
+- **MCP Server Settings** (`set mcp-server`): one Configure endpoint, TLS and Server execution flow plus Diagnostics. Reuse valid TLS; optionally prepare or review the Server-local executor and eligible existing accounts. Skip Server execution for Managed Host-only access. No AI grant is created.
+- **AI Identities** (`set ai-identity`): connect, verify, reconnect and manage credentials. Authentication alone is not authorization.
+- **AI Access Rules**: select verified Source, Destination (existing host, trusted group/dynamic scope or explicitly selected `server:self`), Permission, direct-file paths, and (for This Server only) allowed execution accounts and default. Account selection is part of the same reviewed rule, not an independent grant.
+- **MCP Server Settings** uses shared System infrastructure, reuses ready TLS, and checks actual readiness. Offer the same AI Access wizard after connection; show and validate the local executor ceiling inline, using explicit local review when needed. Direct mode retains the single443 prerequisite. No silent deployment-mode switch; diagnostics without live evidence are NOT TESTED.
+- **Advanced Permissions**: custom Permission Objects/Groups only when needed. Read-only grants host-info, process-read and scoped file-read, never shell. For This Server, Full management supports selected existing OS accounts, including explicitly approved root, with direct-file paths defaulting to `/**` only on a new explicitly reviewed full-management rule. No automatic root grant.
 - AI Access is WHITELIST-only. The wizard and one-shot Rule grammar require no mode field; first reviewed rule initializes WHITELIST atomically. No Policy, disabled enforcement, unverified/revoked identity, no matching rule or unsafe/unavailable target remains DENY.
 
-First connection: AI Access → AI MCP Setup → Connect or manage AI service → select ChatGPT/Claude/Other and name → check endpoint/TLS (fix only if needed) → show public URL and client connection instructions → verify pending OAuth request, explicit operator approval and actual PKCE exchange → optionally open the separate Access Rule wizard with the verified Source preselected. Review destination and permissions before applying; skipping policy setup leaves DENY. The first Owner shortcut is optional and explicitly reviewed: only a verified identity may receive a named audited rule for all trusted hosts, including future signed enrollments **only if the operator explicitly chooses that dynamic scope**, with explicit permissions and path bounds. Select managed-hosts:trusted only for this explicitly reviewed dynamic destination; it evaluates the current active trusted Managed Host inventory on every authorization call, not a mutable automatically populated group. Otherwise select a specific destination or explicit Managed Host Group. Group rules bind an immutable group ID and evaluate current trusted membership; future members are included only after explicit review. Removing a member or revoking trust removes this grant. Never implicitly authorize a new AI because it is first. Subsequent hosts are enrolled under Managed Hosts; a matching dynamic policy needs no AI reconfiguration; other policies remain unchanged until edited. Show effective access and actual connectivity separately.
+First connection: MCP Server Settings (endpoint, TLS and optional native execution) → AI Identity: connect ChatGPT/Claude/Other → complete verified OAuth/PKCE or supported credential workflow → open the named Access Rule with Source preselected → choose Destination, Permission and execution accounts/default (This Server management only), review effective paths and OS authority → apply once and verify. Skipping the rule leaves DENY. The optional first-owner shortcut is only an explicitly reviewed rule, not a special trust mechanism. Existing hosts are the default; future trusted group members require explicit dynamic scope. No per-Agent AI execution configuration is required. Removing trust/group membership withdraws applicable grants. Subsequent AI connections reuse infrastructure, not other identities' grants.
+
+The guided Rule destination picker lists enrolled Managed Hosts (including offline), Network Groups containing Managed Hosts, explicit Managed Host Groups, reviewed all-trusted scope and This Server. Routed LAN Network Objects (including `enrolled-target-*`) are not AI executors; preserve their Remote Service references. Server-local execution setup reviews eligible OS accounts and optional nonprivileged workspace but does not grant AI access. A This Server rule chooses an authorized default and subset. Managed Host rules use the existing Agent execution model without a separate host-local AI configuration. When This Server management is selected without a configured execution profile, offer the same local setup inline; declining or failed verification cancels Rule creation. Local configuration is independently reviewed and survives cancellation of the subsequent Rule. Native read-only file/process grants require an available nonprivileged reader. Switching an existing management Rule to read-only proposes the configured nonprivileged reader as its sole reviewed binding, not the former administrative accounts. CLI and Bundle account edits are reviewed; account-only Bundle changes require confirmation. Invalid per-account roots or default directories make the profile not ready. Legacy singleton read-only access cannot inherit administrative UID 0 authority. No automatic privilege expansion.
 
 Normal commands:
 ```text
-set ai-mcp
+set mcp-server
 set ai-identity <NAME>
 show ai-identities
 show ai-identity <NAME>
@@ -32,7 +35,7 @@ unset ai-access <RULE>
 test ai-access source <AI_IDENTITY> destination <DESTINATION> permission <PERMISSION> [path <PATH>]
 show ai-access-log
 ```
-`set ai-mcp` opens the setup menu; `set ai-access` opens named Rule creation/editing. Named Identity opens onboarding or management; named Rule opens create/edit. Reusing a Rule name replaces selected Source/Destination rather than adding a second Rule. File permissions require absolute path scopes such as `/**`, `/home/**` or `/home/**,/opt/**`; command execution is not a filesystem sandbox. `show ai-identity <NAME>` lists its configured rules; `unset ai-access <RULE>` deletes only that rule, while `unset ai-access policy` resets all rules after confirmation. Cancellation preserves policy. AI Identity management contains pending requests, approve/deny, reconnect, authentication method, rotation and revocation; security-sensitive effects require the existing explicit review/authorization, never a duplicate or bypass. System owns `set server mcp` (guided setup), `unset server mcp` (remove route, retain certificate/account material), `unset server mcp purge` (interactive destructive confirmation), certificate lifecycle and `system diagnostics mcp`. The approved one-shot grammar is documented in CLI Reference. Preserve real user OAuth, positive and negative authorization, safe certificate activation/rollback, upgrade state continuity and exact-head E2E release gates.
+`set mcp-server` opens MCP Server Settings; `set ai-identity` opens the single connection/authentication wizard; `set ai-access` opens named Rule creation/editing. Named Identity opens onboarding or management; named Rule opens create/edit. Reusing a Rule name replaces selected Source/Destination rather than adding a second Rule. File permissions require absolute path scopes such as `/**`, `/home/**` or `/home/**,/opt/**`; command execution is not a filesystem sandbox. `show ai-identity <NAME>` lists its configured rules; `unset ai-access <RULE>` deletes only that rule, while `unset ai-access policy` resets all rules after confirmation. Cancellation preserves policy. AI Identity management contains pending requests, approve/deny, reconnect, authentication method, rotation and revocation; security-sensitive effects require the existing explicit review/authorization, never a duplicate or bypass. Explicit TLS intent uses `set mcp-server <SETTING> <VALUE>`; MCP Server owns `unset mcp-server` (remove route, retain certificate/account material), `unset mcp-server purge` (interactive destructive confirmation), certificate lifecycle and `system diagnostics mcp`. The approved one-shot grammar is documented in CLI Reference. Preserve real user OAuth, positive and negative authorization, safe certificate activation/rollback, upgrade state continuity and exact-head E2E release gates.
 
 
 ```text
@@ -46,11 +49,11 @@ MCP Bridge
 → integration/transport layer
 ```
 
-MCP does not create a separate public identity model.
+MCP does not create a separate public identity model. Managed Host tools accept the exact name or full Client ID returned by `list_hosts`; prefixes and ambiguous identifiers fail closed. Both identifiers use the same existing AI Access rules. Server-self is separately controlled and must be explicitly enabled. Agent connectivity does not imply AI executor readiness. Windows Agent lifecycle support alone does not establish AI executor readiness. The Windows native executor reuses authenticated claim/complete transport with mandatory response HMAC. It remains disabled unless the local operator explicitly opts in using a protected execution-account profile. The signed claim records the Windows path dialect; native file paths use drive-qualified paths (for example `C:/Data/**`), and `/**` is the explicit all-file policy scope. The local allowed roots intersect with the Server Rule scope. UNC/device paths, traversal, streams, reparse points and multiply linked files are rejected. Native Windows and enrolled-host qualification remain separate from implementation. Installed Windows upgrades harden the product code-tree ACL without widening OS ancestors or changing identity/state; see [WINDOWS_CLIENT.md](WINDOWS_CLIENT.md).
 
-## 2. AI MCP Setup
+## 2. Connect and authenticate an AI Identity
 
-The canonical guided entry is `set ai-mcp` (AI MCP Setup): `Set up and manage AI MCP connections`. It covers MCP Server, MCP Bridge and AI service connections. The named `set ai-identity <NAME>` resource command remains compatible; it reviews pending requests and manages the same authenticated resource. AI Access remains separate authorization.
+Use `set mcp-server` for MCP Server Settings (Configure endpoint, TLS and Server execution; Diagnostics). Use `set ai-identity [NAME]` to connect or manage an AI Identity and review pending requests. Authorization is separately managed by `set ai-access`.
 
 ```text
 AI Identity
@@ -92,7 +95,7 @@ set ai-identity <IDENTITY> deny <PENDING-ID>
 
 Credential rotate/revoke/configure are security-sensitive authentication changes; revoke can interrupt active clients. OAuth approve is an explicit authorization decision that can widen access, while deny rejects the pending authorization. These explicit commands are themselves operator approval and do not add a second confirmation prompt.
 
-Public MCP is served only through the `single443` HTTPS frontend. `direct` deployment mode uses its public control port for the FRP listener and therefore must not advertise or activate `https://<host>/mcp`; `set server mcp` and certificate mutation commands fail closed until the Server is reconfigured to `single443`. The supported transition is to re-run the Data Relay Link Server installer from the same immutable release/source ref with `FRP_DEPLOYMENT_MODE=single443`, confirming the cutover by typing `SWITCH` on a TTY or setting `FRP_CONFIRM_MODE_SWITCH=yes` for a non-interactive run. A stale TLS intent or certificate from an earlier configuration does not make Direct mode MCP-capable.
+Public MCP is served only through the `single443` HTTPS frontend. `direct` deployment mode uses its public control port for the FRP listener and therefore must not advertise or activate `https://<host>/mcp`; `set mcp-server` and certificate mutation commands fail closed until the Server is reconfigured to `single443`. The supported transition is to re-run the Data Relay Link Server installer from the same immutable release/source ref with `FRP_DEPLOYMENT_MODE=single443`, confirming the cutover by typing `SWITCH` on a TTY or setting `FRP_CONFIRM_MODE_SWITCH=yes` for a non-interactive run. A stale TLS intent or certificate from an earlier configuration does not make Direct mode MCP-capable.
 
 For a single443 Server with an explicitly configured MCP TLS hostname and mode, that hostname is the canonical `https://<MCP-HOSTNAME>/mcp` origin for OAuth issuer, discovery, registration and token exchange. The configured MCP hostname is the authoritative public origin; do not expose a competing public configuration path. After a hostname change, inspect `/.well-known/oauth-authorization-server` and `/.well-known/oauth-protected-resource/mcp` through the externally reachable MCP HTTPS hostname; the issuer, registration endpoint, token endpoint and protected resource must all match the routed, certificate-valid FQDN. Internal loopback discovery checks do not substitute for the external client test.
 
@@ -104,7 +107,7 @@ identity (that would make initial onboarding impossible).
 
 1. Add the public `https://<MCP-HOSTNAME>/mcp` endpoint in the supported
    ChatGPT MCP connection UI; this opens an OAuth request.
-2. Copy the Pending request ID (oap_...) displayed on the browser consent page and paste it into the Pending request ID prompt in `set ai-mcp` → Connect or manage AI service. Review the client, redirect origin, requested resource and scope before approving. Alternatively, on the **DRLink Server** run:
+2. Copy the Pending request ID (oap_...) displayed on the browser consent page and paste it into the Pending request ID prompt in `set ai-identity`. Review the client, redirect origin, requested resource and scope before approving. Alternatively, on the **DRLink Server** run:
 
    ```text
    set ai-identity chatgpt approve <PENDING-ID>
@@ -170,7 +173,7 @@ A true read-only role does not grant command execution.
 
 ## 4. AI Access Rule
 
-`set ai-access` opens guided rule selection/creation. `set ai-access <RULE>` opens create/edit for that name. Show and review Source, Destination, Permission, file paths, effective OS execution constraints, enabled state and current/future host scope. The default destination scope is explicitly selected existing hosts; no implicit wildcard. Editing a named rule replaces its previous destination; create a different rule to add another destination. All trusted Managed Hosts (current and future; excludes Server) is the explicit dynamic destination. To limit an Identity to a Managed Host Group, select its named group in the Access Rule wizard, or use the destination selector `managed-host-group:<name>` (an exact name) or `managed-host-group:<group-id>`. The rule binds the immutable group ID and follows current and future trusted members. Adding a host to the group changes its applicable permissions; removing it withdraws the group-derived permissions. Other matching rules remain independent. This is not a Network Object Group or the all-trusted-host scope. File path examples: `/**` (all files), `/home/**` (one directory), `/home/**,/opt/**` (multiple directories); `*` is not an absolute path scope. OS access restrictions still apply. `show ai-identity <IDENTITY>` lists configured rules and their destinations, permissions, paths and enabled state; runtime authorization is evaluated per call. `unset ai-access <RULE>` removes one rule, whereas `unset ai-access policy` resets all rules and fails closed after explicit confirmation. Use a verified identity and trusted host-backed selectors; native `server:self` is separately reviewed and never implied by all Managed Hosts.
+`set ai-access` / `set ai-access <RULE>` opens the canonical reviewed rule wizard. Select Source, Destination, Permission, direct-file paths and (This Server only) execution accounts/default as specified below. A named rule replaces its prior destination; separate rules add destinations. An account-bound This Server Rule cannot be converted into a Managed Host Rule. Existing trusted Managed Host/group selectors, immutable group IDs, explicit dynamic trusted membership and separate `server:self` remain unchanged. `show ai-access`, `show ai-identity <NAME>` and `test ai-access` must show configured versus effective permissions and account readiness; deletion/reset remain fail-closed.
 
 Canonical fields:
 
@@ -179,7 +182,8 @@ name
 source      → AI Identity
 destination → Managed Host / Network Object / Network Group / Managed Host Group / managed-hosts:trusted / server:self
 permission  → Permission Object / Permission Group
-paths       → absolute scopes for file permissions
+execution   → allowed OS accounts and default (server:self only)
+paths       → absolute direct-file scopes
 enabled
 ```
 
@@ -189,12 +193,46 @@ Example first rule:
 set ai-access claude-prod source claude destination production-servers permission read-only paths /var/log/** enabled
 ```
 
+### 4.1 Canonical execution-account contract
+
+**User outcome:** a user says "fix the project, test and deploy it". For This Server, the AI discovers its available execution context and chooses the approved account. For Managed Hosts, the existing Agent executes authorized requests without additional account setup. The user never has to provide an account or path for routine requests. No automatic root retry, sudo password manager, command classifier, new gateway or sandbox is in scope.
+
+For This Server Full management (and Custom with account-bearing operations), show the default existing OS account, additional existing accounts (multi-select), and explicit Administrator/root choice. Root may be the only or default account; no forced `drlink-mcp` account. Default is one allowed account, chosen explicitly; root must never be selected implicitly. A read-only rule offers no arbitrary execution account switch: diagnostic tools and scoped reads use a locally approved nonprivileged reader, and shell/write/delete/transfer permissions not granted by the rule are denied. Read-only plus management are not independent modes that can be combined to elevate a grant; Permission describes capabilities and accounts describe execution identity.
+
+```text
+Source           : ChatGPT
+Destination      : server:self
+Permission       : Full management
+Default account  : aella
+Additional users : ubuntu
+Administrator    : root (explicitly approved)
+Direct file paths: /**
+Review           : aella, ubuntu, root; default aella
+```
+
+Select accounts from the Server's eligible existing OS users, not arbitrary names supplied by an AI. The Server-local execution ceiling and the authenticated AI's This Server Rule must both authorize the chosen account. The Server's privileged CLI reviews local eligibility and the Rule. Never silently increase the local ceiling. Root grants real administrative authority, including the ability to change DRLink itself. Existing OS escalation rights remain real authority.
+
+**Managed Hosts (owner direction 2026-11-28):** retain existing Agent installation, enrollment, authentication, job transport, service execution identity and existing platform-specific safeguards. All AI-specific permissions, target/group selection and direct-file scopes are managed centrally on the Server with AI Access Rules. No additional Agent execution configuration, account advertisement, account-bound RPC, or local approval wizard is introduced. Managed Host rules do not accept execution-account bindings; MCP rejects run_as/cwd overrides for those targets rather than silently ignoring them. Existing Agent behavior is not equivalent to arbitrary OS-account selection. Explicitly bound This Server Rules cannot be repurposed as Managed Host Rules; create a separate Rule.
+
+For each native Server operation, resolve target and current identity, then choose the explicitly requested `run_as` or a unique effective default. Apply one complete enabled matching rule that authorizes the capability, account and applicable path together; do not union independent rules into a new grant. If matching eligible rules disagree on the implicit default, return an ambiguity error with the authorized choices; explicit `run_as` can select an otherwise fully authorized rule. Never silently choose root or substitute another account. Job operations inherit the original target, immutable identity, UID/account, rule context and cwd; do not accept an account switch. Recheck current entitlement for every call, deny revoked job access and terminate tracked running jobs on revocation or loss of their grant; detached OS processes are not guaranteed retractable.
+
+**Paths:** direct file operations enforce rule scopes and OS permissions; native Server operations additionally enforce its approved local path ceilings; all files is `/**` in policy and `/` as an OS root. Full management defaults to full direct-file paths only with explicit review; narrower custom paths remain possible. Initial cwd is not a shell sandbox. For native Server commands, omitted cwd selects the Server-approved per-account default (normally its accessible HOME); if no safe approved default exists return a diagnostic, never guess or fall back to root. Explicit invalid/out-of-scope cwd fails. A filesystem-wide grant may resolve legitimate existing directory aliases to their canonical cwd; scoped file operations retain traversal/symlink protections. For a general shell, the actual account's OS authority applies regardless of direct-file paths.
+
+**Discovery and normal use:** `get_server` exposes the requesting identity's effective native execution context. Managed Host discovery retains existing host information and readiness, not OS account selection. Unsupported targets/capabilities report unsupported, not false READY. Native Server MCP command, Git and applicable file/process calls take optional `run_as`; native command cwd is optional. Default is used when omitted; AI tool descriptions direct development/Git to the project-owning approved account and system changes to explicitly approved root only when appropriate to user intent. Never auto-escalate on permission failure. No need to reconnect OAuth after an ordinary policy edit.
+
+**Operator verification:** the native policy test separates Policy Result, configured per-capability execution grants, and Live OS execution (NOT TESTED until a real authenticated operation). Show the chosen identity/target/account, effective paths, local executor readiness and actual command/file checks appropriate to the permission. Separate local executor self-test from real authenticated remote MCP checks; never claim remote PASS from local tests. Provide machine-readable denial codes identifying authentication, policy, account, cwd, file scope, OS permission or unavailable target, with only authorized recovery information. Audit the resolved account/UID, identity, target, rule/revision, tool and result without tokens or sensitive file contents.
+
+**Native tracked jobs:** the candidate revalidates the complete grant against a single read snapshot before launch and on access. While jobs are active the native executor also checks current grants on a bounded 0.5-second interval (plus DB/OS scheduling latency); it terminates the managed process group and permanently denies the revoked job receipt. No client poll is required. Regranting access permits new jobs, not reuse of revoked job IDs. Detached OS processes are not guaranteed retractable.
+
+**Persistence and upgrade:** maintain one canonical rule representation across CLI, Web (where present), policy evaluation and ConfigurationBundle. Execution binding applies only to server:self and is an allowed account list plus one default; omitted edit preserves binding, invalid/default-not-allowed or ambiguous configuration fails closed. Existing native Server singleton execution must migrate only to the previously effective locally approved account and paths, never grant additional accounts/root by migration. Explicitly reviewed Server profile replacement can remove accounts, change roots and replace the reader; review the previous and proposed local settings and impact on existing Rules. Changed singleton authority invalidates frozen legacy grants until explicitly reviewed; no implicit migration. Existing Agent execution and central rules remain unchanged; if identity/OS authority cannot be verified, preserve state and mark unavailable pending explicit review. Preserve OAuth, certificates, identities, audit and existing policy/revisions. Do not claim implementation until new schemas, CLI, runtime, packaging, upgrade/rollback and real E2E pass.
+
 ## 5. Policy semantics
 
 AI Access is explicitly deny-by-default and **WHITELIST-only**.
 
 ```text
-Authenticated AI Identity + matching enabled Rule → ALLOW
+Managed Host: authenticated AI Identity + matching enabled Rule + existing Agent eligibility → ALLOW
+Server-self: authenticated AI Identity + complete matching enabled Rule + local Server execution eligibility → ALLOW
 No Policy / No Rules                              → DENY
 No matching Rule                                  → DENY
 Enforcement DISABLED                              → DENY ALL
@@ -220,7 +258,7 @@ show ai-access-log destination <DESTINATION>
 show ai-access-log permission <PERMISSION>
 ```
 
-Useful entries expose timestamp, AI Identity, destination, permission, and result. Sensitive file contents, bearer tokens, and unrestricted command output are not audit payloads.
+Useful entries expose timestamp, AI Identity, destination, permission, selected execution account/UID, rule/revision and result. Sensitive file contents, bearer tokens, and unrestricted command output are not audit payloads.
 
 ## 7. MCP security boundary
 
@@ -232,7 +270,7 @@ MCP host
 → server-side MCP Bridge
 → authenticated AI Identity
 → current AI Access authorization
-→ authenticated DRLink Agent management path
+→ local Server executor or authenticated DRLink Agent management path
 → target OS permission boundary
 ```
 
@@ -256,7 +294,7 @@ ConfigurationBundle rules use the same `paths` list. Omit `paths` on edit to pre
 
 When `permission` is a Permission Group, public `test ai-access` expands to atomic permissions, evaluates each member with the same path-aware rules, and aggregates ALLOW only when every atomic member allows. Mixed Permission Groups therefore cannot report a false scalar ALLOW.
 
-Command execution is stronger than direct read/write permissions because a shell may modify system state. Grant `command-exec` only when the target OS identity and privilege boundary are appropriate.
+Command execution is stronger than direct read/write permissions because a shell may modify system state. The account selection, optional cwd, target-local ceiling and effective rule semantics in §4.1 are mandatory. Direct-file paths and initial cwd are not a shell sandbox.
 
 Unknown or ungranted operations are denied.
 

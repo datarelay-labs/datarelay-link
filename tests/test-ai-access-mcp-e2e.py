@@ -809,6 +809,41 @@ class MCPBridgeE2ETests(unittest.TestCase):
         )
         self.assertIn("DENY", self.text_of(payload))
 
+    def test_listed_client_id_is_same_target_and_same_policy_as_name(self):
+        _, listing = self.call(self.cursor, "list_hosts", {})
+        hosts = json.loads(self.text_of(listing))
+        target = next(h for h in hosts if h["name"] == "lab1")
+        endpoint = target["client_id"]
+        self.assertEqual(endpoint, "client-lab-bbbbbbbb")
+        _, info = self.call(self.cursor, "get_host", {"endpoint": endpoint})
+        self.assertNotIn("DENY", self.text_of(info))
+        self.assertEqual(json.loads(self.text_of(info))["name"], "lab1")
+        path = self.etc_vendor / "id-smoke"
+        _, result = self.call(self.cursor, "write_file", {"endpoint": endpoint, "path": str(path), "content": "id-smoke"})
+        self.assertNotIn("DENY", self.text_of(result))
+        self.assertEqual(path.read_text(), "id-smoke")
+        _, result = self.call(self.cursor, "read_file", {"endpoint": endpoint, "path": str(path)})
+        self.assertEqual(self.decoded_file(result), "id-smoke")
+        _, result = self.call(self.cursor, "delete_file", {"endpoint": endpoint, "path": str(path)})
+        self.assertNotIn("DENY", self.text_of(result))
+        self.assertFalse(path.exists())
+        for forbidden in ("client-prod-aaaaaaaa", "client-lab", "unknown", "server:self"):
+            _, result = self.call(self.cursor, "get_host", {"endpoint": forbidden})
+            self.assertIn("DENY", self.text_of(result))
+        _, result = self.call(self.chatgpt, "write_file", {"endpoint": "client-prod-aaaaaaaa", "path": str(path), "content": "denied"})
+        self.assertIn("DENY", self.text_of(result))
+        _, result = self.call(self.cursor, "write_file", {"endpoint": endpoint, "path": str(Path(self.tmp) / "outside"), "content": "denied"})
+        self.assertIn("DENY", self.text_of(result))
+
+    def test_managed_host_rejects_native_execution_overrides(self):
+        # Managed Hosts keep the existing execution transport and identity.
+        _, normal = self.call(self.cursor,"exec",{"endpoint":"lab1","command":"echo central-only"})
+        self.assertIn("central-only",self.text_of(normal))
+        for override in ({"run_as":"root"},{"cwd":"/"}):
+            _, result=self.call(self.cursor,"exec",{"endpoint":"lab1","command":"echo must-not-run",**override})
+            self.assertIn("DENY",self.text_of(result))
+            self.assertNotIn("must-not-run",self.text_of(result))
+
     def test_large_exec_bounded_result_completes_via_real_agent_queue(self):
         # PASS1 F014: a quick 64 KiB/1 MiB command must return a bounded
         # result, never an Agent-job delivery TIMEOUT. Exercise the complete

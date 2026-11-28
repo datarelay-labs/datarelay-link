@@ -253,19 +253,9 @@ def default_windows_client_installer_url(cfg=None):
 
 
 def resolve_configured_installer_url(cfg, *, windows=False):
-    """Resolve Managed Host installer URL from Server-local artifacts only.
-
-    Configured Server-local and unrelated administrator URLs are preserved.
-    Missing URLs and former official public DataRelay/fatedier URLs are
-    derived from allocator_public_url. Fail closed if that is impossible.
-    """
-    platform = 'windows' if windows else 'linux'
+    """Always derive the qualified Server-local source; ignore retired overrides."""
     if not isinstance(cfg, dict):
-        fail_closed_installer(platform)
-    key = 'windows_client_installer_url' if windows else 'client_installer_url'
-    configured = str(cfg.get(key, '') or '').strip()
-    if configured and not _is_forbidden_public_installer_url(configured):
-        return configured
+        fail_closed_installer("windows" if windows else "linux")
     return server_local_installer_url(cfg, windows=windows)
 
 
@@ -472,8 +462,10 @@ def entry_authority_for_cfg(cfg):
         raise ValueError('HTTPS allocator public URL is required')
     if allocator.username or allocator.password or allocator.query or allocator.fragment:
         raise ValueError('invalid allocator public URL')
-    authority = str(cfg.get('bootstrap_hostname') or allocator.netloc).strip()
-    return zt.entry_authority(authority)
+    server_config = load_server_config()
+    if server_config is None:
+        raise ValueError('Server configuration helper unavailable')
+    return zt.entry_authority(server_config.bootstrap_authority(cfg))
 
 
 def validate_zero_touch_prerequisites(cfg, platform, installer, ca_fp):
@@ -999,12 +991,7 @@ def print_manual(cfg, record, ttl, public_host, control_public, allocator, ca_fp
         print('WARNING: allocator public URL is not configured.')
         print('Set FRP_ALLOCATOR_URL on the Agent Host, or re-run the server installer.')
     else:
-        print('Set the Agent installer URL, then re-run this command:')
-        print('  sudo drlink set server installer-url <URL>')
-        suggested = default_client_installer_url(cfg)
-        if suggested and not _is_forbidden_public_installer_url(suggested):
-            print('Example:')
-            print('  sudo drlink set server installer-url %s' % suggested)
+        print('Qualified Server-local Agent installer unavailable. Run system diagnostics and repair the Server package.')
         if not allocator:
             print()
             print('WARNING: allocator public URL is not configured.')

@@ -240,9 +240,9 @@ load_existing_server_config
 resolve_server_settings
 [[ "$FRP_PUBLIC_IP" == '203.0.113.10' ]] || fail "CASE D public ip overwritten"
 [[ "$FRP_ALLOCATOR_PUBLIC_URL" == 'https://203.0.113.10:6099/enroll' ]] || fail "CASE D HTTP URL must not be reused"
-[[ "$CLIENT_INSTALLER_URL" == 'https://example.invalid/bootstrap-client.sh' ]] || fail "CASE D installer URL overwritten"
-[[ "$WINDOWS_CLIENT_INSTALLER_URL" == 'https://example.invalid/bootstrap-client.ps1' ]] \
-  || fail "CASE D Windows installer URL overwritten"
+[[ "$CLIENT_INSTALLER_URL" == 'https://203.0.113.10:6099/artifacts/agent/bootstrap-client.sh' ]] || fail "CASE D legacy installer URL not replaced"
+[[ "$WINDOWS_CLIENT_INSTALLER_URL" == 'https://203.0.113.10:6099/artifacts/agent/bootstrap-client.ps1' ]] \
+  || fail "CASE D legacy Windows installer URL not replaced"
 pass "CASE D rerun preserves runtime config"
 
 # Explicit env wins over existing config.
@@ -369,7 +369,7 @@ resolve_server_settings
 [[ "$CLIENT_INSTALLER_URL" != *'/main/'* ]] || fail "stable channel still uses mutable main"
 pass "official main installer URL migrated to immutable tag"
 
-# Arbitrary custom installer URLs are left unchanged.
+# Retired custom installer URLs are replaced by the qualified Server-local source.
 EXISTING_CUSTOM="$WORKDIR/custom-installer-url.json"
 python3 - "$EXISTING_CUSTOM" <<'PY'
 import json, sys
@@ -388,8 +388,8 @@ reset_env
 export FRP_SERVER_CONFIG="$EXISTING_CUSTOM"
 load_existing_server_config
 resolve_server_settings
-[[ "$CLIENT_INSTALLER_URL" == 'https://example.org/my-custom-client.sh' ]] || fail "custom installer URL rewritten"
-pass "custom installer URL preserved"
+[[ "$CLIENT_INSTALLER_URL" == "https://203.0.113.10:6099/artifacts/agent/bootstrap-client.sh" ]] || fail "legacy override not replaced"
+pass "legacy custom installer URL replaced"
 
 # Empty installer URL uses the current canonical default.
 EXISTING_EMPTY="$WORKDIR/empty-installer-url.json"
@@ -525,7 +525,7 @@ ip_cfg = json.loads(Path(sys.argv[3]).read_text())
 locator = 'A3xK9mP2'
 from urllib.parse import urlparse
 for cfg in (domain_cfg, ip_cfg):
-    expected = urlparse(cfg['allocator_public_url']).netloc
+    expected = S.bootstrap_authority(cfg)
     assert mod.entry_authority_for_cfg(cfg) == expected
     assert zt.render_entry_command(expected, locator, 'linux') == (
         'curl -kfsS https://' + expected + '/' + locator + '|sudo bash')

@@ -48,7 +48,7 @@ frpctl_lib_candidate() { printf '%s/%s' "$LIB" "$1"; }
             self.assertEqual(result.returncode,0,result.stderr)
             self.assertIn('https://203.0.113.10/artifacts/agent/bootstrap-client.sh',result.stdout)
             self.assertIn('https://203.0.113.10/artifacts/agent/bootstrap-client.ps1',result.stdout)
-            self.assertIn('configured former public source ignored',result.stdout)
+            self.assertEqual(result.stdout.count('legacy override ignored; automatic qualified source'),2)
             self.assertNotIn('raw.githubusercontent.com',result.stdout)
             self.assertNotIn('github.com/fatedier',result.stdout)
 

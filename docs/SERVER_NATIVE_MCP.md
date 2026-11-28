@@ -1,44 +1,13 @@
-# Data Relay Link v2.4 — Native Server MCP
+# Data Relay Link — Native Server MCP execution contract
 
-> Workstream: [Issue #223](https://github.com/datarelay-labs/datarelay-link/issues/223).
-> Target: dev-drlink / access.xdr.ooo.
-> Public endpoint: **https://mcp.link.xdr.ooo/mcp**.
-> Existing public TLS, OAuth, verified identity and Server-self host-info access are established.
-> Source qualification and installed full-control acceptance are separate; live evidence is recorded in Issue #223.
+> **Status:** approved target redesign, not installed-runtime qualification.
+> Canonical user workflow and authorization semantics: [AI_ACCESS_MCP.md §4.1](AI_ACCESS_MCP.md#41-canonical-execution-account-contract).
 
-## Scope
+Native MCP controls `server:self` without an Agent on the Server; Managed Hosts use the authenticated Agent path. Only native Server execution supports account selection; Managed Hosts retain existing Agent execution, with central AI Access and no additional local configuration. Existing Server and Managed Host tools remain compatible. No new gateway, sandbox, or OAuth model is required.
 
-Public AI Identity/TLS management follows the target in [AI_ACCESS_MCP.md](AI_ACCESS_MCP.md); native dispatch, actual authorization and security qualification are unchanged.
+General command execution grants the chosen OS account's actual authority. Native execution defaults off unless locally enabled. An explicit local root approval and a matching AI Access rule for root are both mandatory. A privileged Bridge does not implicitly grant root. Child execution preserves the selected account's UID/GID, groups, HOME, Git and file ownership context without inheriting Bridge credentials. Existing OS escalation privileges are real authority, not a DRLink sandbox.
 
-Native MCP controls the DRLink Server through the existing authenticated Bridge.
-It does not require an Agent, central Server Peer, Enrollment Code, new ingress,
-or another OAuth approval. This workstream changes the MCP implementation,
-its necessary packaging and authorized development-server configuration only.
-
-The full-control profile supports general argv and shell commands, file
-creation/edit/read/delete, writable Git, process jobs, and service/package/
-deployment commands under an explicitly selected OS account. The restricted
-executor remains available when full-control is disabled.
-
-**General command execution grants that account's real OS authority.**
-An initial working-directory scope is not a filesystem sandbox. Root requires
-a separate local operator opt-in. Authentication, current AI Access, job
-ownership and audit remain enforced for every call.
-
-## Authentication and authorization
-
-- The existing OAuth or operator-issued bearer credential resolves a verified,
-  enabled AI Identity. OAuth alone does not grant any operation.
-- `server:self` is a built-in Server target, distinct from Managed Hosts.
-  It is not included in `list_hosts` and never impersonates an Agent.
-- Every operation re-evaluates canonical v2.4 AI Access and records ALLOW/DENY.
-- Every process read/input/stop call additionally checks authenticated identity
-  ownership and the current locally selected execution account/profile.
-- A revoked identity, revoked command permission, removed path scope, disabled
-  profile or changed account denies subsequent access to retained jobs.
-- Child commands receive a minimal environment, not Bridge tokens or the
-  Bridge's inherited environment. They may use the configured account's own
-  files, groups, Git configuration and OS permissions.
+Every invocation rechecks current AI Access, target-local account eligibility and applicable paths. Job ownership binds identity, target, selected account/UID and cwd; subsequent input/poll/stop never changes account. Deny unauthorized/revoked access and terminate tracked jobs on loss of grant. Detached processes remain outside managed lifecycle.
 
 ## Connection renewal
 
@@ -61,62 +30,27 @@ approval. Do not recreate the app, copy credentials, disable expiry, or
 silently broaden a registered client's scope. Verify the new connection
 renews after access-token expiry before calling host interoperability fixed.
 
-## Operator settings
+## Operator settings and public tools
 
-Configure settings in the existing MCP Bridge service only after source,
-security, artifact and rollback checks pass.
+The canonical `set mcp-server` menu combines public endpoint, TLS and local execution setup; Diagnostics is the second item. Reuse an active valid certificate, preserve the existing approved ceiling and explicitly review new account eligibility. Optional dedicated `drlink-mcp` preparation is not a remote grant. Preserve Linux ACL preparation, ownership, no privileged-group fallback, rollback on failed activation and truthful Unknown diagnostics. The rule binds identity-specific accounts/default, not a second global execution-user setting.
 
-| Setting | Meaning |
+The public rule wizard is the account configuration entry point. Review the local execution ceiling and permitted accounts together with the AI rule; no second mandatory manual environment-variable or path configuration for normal setup. The local executor enforces allowed accounts and paths independently of the central rule. Use root for explicit full administration, a real project owner for development, or a locally approved read-only reader. The existing `drlink-mcp` user remains optional, not mandatory. Existing singleton settings are migration inputs only; do not reintroduce a global execution account as the target design.
+
+| Tool family | Target contract |
 |---|---|
-| `DRLINK_MCP_SERVER_SELF_ENABLED=1` | Enable independently authorized Server-self access |
-| `DRLINK_MCP_SERVER_LOCAL_EXEC_ENABLED=1` | Enable local file/command execution |
-| `DRLINK_MCP_SERVER_FULL_CONTROL_ENABLED=1` | Select the general command/job profile |
-| `DRLINK_MCP_SERVER_EXEC_USER=<account>` | Required existing OS execution account; never chosen by tool arguments |
-| `DRLINK_MCP_SERVER_ALLOWED_ROOTS=<absolute paths separated by colons>` | Required initial-cwd/file boundary, intersected with AI Access |
-| `DRLINK_MCP_SERVER_DEFAULT_CWD=<absolute directory>` | Optional initial cwd for the existing `exec(endpoint=server:self)` alias |
-| `DRLINK_MCP_SERVER_ADMIN_ENABLED=1` | Separate explicit local opt-in required when the selected account has UID 0 |
+| `get_server`, `get_host`, `list_hosts` | Discover identity-filtered effective execution context and capabilities; Server-self remains distinct from Managed Host inventory |
+| `server_run`, `server_exec`, `server_git` | Optional `run_as` and optional cwd; default account/cwd from authorized context |
+| Existing file read/write/delete/upload/download aliases | Optional `run_as` for server:self only; identical rule/local path checks and OS ownership |
+| `list_processes` | Read-only capability or approved account context, according to effective rule |
+| `server_job_poll/input/stop` | Bound original job account and identity, no account override |
 
-All execution gates default off. The Bridge service running as root does not
-implicitly select root for commands. Existing `NoNewPrivileges=yes` remains
-in force; selecting a non-root account does not promise privileged package or
-system-service operations. An operator who needs those operations must choose
-the intended account and independently enable UID 0 when appropriate.
+Keep existing tool names/argument compatibility, retain existing Managed Host transport and execution semantics. Expose only supported capabilities. New optional parameters are genuinely optional in public JSON schemas. Existing clients omitting them use their explicitly authorized default. Tool descriptions explain account selection; do not classify command strings to choose root. All errors identify the failing boundary, with authorized context only. Command, writable Git, stdin and mutation tools retain accurate destructive/open-world annotations. The canonical path/default, overlapping-rule, root, migration and diagnostic semantics are in AI_ACCESS_MCP.md.
 
-Allowed roots validate paths and initial cwd; a general shell can subsequently
-access anything its OS account permits. Do not describe this profile as a
-restricted filesystem or process sandbox.
+### Existing singleton profile migration
 
-For the full-control command tools only, a directory alias may be resolved to
-its existing canonical directory when the effective AI Access paths explicitly
-include `/**` and the operator-selected roots include `/`. The resolved path is
-validated before launch and stored in the job receipt. Scoped command grants,
-restricted executors and direct file operations retain their no-symlink checks.
-This changes neither AI permissions nor the configured execution account.
+Use the existing profile menu to add accounts while preserving existing scopes, or explicitly review replacement of accounts, paths and reader. A replacement shows previous and proposed settings and can change effective grants; removing an account denies its operations, and changing former singleton authority invalidates the inherited grant. The same activation/rollback procedure applies. Managed Hosts never require this local Server profile.
 
-## Public tools
-
-| Tool | Input | AI Access | Result |
-|---|---|---|---|
-| `get_server` | None | host-info | Server target and actual hostname |
-| `get_system_info` | `endpoint=server:self` | host-info | Actual Server OS identity |
-| `server_read_file` | `path` | file-read and path scope | Bounded file bytes |
-| `server_write_file` | `path, content` | file-write and path scope | Create or update file |
-| `server_delete_file` | `path` | file-write and path scope | Delete regular file |
-| `server_run` | `cwd, argv` | command-exec and initial cwd | General argv command and job receipt |
-| `server_exec` | `cwd, command` | command-exec and initial cwd | Shell command and job receipt |
-| `server_git` | `cwd, argv` beginning with Git | command-exec and initial cwd | Git operations including add/commit/push |
-| `server_job_poll` | `job_id`, optional cursors/wait | command-exec, stored cwd, same identity | State and incremental output |
-| `server_job_input` | `job_id`, optional `data, eof` | command-exec, stored cwd, same identity | Accepted stdin byte count / EOF |
-| `server_job_stop` | `job_id` | command-exec, stored cwd, same identity | Stop managed process group and collect state |
-
-Existing file/process-list and `exec(endpoint=server:self)` aliases also use
-the selected full-control profile. Managed Host behavior is unchanged.
-When full-control is disabled, the original restricted executor continues
-to enforce its read-only Git and selected-test rules; new shell/job tools deny.
-
-Command, writable Git and stdin tools advertise mutating, destructive,
-open-world behavior. Optional process settings have typed public schemas and
-are validated before execution; they are not incorrectly marked required.
+The combined setup reviews the active managed profile against its exact local file and live Bridge settings. A reviewed additive migration pins the previous account's UID, default cwd and roots; additional accounts receive separately reviewed local roots. It retains only unchanged, previously effective Server-self legacy grants via a bounded fingerprint snapshot of rule identity, destination, permission capabilities and paths. Disabled or unverified legacy rules, edited rules and new management rules require explicit account binding. New accounts never inherit the previous grant. Existing local account scopes are not expanded by migration. Unrecognized external overrides or incompatible changes are refused without overwriting the previous profile. An activation failure restores the exact prior profile and verifies the running service. The legacy singleton environment value is cleared in a multi-account profile so an older native executor cannot silently substitute the previous default.
 
 ## Process and output contract
 
@@ -146,66 +80,9 @@ are validated before execution; they are not incorrectly marked required.
 
 ## Packaging and deployment
 
-Both `drlink_mcp_server_executor.py` and `drlink_mcp_full_control.py` belong
-in the Server project manifest and generated Server bootstrap bundle.
-The full-control runtime depends on the existing Agent file helper, without
-changing Agent behavior. The shared `path_allowed` fix only corrects an
-explicit `/**` tree; it grants no implicit path scope.
+Implement in the existing Bridge, native executor, Agent execution path, shared authorization and public CLI/configuration code. Package the actual changed modules and Agent payload through the existing manifest and immutable build process. Migrate legacy singleton Server settings (including the old execution user, allowed roots, default cwd and administrator opt-in) and existing Agent behavior without widening effective grants. A legacy rollout helper may remain for compatible historical artifacts only; it is not the target user configuration procedure.
 
-For this already-running public endpoint, use a reviewed **MCP-only rollout**:
-
-1. Pass the runtime, public HTTP, affected authorization and packaging checks.
-2. Preserve existing generated changes, produce a coherent source/artifact
-   candidate, verify provenance, push it and verify required exact-head CI.
-3. Back up the affected installed modules and MCP-only service configuration;
-   record hashes and a rollback receipt. Preserve existing TLS, OAuth, DB,
-   frontend, FRP and independent developer processes.
-4. Install only the reviewed MCP modules and directly required shared helper.
-   Configure the explicitly selected account/profile and the existing AI
-   Identity's intended AI Access. Restart only `drlink-mcp-bridge.service`.
-5. Check module hashes, active Bridge, unchanged TLS/OAuth metadata and real
-   Native MCP ALLOW/DENY receipts. Retain rollback until acceptance completes.
-
-`tools/operator-native-mcp-full-control.py` implements the narrow file transaction.
-Its default `--check` is read-only. Apply requires root, an exact clean committed
-`--head`, explicit `--exec-user` and `--allowed-root`; UID 0 requires `--allow-root`.
-It installs committed Git blobs, writes only the dedicated `zz-native-full-control.conf`,
-checks backup/install hashes, and automatically restores affected files after a
-failed restart. Rollback refuses later file/permission changes. AI Access remains
-unchanged and must be authorized separately; the helper cannot grant tool privileges.
-
-The MCP-only helper is not a full Server project upgrade. Both `--check` and
-`--apply` verify the installed `drlink_mcp_server_executor.py` and
-`drlink_v24.py` against the selected committed candidate before any replacement
-or restart. A Server missing those modules or running different dependency
-bytes must complete the Server project update first. Dependency mismatches
-fail closed; the helper does not silently replace unrelated runtime modules.
-
-To show a fully executable operator command on **both** `/oauth/authorize` and
-`/oauth/continue`, explicitly configure `--approval-ai-identity plugin-personal-e2e`
-when checking/applying the MCP-only rollout. This sets
-`DRLINK_MCP_OAUTH_OPERATOR_IDENTITY` in the dedicated Bridge drop-in. Example
-for a previously approved administrative profile:
-
-```bash
-sudo python3 tools/operator-native-mcp-full-control.py --apply \
-  --head <qualified-exact-Git-HEAD> --exec-user root --allowed-root / \
-  --allow-root --approval-ai-identity plugin-personal-e2e
-```
-
-For an unbound DCR/CIMD OAuth request, only a currently enabled and
-verified/active operator-configured Identity is displayed. The result looks like
-`sudo drlink set ai-identity plugin-personal-e2e approve oap_<PENDING-ID>`.
-This is only a **display hint**, never automatic approval or authorization. If
-no verified hint is configured, the page retains `<AI-IDENTITY>` rather than
-guessing. An already-bound OAuth client shows the fully executable command with the verified bound Identity. The operator must still review the client and
-execute the command on the correct DRLink Server. Existing TLS, OAuth consent,
-identity credentials, and AI Access rules are unchanged.
-
-The historical single443, certificate-issuance, Preview, domain and Server-peer
-scripts are not this rollout path. Do not rerun them for full-control enablement.
-A current tool/platform privilege denial must be reported and respected;
-neither another executor nor operator-command substitution bypasses that denial.
+Use exact-HEAD, reviewed development qualification before rollout. Preserve TLS/OAuth, DB, audit, FRP, unrelated services and existing operator permissions. Back up changed configuration and runtime, verify artifact hashes, apply atomically or restore the previous effective state on failure; report incomplete rollback. No production deployment or permission change is authorized by this document. A current tool/platform denial is binding. Reconnection is required only for actual credential or host tool-discovery changes, not ordinary policy edits.
 
 ## Validation and acceptance
 
@@ -233,6 +110,8 @@ qualified candidate is deployed, use the genuine existing Native MCP connection
 to demonstrate hostname/account, file CRUD, shell/argv, Git write/commit/push
 in a disposable repository, process input/output/stop, and the authorized
 service/deployment workflow with negative authorization checks.
+
+Extend the existing tests with multi-account/default selection, no implicit root, root opt-in per identity and target, conflicting rules, missing account/cwd, scoped paths, file ownership, migration without expansion, unchanged Managed Host central-policy regressions and real natural-language workflow tests.
 
 Request tool refresh/reconnection only after implementation and deployment,
 and only if new tool discovery needs it. Keep Desktop Commander until actual

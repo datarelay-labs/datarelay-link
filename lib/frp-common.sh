@@ -452,10 +452,7 @@ frp_infer_expected_source_ref() {
     fi
     return 0
   fi
-  for url in \
-    "${FRP_BOOTSTRAP_URL:-}" \
-    "${FRP_CLIENT_INSTALLER_URL:-}" \
-    "${FRP_WINDOWS_CLIENT_INSTALLER_URL:-}"; do
+  for url in "${FRP_BOOTSTRAP_URL:-}"; do
     if [[ -n "$url" ]] && ref="$(frp_source_ref_from_github_raw_url "$url")"; then
       FRP_EXPECTED_SOURCE_REF="$ref"
       export FRP_EXPECTED_SOURCE_REF

@@ -37,6 +37,7 @@ cp "$TREE/etc/drlink/pki/ca.crt" "$TREE/etc/drlink/pki/server.crt"
 cp "$TREE/etc/drlink/pki/ca.key" "$TREE/etc/drlink/pki/server.key"
 
 cp "$ROOT/lib/frp_zero_touch.py" "$TREE/usr/local/lib/drlink/"
+cp "$ROOT/lib/drlink_qualified_artifacts.py" "$TREE/usr/local/lib/drlink/"
 cp "$ROOT/lib/frp_pki.py" "$TREE/usr/local/lib/drlink/"
 cp "$ROOT/lib/frp_mgmt_auth.py" "$TREE/usr/local/lib/drlink/"
 cp "$ROOT/lib/frp_client_registry.py" "$TREE/usr/local/lib/drlink/"
@@ -93,6 +94,22 @@ Path(sys.argv[1]).write_text(json.dumps(cfg, indent=2) + "\n")
 )
 PY
 
+# Serve a real hash-bound inert fixture from the canonical artifact layout.
+python3 - "$TREE" <<'PYART'
+import json, hashlib, sys
+from pathlib import Path
+root = Path(sys.argv[1]) / "usr/local/share/drlink/artifacts"
+agent = root / "agent"
+agent.mkdir(parents=True)
+head = "a" * 40
+items = []
+for name, platform, arch in (("bootstrap-client.sh","linux","any"),("bootstrap-client.ps1","windows","amd64")):
+    p = agent / name
+    p.write_text("# isolated fixture\n")
+    items.append(dict(artifact_type="agent-installer",platform=platform,architecture=arch,
+                      relative_path="agent/"+name,source_head=head,sha256=hashlib.sha256(p.read_bytes()).hexdigest()))
+(root/"manifest.json").write_text(json.dumps(dict(drlink_version="2.4.0",frp_version="0.71.0",source_head=head,immutable_source_ref=head,channel="development",qualification_status="PASS",artifacts=items)))
+PYART
 export FRP_DEPLOY_TEST_ROOT="$TREE"
 export FRP_AUDIT_LOG="$TREE/var/log/drlink/audit.jsonl"
 
@@ -255,8 +272,9 @@ p=Path(sys.argv[1]);d=json.loads(p.read_text());d['client_installer_url']=sys.ar
 PYCFG
 issue --client-name reload-test >"$WORKDIR/reload.out"
 curl -fsSk "$ORIGIN/$(entry_locator "$WORKDIR/reload.out")" -o "$WORKDIR/reload.sh"
-grep -Fq "$NEW_INSTALLER" "$WORKDIR/reload.sh"
-pass "CONFIG_RELOAD_WITHOUT_RESTART"
+! grep -Fq "$NEW_INSTALLER" "$WORKDIR/reload.sh"
+grep -Fq "/artifacts/agent/bootstrap-client.sh" "$WORKDIR/reload.sh"
+pass "LEGACY_INSTALLER_OVERRIDE_IGNORED_WITHOUT_RESTART"
 PYTHONPATH="$ROOT/lib" python3 - "$TICKET" <<'PYREDACT'
 import frp_zero_touch as z,sys
 sample='GET /'+sys.argv[1]+' HTTP/1.1'

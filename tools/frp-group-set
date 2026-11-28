@@ -194,7 +194,7 @@ def confirm_group_delete(selector, yes=False):
     name = CREG.sanitize_display(group.get('name') or gid, 64)
     members = group_member_ids(state, gid)
     if yes:
-        return gid, name, members
+        return gid, str(group.get('name') or ''), members
     if not sys.stdin.isatty():
         fail(
             'deleting Managed Host Group "%s" affects %d Managed Host(s); '
@@ -205,12 +205,21 @@ def confirm_group_delete(selector, yes=False):
     print('Managed Hosts : %d' % len(members))
     print('Group membership is removed. Managed Host identity, Remote Services, and public ports')
     print('are not changed.')
-    answer = input(
-        'Delete Managed Host Group "%s" from %d Managed Host(s)? [y/N]: ' % (name, len(members))
-    ).strip().lower()
-    if answer not in ('y', 'yes'):
-        raise SystemExit('Aborted.')
-    return gid, name, members
+    while True:
+        try:
+            answer = input(
+                'Delete Managed Host Group "%s" from %d Managed Host(s)? [y/N]: ' % (name, len(members))
+            ).strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            raise SystemExit("Cancelled. No changes were applied.") from None
+        if answer in ('y', 'yes'):
+            return gid, str(group.get('name') or ''), members
+        if answer in ('n', 'no', '', '0'):
+            raise SystemExit('Cancelled (aborted). No changes were applied.')
+        if answer == '?':
+            print("Answer y to delete the reviewed group and remove its membership, or n / 0 to cancel. Host identity, Remote Services and public ports remain unchanged.")
+        else:
+            print("ERROR: answer y or n (? for help, 0 to cancel).")
 
 
 def cmd_delete(args):
@@ -221,6 +230,8 @@ def cmd_delete(args):
         group = state['groups'].get(gid)
         if not isinstance(group, dict):
             fail('group %s changed while waiting for confirmation; re-run the command' % gid)
+        if str(group.get('name') or '') != name:
+            fail('Managed Host Group name changed while waiting for confirmation; re-run the command')
         if sorted(str(mid) for mid in group_member_ids(state, gid)) != expected:
             fail('group membership changed while waiting for confirmation; re-run the command')
         for client in state['clients'].values():

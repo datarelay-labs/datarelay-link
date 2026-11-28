@@ -179,24 +179,8 @@ frp_apply_server_local_installer_urls() {
     frp_qualified_artifact_missing windows amd64
     return 1
   }
-  if [[ -z "${FRP_CLIENT_INSTALLER_URL:-}" ]]; then
-    if [[ -z "${CLIENT_INSTALLER_URL:-}" ]] || \
-       frp_is_public_github_installer_url "$CLIENT_INSTALLER_URL" || \
-       frp_is_former_product_installer_url "$CLIENT_INSTALLER_URL" || \
-       [[ "$CLIENT_INSTALLER_URL" == "$(frp_legacy_client_installer_url)" ]] || \
-       frp_is_official_main_installer_url "$CLIENT_INSTALLER_URL" || \
-       [[ "$CLIENT_INSTALLER_URL" == "$(frp_default_client_installer_url)" ]]; then
-      CLIENT_INSTALLER_URL="$linux_url"
-    fi
-  fi
-  if [[ -z "${FRP_WINDOWS_CLIENT_INSTALLER_URL:-}" ]]; then
-    if [[ -z "${WINDOWS_CLIENT_INSTALLER_URL:-}" ]] || \
-       frp_is_public_github_installer_url "$WINDOWS_CLIENT_INSTALLER_URL" || \
-       frp_is_former_product_installer_url "$WINDOWS_CLIENT_INSTALLER_URL" || \
-       [[ "$WINDOWS_CLIENT_INSTALLER_URL" == "$(frp_default_windows_client_installer_url)" ]]; then
-      WINDOWS_CLIENT_INSTALLER_URL="$windows_url"
-    fi
-  fi
+  CLIENT_INSTALLER_URL="$linux_url"
+  WINDOWS_CLIENT_INSTALLER_URL="$windows_url"
   if ! frp_validate_https_url "$CLIENT_INSTALLER_URL"; then
     echo "ERROR: client_installer_url must be a valid https:// URL" >&2
     exit 1
@@ -986,32 +970,8 @@ resolve_server_settings() {
   frp_infer_expected_source_from_release_manifest "$BASE_DIR"
   DEFAULT_CLIENT_INSTALLER_URL="$(frp_default_client_installer_url)"
   DEFAULT_WINDOWS_CLIENT_INSTALLER_URL="$(frp_default_windows_client_installer_url)"
-  CLIENT_INSTALLER_URL="${FRP_CLIENT_INSTALLER_URL:-${EXISTING_CLIENT_INSTALLER_URL:-$DEFAULT_CLIENT_INSTALLER_URL}}"
-  frp_migrate_legacy_client_installer_url
-  WINDOWS_CLIENT_INSTALLER_URL="${FRP_WINDOWS_CLIENT_INSTALLER_URL:-${EXISTING_WINDOWS_CLIENT_INSTALLER_URL:-$DEFAULT_WINDOWS_CLIENT_INSTALLER_URL}}"
-  if frp_is_former_product_installer_url "${WINDOWS_CLIENT_INSTALLER_URL:-}"; then
-    WINDOWS_CLIENT_INSTALLER_URL="$(frp_default_windows_client_installer_url)"
-  fi
-  # Existing config installer URLs are also provenance when env/git overrides are absent.
-  if [[ -z "${FRP_EXPECTED_SOURCE_REF:-}" ]]; then
-    _frp_resolved_ref=""
-    for _frp_resolved_url in "$CLIENT_INSTALLER_URL" "$WINDOWS_CLIENT_INSTALLER_URL"; do
-      if _frp_resolved_ref="$(frp_source_ref_from_github_raw_url "${_frp_resolved_url:-}")"; then
-        FRP_EXPECTED_SOURCE_REF="$_frp_resolved_ref"
-        export FRP_EXPECTED_SOURCE_REF
-        break
-      fi
-    done
-    unset _frp_resolved_ref _frp_resolved_url
-  fi
-  if ! frp_validate_https_url "$CLIENT_INSTALLER_URL"; then
-    echo "ERROR: client_installer_url must be a valid https:// URL" >&2
-    exit 1
-  fi
-  if ! frp_validate_https_url "$WINDOWS_CLIENT_INSTALLER_URL"; then
-    echo "ERROR: windows_client_installer_url must be a valid https:// URL" >&2
-    exit 1
-  fi
+  CLIENT_INSTALLER_URL="$DEFAULT_CLIENT_INSTALLER_URL"
+  WINDOWS_CLIENT_INSTALLER_URL="$DEFAULT_WINDOWS_CLIENT_INSTALLER_URL"
   FRP_MODE_SWITCH=0
 
   # Public vs listen: dedicated vars win; a single legacy FRP_CONTROL_PORT or
@@ -2080,6 +2040,21 @@ frp_server_end_tmp() {
   fi
 }
 
+frp_server_prepare_mcp_executor() {
+  # Test roots must never create accounts or touch real machine ACLs.
+  frp_server_test_mode && return 0
+  [[ ${EUID} -eq 0 ]] || return 0
+  local helper
+  helper="$(frp_server_fs /usr/local/lib/drlink/operator-native-mcp-full-control.py)"
+  [[ -f "$helper" ]] || return 0
+  # Preparation is independent of the operator's execution opt-in; preserve
+  # existing drop-ins and do not fail unrelated Server installation.
+  if ! python3 "$helper" --prepare-default; then
+    echo "WARNING: default local MCP execution environment not prepared; existing permissions unchanged." >&2
+  fi
+  return 0
+}
+
 frp_server_ensure_sandbox_dirs() {
   # Persistent paths listed in unit ReadWritePaths must exist before systemd
   # starts the allocator/frontend. Missing dirs cause status=226/NAMESPACE.
@@ -2124,7 +2099,12 @@ frp_server_ensure_sandbox_dirs() {
       # this directory to execute frp-egress-gateway.py/drlink-tcp-egress.py.
       # Grant only directory execute, never world traversal or PKI access.
       if [[ -d "$lib_dir" ]]; then
-        if command -v setfacl >/dev/null 2>&1 &&
+        # An existing safe named ACL may also grant the MCP worker read/search.
+        # Avoid resetting its mask when Egress already has verified traversal.
+        if [[ ! -L "$lib_dir" && "$(stat -c '%u:%a' "$lib_dir")" =~ ^0:7[0145]0$ ]] &&
+           frp_service_user_can_traverse "$lib_dir"; then
+          :
+        elif command -v setfacl >/dev/null 2>&1 &&
            setfacl -m u:drlink-egress:--x "$lib_dir" 2>/dev/null; then
           :
         else
@@ -2945,6 +2925,7 @@ PY
   fi
 
   frp_server_ensure_sandbox_dirs
+  frp_server_prepare_mcp_executor
   if ! frp_server_skip_systemd; then
     systemctl daemon-reload || {
       frp_server_fail_after_mutation SYSTEMD_RELOAD_FAILED "systemd daemon-reload failed"

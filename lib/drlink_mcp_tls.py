@@ -2028,7 +2028,7 @@ def doctor_checks(plane, root=None) -> list[dict]:
                 "id": "mcp_tls_configured",
                 "status": "INFO",
                 "summary": "MCP public TLS is not configured",
-                "detail": "Configure with: set server mcp hostname <fqdn> && set server mcp mode auto-acme",
+                "detail": "Configure with: set mcp-server hostname <fqdn> && set mcp-server mode auto-acme",
             }
         )
         return checks

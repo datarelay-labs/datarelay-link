@@ -248,11 +248,6 @@ restore_server_settings() {
   else
     ssh_server "sudo /usr/local/bin/drlink unset server bootstrap-hostname" >/dev/null 2>&1 || rc=1
   fi
-  if [[ -n "$ORIG_INSTALLER_URL" ]]; then
-    ssh_server "sudo /usr/local/bin/drlink set server installer-url $(printf '%q' "$ORIG_INSTALLER_URL")" >/dev/null 2>&1 || rc=1
-  else
-    ssh_server "sudo /usr/local/bin/drlink unset server installer-url" >/dev/null 2>&1 || rc=1
-  fi
   if [[ "$rc" == "0" ]]; then
     SERVER_SETTINGS_SNAPSHOTTED=0
     note "SERVER_SETTINGS_RESTORE=PASS"
@@ -315,10 +310,6 @@ snapshot_server_settings
 # Canonical operator surface is drlink (legacy /usr/local/sbin helpers are retired).
 ssh_server "sudo /usr/local/bin/drlink set server bootstrap-hostname '$BOOTSTRAP_HOST'" \
   >"$OUT_DIR/set-bootstrap.log" 2>&1 || fail "set bootstrap-hostname"
-# Canonical grammar is action-first under the Server settings resource.
-# Installer URL is a Server setting and uses only the canonical set server path.
-ssh_server "sudo /usr/local/bin/drlink set server installer-url '$INSTALLER_URL'" \
-  >"$OUT_DIR/set-installer.log" 2>&1 || fail "set installer url"
 ssh_server 'sudo systemctl daemon-reload; sudo systemctl restart drlink-allocator' \
   >"$OUT_DIR/restart-allocator.log" 2>&1 || fail "restart allocator after config"
 for _ in $(seq 1 30); do

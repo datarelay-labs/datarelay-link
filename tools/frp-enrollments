@@ -147,12 +147,14 @@ def main(argv=None):
     args = parser.parse_args(argv)
     if args.state_only and not args.id:
         parser.error('--state-only requires an enrollment ID')
-    cfg = json.loads(CONFIG.read_text(encoding='utf-8'))
-    enrollments = remap(cfg['enrollments_dir'])
-    bootstrap = remap(
-        cfg.get('bootstrap_dir')
-        or str(Path(cfg['enrollments_dir']).parent / 'bootstrap')
-    )
+    try:
+        cfg = json.loads(CONFIG.read_text(encoding='utf-8'))
+        if not isinstance(cfg, dict) or not isinstance(cfg.get('enrollments_dir'), str) or not cfg['enrollments_dir'].strip():
+            raise ValueError("missing enrollment storage configuration")
+        enrollments = remap(cfg['enrollments_dir'])
+        bootstrap = remap(cfg.get('bootstrap_dir') or str(Path(cfg['enrollments_dir']).parent / 'bootstrap'))
+    except (OSError, ValueError, TypeError):
+        raise SystemExit("ERROR: Enrollment storage configuration is unavailable.\nRun: sudo drlink system diagnostics\nNo changes were applied.") from None
     rows = collect_rows(enrollments, bootstrap, int(time.time()))
     if args.id:
         target = str(args.id).strip().lower()

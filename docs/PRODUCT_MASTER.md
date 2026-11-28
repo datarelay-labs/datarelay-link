@@ -103,10 +103,12 @@ The DRLink Server manages:
 
 ```text
 Managed Hosts
+Managed Services (read-only inventory)
 Enrollments
 Network Objects / Groups
 Service Objects / Groups
 Permission Objects / Groups
+MCP Server Settings
 AI Identities
 Remote Access
 Internet Access
@@ -136,6 +138,8 @@ A Managed Host is a real host managed through DRLink.
 A DRLink Agent is the software installed on that Managed Host.
 
 A Managed Host is usable as a Network Object selector where the policy context allows it, but Managed Host lifecycle remains under Managed Host commands.
+
+`show managed-services` lists all non-released Server-managed mappings, ordered by public port: public endpoint, Managed Host, service name, target and recorded status. It does not mutate service state or prove end-to-end target reachability. `show managed-host-groups` lists groups and counts; `show managed-host-group <GROUP>` lists actual member IDs, names and hostnames, or an explicit empty result. Group membership changes preserve Agent identity, Remote Services and public ports. Managed Host Groups are distinct from Network Groups.
 
 ## 8. Network Objects
 
@@ -311,9 +315,9 @@ For Internet Access and AI Access, authentication or network reachability alone 
 
 There is no rule ordering and no per-rule ALLOW/DENY action. Remote Access retains its existing BLACKLIST/WHITELIST behavior for v2.4 compatibility.
 
-## 15. AI MCP Setup and AI Access
+## 15. MCP Server Settings and AI Access
 
-AI MCP Setup is the canonical user-facing entry for MCP Server, MCP Bridge and AI service connection configuration. The guided CLI menu selector is `ai-mcp`, labeled `AI MCP Setup`, with description `Set up and manage AI MCP connections`. AI Access manages authorization separately. AI Identity remains the verified security resource used by authentication and policy evaluation; existing action-first resource/credential syntax and state semantics are unchanged. The CLI/AI Master defines the guided navigation contract, and exact-HEAD runtime verification is required before declaring the UX implemented.
+MCP Server Settings (`set mcp-server`) owns endpoint/TLS and local Server execution setup. AI Identities (`set ai-identity`) own AI client connections and verified authentication. AI Access Rules (`set ai-access`) independently authorize target, capability and path scope. The CLI/AI Master defines guided navigation and exact-candidate runtime verification remains required.
 
 AI Access source is a verified AI Identity.
 
@@ -339,15 +343,15 @@ A display name alone is never authentication.
 
 Authentication and AI Access authorization are separate.
 
-### AI MCP Setup and AI Access workflow
+### MCP Server Settings and AI Access workflow
 
-The single workflow specification is [AI_ACCESS_MCP.md](AI_ACCESS_MCP.md). Managed Hosts owns enrollment; AI MCP Setup manages infrastructure and connections; AI Identity retains verified authentication and credential lifecycle; AI Access Rules own Source → Destination → Permission authorization; System owns shared MCP settings and certificates. AI MCP Setup checks readiness and uses that same settings flow only when necessary, then optionally opens the separate Access Rule wizard. No automatic privilege grant from OAuth or first connection; explicitly reviewed Owner scope is optional. Basic permissions use built-in profiles; custom Objects/Groups are advanced. AI Access mode is fixed WHITELIST, not an operator input. Preserve existing state and all fail-closed controls. No duplicate public command/menu paths. These are target requirements, not installed-product evidence.
+The single normative workflow is [AI_ACCESS_MCP.md](AI_ACCESS_MCP.md). Managed Hosts owns enrollment; `set mcp-server` owns the unified endpoint, TLS and local execution setup; `set ai-identity` owns verified connection and credential lifecycle; AI Access Rules own Source, Destination, Permission and direct-file paths; only This Server Rules include allowed execution accounts and a default. Managed Hosts keep existing Agent execution with centrally managed AI Access and no additional Agent configuration. System owns shared infrastructure and the local Server execution safety ceiling, not a second independent user-facing account wizard. After OAuth, guide the operator into one reviewed Access Rule flow; skipping it leaves DENY. Built-in permissions need no custom Objects/Groups. AI Access is fixed WHITELIST. Normal requests describe work, not OS accounts: MCP discovers effective accounts and defaults; AI selects an explicitly granted account only when needed. Preserve existing state, public command compatibility and fail-closed enforcement. These are target requirements pending exact-candidate implementation and E2E.
 
 **v2.4.0 scope decision (current owner, 2026-10-16):** The v2.4.0 target includes the current Managed Host/Network Object/Service Object/Permission Object model, Remote Access, Controlled Internet Access, Zero-Touch enrollment, guided/direct CLI, ConfigurationBundle, revision/audit, product/Relay Engine lifecycle, multi-platform Agent, **AI Identity/AI Access and server-side MCP Bridge**. The MCP/AI-only exclusions in `CLI_ONLY_E2E_SCENARIOS.md` narrow **that test run only**. They are not an MCP deferral to 2.5.0 and do not relax the full v2.4.0 release gates. Record real implementation/candidate bytes and exact Source HEAD; documentation is not proof of feature completion.
 
 For the v2.4.0 target, the server-side MCP Bridge is included as part of AI Access. MCP is an integration layer over this identity and permission model; it does not introduce a separate public `AI Principal` model.
 
-**2026-10-29 owner update — Server Native MCP (Issue #223):** the unreleased v2.4 candidate includes a first-class `server:self` MCP target **without installing an Agent on the Server**. Server-self and Managed Host targets remain distinct, with verified AI Identity, explicit per-target AI Access, and per-call audit. Server-local execution defaults off and requires an independently selected OS account and enabled execution profile. The optional Full Control profile supports shell/argv, files, writable Git, and process jobs under that account's OS authority; UID 0 requires a separate local operator opt-in. Initial working-directory scopes are not a shell sandbox. The current owner-selected design is a direct authenticated connection to the target Server's Native MCP endpoint; Server-peer routing is not implemented or required. Development-server acceptance does not establish stable release qualification. See `SERVER_NATIVE_MCP.md`.
+**Execution-account model (owner direction 2026-11-28):** native `server:self` supports explicitly approved existing OS accounts and a default, including root when authorized. Managed Hosts retain existing Agent execution and enrollment; all AI Access permissions and target scopes are centrally configured on the Server, without per-Agent AI setup or account switching. See the canonical execution-account contract. Installed qualification remains pending.
 
 Stable v2.4.0 qualification is blocked until real ChatGPT owner/UI authentication is proven end to end on a plan/surface that officially supports full MCP at evidence-capture time. The required owner/UI evidence is: OAuth Authorization Code/consent completes through the public MCP endpoint, ChatGPT discovers the exposed tools, one authorized operation succeeds, and one intentionally out-of-scope operation is denied by current AI Access policy. Machine-side SDK/HTTP conformance alone does not satisfy this gate. Because retained owner/UI JSON is external evidence, it is not terminal release authority by itself; stable attestation also requires the independently administered `stable-release-owner-ui` GitHub Environment approval gate.
 

@@ -44,10 +44,7 @@ CLIENT_PROPS = ("label", "note", "tag")
 SERVER_SETTINGS = (
     "public-hostname",
     "bootstrap-hostname",
-    "installer-url",
-    "windows-installer-url",
 )
-INSTALLER_URL_SETTINGS = ("installer-url", "windows-installer-url")
 GROUP_PROPS = ("name", "description")
 SERVICE_PROPS = (
     "target-host",
@@ -213,7 +210,7 @@ ENROLL_FLAGS = (
         choices=("linux", "windows"),
         default="linux",
         description="Client platform for the one-line installer command",
-        effect="Windows requires windows_client_installer_url in server config",
+        effect="Windows uses qualified Server-local Agent artifacts",
         risk="metadata",
         type="enum",
     ),
@@ -1474,6 +1471,7 @@ def domain_help(topic, role):
             "  menu → Managed Hosts\n\n"
             "Everyday commands:\n"
             "  show managed-hosts\n"
+            "  show managed-services\n"
             "  show managed-host <HOST>\n"
             "  show managed-host <HOST> remote-services\n"
             "  show managed-host <HOST> agent\n"
@@ -1546,11 +1544,19 @@ def domain_help(topic, role):
             "  set remote-access enabled|disabled\n"
             "  test remote-access source <SRC> destination <DST> service <SVC>\n"
         )
+    if topic == "managed-services":
+        if not server:
+            return "Managed Services inventory is available on a Data Relay Link server.\n"
+        return ("Managed Services\n================\n\n"
+                "  show managed-services\n\n"
+                "List all Server port mappings with host, service, target and status.\n"
+                "Disabled and pending mappings are included; released mappings are excluded.\n")
     if topic in ("remote-service", "remote-services"):
         if server:
             return (
                 "Remote Services are owned by Agent Hosts.\n\n"
                 "On the Server:\n"
+                "  show managed-services\n"
                 "  show managed-host <HOST> remote-services\n\n"
                 "On an Agent Host:\n"
                 "  show remote-services\n"
@@ -1588,14 +1594,14 @@ def domain_help(topic, role):
             "  set internet-access enabled|disabled\n"
             "  test internet-access source <SRC> destination <DST> service <SVC>\n"
         )
-    if topic == "ai-mcp":
+    if topic == "mcp-server":
         if not server:
-            return "AI MCP Setup is available on a Data Relay Link server.\n"
-        return ("AI MCP Setup\n============\n\n"
-                "Set up and manage AI MCP connections.\n"
-                "set ai-mcp opens MCP Server settings, MCP Bridge settings / diagnostics, AI service connections and connection inventory.\n"
-                "Existing AI Identity commands manage authentication. AI Access remains separate authorization.\n"
-                "menu → AI Access → AI MCP Setup\n")
+            return "MCP Server Settings are available on a Data Relay Link server.\n"
+        return ("MCP Server Settings\n===================\n\n"
+                "set mcp-server guides endpoint/TLS configuration and then reviews Server execution; diagnostics is separate.\n"
+                "Use set ai-identity to connect and authenticate an AI client; set ai-access to grant access.\n"
+                "Server execution requires explicit local administrator approval. It never creates an AI Access Rule.\n"
+                "menu → AI Access → MCP Server Settings\n")
     if topic in ("ai-access", "mcp", "ai-identity", "ai-identities"):
         if not server:
             return "AI Access help is available on a Data Relay Link server.\n"
@@ -1606,14 +1612,15 @@ def domain_help(topic, role):
             "AI Identity authentication is separate from AI Access authorization.\n"
             "Display name alone is not a verified identity.\n\n"
             "Lifecycle:\n"
-            "  1. Create and authenticate an AI Identity\n"
-            "  2. Choose built-in permissions, or a custom Permission Object / Permission Group\n"
-            "  3. Create an AI Access Rule binding Identity → Destination → Permission\n"
-            "  4. Test / explain, then review the Access Log\n\n"
+            "  1. Configure MCP Server connectivity and, if needed, local Server execution\n"
+            "  2. Connect and authenticate an AI Identity\n"
+            "  3. Choose built-in permissions, or a custom Permission Object / Permission Group\n"
+            "  4. Create an AI Access Rule binding Identity → Destination → Permission\n"
+            "  5. Test / explain, then review the Access Log\n\n"
             "Guided path:\n"
-            "  menu → AI Access → AI MCP Setup\n\n"
+            "  menu → AI Access → MCP Server Settings\n\n"
             "Everyday commands:\n"
-            "  set ai-mcp\n"
+            "  set mcp-server\n"
             "  set ai-identity <NAME>\n"
             "  set ai-access\n"
             "  show ai-identities\n"
@@ -1679,14 +1686,13 @@ def domain_help(topic, role):
                     "  set ai-identity <IDENTITY> approve <PENDING-ID>",
                     "  set ai-identity <IDENTITY> deny <PENDING-ID>",
                     "  system diagnostics mcp",
-                    "  set server mcp",
-                    "  set server mcp hostname <FQDN>",
-                    "  set server mcp mode <auto-acme|user-certificate>",
-                    "  set server mcp contact-email <EMAIL>",
-                    "  set server mcp acme-environment <production|staging>",
-                    "  set server mcp acme-directory <URL>",
-                    "  unset server mcp",
-                    "  unset server mcp purge",
+                    "  set mcp-server hostname <FQDN>",
+                    "  set mcp-server mode <auto-acme|user-certificate>",
+                    "  set mcp-server contact-email <EMAIL>",
+                    "  set mcp-server acme-environment <production|staging>",
+                    "  set mcp-server acme-directory <URL>",
+                    "  unset mcp-server",
+                    "  unset mcp-server purge",
                     "  system certificate issue",
                     "  system certificate import <CERT> <KEY> [CHAIN]",
                     "  system certificate renew",
@@ -1867,7 +1873,7 @@ _IMPACT_BY_PATH = {
         "Validates and atomically applies the ConfigurationBundle after diff "
         "and y/N confirmation; the applied configuration can broaden access."
     ),
-    ("unset", "server", "mcp"): (
+    ("unset", "mcp-server"): (
         "Clears the MCP TLS intent and removes the public MCP route; the "
         "DRLink-owned certificate and ACME account material is kept. Active "
         "MCP/OAuth connections may be interrupted."
@@ -1984,10 +1990,9 @@ def command_help(cmd):
             rows.append((field, description))
         lines.extend(["", "Fields after the name:"])
         lines.extend(_fmt_rows(rows))
-    shown_flags = []
-    # Public command help never advertises GNU-style --options.
-    if False:
-        shown_flags = [flag for flag in cmd["flags"] if not flag.get("hidden")]
+    # Only explicitly documented automation exceptions are visible. Retired
+    # backend flags remain hidden and must never appear in operator help.
+    shown_flags = [flag for flag in cmd["flags"] if not flag.get("hidden")]
     if shown_flags:
         rows = []
         for flag in shown_flags:
@@ -2010,7 +2015,7 @@ def command_help(cmd):
             if flag.get("examples"):
                 bits.append("e.g. %s" % ", ".join(flag["examples"]))
             rows.append((label, "; ".join(bits)))
-        lines.extend(["", "Options:"])
+        lines.extend(["", "Automation options:"])
         lines.extend(_fmt_rows(rows))
     if cmd.get("risk") and cmd["risk"] != "none":
         lines.extend(["", "Risk: %s" % cmd["risk"]])
@@ -2084,8 +2089,7 @@ WORKFLOWS = (
             "show ai-access",
             "show ai-access-log",
         ),
-        "Authenticate the AI Identity before authorization. Permission Objects/Groups "
-        "are required for AI Access Rules.",
+        "Authenticate the AI Identity before authorization. Built-in permission profiles or custom Permission Objects/Groups are supported.",
         "server",
     ),
     (
@@ -2242,7 +2246,14 @@ NAVIGATION_TREE = {
         ("client_sys_pause", "Pause", "", "command", "system pause"),
         ("client_sys_resume", "Resume", "", "command", "system resume"),
         ("client_sys_restart", "Restart", "", "command", "system restart"),
-        ("client_sys_autostart", "Autostart", "", "command", "system autostart"),
+        ("client_sys_autostart", "Autostart", "", "submenu", "client.agent.autostart"),
+        ("client_sync", "Synchronize Remote Services", "", "command", "system synchronize"),
+        ("back", "Back", "", "back", None),
+    ),
+    "client.agent.autostart": (
+        ("autostart_status", "Show Autostart", "", "command", "system autostart"),
+        ("autostart_enable", "Enable Autostart", "", "command", "system autostart enable"),
+        ("autostart_disable", "Disable Autostart", "", "command", "system autostart disable"),
         ("back", "Back", "", "back", None),
     ),
     "client.configuration": (
@@ -2317,7 +2328,7 @@ NAVIGATION_TREE = {
         (
             "server_ai",
             "AI Access",
-            "AI MCP Setup, Permissions, Rules and Access Log",
+            "MCP Server, AI Identities, Access Rules, Permissions and Log",
             "submenu",
             "server.ai",
         ),
@@ -2336,6 +2347,17 @@ NAVIGATION_TREE = {
         ("server_zt", "Connect New Host", "", "workflow", "create_zero_touch"),
         ("server_hosts_manage", "Manage Host", "", "workflow", "manage_host"),
         ("server_enrollments", "Enrollments", "", "submenu", "server.clients.enrollments"),
+        ("server_host_groups", "Managed Host Groups", "", "submenu", "server.hosts.groups"),
+        ("server_managed_services", "Managed Services", "All Remote Services published by enrolled hosts", "command", "show managed-services"),
+        ("back", "Back", "", "back", None),
+    ),
+    "server.hosts.groups": (
+        ("host_groups_list", "List Managed Host Groups", "", "command", "show managed-host-groups"),
+        ("host_groups_create", "Create Managed Host Group", "", "command", "set managed-host-group"),
+        ("host_groups_show", "Show Managed Host Group", "", "command", "show managed-host-group"),
+        ("host_groups_manage", "Manage membership", "", "workflow", "manage_host_group_membership"),
+        ("host_groups_edit", "Edit Managed Host Group", "", "workflow", "edit_host_group"),
+        ("host_groups_delete", "Delete Managed Host Group", "", "command", "unset managed-host-group"),
         ("back", "Back", "", "back", None),
     ),
     "server.clients": (
@@ -2377,10 +2399,12 @@ NAVIGATION_TREE = {
         ("back", "Back", "", "back", None),
     ),
     "server.ai": (
-        ("server_ai_mcp", "AI MCP Setup", "Set up and manage AI MCP connections", "command", "set ai-mcp"),
-        ("server_ai_permissions", "Advanced Permissions", "", "submenu", "server.ai.permissions"),
+        ("server_ai_mcp", "MCP Server Settings", "Configure MCP Server connectivity and execution", "command", "set mcp-server"),
+        ("server_ai_identities", "AI Identities", "List AI Identities and authentication status", "command", "show ai-identities"),
+        ("server_ai_connect", "Connect or manage AI Identity", "", "command", "set ai-identity"),
         ("server_ai_rules", "Access Rules", "", "command", "show ai-access"),
         ("server_ai_create_rule", "Create or edit Access Rule", "", "command", "set ai-access"),
+        ("server_ai_permissions", "Permission Objects / Groups", "", "submenu", "server.ai.permissions"),
         ("server_ai_enable", "Enable Enforcement", "", "command", "set ai-access enabled"),
         ("server_ai_disable", "Disable Enforcement", "", "command", "set ai-access disabled"),
         ("server_ai_log", "Access Log", "", "command", "show ai-access-log"),
@@ -2401,7 +2425,7 @@ NAVIGATION_TREE = {
         ("back", "Back", "", "back", None),
     ),
     "server.services": (
-        ("server_svc_list", "Remote Services (inspect via Managed Host)", "", "command", "show managed-hosts"),
+        ("server_svc_list", "List Managed Services", "", "command", "show managed-services"),
         ("back", "Back", "", "back", None),
     ),
     "server.internet": (
@@ -2424,19 +2448,39 @@ NAVIGATION_TREE = {
         ("server_sys_updates", "Updates", "", "submenu", "server.system.updates"),
         ("server_sys_diag", "Diagnostics", "", "submenu", "server.system.diagnostics"),
         ("server_sys_audit", "Audit Log", "", "command", "system audit"),
-        ("server_sys_export", "Export configuration", "", "command", "system export configuration"),
+        ("server_sys_export", "Configuration", "Test, diff, apply and export ConfigurationBundle", "submenu", "server.system.configuration"),
         ("server_sys_version", "Version Information", "", "command", "system version"),
         ("server_sys_uninstall", "Uninstall Data Relay Link", "", "command", "system uninstall"),
+        ("server_sys_revisions", "Revisions / Rollback", "", "submenu", "server.system.revisions"),
+        ("server_sys_certificates", "Certificates", "", "submenu", "server.system.certificates"),
+        ("back", "Back", "", "back", None),
+    ),
+    "server.system.configuration": (
+        ("server_cfg_test", "Test Configuration", "", "command", "test configuration"),
+        ("server_cfg_diff", "Diff Configuration", "", "command", "system diff configuration"),
+        ("server_cfg_apply", "Apply Configuration", "", "command", "system apply configuration"),
+        ("server_cfg_export", "Export Configuration", "", "command", "system export configuration"),
+        ("back", "Back", "", "back", None),
+    ),
+    "server.system.revisions": (
+        ("revisions_list", "List Revisions", "", "command", "system revisions"),
+        ("revision_show", "Show Revision", "", "command", "system revision"),
+        ("revision_diff", "Compare Revisions", "", "workflow", "diff_revisions"),
+        ("revision_rollback", "Rollback to Revision", "Confirmation required", "command", "system rollback"),
+        ("back", "Back", "", "back", None),
+    ),
+    "server.system.certificates": (
+        ("certificate_status", "Certificate Status", "", "command", "system certificate status"),
+        ("certificate_preflight", "Check Prerequisites", "", "command", "system certificate preflight"),
+        ("certificate_issue", "Issue Certificate", "", "command", "system certificate issue"),
+        ("certificate_import", "Import Certificate", "", "workflow", "import_mcp_certificate"),
+        ("certificate_renew", "Renew Certificate", "", "command", "system certificate renew"),
         ("back", "Back", "", "back", None),
     ),
     "server.system.settings": (
         ("server_show_settings", "Show current Server settings", "", "command", "system status"),
         ("server_set_public", "Remote Service public hostname", "", "workflow", "set_public_hostname"),
         ("server_set_bootstrap", "Bootstrap hostname", "", "workflow", "set_bootstrap_hostname"),
-        ("server_set_installer", "Linux/macOS Agent installer URL", "", "workflow", "set_installer_url"),
-        ("server_set_win_installer", "Windows Agent installer URL", "", "workflow", "set_windows_installer_url"),
-        ("server_set_mcp", "MCP Server Settings", "", "command", "set server mcp"),
-        ("server_cert_status", "MCP Certificate Status", "", "command", "system certificate status"),
         ("back", "Back", "", "back", None),
     ),
     "server.system.backup": (
@@ -2505,7 +2549,7 @@ NAVIGATION_TREE["both"] = (
     (
         "both_ai",
         "AI Access",
-        "AI MCP Setup, Permissions, Rules and Access Log",
+        "MCP Server, AI Identities, Access Rules, Permissions and Log",
         "submenu",
         "server.ai",
     ),
@@ -2526,12 +2570,17 @@ NAVIGATION_TREE["both.system"] = (
     ("both_sys_pause", "Pause Agent", "", "command", "system pause"),
     ("both_sys_resume", "Resume Agent", "", "command", "system resume"),
     ("both_sys_restart", "Restart Agent", "", "command", "system restart"),
-    ("both_sys_autostart", "Agent autostart", "", "command", "system autostart"),
+    ("both_sys_autostart", "Agent Autostart", "", "submenu", "client.agent.autostart"),
     ("both_sys_updates", "Updates", "", "submenu", "server.system.updates"),
     ("both_sys_diag", "Diagnostics", "", "submenu", "server.system.diagnostics"),
     ("both_sys_audit", "Audit Log", "", "command", "system audit"),
     ("both_sys_version", "Version Information", "", "command", "system version"),
     ("both_sys_uninstall", "Uninstall Data Relay Link", "", "command", "system uninstall"),
+    ("both_sys_config", "Configuration", "", "submenu", "server.system.configuration"),
+    ("both_sys_revisions", "Revisions / Rollback", "", "submenu", "server.system.revisions"),
+    ("both_sys_certificates", "Certificates", "", "submenu", "server.system.certificates"),
+    ("both_sys_agent", "Agent status", "", "command", "show agent"),
+    ("both_sys_sync", "Synchronize Remote Services", "", "command", "system synchronize"),
     ("back", "Back", "", "back", None),
 )
 NAVIGATION_TREE["both.services"] = (
@@ -2785,6 +2834,7 @@ COMPLETION_DOMAIN_GROUPS = (
         "Managed Hosts",
         (
             "managed-hosts",
+            "managed-services",
             "managed-host",
             "clients",
             "client",
@@ -2879,7 +2929,7 @@ COMPLETION_DOMAIN_GROUPS = (
         (
             "ai-access",
             "ai-identities",
-            "ai-mcp",
+            "mcp-server",
             "ai-identity",
             "ai-principals",
             "ai-principal",
@@ -2902,8 +2952,6 @@ COMPLETION_DOMAIN_GROUPS = (
             "backup",
             "support-bundle",
             "info",
-            "installer-url",
-            "windows-installer-url",
             "server",
             "product",
             "engine",

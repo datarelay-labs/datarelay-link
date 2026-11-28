@@ -79,7 +79,7 @@
     "roles": "server",
     "category": "Inventory",
     "summary": "Show one Managed Host Group and its members",
-    "detail": "Show one Managed Host Group, its immutable group ID, description, and Managed Host membership count.",
+    "detail": "Show one Managed Host Group, its immutable group ID, description, membership count, and member HOST ID, NAME and HOSTNAME.",
     "examples": [
       "show managed-host-group edge"
     ],
@@ -191,7 +191,7 @@
         "name": "--description",
         "arity": 1,
         "choices": [],
-        "hidden": true,
+        "hidden": false,
         "required": false,
         "description": "Free-form operator note",
         "metavar": "TEXT",
@@ -360,7 +360,7 @@
         "description": "Client platform for the one-line installer command",
         "metavar": "",
         "examples": [],
-        "effect": "Windows requires windows_client_installer_url in server config",
+        "effect": "Windows uses qualified Server-local Agent artifacts",
         "risk": "metadata",
         "type": "enum",
         "default": "linux"
@@ -502,21 +502,17 @@
     "roles": "server",
     "category": "Server",
     "summary": "Change server settings",
-    "detail": "Configure Server public/bootstrap hostnames and Linux/macOS or Windows Agent installer URLs.",
+    "detail": "Set or clear public and Bootstrap hostnames. Bootstrap inherits public hostname when unset, otherwise uses the configured allocator HTTPS authority. Installer sources are automatic.",
     "examples": [
       "set server public-hostname frp.example.com",
-      "set server bootstrap-hostname bootstrap.example.com",
-      "set server installer-url https://example.test/install-client.sh",
-      "set server windows-installer-url https://example.test/install-client.ps1"
+      "set server bootstrap-hostname bootstrap.example.com"
     ],
     "args": [
       {
-        "name": "public-hostname|bootstrap-hostname|installer-url|windows-installer-url",
+        "name": "public-hostname|bootstrap-hostname",
         "complete": [
           "public-hostname",
-          "bootstrap-hostname",
-          "installer-url",
-          "windows-installer-url"
+          "bootstrap-hostname"
         ],
         "required": true
       },
@@ -607,22 +603,18 @@
     ],
     "roles": "server",
     "category": "Server",
-    "summary": "Clear optional server hostname and installer URL settings",
-    "detail": "Unsetting public-hostname falls back to Public IP access. Unsetting bootstrap-hostname uses the configured allocator HTTPS authority. Public and private HTTPS use the same entry form; route and downstream TLS readiness are checked before issuance. Unsetting installer URLs restores automatic/default installer sources.",
+    "summary": "Clear optional server hostname settings",
+    "detail": "Set or clear public and Bootstrap hostnames. Bootstrap inherits public hostname when unset, otherwise uses the configured allocator HTTPS authority. Installer sources are automatic.",
     "examples": [
       "unset server public-hostname",
-      "unset server bootstrap-hostname",
-      "unset server installer-url",
-      "unset server windows-installer-url"
+      "unset server bootstrap-hostname"
     ],
     "args": [
       {
-        "name": "public-hostname|bootstrap-hostname|installer-url|windows-installer-url",
+        "name": "public-hostname|bootstrap-hostname",
         "complete": [
           "public-hostname",
-          "bootstrap-hostname",
-          "installer-url",
-          "windows-installer-url"
+          "bootstrap-hostname"
         ],
         "required": true
       }
@@ -927,9 +919,9 @@
         "name": "--json",
         "arity": 0,
         "choices": [],
-        "hidden": true,
+        "hidden": false,
         "required": false,
-        "description": "",
+        "description": "Return machine-readable diagnostic results",
         "metavar": "",
         "examples": [],
         "effect": "",
@@ -939,9 +931,9 @@
         "name": "--verbose",
         "arity": 0,
         "choices": [],
-        "hidden": true,
+        "hidden": false,
         "required": false,
-        "description": "",
+        "description": "Include diagnostic check details",
         "metavar": "",
         "examples": [],
         "effect": "",
@@ -951,9 +943,9 @@
         "name": "--quiet",
         "arity": 0,
         "choices": [],
-        "hidden": true,
+        "hidden": false,
         "required": false,
-        "description": "",
+        "description": "Show only the diagnostic summary",
         "metavar": "",
         "examples": [],
         "effect": "",
@@ -996,7 +988,7 @@
         "name": "--output",
         "arity": 1,
         "choices": [],
-        "hidden": true,
+        "hidden": false,
         "required": false,
         "description": "Write output to this path instead of stdout",
         "metavar": "PATH",
@@ -1596,7 +1588,7 @@
     "roles": "server",
     "category": "AI Access",
     "summary": "Create or edit an AI Access rule",
-    "detail": "Bare set ai-access opens the guided Rule name prompt; set ai-access enabled/disabled controls the entire policy. A named Rule edits or creates one rule; selecting a new destination replaces the old one. File scope examples: /**, /home/**, /home/**,/opt/**. The calculated security impact of an edit is checked before mutation. A y/N confirmation is required when that impact broadens or materially narrows access; safe creation and no-change paths need no additional confirmation. AI Access is WHITELIST-only; the first rule initializes this mode without a mode field. Explicit destination managed-hosts:trusted includes all current and future trusted Managed Hosts; never server:self.",
+    "detail": "Bare set ai-access opens the guided Rule name prompt; set ai-access enabled/disabled controls the entire policy. A named Rule edits or creates one rule; selecting a new destination replaces the old one. For This Server (server:self) only, supply accounts and default-account together; local Server approval is still required. Managed Hosts retain existing Agent execution and central AI Access. File scope examples: /**, /home/**, /home/**,/opt/**. The calculated security impact of an edit is checked before mutation. A y/N confirmation is required when that impact broadens or materially narrows access; safe creation and no-change paths need no additional confirmation. AI Access is WHITELIST-only; the first rule initializes this mode without a mode field. Explicit destination managed-hosts:trusted includes all current and future trusted Managed Hosts; never server:self.",
     "examples": [
       "set ai-access",
       "set ai-access <RULE>",
@@ -1608,7 +1600,8 @@
     "args": [
       {
         "name": "RULE",
-        "required": false
+        "required": false,
+        "complete": "ai-access-rules"
       }
     ],
     "tail": "any",
@@ -1625,6 +1618,8 @@
       "destination": null,
       "permission": null,
       "paths": null,
+      "accounts": null,
+      "default-account": null,
       "enabled": false,
       "disabled": false
     }
@@ -2144,46 +2139,6 @@
   },
   {
     "roles": "server",
-    "detail": "Configure non-secret MCP TLS intent. Default public-cloud mode is AUTO_ACME. PRIVATE_CA is internal/test only.",
-    "aliases": [],
-    "destructive": false,
-    "hidden": false,
-    "risk": "none",
-    "confirmation": "none",
-    "surface": "",
-    "flags": [],
-    "internal": null,
-    "tail": "any",
-    "path": [
-      "set",
-      "server",
-      "mcp"
-    ],
-    "category": "System",
-    "summary": "Configure MCP Server settings",
-    "examples": [
-      "set server mcp",
-      "set server mcp hostname mcp.example.com",
-      "set server mcp mode auto-acme",
-      "set server mcp contact-email ops@example.com",
-      "set server mcp acme-environment staging"
-    ],
-    "args": [
-      {
-        "name": "<SETTING>",
-        "complete": [
-          "hostname",
-          "mode",
-          "contact-email",
-          "acme-environment",
-          "acme-directory"
-        ],
-        "required": false
-      }
-    ]
-  },
-  {
-    "roles": "server",
     "detail": "Clear MCP TLS intent and remove its active public MCP route while retaining DRLink-owned certificate and ACME account material. Active MCP/OAuth connections may be interrupted. The explicit command is sufficient approval; no additional confirmation prompt is required. Check system certificate status and system diagnostics mcp afterward.",
     "aliases": [],
     "destructive": true,
@@ -2196,13 +2151,12 @@
     "tail": null,
     "path": [
       "unset",
-      "server",
-      "mcp"
+      "mcp-server"
     ],
-    "category": "System",
+    "category": "AI Access",
     "summary": "Clear MCP public TLS configuration",
     "examples": [
-      "unset server mcp"
+      "unset mcp-server"
     ],
     "args": []
   },
@@ -2220,14 +2174,13 @@
     "tail": null,
     "path": [
       "unset",
-      "server",
-      "mcp",
+      "mcp-server",
       "purge"
     ],
-    "category": "System",
+    "category": "AI Access",
     "summary": "Purge MCP TLS certificate and ACME account material",
     "examples": [
-      "unset server mcp purge"
+      "unset mcp-server purge"
     ],
     "args": []
   },
@@ -3162,6 +3115,29 @@
   {
     "path": [
       "show",
+      "managed-services"
+    ],
+    "roles": "server",
+    "category": "Managed Hosts",
+    "summary": "List all Managed Services and port mappings",
+    "detail": "Read-only Server-wide Remote Service inventory, sorted by public port. Shows public endpoint, Managed Host, service name, target address and port, and status. Includes disabled and pending services; excludes released mappings.",
+    "examples": [
+      "show managed-services"
+    ],
+    "args": [],
+    "tail": null,
+    "internal": null,
+    "aliases": [],
+    "destructive": false,
+    "hidden": false,
+    "risk": "none",
+    "confirmation": "none",
+    "surface": "",
+    "flags": []
+  },
+  {
+    "path": [
+      "show",
       "managed-hosts"
     ],
     "roles": "server",
@@ -3320,17 +3296,33 @@
   {
     "path": [
       "set",
-      "ai-mcp"
+      "mcp-server"
     ],
     "roles": "server",
     "category": "AI Access",
-    "summary": "Set up and manage AI MCP connections",
-    "detail": "AI MCP Setup: MCP Server, MCP Bridge settings / diagnostics and AI service connections. AI Access remains separate authorization.",
+    "summary": "Configure MCP Server connectivity and execution",
+    "detail": "Configure the public endpoint and TLS, explicitly select the local Server execution account and roots, or run diagnostics. AI Identities own connection/authentication; AI Access Rules own authorization.",
     "examples": [
-      "set ai-mcp"
+      "set mcp-server",
+      "set mcp-server hostname mcp.example.com",
+      "set mcp-server mode auto-acme",
+      "set mcp-server contact-email ops@example.com",
+      "set mcp-server acme-environment staging"
     ],
-    "args": [],
-    "tail": null,
+    "args": [
+      {
+        "name": "<SETTING>",
+        "complete": [
+          "hostname",
+          "mode",
+          "contact-email",
+          "acme-environment",
+          "acme-directory"
+        ],
+        "required": false
+      }
+    ],
+    "tail": "any",
     "internal": null,
     "aliases": [],
     "destructive": false,

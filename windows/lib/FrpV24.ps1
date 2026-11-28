@@ -28,6 +28,8 @@ function Get-FrpV24MgmtOperation {
     if ($m -eq 'POST' -and $Path -eq '/v1/remote-services') { return 'remote-service.set' }
     if ($m -eq 'POST' -and $Path -eq '/v1/remote-services-status') { return 'remote-service.status' }
     if ($m -eq 'POST' -and $Path -eq '/v1/agent-lifecycle') { return 'agent.lifecycle' }
+    if ($m -eq 'POST' -and $Path -eq '/v1/ai-jobs/claim') { return 'ai-job.claim' }
+    if ($m -eq 'POST' -and $Path -eq '/v1/ai-jobs/complete') { return 'ai-job.complete' }
     if ($m -eq 'DELETE' -and $Path -match '^/v1/remote-services/[^/]+$') { return 'remote-service.delete' }
     throw 'ERROR: unsupported management operation'
 }
@@ -70,9 +72,14 @@ function Get-FrpV24FixtureResponse {
     throw 'ERROR: unsupported v2.4 fixture request'
 }
 function Invoke-FrpV24MgmtRequest {
-    param([string]$Method, [string]$Path, $Body = $null)
-    $fixture = Get-FrpV24FixtureResponse -Method $Method -Path $Path -Body $Body
-    if ($null -ne $fixture) { return $fixture }
+    param([string]$Method, [string]$Path, $Body = $null, [int]$TimeoutSec = 30)
+    $op = Get-FrpV24MgmtOperation -Method $Method -Path $Path
+    $aiJob = $op -in @('ai-job.claim', 'ai-job.complete')
+    # A job response must never use the unsigned local fixture adapter.
+    if (-not $aiJob) {
+        $fixture = Get-FrpV24FixtureResponse -Method $Method -Path $Path -Body $Body
+        if ($null -ne $fixture) { return $fixture }
+    }
     if (-not (Test-FrpIsEnrolled)) { throw 'ERROR: Agent is not enrolled' }
     $base = Get-FrpV24MgmtBaseUrl
     if (-not $base) { throw 'ERROR: Server management URL is not configured' }
@@ -83,7 +90,6 @@ function Invoke-FrpV24MgmtRequest {
     if ($null -ne $Body) { $bodyText = Get-FrpCanonicalJson -Object $Body }
     $ts = [int64]([DateTimeOffset]::UtcNow.ToUnixTimeSeconds())
     $nonce = New-FrpNonce
-    $op = Get-FrpV24MgmtOperation -Method $Method -Path $Path
     $message = Get-FrpSignedMessage -MachineId $machineId -Body $bodyText -Timestamp $ts -Nonce $nonce -Op $op -Method $Method -Path $Path
     $privatePem = Read-FrpIdentityKey
     $signature = Protect-FrpSignMessage -PrivatePem $privatePem -Message $message
@@ -98,11 +104,15 @@ function Invoke-FrpV24MgmtRequest {
     $url = $base.TrimEnd('/') + $Path
     $wireBody = $bodyText
     if ($Method -eq 'GET') { $wireBody = $null }
-    $raw = Invoke-FrpHttpsJson -Method $Method -Url $url -Body $wireBody -Headers $headers
-    if (-not $raw) { return [pscustomobject]@{} }
+    $raw = Invoke-FrpHttpsJson -Method $Method -Url $url -Body $wireBody -Headers $headers -TimeoutSec $TimeoutSec
+    if (-not $raw) {
+        if ($aiJob) { throw 'ERROR: missing signed AI job response' }
+        return [pscustomobject]@{}
+    }
     $data = ConvertFrom-FrpJson -Json $raw
     if ($data.error) { throw ('ERROR: Server management request failed: {0}' -f [string]$data.error) }
     $props = @($data.PSObject.Properties.Name)
+    if ($aiJob -and $props -notcontains 'response_hmac') { throw 'ERROR: missing signed AI job response HMAC' }
     if ($props -contains 'response_hmac') {
         $received = [string]$data.response_hmac
         $plain = ConvertTo-FrpPlainObject $data

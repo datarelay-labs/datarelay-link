@@ -581,7 +581,7 @@ if _is_file(cfg):
                 names.append(cid)
                 label = str(client.get("label") or "").strip()
                 host = str(client.get("hostname") or "").strip()
-                clients_meta.append({"id": cid, "label": label, "hostname": host})
+                clients_meta.append({"id": cid, "full_id": mid, "label": label, "hostname": host})
                 sids = []
                 for sid in (client.get("services") or {}):
                     sid = str(sid)
@@ -652,7 +652,7 @@ try:
     canonical = read_only_completion_inventory(role, root)
     if canonical is not None:
         payload.update(canonical)
-        payload['inventory_warning'] = False
+        payload['inventory_warning'] = bool(canonical.get('inventory_warning'))
 except Exception:
     # Never advertise stale legacy selectors after an authoritative read fails.
     payload.update(names=[], clients=[], services={}, local_services=[], groups=[], inventory={})
@@ -854,7 +854,10 @@ try:
 except Exception:
     control = "unconfigured"
 public = mod.public_hostname(cfg)
-bootstrap = mod.bootstrap_hostname(cfg)
+try:
+    bootstrap = mod.bootstrap_authority(cfg)
+except (ValueError, TypeError):
+    bootstrap = mod.short_url_hostname(cfg)
 linux_url = str(cfg.get("client_installer_url") or "").strip()
 windows_url = str(cfg.get("windows_client_installer_url") or "").strip()
 spec = importlib.util.spec_from_file_location("_drlink_qualified_sources", sys.argv[3])
@@ -863,21 +866,19 @@ sys.modules[spec.name] = artifacts
 spec.loader.exec_module(artifacts)
 def effective_installer_source(configured, platform):
     # Same source rejection and Server-local derivation as enrollment output.
-    if configured and not artifacts.is_forbidden_public_installer_url(configured):
-        return configured
     try:
         effective = artifacts.agent_installer_url(cfg.get("allocator_public_url"), platform)
     except artifacts.ArtifactError:
         return "Unavailable (qualified Server-local installer source is unconfigured)"
     if artifacts.is_forbidden_public_installer_url(effective):
         return "Unavailable (qualified Server-local installer source is unconfigured)"
-    label = "configured former public source ignored" if configured else "automatic qualified source"
+    label = "legacy override ignored; automatic qualified source" if configured else "automatic qualified source"
     return "%s (%s)" % (effective, label)
 try:
     print("\nServer Settings")
     print("===============")
     print("Public hostname              : %s" % (public or ("Automatic (Public IP: %s)" % control)))
-    print("Bootstrap hostname           : %s" % (bootstrap or "Automatic (pinned-CA zt1 bootstrap)"))
+    print("Bootstrap hostname           : %s" % ((bootstrap + (" (inherited public hostname)" if public else " (allocator HTTPS authority)")) if bootstrap and not mod.bootstrap_hostname(cfg) else (bootstrap or "Unavailable (allocator HTTPS authority)")))
     print("Linux/macOS Agent installer : %s" % effective_installer_source(linux_url, "linux"))
     print("Windows Agent installer     : %s" % effective_installer_source(windows_url, "windows"))
     sys.stdout.flush()
@@ -1020,6 +1021,8 @@ if not title:
         title = "Internet Access"
     elif menu_key.endswith(".system"):
         title = "System"
+    elif menu_key == "server.hosts.groups":
+        title = "Managed Host Groups"
     elif menu_key.endswith(".groups"):
         title = "Groups"
     elif menu_key.endswith(".enrollments"):
@@ -1042,6 +1045,12 @@ if not title:
         title = "Updates"
     elif menu_key.endswith(".diagnostics"):
         title = "Diagnostics"
+    else:
+        # Use the actual parent navigation label for every reachable menu.
+        # A new submenu must not render as a nameless list of numbers.
+        title = next((row[1] for entries in mod.NAVIGATION_TREE.values()
+                      for row in entries if row[3] == "submenu" and row[4] == menu_key),
+                     menu_key.rsplit(".", 1)[-1].replace("_", " ").title())
 sys.stdout.write(mod.render_navigation_menu(menu_key, title=title))
 PY
 }
@@ -1104,6 +1113,15 @@ frpctl_nav_dispatch_command() {
       ;;
     "system export configuration")
       prompt="Output file path (? help, 0 or empty cancels): "
+      ;;
+    "set managed-host-group")
+      prompt="New Managed Host Group name (? help, 0 or empty cancels): "
+      ;;
+    "show managed-host-group"|"unset managed-host-group")
+      prompt="Managed Host Group name or ID (? help, 0 or empty cancels): "
+      ;;
+    "system revision"|"system rollback")
+      prompt="Revision ID (? help, 0 or empty cancels): "
       ;;
   esac
   if [[ -n "$prompt" ]]; then
@@ -1346,6 +1364,60 @@ frpctl_nav_workflow() {
         *) echo "ERROR: select 1-3 (? for help, 0 to go back)" >&2; return 1 ;;
       esac
       ;;
+    manage_host_group_membership)
+      frpctl_dispatch show managed-hosts || return $?
+      id="$(frpctl_nav_prompt_id "Managed Host name or ID (? help, 0 cancels): " true)" || return 1
+      [[ -n "$id" ]] || return 0
+      frpctl_dispatch show managed-host-groups || return $?
+      value="$(frpctl_nav_prompt_id "Managed Host Group (? help, 0 cancels): " true)" || return 1
+      [[ -n "$value" ]] || return 0
+      echo "1) Add membership"
+      echo "2) Remove membership"
+      echo "3) Back"
+      path="$(frpctl_read_menu 3 Back "Select: " "3")" || return 1
+      case "$path" in
+        1) frpctl_dispatch set managed-host "$id" group "$value" ;;
+        2) frpctl_dispatch unset managed-host "$id" group "$value" ;;
+      esac
+      ;;
+    edit_host_group)
+      frpctl_dispatch show managed-host-groups || return $?
+      id="$(frpctl_nav_prompt_id "Managed Host Group (? help, 0 cancels): " true)" || return 1
+      [[ -n "$id" ]] || return 0
+      frpctl_dispatch show managed-host-group "$id" || return $?
+      echo "1) Change name"
+      echo "2) Change description"
+      echo "3) Back"
+      path="$(frpctl_read_menu 3 Back "Select: " "3")" || return 1
+      case "$path" in
+        1) profile=name ;;
+        2) profile=description ;;
+        *) return 0 ;;
+      esac
+      value="$(frpctl_nav_prompt_id "New value (? help, 0 cancels): " true)" || return 1
+      [[ -n "$value" ]] || return 0
+      frpctl_dispatch set managed-host-group "$id" "$profile" "$value"
+      ;;
+    diff_revisions)
+      id="$(frpctl_nav_prompt_id "First revision ID (? help, 0 cancels): " true)" || return 1
+      [[ -n "$id" ]] || return 0
+      value="$(frpctl_nav_prompt_id "Second revision ID (? help, 0 cancels): " true)" || return 1
+      [[ -n "$value" ]] || return 0
+      frpctl_dispatch system diff "$id" "$value"
+      ;;
+    import_mcp_certificate)
+      path="$(frpctl_nav_prompt_id "Certificate file path (? help, 0 cancels): " true)" || return 1
+      [[ -n "$path" ]] || return 0
+      value="$(frpctl_nav_prompt_id "Private key file path (? help, 0 cancels): " true)" || return 1
+      [[ -n "$value" ]] || return 0
+      # Empty means the certificate already contains its chain; 0 cancels.
+      profile="$(frpctl_read_step "Optional chain file path (Enter skips, ? help, 0 cancels): " "")" || return 1
+      if [[ -n "$profile" ]]; then
+        frpctl_dispatch system certificate import "$path" "$value" "$profile"
+      else
+        frpctl_dispatch system certificate import "$path" "$value"
+      fi
+      ;;
     create_group)
       id="$(frpctl_nav_prompt_id "Group name: ")" || return 1
       frpctl_dispatch set managed-host-group "$id" || true
@@ -1503,14 +1575,6 @@ PY
     set_bootstrap_hostname)
       value="$(frpctl_nav_prompt_id "Bootstrap hostname: ")" || return 1
       frpctl_dispatch set server bootstrap-hostname "$value" || true
-      ;;
-    set_installer_url)
-      value="$(frpctl_nav_prompt_id "Linux/macOS Agent installer URL: ")" || return 1
-      frpctl_dispatch set server installer-url "$value" || true
-      ;;
-    set_windows_installer_url)
-      value="$(frpctl_nav_prompt_id "Windows Agent installer URL: ")" || return 1
-      frpctl_dispatch set server windows-installer-url "$value" || true
       ;;
     restore_backup)
       path="$(frpctl_select_backup_archive)" || return 1
@@ -4636,14 +4700,6 @@ frpctl_dispatch_canonical() {
       frpctl_require_server || return 1
       frpctl_unset_client_from_canon "$result"
       ;;
-    set_installer_url)
-      frpctl_require_server || return 1
-      frpctl_invoke frp-set-client-installer-url "$(frpctl_json_get "$result" value)"
-      ;;
-    set_windows_installer_url)
-      frpctl_require_server || return 1
-      frpctl_invoke frp-set-client-installer-url --windows "$(frpctl_json_get "$result" value)"
-      ;;
     set_server_hostname)
       frpctl_require_server || return 1
       frpctl_invoke frp-server-set hostname "$(frpctl_json_get "$result" value)"
@@ -4659,14 +4715,6 @@ frpctl_dispatch_canonical() {
     unset_server_bootstrap_hostname)
       frpctl_require_server || return 1
       frpctl_invoke frp-server-set bootstrap-hostname --unset
-      ;;
-    unset_installer_url)
-      frpctl_require_server || return 1
-      frpctl_invoke frp-set-client-installer-url --unset
-      ;;
-    unset_windows_installer_url)
-      frpctl_require_server || return 1
-      frpctl_invoke frp-set-client-installer-url --windows --unset
       ;;
     set_service)
       frpctl_require_client || return 1
@@ -4886,36 +4934,14 @@ frpctl_dispatch_canonical() {
       ;;
     delete_group)
       frpctl_require_server || return 1
-      _del_group="$(frpctl_json_get "$result" group)"
-      frpctl_load_passthrough "$result"
-      # Product-owned confirmation. Public group deletion is interactive only;
-      # backend --yes is internal and is used only after this public y/N gate.
-      _del_ans=""
-      if [[ -t 0 ]]; then
-        echo
-        echo "Delete Managed Host Group \"${_del_group}\"?"
-        echo "Group membership is removed. Managed Host identity, Remote Services, and public ports"
-        echo "are not changed."
-        _del_ans="$(FRP_CTL_TEST_INPUT= frpctl_read_step "Delete Managed Host Group? [y/N]: " "N")" || {
-          _del_rc=$?
-          frpctl_read_abort "$_del_rc" || true
-          [[ "$_del_rc" == 3 ]] || _FRP_CTL_RC=1
-          return 0
-        }
-      else
+      # Resolve and review the immutable Group ID and membership in one
+      # operation; never resolve a mutable name again after approval.
+      if [[ ! -t 0 ]]; then
         echo "ERROR: deleting a Managed Host Group requires interactive confirmation." >&2
         echo "Run this command interactively and answer y/N." >&2
-        _FRP_CTL_RC=1
-        return 0
+        return 1
       fi
-      case "$(printf '%s' "$_del_ans" | tr '[:upper:]' '[:lower:]')" in
-        y|yes) ;;
-        *)
-          echo "Aborted."
-          return 0
-          ;;
-      esac
-      frpctl_invoke frp-group-set delete "$_del_group" --yes
+      FRP_CTL_TEST_INPUT= frpctl_invoke frp-group-set delete "$(frpctl_json_get "$result" group)"
       ;;
     delete_profile) frpctl_require_server || return 1; frpctl_invoke frp-profile delete "$(frpctl_json_get "$result" profile)" ;;
     add_group_member)

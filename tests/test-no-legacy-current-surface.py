@@ -216,7 +216,9 @@ class LegacyReintroductionGate(unittest.TestCase):
             self.assertIsNone(catalog.find(old, role="server"))
             self.assertEqual(grammar.match(old, role="server").get("status"), "error")
             self.assertEqual(grammar.match(old + ["?"], role="server").get("status"), "error")
-            new = [verb, "server", "mcp"]
+            retired = [verb, "server", "mcp"]
+            self.assertEqual(grammar.match(retired, role="server").get("status"), "error")
+            new = [verb, "mcp-server"]
             self.assertEqual(grammar.match(new, role="server").get("action"), "control_plane")
             self.assertNotEqual(grammar.match(new, role="client").get("status"), "ok")
 

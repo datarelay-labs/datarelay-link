@@ -103,6 +103,24 @@ class DocConsistencyV24(unittest.TestCase):
             with self.subTest(path=path.name):
                 self.assertIsNone(pattern.search(path.read_text(encoding="utf-8")))
 
+    def test_current_mcp_nouns_and_navigation_match_implementation(self):
+        import sys
+        sys.path.insert(0, str(ROOT / "lib"))
+        import frp_cli_catalog as catalog
+        paths = [ROOT / "README.md", ROOT / "README.ko.md", *(ROOT / "docs").glob("*.md")]
+        obsolete = re.compile(r"\bai-mcp\b|AI MCP Setup|Connect or manage AI service|MCP Bridge settings / diagnostics")
+        for path in paths:
+            text = path.read_text(encoding="utf-8")
+            with self.subTest(path=path.name):
+                self.assertIsNone(obsolete.search(text))
+                self.assertIsNone(re.search(r"(?m)^\s*set server mcp\s*$", text))
+        expected = [entry[1] for entry in catalog.navigation_entries("server.ai") if entry[0] != "back"]
+        for path in (MASTER, IA):
+            tree = path.read_text(encoding="utf-8").split("├── 6. AI Access\n", 1)[1].split("├── 7. System", 1)[0]
+            actual = re.findall(r"(?m)^│   [├└]── (.+)$", tree)
+            self.assertEqual(actual, expected, path.name)
+        self.assertIn("set mcp-server", catalog.domain_help("mcp-server", "server"))
+
     def test_restricted_plane_guidance_has_no_blacklist_allow_fallback(self):
         master = MASTER.read_text(encoding="utf-8")
         product = PRODUCT.read_text(encoding="utf-8")

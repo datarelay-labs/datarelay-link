@@ -264,7 +264,8 @@ MCP host
 → loopback MCP Bridge 127.0.0.1:6103
 → AI Identity (OAuth-bound or supported authenticated credential)
 → AI Access authorization
-→ managed client control path
+→ complete rule grant (native Server also checks local account eligibility)
+→ native Server executor or authenticated Agent control path
 → target OS boundary
 ```
 
@@ -313,7 +314,7 @@ download_file
 
 Unknown or ungranted tools are denied.
 
-Each tool invocation is authorized using the current AI Access policy. Authentication remains mandatory but never grants capability access by itself. AI Access is WHITELIST-only: no policy, disabled enforcement, unsupported mode, or no matching enabled Rule is DENY.
+Each tool invocation is authorized using the current AI Access policy; native Server operations additionally check selected account and Server-local eligibility as specified in [AI_ACCESS_MCP.md §4.1](AI_ACCESS_MCP.md#41-canonical-execution-account-contract). No capability/account/path union across rules. Native Server root requires explicit local and AI-rule approval. Managed Host execution retains the existing Agent identity and platform safeguards. Root can alter the target, including DRLink itself; do not claim isolation from approved root. Authentication remains mandatory but never grants capability access by itself. AI Access is WHITELIST-only: no policy, disabled enforcement, unsupported mode, or no matching enabled Rule is DENY.
 
 ## 20. Read-only AI semantics
 
@@ -336,7 +337,7 @@ timeout/process controls
 optional sandbox/isolation if implemented
 ```
 
-Do not market a role as read-only merely because direct `write_file` is denied. Execution identity and privilege elevation should be explicit constraints; granting `exec` alone never implies permission to elevate privileges.
+Do not market a role as read-only merely because direct `write_file` is denied. For native Server operations the AI may select only an explicitly approved account; omission uses the unique authorized default. Managed Hosts have no new account-selection setting. No implicit root or automatic retry with elevated privileges. Existing OS-level sudo rights are part of real account authority, and direct-file/cwd scopes do not sandbox a general shell.
 
 ## 21. AI path scopes
 
