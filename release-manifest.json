@@ -3,7 +3,7 @@
   "project_version": "2.4.0",
   "frp_version": "0.71.0",
   "channel": "development",
-  "git_ref": "8f587f40b95573db18e52f23af06a02d90747dca",
+  "git_ref": "c791efb2f0f53c71f674c971d3a14d9428591645",
   "owner": "datarelay-labs",
   "repo": "datarelay-link",
   "https_raw_base": "https://raw.githubusercontent.com/datarelay-labs/datarelay-link",
@@ -66,17 +66,17 @@
     "bootstrap-client.sh": {
       "path": "dist/bootstrap-client.sh",
       "url_path": "dist/bootstrap-client.sh",
-      "sha256": "2f034a5e4c12873798d36d5486edfaf153411ef2a6ed3d05b070f29464686ce6"
+      "sha256": "c10d3e701e698f5e125382840bc4d94d2fd06a755d791342d82a2a1af0cf043f"
     },
     "bootstrap-client.ps1": {
       "path": "dist/bootstrap-client.ps1",
       "url_path": "dist/bootstrap-client.ps1",
-      "sha256": "42a1b554296aa1180a0de786c9570f5887e2148e888fc52ba76d4baa1f8bd3b9"
+      "sha256": "40209e96b9cad5f9b55dd8e194e55b3ec721c51285558d3be8f3ee34fb4eff09"
     },
     "bootstrap-server.sh": {
       "path": "dist/bootstrap-server.sh",
       "url_path": "dist/bootstrap-server.sh",
-      "sha256": "5b8d16204af8842a34776c01513b68852fcee793ddd378c9fe44bc1333d7d3b5"
+      "sha256": "d1fc1e3f5350f9f0fc160a36d6270ac912e32fc357d2ea9792de8f238efac3a5"
     },
     "uninstall-client.sh": {
       "path": "dist/uninstall-client.sh",
@@ -91,17 +91,17 @@
     "bootstrap-server-online.sh": {
       "path": "dist/bootstrap-server-online.sh",
       "url_path": "dist/bootstrap-server-online.sh",
-      "sha256": "01ada08ab148d0248d596d2421d9ccd42d5d45e6c56e92dc44cc8fc472a250fc"
+      "sha256": "c752c59cc5b4083a6523d6ba478d4ffdc2d4aec35830f9527185b970f4e427fe"
     },
     "bootstrap-server-core.tar": {
       "path": "dist/bootstrap-server-core.tar",
       "url_path": "dist/bootstrap-server-core.tar",
-      "sha256": "f8b9701a4a37263fd4435d4ea735876f4f56295850971b90fa46990d5d1f026b"
+      "sha256": "1dcfa3f3876c373904ee064e1bbab8dcd32e94bb18720d1391d70c204b4f23de"
     }
   },
-  "source_head": "8f587f40b95573db18e52f23af06a02d90747dca",
+  "source_head": "c791efb2f0f53c71f674c971d3a14d9428591645",
   "features": {
     "mcp_included": true
   },
-  "immutable_source_ref": "8f587f40b95573db18e52f23af06a02d90747dca"
+  "immutable_source_ref": "c791efb2f0f53c71f674c971d3a14d9428591645"
 }
